@@ -16,8 +16,12 @@ from tools.config import from_env, get_status_display  # noqa: E402
 def main():
     payload = json.loads(sys.stdin.read())
     ctx = from_env()
-    category = payload["input"]["category"]
-    thread = payload["input"]["thread"]
+    inp = payload.get("input", {})
+    category = inp.get("category", "")
+    thread = inp.get("thread", "")
+    if not category or not thread:
+        sys.stdout.write(json.dumps({"output": {"error": "缺少必填参数 category 或 thread"}}, ensure_ascii=False))
+        return
 
     thread_dir = f"{ctx.workspace_dir}/discussions/{category}/{thread}"
     posts = threads.list_posts(thread_dir)

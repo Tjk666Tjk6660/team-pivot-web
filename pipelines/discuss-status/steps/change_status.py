@@ -24,11 +24,16 @@ ACTION_TO_STATUS = {
 def main():
     payload = json.loads(sys.stdin.read())
     ctx = from_env()
-    inp = payload["input"]
-    action = inp["action"]
-    category = inp["category"]
-    thread = inp["thread"]
+    inp = payload.get("input", {})
+    action = inp.get("action", "")
+    category = inp.get("category", "")
+    thread = inp.get("thread", "")
     reason = inp.get("reason", "")
+
+    if not action:
+        raise ValueError("缺少必填参数 action（close / pending / reopen）")
+    if not category or not thread:
+        raise ValueError("缺少必填参数 category 或 thread")
 
     if action not in ACTION_TO_STATUS:
         raise ValueError(f"Unknown action: {action}")
