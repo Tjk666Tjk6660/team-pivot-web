@@ -1,0 +1,32 @@
+name: discuss-reply
+description: "回复现有讨论主题"
+triggers: ["回复", "reply"]
+input:
+  category: string
+  thread: string
+  draft_path: string
+  mention_users: string
+  mention_comments: string
+steps:
+  - name: prepare
+    type: code
+    command: "python3 steps/prepare.py"
+  - name: generate_summary
+    type: llm
+    model: standard
+    skip_if: "prepare.output.has_summary"
+    prompt: |
+      为以下讨论回复生成通知摘要。
+      回复内容：
+      {{prepare.output.content}}
+      要求：**摘要** 3-5 句话 + **亮点** 1-2 点。
+    schema: schemas/summary.json
+    retry: 2
+  - name: write_summary
+    type: code
+    skip_if: "prepare.output.has_summary"
+    command: "python3 steps/write_summary.py"
+  - name: publish
+    type: code
+    command: "python3 steps/publish.py"
+output: publish

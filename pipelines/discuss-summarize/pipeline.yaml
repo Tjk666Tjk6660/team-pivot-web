@@ -1,0 +1,24 @@
+name: discuss-summarize
+description: "为讨论生成或更新 SUMMARY.md（只有发起者可以执行）"
+triggers: ["生成摘要", "summarize thread"]
+input:
+  category: string
+  thread: string
+steps:
+  - name: gather
+    type: code
+    command: "python3 steps/gather.py"
+  - name: generate_summary
+    type: llm
+    model: reasoning
+    prompt: |
+      根据以下讨论的所有帖子，生成一个时间线式的 SUMMARY.md 文档。
+      讨论内容：
+      {{gather.output.posts}}
+      要求：按时间顺序，每个帖子一行，用表格格式：| 时间 | 作者 | 要点 |
+    schema: schemas/summary.json
+    retry: 2
+  - name: publish
+    type: code
+    command: "python3 steps/publish.py"
+output: publish

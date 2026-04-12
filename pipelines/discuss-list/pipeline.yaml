@@ -1,0 +1,10 @@
+name: discuss-list
+description: "列出所有讨论（可选按 category 筛选）"
+triggers: ["列出讨论", "list threads"]
+input:
+  category: string
+steps:
+  - name: list_threads
+    type: code
+    command: "python3 steps/list_threads.py"
+output: list_threads

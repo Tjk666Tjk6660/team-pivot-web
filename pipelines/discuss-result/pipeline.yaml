@@ -1,0 +1,24 @@
+name: discuss-result
+description: "生成 RESULT.md 并把状态改为 concluded（只有发起者可以执行）"
+triggers: ["生成结论", "generate result"]
+input:
+  category: string
+  thread: string
+steps:
+  - name: gather
+    type: code
+    command: "python3 steps/gather.py"
+  - name: generate_result
+    type: llm
+    model: reasoning
+    prompt: |
+      根据以下讨论，生成 RESULT.md 结论文档。
+      讨论内容：
+      {{gather.output.posts}}
+      包含以下 section：背景、讨论的选项、最终决定、后续行动项。
+    schema: schemas/result.json
+    retry: 2
+  - name: publish
+    type: code
+    command: "python3 steps/publish.py"
+output: publish

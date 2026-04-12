@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+# pivot-cli — lightweight Pivot Agent CLI (curl wrapper)
+# No runtime dependencies beyond curl and a POSIX shell.
+#
+# Config: ~/.pivot-cli.conf (created by 'pivot-cli login')
+#   PIVOT_ENDPOINT=https://xxx.saas.enclaws.com
+#   PIVOT_TOKEN=ptk_xxx
+
+set -euo pipefail
+
+CONFIG_FILE="$HOME/.pivot-cli.conf"
+
+# ---- helpers ----
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+load_config() {
+  [ -f "$CONFIG_FILE" ] || die "Not logged in. Run: pivot-cli login --endpoint <url> --token <token>"
+  PIVOT_ENDPOINT=$(grep '^PIVOT_ENDPOINT=' "$CONFIG_FILE" | cut -d= -f2-)
+  PIVOT_TOKEN=$(grep '^PIVOT_TOKEN=' "$CONFIG_FILE" | cut -d= -f2-)
+  [ -n "$PIVOT_ENDPOINT" ] || die "PIVOT_ENDPOINT not set in $CONFIG_FILE"
+  [ -n "$PIVOT_TOKEN" ] || die "PIVOT_TOKEN not set in $CONFIG_FILE"
+}
+
+rpc() {
+  local method="$1"
+  local params="$2"
+  curl -s -X POST "${PIVOT_ENDPOINT}/api/rpc" \
+    -H "Authorization: Bearer ${PIVOT_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "{\"method\": \"${method}\", \"params\": ${params}}"
+}
+
+# ---- commands ----
+
+cmd_login() {
+  local endpoint="" token=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --endpoint) endpoint="$2"; shift 2 ;;
+      --token)    token="$2";    shift 2 ;;
+      *) die "Unknown option: $1" ;;
+    esac
+  done
+  [ -n "$endpoint" ] || die "Missing --endpoint"
+  [ -n "$token" ]    || die "Missing --token"
+  cat > "$CONFIG_FILE" <<EOF
+PIVOT_ENDPOINT=${endpoint}
+PIVOT_TOKEN=${token}
+EOF
+  chmod 600 "$CONFIG_FILE"
+  echo "Logged in. Config saved to $CONFIG_FILE"
+}
+
+cmd_discuss() {
+  load_config
+  local sub="${1:-}"; shift 2>/dev/null || true
+  case "$sub" in
+    new)
+      local category="${1:-}"; shift 2>/dev/null || true
+      local title="${1:-}"; shift 2>/dev/null || true
+      local draft="" mention="" comments=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --draft)    draft="$2";    shift 2 ;;
+          --mention)  mention="$2";  shift 2 ;;
+          --comments) comments="$2"; shift 2 ;;
+          *) die "Unknown option: $1" ;;
+        esac
+      done
+      [ -n "$category" ] || die "Usage: pivot-cli discuss new <category> <title> [--draft <path>] [--mention <users>] [--comments <text>]"
+      rpc "app.pivot.discuss-new" "{\"category\":\"${category}\",\"title\":\"${title}\",\"draft_path\":\"${draft}\",\"mention_users\":\"${mention}\",\"mention_comments\":\"${comments}\"}"
+      ;;
+    reply)
+      local target="${1:-}"; shift 2>/dev/null || true
+      local draft="" mention="" comments=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --draft)    draft="$2";    shift 2 ;;
+          --mention)  mention="$2";  shift 2 ;;
+          --comments) comments="$2"; shift 2 ;;
+          *) die "Unknown option: $1" ;;
+        esac
+      done
+      local category="${target%%/*}"
+      local thread="${target#*/}"
+      [ -n "$target" ] || die "Usage: pivot-cli discuss reply <category>/<thread> [--draft <path>] [--mention <users>] [--comments <text>]"
+      rpc "app.pivot.discuss-reply" "{\"category\":\"${category}\",\"thread\":\"${thread}\",\"draft_path\":\"${draft}\",\"mention_users\":\"${mention}\",\"mention_comments\":\"${comments}\"}"
+      ;;
+    list)
+      local category="${1:-}"
+      rpc "app.pivot.discuss-list" "{\"category\":\"${category}\"}"
+      ;;
+    inbox)
+      rpc "app.pivot.discuss-inbox" "{}"
+      ;;
+    read)
+      local target="${1:-}"
+      local category="${target%%/*}"
+      local thread="${target#*/}"
+      [ -n "$target" ] || die "Usage: pivot-cli discuss read <category>/<thread>"
+      rpc "app.pivot.discuss-read" "{\"category\":\"${category}\",\"thread\":\"${thread}\"}"
+      ;;
+    close|pending)
+      local target="${1:-}"
+      local category="${target%%/*}"
+      local thread="${target#*/}"
+      [ -n "$target" ] || die "Usage: pivot-cli discuss ${sub} <category>/<thread>"
+      rpc "app.pivot.discuss-status" "{\"category\":\"${category}\",\"thread\":\"${thread}\",\"action\":\"${sub}\",\"reason\":\"\"}"
+      ;;
+    reopen)
+      local target="${1:-}"; shift 2>/dev/null || true
+      local reason=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --reason) reason="$2"; shift 2 ;;
+          *) die "Unknown option: $1" ;;
+        esac
+      done
+      local category="${target%%/*}"
+      local thread="${target#*/}"
+      [ -n "$target" ] || die "Usage: pivot-cli discuss reopen <category>/<thread> --reason <text>"
+      [ -n "$reason" ] || die "reopen requires --reason"
+      rpc "app.pivot.discuss-status" "{\"category\":\"${category}\",\"thread\":\"${thread}\",\"action\":\"reopen\",\"reason\":\"${reason}\"}"
+      ;;
+    *)
+      die "Unknown discuss command: ${sub}\nAvailable: new | reply | list | inbox | read | close | pending | reopen"
+      ;;
+  esac
+}
+
+cmd_file() {
+  load_config
+  local sub="${1:-}"; shift 2>/dev/null || true
+  case "$sub" in
+    fetch)
+      local paths=""
+      for p in "$@"; do
+        [ -n "$paths" ] && paths="${paths},"
+        paths="${paths}${p}"
+      done
+      [ -n "$paths" ] || die "Usage: pivot-cli file fetch <path> [<path2> ...]"
+      rpc "app.pivot.file-fetch" "{\"paths\":\"${paths}\"}"
+      ;;
+    *)
+      die "Unknown file command: ${sub}\nAvailable: fetch"
+      ;;
+  esac
+}
+
+cmd_help() {
+  cat <<'HELP'
+pivot-cli — Team-Pivot Agent CLI
+
+Usage: pivot-cli <command> [options]
+
+Commands:
+  login --endpoint <url> --token <token>    Save credentials
+  discuss new <category> <title> [options]  Start a new discussion
+  discuss reply <category>/<thread> [opts]  Reply to a discussion
+  discuss list [category]                   List discussions
+  discuss inbox                             Show unread
+  discuss read <category>/<thread>          Read a discussion
+  discuss close <category>/<thread>         Close a discussion
+  discuss pending <category>/<thread>       Shelve a discussion
+  discuss reopen <cat>/<thread> --reason X  Reopen a discussion
+  file fetch <path> [<path2> ...]           Fetch files
+
+Options for new/reply:
+  --draft <path>       Path to draft markdown file
+  --mention <users>    Comma-separated user names to @mention
+  --comments <text>    Comment attached to mentions
+
+All commands return JSON. Pipe to jq for pretty-printing:
+  pivot-cli discuss list | jq .
+HELP
+}
+
+# ---- main ----
+
+case "${1:-}" in
+  login)   shift; cmd_login "$@" ;;
+  discuss) shift; cmd_discuss "$@" ;;
+  file)    shift; cmd_file "$@" ;;
+  help|--help|-h) cmd_help ;;
+  "") cmd_help ;;
+  *) die "Unknown command: $1. Run 'pivot-cli help' for usage." ;;
+esac

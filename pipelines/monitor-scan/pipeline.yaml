@@ -1,0 +1,11 @@
+name: monitor-scan
+description: "巡视所有讨论：检测 un-indexed 文件并尝试恢复、长期 open、mention 后未回复，推送通知"
+triggers: ["监控扫描"]
+input:
+  window_hours: string
+  mention_window_hours: string
+steps:
+  - name: scan
+    type: code
+    command: "python3 steps/scan.py"
+output: scan

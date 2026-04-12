@@ -1,0 +1,43 @@
+name: discuss-new
+description: "创建一个新的讨论主题（从草稿发布到 git 并发送通知）"
+triggers:
+  - "发起讨论"
+  - "新讨论"
+  - "new discussion"
+input:
+  category: string
+  title: string
+  draft_path: string
+  mention_users: string
+  mention_comments: string
+steps:
+  - name: prepare
+    type: code
+    command: "python3 steps/prepare.py"
+
+  - name: generate_summary
+    type: llm
+    model: standard
+    skip_if: "prepare.output.has_summary"
+    prompt: |
+      为以下新发起的讨论生成通知摘要。
+
+      讨论内容：
+      {{prepare.output.content}}
+
+      要求：用内容的语言撰写，格式如下：
+      **摘要**：3-5 句话详细总结背景、核心提案和关键论据。
+      **亮点**：1-2 个最具突破性或价值的具体要点。
+    schema: schemas/summary.json
+    retry: 2
+
+  - name: write_summary
+    type: code
+    skip_if: "prepare.output.has_summary"
+    command: "python3 steps/write_summary.py"
+
+  - name: publish
+    type: code
+    command: "python3 steps/publish.py"
+
+output: publish
