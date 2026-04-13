@@ -206,16 +206,16 @@ def _send_notifications(
     window_hours: int,
     mention_window_hours: int,
 ) -> int:
-    """Send best-effort Feishu notifications for stale-open and un-replied mention issues.
+    """Send best-effort Feishu Bot notifications for stale-open and un-replied mention issues.
 
-    Returns the count of send_card calls actually attempted (regardless of success).
-    Returns 0 when FEISHU_WEBHOOK_URL is not configured.
+    Returns the count of successful card sends (across all chats).
+    Returns 0 when FEISHU_ACCESS_TOKEN is not configured.
     """
     try:
-        from tools.notify.feishu_adapter import FeishuAdapter
+        from tools.notify.feishu_bot import FeishuBotAdapter
         from tools.config import build_thread_url
 
-        notifier = FeishuAdapter.from_env()
+        notifier = FeishuBotAdapter.from_env()
     except Exception as e:
         sys.stderr.write(f"monitor-scan: notifier init skipped: {e}\n")
         return 0
@@ -223,7 +223,7 @@ def _send_notifications(
     sent = 0
     for issue in issues.get("stale_open_threads", []):
         try:
-            notifier.send_card(
+            sent += notifier.send_card_to_all(
                 title=f"Stale thread: {issue['thread']}",
                 summary=(
                     f"No activity since {issue['last_updated']}, "
@@ -232,13 +232,12 @@ def _send_notifications(
                 thread_url=build_thread_url(thread=issue["thread"]),
                 author="Pivot Monitor",
             )
-            sent += 1
         except Exception as e:
             sys.stderr.write(f"monitor-scan: stale-open notify failed: {e}\n")
 
     for m in issues.get("un_replied_mentions", []):
         try:
-            notifier.send_card(
+            sent += notifier.send_card_to_all(
                 title=f"Awaiting reply from {m['mentioned_user']}",
                 summary=(
                     f"Mentioned over {mention_window_hours} hours ago, no reply yet. "
@@ -250,7 +249,6 @@ def _send_notifications(
                 author="Pivot Monitor",
                 mention_names=[m["mentioned_user"]],
             )
-            sent += 1
         except Exception as e:
             sys.stderr.write(f"monitor-scan: mention notify failed: {e}\n")
 

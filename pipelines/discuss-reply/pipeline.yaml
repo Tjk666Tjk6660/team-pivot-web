@@ -1,10 +1,13 @@
 name: discuss-reply
-description: "回复现有讨论主题"
-triggers: ["回复", "reply"]
+description: >
+  Reply to an existing discussion thread. Pass the reply content directly
+  as the 'content' parameter. Do NOT create draft files — the pipeline
+  handles all file creation internally.
+triggers: ["reply", "respond"]
 input:
   category: string
   thread: string
-  draft_path: string
+  content: string
   mention_users: string
   mention_comments: string
 steps:
@@ -16,22 +19,19 @@ steps:
     model: standard
     skip_if: "prepare.output.has_summary"
     prompt: |
-      为以下讨论回复生成通知摘要。
+      Generate a notification summary for the following discussion reply.
 
-      回复内容：
+      Reply content:
       {{prepare.output.content}}
 
-      要求：返回一个 JSON 对象，只有一个字段 "summary"，值是一段文字。
-      文字内容包括：**摘要**（3-5 句话总结回复要点）和 **亮点**（1-2 个要点）。
-      用内容的语言撰写。不要返回任何其他字段。
+      Return a JSON object with exactly one field "summary" (string).
+      The summary should include: a brief overview (3-5 sentences) and
+      1-2 key highlights. Write in the same language as the content.
+      Do not include any other fields.
 
-      示例：{"summary": "**摘要**：回复者认为应优先处理...。**亮点**：1) ...；2) ..."}
+      Example: {"summary": "Overview: The respondent suggests prioritizing... Highlights: 1) ...; 2) ..."}
     schema: schemas/summary.json
     retry: 2
-  - name: write_summary
-    type: code
-    skip_if: "prepare.output.has_summary"
-    command: "python3 steps/write_summary.py"
   - name: publish
     type: code
     command: "python3 steps/publish.py"

@@ -1,4 +1,4 @@
-"""Verify that un-indexed files can be discovered and recovered."""
+"""Pipeline test: atomicity recovery (migrated from tests/integration/)."""
 from pathlib import Path
 
 from tools import atomicity
@@ -6,14 +6,13 @@ from tools import atomicity
 
 class TestAtomicityRecovery:
     def test_un_indexed_files_are_discoverable(self, tmp_path: Path):
-        thread = tmp_path / "discussions/enclaws/t"
+        thread = tmp_path / "discussions/test/t"
         thread.mkdir(parents=True)
         atomicity.write_business_file_pending(
             str(thread / "001_ken_proposal_abc123.md"),
             frontmatter={"type": "proposal", "author": "ken"},
             body="# stuck in the middle\n",
         )
-
         un_indexed = list(atomicity.find_un_indexed_files(str(tmp_path / "discussions")))
         assert len(un_indexed) == 1
         assert un_indexed[0].endswith("001_ken_proposal_abc123.md")

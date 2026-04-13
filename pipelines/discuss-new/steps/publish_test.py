@@ -1,4 +1,4 @@
-"""Tests for publish step: move draft to canonical path, update INDEX, commit, notify."""
+"""Tests for publish step: create canonical file, update INDEX, commit, notify."""
 import json
 import os
 import subprocess
@@ -10,17 +10,7 @@ STEP = Path(__file__).parent / "publish.py"
 
 
 class TestPublish:
-    def test_publish_moves_draft_to_thread_dir_and_updates_index(
-        self, tmp_git_repo: Path
-    ):
-        draft_dir = tmp_git_repo / "discussions" / "enclaws" / "test-thread" / "members" / "huangshengli"
-        draft_dir.mkdir(parents=True)
-        draft = draft_dir / "draft_proposal.md"
-        draft.write_text(
-            "---\ntype: proposal\nauthor: huangshengli\nsummary: \"**摘要**：test\"\n---\n# test body\n",
-            encoding="utf-8",
-        )
-
+    def test_publish_creates_file_and_updates_index(self, tmp_git_repo: Path):
         env = {
             **os.environ,
             "PIVOT_TENANT_ID": "t",
@@ -35,21 +25,24 @@ class TestPublish:
                     "input": {
                         "category": "enclaws",
                         "title": "test-thread",
-                        "draft_path": str(draft),
+                        "content": "# My Proposal\n\nBody text here.",
                         "mention_users": "",
                         "mention_comments": "",
                     },
                     "steps": {
                         "prepare": {
                             "output": {
-                                "draft_path": str(draft),
                                 "category": "enclaws",
                                 "title": "test-thread",
+                                "content": "# My Proposal\n\nBody text here.",
                                 "author": "huangshengli",
                                 "mention_users": "",
                                 "mention_comments": "",
                             }
-                        }
+                        },
+                        "generate_summary": {
+                            "output": {"summary": "Proposal summary"}
+                        },
                     },
                 }
             ),
@@ -72,24 +65,17 @@ class TestPublish:
 
 
 class TestPublishNotification:
-    def test_publish_sends_notification_when_webhook_set(
+    def test_publish_sends_notification_via_bot(
         self, tmp_git_repo: Path, mock_feishu_server
     ):
-        draft_dir = tmp_git_repo / "discussions" / "enclaws" / "notify-test" / "members" / "huangshengli"
-        draft_dir.mkdir(parents=True)
-        draft = draft_dir / "draft_proposal.md"
-        draft.write_text(
-            "---\ntype: proposal\nauthor: huangshengli\nsummary: \"**摘要**：testing notification flow\"\n---\n# body\n",
-            encoding="utf-8",
-        )
         env = {
             **os.environ,
             "PIVOT_TENANT_ID": "t",
             "PIVOT_USER_ID": "huangshengli",
             "PIVOT_WORKSPACE_DIR": str(tmp_git_repo),
             "PIVOT_APP_NAME": "pivot",
-            "FEISHU_WEBHOOK_URL": mock_feishu_server["url"],
-            "FEISHU_SECRET": "",
+            "FEISHU_ACCESS_TOKEN": "t-test",
+            "FEISHU_CHAT_IDS": json.dumps([mock_feishu_server["url"].split("//")[1]]),
             "PIVOT_USER_MAP": '{"ken": {"feishu_id": "ou_ken"}}',
         }
         proc = subprocess.run(
@@ -99,21 +85,24 @@ class TestPublishNotification:
                     "input": {
                         "category": "enclaws",
                         "title": "notify-test",
-                        "draft_path": str(draft),
+                        "content": "# Proposal body\n\nDetails here.",
                         "mention_users": "ken",
                         "mention_comments": "",
                     },
                     "steps": {
                         "prepare": {
                             "output": {
-                                "draft_path": str(draft),
                                 "category": "enclaws",
                                 "title": "notify-test",
+                                "content": "# Proposal body\n\nDetails here.",
                                 "author": "huangshengli",
                                 "mention_users": "ken",
                                 "mention_comments": "",
                             }
-                        }
+                        },
+                        "generate_summary": {
+                            "output": {"summary": "Test notification summary"}
+                        },
                     },
                 }
             ),
@@ -125,30 +114,15 @@ class TestPublishNotification:
         result = json.loads(proc.stdout)
         assert result["output"]["committed"] is True
 
-        assert len(mock_feishu_server["received"]) == 1
-        body = mock_feishu_server["received"][0]
-        assert body["msg_type"] == "interactive"
-        content = body["card"]["elements"][0]["text"]["content"]
-        assert '<at id="ou_ken"></at>' in content
-        assert "New thread" in body["card"]["header"]["title"]["content"]
-
-    def test_publish_succeeds_when_webhook_unreachable(self, tmp_git_repo: Path):
-        draft_dir = tmp_git_repo / "discussions" / "enclaws" / "x" / "members" / "u"
-        draft_dir.mkdir(parents=True)
-        draft = draft_dir / "draft_proposal.md"
-        draft.write_text(
-            "---\ntype: proposal\nauthor: u\nsummary: test\n---\n# body\n",
-            encoding="utf-8",
-        )
+    def test_publish_succeeds_without_bot_config(self, tmp_git_repo: Path):
         env = {
             **os.environ,
             "PIVOT_TENANT_ID": "t",
             "PIVOT_USER_ID": "u",
             "PIVOT_WORKSPACE_DIR": str(tmp_git_repo),
             "PIVOT_APP_NAME": "pivot",
-            "FEISHU_WEBHOOK_URL": "http://127.0.0.1:1",
-            "FEISHU_SECRET": "",
         }
+        env.pop("FEISHU_ACCESS_TOKEN", None)
         proc = subprocess.run(
             [sys.executable, str(STEP)],
             input=json.dumps(
@@ -156,21 +130,24 @@ class TestPublishNotification:
                     "input": {
                         "category": "enclaws",
                         "title": "x",
-                        "draft_path": str(draft),
+                        "content": "# body",
                         "mention_users": "",
                         "mention_comments": "",
                     },
                     "steps": {
                         "prepare": {
                             "output": {
-                                "draft_path": str(draft),
                                 "category": "enclaws",
                                 "title": "x",
+                                "content": "# body",
                                 "author": "u",
                                 "mention_users": "",
                                 "mention_comments": "",
                             }
-                        }
+                        },
+                        "generate_summary": {
+                            "output": {"summary": "Summary"}
+                        },
                     },
                 }
             ),

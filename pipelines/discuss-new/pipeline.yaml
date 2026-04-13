@@ -1,13 +1,15 @@
 name: discuss-new
-description: "创建一个新的讨论主题（从草稿发布到 git 并发送通知）"
+description: >
+  Create a new discussion thread. Pass the discussion content directly
+  as the 'content' parameter. Do NOT create draft files — the pipeline
+  handles all file creation internally.
 triggers:
-  - "发起讨论"
-  - "新讨论"
   - "new discussion"
+  - "create discussion"
 input:
   category: string
   title: string
-  draft_path: string
+  content: string
   mention_users: string
   mention_comments: string
 steps:
@@ -20,23 +22,19 @@ steps:
     model: standard
     skip_if: "prepare.output.has_summary"
     prompt: |
-      为以下新发起的讨论生成通知摘要。
+      Generate a notification summary for the following new discussion.
 
-      讨论内容：
+      Discussion content:
       {{prepare.output.content}}
 
-      要求：返回一个 JSON 对象，只有一个字段 "summary"，值是一段文字。
-      文字内容包括：**摘要**（3-5 句话总结背景、核心提案和关键论据）和 **亮点**（1-2 个要点）。
-      用内容的语言撰写。不要返回任何其他字段。
+      Return a JSON object with exactly one field "summary" (string).
+      The summary should include: a brief overview (3-5 sentences) and
+      1-2 key highlights. Write in the same language as the content.
+      Do not include any other fields.
 
-      示例：{"summary": "**摘要**：团队提出了新的认证方案，核心思路是...。**亮点**：1) ...；2) ..."}
+      Example: {"summary": "Overview: The team proposed a new auth scheme... Highlights: 1) ...; 2) ..."}
     schema: schemas/summary.json
     retry: 2
-
-  - name: write_summary
-    type: code
-    skip_if: "prepare.output.has_summary"
-    command: "python3 steps/write_summary.py"
 
   - name: publish
     type: code

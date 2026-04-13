@@ -43,14 +43,6 @@ class TestReplyPublish:
         thread = "auth-redesign"
         _seed_thread(tmp_git_repo, category, thread, "ken")
 
-        draft_dir = tmp_git_repo / "discussions" / category / thread / "members" / "shengli"
-        draft_dir.mkdir(parents=True)
-        draft = draft_dir / "draft_reply.md"
-        draft.write_text(
-            "---\ntype: reply\nauthor: shengli\nsummary: my reply\n---\n# reply body\n",
-            encoding="utf-8",
-        )
-
         env = {
             **os.environ,
             "PIVOT_TENANT_ID": "t",
@@ -65,7 +57,7 @@ class TestReplyPublish:
                     "input": {
                         "category": category,
                         "thread": thread,
-                        "draft_path": str(draft),
+                        "content": "# My reply\n\nI agree with the proposal.",
                         "mention_users": "ken",
                         "mention_comments": "please review",
                     },
@@ -74,12 +66,15 @@ class TestReplyPublish:
                             "output": {
                                 "category": category,
                                 "thread": thread,
-                                "draft_path": str(draft),
+                                "content": "# My reply\n\nI agree with the proposal.",
                                 "author": "shengli",
                                 "mention_users": "ken",
                                 "mention_comments": "please review",
                             }
-                        }
+                        },
+                        "generate_summary": {
+                            "output": {"summary": "Reply agreeing with proposal"}
+                        },
                     },
                 }
             ),
@@ -99,20 +94,10 @@ class TestReplyPublish:
 
 
 class TestReplyPublishNotification:
-    def test_reply_sends_notification_when_webhook_set(
-        self, tmp_git_repo: Path, mock_feishu_server
-    ):
+    def test_reply_succeeds_without_bot_config(self, tmp_git_repo: Path):
         category = "enclaws"
-        thread = "reply-notify-test"
+        thread = "reply-no-bot"
         _seed_thread(tmp_git_repo, category, thread, "ken")
-
-        draft_dir = tmp_git_repo / "discussions" / category / thread / "members" / "shengli"
-        draft_dir.mkdir(parents=True)
-        draft = draft_dir / "draft_reply.md"
-        draft.write_text(
-            "---\ntype: reply\nauthor: shengli\nsummary: replying\n---\n# body\n",
-            encoding="utf-8",
-        )
 
         env = {
             **os.environ,
@@ -120,10 +105,8 @@ class TestReplyPublishNotification:
             "PIVOT_USER_ID": "shengli",
             "PIVOT_WORKSPACE_DIR": str(tmp_git_repo),
             "PIVOT_APP_NAME": "pivot",
-            "FEISHU_WEBHOOK_URL": mock_feishu_server["url"],
-            "FEISHU_SECRET": "",
-            "PIVOT_USER_MAP": '{"ken": {"feishu_id": "ou_ken"}}',
         }
+        env.pop("FEISHU_ACCESS_TOKEN", None)
         proc = subprocess.run(
             [sys.executable, str(STEP)],
             input=json.dumps(
@@ -131,66 +114,7 @@ class TestReplyPublishNotification:
                     "input": {
                         "category": category,
                         "thread": thread,
-                        "draft_path": str(draft),
-                        "mention_users": "ken",
-                        "mention_comments": "pls review",
-                    },
-                    "steps": {
-                        "prepare": {
-                            "output": {
-                                "category": category,
-                                "thread": thread,
-                                "draft_path": str(draft),
-                                "author": "shengli",
-                                "mention_users": "ken",
-                                "mention_comments": "pls review",
-                            }
-                        }
-                    },
-                }
-            ),
-            capture_output=True,
-            text=True,
-            env=env,
-        )
-        assert proc.returncode == 0, proc.stderr
-
-        assert len(mock_feishu_server["received"]) == 1
-        body = mock_feishu_server["received"][0]
-        content = body["card"]["elements"][0]["text"]["content"]
-        assert '<at id="ou_ken"></at>' in content
-        assert "Reply" in body["card"]["header"]["title"]["content"]
-
-    def test_reply_succeeds_when_webhook_unreachable(self, tmp_git_repo: Path):
-        category = "enclaws"
-        thread = "reply-unreach"
-        _seed_thread(tmp_git_repo, category, thread, "ken")
-
-        draft_dir = tmp_git_repo / "discussions" / category / thread / "members" / "shengli"
-        draft_dir.mkdir(parents=True)
-        draft = draft_dir / "draft_reply.md"
-        draft.write_text(
-            "---\ntype: reply\nauthor: shengli\nsummary: replying\n---\n# body\n",
-            encoding="utf-8",
-        )
-
-        env = {
-            **os.environ,
-            "PIVOT_TENANT_ID": "t",
-            "PIVOT_USER_ID": "shengli",
-            "PIVOT_WORKSPACE_DIR": str(tmp_git_repo),
-            "PIVOT_APP_NAME": "pivot",
-            "FEISHU_WEBHOOK_URL": "http://127.0.0.1:1",
-            "FEISHU_SECRET": "",
-        }
-        proc = subprocess.run(
-            [sys.executable, str(STEP)],
-            input=json.dumps(
-                {
-                    "input": {
-                        "category": category,
-                        "thread": thread,
-                        "draft_path": str(draft),
+                        "content": "# reply",
                         "mention_users": "",
                         "mention_comments": "",
                     },
@@ -199,12 +123,15 @@ class TestReplyPublishNotification:
                             "output": {
                                 "category": category,
                                 "thread": thread,
-                                "draft_path": str(draft),
+                                "content": "# reply",
                                 "author": "shengli",
                                 "mention_users": "",
                                 "mention_comments": "",
                             }
-                        }
+                        },
+                        "generate_summary": {
+                            "output": {"summary": "Reply summary"}
+                        },
                     },
                 }
             ),

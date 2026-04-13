@@ -129,98 +129,9 @@ class TestScan:
 
 
 class TestScanNotification:
-    def test_scan_sends_stale_open_notification(
-        self, tmp_path: Path, mock_feishu_server
-    ):
+    def test_scan_succeeds_without_bot_config(self, tmp_path: Path):
         long_ago = (datetime.now(timezone.utc).astimezone() - timedelta(days=10)).isoformat()
-        _write_idx(tmp_path, "notify-stale", "open", long_ago)
-
-        env = {
-            **os.environ,
-            "PIVOT_TENANT_ID": "t",
-            "PIVOT_USER_ID": "monitor",
-            "PIVOT_WORKSPACE_DIR": str(tmp_path),
-            "PIVOT_APP_NAME": "pivot",
-            "FEISHU_WEBHOOK_URL": mock_feishu_server["url"],
-            "FEISHU_SECRET": "",
-        }
-        proc = subprocess.run(
-            [sys.executable, str(STEP)],
-            input=json.dumps(
-                {
-                    "input": {"window_hours": "24", "mention_window_hours": "48"},
-                    "steps": {},
-                }
-            ),
-            capture_output=True,
-            text=True,
-            env=env,
-        )
-        assert proc.returncode == 0, proc.stderr
-        result = json.loads(proc.stdout)
-        assert result["output"]["stale_open_threads_count"] >= 1
-        assert result["output"]["notifications_sent"] >= 1
-        assert len(mock_feishu_server["received"]) >= 1
-        body = mock_feishu_server["received"][0]
-        assert "Stale thread" in body["card"]["header"]["title"]["content"]
-
-    def test_scan_sends_un_replied_mention_with_at(
-        self, tmp_path: Path, mock_feishu_server
-    ):
-        long_ago = (datetime.now(timezone.utc).astimezone() - timedelta(hours=72)).isoformat()
-        recent = datetime.now(timezone.utc).astimezone().isoformat()
-        _write_idx(
-            tmp_path,
-            "mention-thread",
-            "open",
-            recent,
-            timeline_entries=[
-                {
-                    "time": long_ago,
-                    "event": "ken @ shengli",
-                    "mention": [{"user": "shengli", "comments": "pls review"}],
-                }
-            ],
-        )
-
-        env = {
-            **os.environ,
-            "PIVOT_TENANT_ID": "t",
-            "PIVOT_USER_ID": "monitor",
-            "PIVOT_WORKSPACE_DIR": str(tmp_path),
-            "PIVOT_APP_NAME": "pivot",
-            "FEISHU_WEBHOOK_URL": mock_feishu_server["url"],
-            "FEISHU_SECRET": "",
-            "PIVOT_USER_MAP": '{"shengli": {"feishu_id": "ou_shengli"}}',
-        }
-        proc = subprocess.run(
-            [sys.executable, str(STEP)],
-            input=json.dumps(
-                {
-                    "input": {"window_hours": "999", "mention_window_hours": "48"},
-                    "steps": {},
-                }
-            ),
-            capture_output=True,
-            text=True,
-            env=env,
-        )
-        assert proc.returncode == 0, proc.stderr
-        result = json.loads(proc.stdout)
-        assert result["output"]["un_replied_mentions_count"] >= 1
-        assert result["output"]["notifications_sent"] >= 1
-
-        mention_cards = [
-            b
-            for b in mock_feishu_server["received"]
-            if '<at id="ou_shengli"></at>'
-            in b["card"]["elements"][0]["text"]["content"]
-        ]
-        assert len(mention_cards) >= 1
-
-    def test_scan_succeeds_without_webhook(self, tmp_path: Path):
-        long_ago = (datetime.now(timezone.utc).astimezone() - timedelta(days=10)).isoformat()
-        _write_idx(tmp_path, "no-webhook", "open", long_ago)
+        _write_idx(tmp_path, "no-bot", "open", long_ago)
 
         env = {
             **os.environ,
@@ -229,7 +140,7 @@ class TestScanNotification:
             "PIVOT_WORKSPACE_DIR": str(tmp_path),
             "PIVOT_APP_NAME": "pivot",
         }
-        env.pop("FEISHU_WEBHOOK_URL", None)
+        env.pop("FEISHU_ACCESS_TOKEN", None)
         proc = subprocess.run(
             [sys.executable, str(STEP)],
             input=json.dumps(

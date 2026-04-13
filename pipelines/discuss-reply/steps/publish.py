@@ -12,7 +12,7 @@ _ROOT = _HERE.parent.parent.parent
 sys.path.insert(0, str(_ROOT))
 
 from tools import git_ops, index, threads  # noqa: E402
-from tools.atomicity import mark_indexed, read_business_file, write_business_file_pending  # noqa: E402
+from tools.atomicity import mark_indexed, write_business_file_pending  # noqa: E402
 from tools.config import from_env  # noqa: E402
 
 
@@ -23,7 +23,6 @@ def main():
 
     category = prepare_out["category"]
     thread = prepare_out["thread"]
-    draft_path = prepare_out.get("draft_path", "")
     author = prepare_out["author"]
     mention_users = prepare_out.get("mention_users", "")
     mention_comments = prepare_out.get("mention_comments", "")
@@ -33,22 +32,16 @@ def main():
     if not thread_dir.is_dir():
         raise FileNotFoundError(f"Thread not found: {thread_dir}")
 
-    # Resolve content + frontmatter: draft file mode vs content mode
-    if draft_path:
-        parsed = read_business_file(draft_path)
-        frontmatter = parsed.frontmatter
-        body = parsed.body
-    else:
-        body = prepare_out.get("content", "")
-        summary_text = ""
-        ws = payload.get("steps", {}).get("write_summary", {}).get("output", {})
-        gs = payload.get("steps", {}).get("generate_summary", {}).get("output", {})
-        summary_text = ws.get("summary", "") or gs.get("summary", "")
-        frontmatter = {
-            "type": "reply",
-            "author": author,
-            "summary": summary_text,
-        }
+    body = prepare_out.get("content", "")
+
+    summary_text = ""
+    gs = payload.get("steps", {}).get("generate_summary", {}).get("output", {})
+    summary_text = gs.get("summary", "")
+    frontmatter = {
+        "type": "reply",
+        "author": author,
+        "summary": summary_text,
+    }
 
     next_num = threads.next_post_number(str(thread_dir))
     short = threads.ensure_unique_filename_hash(repo_path)
@@ -91,11 +84,6 @@ def main():
     index.save(idx)
 
     mark_indexed(str(canonical_path))
-
-    try:
-        os.remove(draft_path)
-    except OSError:
-        pass
 
     git_ops.commit(
         repo_path,
@@ -141,19 +129,19 @@ def _send_reply_notification(
     summary: str,
     mention_users: str,
 ) -> None:
-    """Best-effort Feishu notification. Failures logged and swallowed."""
+    """Best-effort Feishu Bot notification. Failures logged and swallowed."""
     try:
-        from tools.notify.feishu_adapter import FeishuAdapter
+        from tools.notify.feishu_bot import FeishuBotAdapter
         from tools.config import build_thread_url
 
-        notifier = FeishuAdapter.from_env()
+        notifier = FeishuBotAdapter.from_env()
     except Exception as e:
         sys.stderr.write(f"discuss-reply: notifier init skipped: {e}\n")
         return
 
     mention_list = [u.strip() for u in mention_users.split(",") if u.strip()]
     try:
-        notifier.send_card(
+        notifier.send_card_to_all(
             title=f"Reply: {category}/{thread} #{post_number:03d}",
             summary=summary or "(no summary)",
             thread_url=build_thread_url(category=category, thread=thread),

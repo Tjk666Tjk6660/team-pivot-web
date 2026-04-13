@@ -52,7 +52,11 @@ def read_business_file(file_path: str) -> ParsedBusinessFile:
     if not match:
         return ParsedBusinessFile(frontmatter={}, body=content)
     fm_text, body = match.groups()
-    fm = yaml.safe_load(fm_text) or {}
+    try:
+        fm = yaml.safe_load(fm_text) or {}
+    except yaml.YAMLError:
+        # Malformed frontmatter (e.g. unquoted colons) — treat as plain text
+        fm = {}
     return ParsedBusinessFile(frontmatter=fm, body=body)
 
 

@@ -1,45 +1,46 @@
-"""Feishu (Lark) notifier adapter. Minimal card sender.
+"""Feishu Bot API adapter. Sends interactive cards via application messaging.
 
-Full card DSL and collapsible panels to be ported from appv2/tools/notify.py
-in a later phase. Phase 1 only supports a simple header + summary + link card;
-Phase 1.1 adds @mention support via <at> element (see spec 3.3).
+Replaces the webhook adapter to enable real @mention. EC manages token
+acquisition and chat discovery; this adapter only sends cards.
+
+ENV vars required (injected by EC):
+  FEISHU_ACCESS_TOKEN — tenant_access_token (cached by EC)
+  FEISHU_CHAT_IDS — JSON array of chat_id strings (cached by EC)
+  PIVOT_USER_MAP — {name: {feishu_id: "ou_xxx"}} (existing)
 """
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
+import json
 import os
-import time
-from dataclasses import dataclass
 from typing import Any, Optional
 
 import requests
 
 
-class FeishuConfigError(Exception):
+class FeishuBotConfigError(Exception):
     pass
 
 
-@dataclass
-class FeishuConfig:
-    webhook_url: str
-    secret: str
-
-
-class FeishuAdapter:
-    def __init__(self, config: FeishuConfig):
-        self.config = config
+class FeishuBotAdapter:
+    def __init__(self, access_token: str, chat_ids: list[str]):
+        self.access_token = access_token
+        self.chat_ids = chat_ids
 
     @classmethod
-    def from_env(cls) -> "FeishuAdapter":
-        url = os.environ.get("FEISHU_WEBHOOK_URL")
-        secret = os.environ.get("FEISHU_SECRET", "")
-        if not url:
-            raise FeishuConfigError("FEISHU_WEBHOOK_URL not set")
-        return cls(FeishuConfig(webhook_url=url, secret=secret))
+    def from_env(cls) -> "FeishuBotAdapter":
+        token = os.environ.get("FEISHU_ACCESS_TOKEN", "")
+        if not token:
+            raise FeishuBotConfigError("FEISHU_ACCESS_TOKEN not set")
+        chat_ids_raw = os.environ.get("FEISHU_CHAT_IDS", "[]")
+        try:
+            chat_ids = json.loads(chat_ids_raw)
+        except json.JSONDecodeError:
+            chat_ids = []
+        if not chat_ids:
+            raise FeishuBotConfigError("FEISHU_CHAT_IDS is empty")
+        return cls(access_token=token, chat_ids=chat_ids)
 
-    def send_card(
+    def send_card_to_all(
         self,
         *,
         title: str,
@@ -48,14 +49,9 @@ class FeishuAdapter:
         author: str,
         mention_names: Optional[list[str]] = None,
         user_map: Optional[dict[str, dict[str, str]]] = None,
-    ) -> bool:
-        """Send a Feishu card. Optionally @mentions users by pivot name.
-
-        If mention_names is non-empty and user_map is None, the adapter loads
-        the map from PIVOT_USER_MAP via config.get_user_map().
-        """
+    ) -> int:
+        """Send a card to all bot groups. Returns count of successful sends."""
         if mention_names and user_map is None:
-            # Late import to avoid module-load cycle.
             from tools.config import get_user_map
             user_map = get_user_map()
 
@@ -67,30 +63,29 @@ class FeishuAdapter:
             mention_names=mention_names or [],
             user_map=user_map or {},
         )
-        body: dict[str, Any] = {
-            "msg_type": "interactive",
-            "card": card,
-        }
-        if self.config.secret:
-            ts = str(int(time.time()))
-            body["timestamp"] = ts
-            body["sign"] = self._sign(ts)
-        try:
-            resp = requests.post(self.config.webhook_url, json=body, timeout=10)
-        except requests.RequestException:
-            return False
-        if resp.status_code != 200:
-            return False
-        data = resp.json()
-        return data.get("code", 0) == 0
-
-    def _sign(self, timestamp: str) -> str:
-        key = f"{timestamp}\n{self.config.secret}"
-        digest = hmac.new(
-            key.encode("utf-8"),
-            digestmod=hashlib.sha256,
-        ).digest()
-        return base64.b64encode(digest).decode("utf-8")
+        card_json = json.dumps(card)
+        sent = 0
+        for chat_id in self.chat_ids:
+            try:
+                resp = requests.post(
+                    "https://open.feishu.cn/open-apis/im/v1/messages",
+                    params={"receive_id_type": "chat_id"},
+                    headers={
+                        "Authorization": f"Bearer {self.access_token}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "receive_id": chat_id,
+                        "msg_type": "interactive",
+                        "content": card_json,
+                    },
+                    timeout=10,
+                )
+                if resp.status_code == 200 and resp.json().get("code") == 0:
+                    sent += 1
+            except requests.RequestException:
+                pass
+        return sent
 
     def _build_card(
         self,
@@ -103,7 +98,7 @@ class FeishuAdapter:
         user_map: dict[str, dict[str, str]],
     ) -> dict[str, Any]:
         mention_prefix = self._build_mention_prefix(mention_names, user_map)
-        summary_content = f"**Author**：{author}\n\n{summary}"
+        summary_content = f"**Author**: {author}\n\n{summary}"
         if mention_prefix:
             summary_content = f"{mention_prefix}\n\n{summary_content}"
         return {
@@ -139,13 +134,13 @@ class FeishuAdapter:
         mention_names: list[str],
         user_map: dict[str, dict[str, str]],
     ) -> str:
-        """Per-name decision: feishu_id -> <at> element; else -> text @name."""
+        """Per-name decision: open_id found -> <at> element; else -> text @name."""
         parts: list[str] = []
         for name in mention_names:
             user = user_map.get(name) or {}
             feishu_id = user.get("feishu_id", "") if isinstance(user, dict) else ""
             if feishu_id:
-                parts.append(f'<at id="{feishu_id}"></at>')
+                parts.append(f'<at user_id="{feishu_id}"></at>')
             else:
                 parts.append(f"@{name}")
         return " ".join(parts)

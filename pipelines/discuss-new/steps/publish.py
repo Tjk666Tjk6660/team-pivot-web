@@ -12,7 +12,7 @@ _ROOT = _HERE.parent.parent.parent
 sys.path.insert(0, str(_ROOT))
 
 from tools import git_ops, index, threads  # noqa: E402
-from tools.atomicity import mark_indexed, read_business_file, write_business_file_pending  # noqa: E402
+from tools.atomicity import mark_indexed, write_business_file_pending  # noqa: E402
 from tools.config import from_env  # noqa: E402
 
 
@@ -23,30 +23,21 @@ def main():
 
     category = prepare_out["category"]
     title = prepare_out["title"]
-    draft_path = prepare_out.get("draft_path", "")
     author = prepare_out["author"]
     mention_users = prepare_out.get("mention_users", "")
     mention_comments = prepare_out.get("mention_comments", "")
 
     repo_path = ctx.workspace_dir
+    body = prepare_out.get("content", "")
 
-    # Resolve content + frontmatter: draft file mode vs content mode
-    if draft_path:
-        parsed = read_business_file(draft_path)
-        frontmatter = parsed.frontmatter
-        body = parsed.body
-    else:
-        body = prepare_out.get("content", "")
-        # Build summary from LLM output if available
-        summary_text = ""
-        ws = payload.get("steps", {}).get("write_summary", {}).get("output", {})
-        gs = payload.get("steps", {}).get("generate_summary", {}).get("output", {})
-        summary_text = ws.get("summary", "") or gs.get("summary", "")
-        frontmatter = {
-            "type": "proposal",
-            "author": author,
-            "summary": summary_text,
-        }
+    summary_text = ""
+    gs = payload.get("steps", {}).get("generate_summary", {}).get("output", {})
+    summary_text = gs.get("summary", "")
+    frontmatter = {
+        "type": "proposal",
+        "author": author,
+        "summary": summary_text,
+    }
 
     thread_dir = Path(repo_path) / "discussions" / category / title
     thread_dir.mkdir(parents=True, exist_ok=True)
@@ -97,12 +88,6 @@ def main():
 
     mark_indexed(str(canonical_path))
 
-    if draft_path:
-        try:
-            os.remove(draft_path)
-        except OSError:
-            pass
-
     git_ops.commit(
         repo_path,
         message=f"new thread: {category}/{title} by {author}",
@@ -143,20 +128,19 @@ def _send_publish_notification(
     summary: str,
     mention_users: str,
 ) -> None:
-    """Best-effort Feishu notification. Failures are logged to stderr and swallowed
-    so that a notification hiccup never prevents a successful publish."""
+    """Best-effort Feishu Bot notification. Failures logged and swallowed."""
     try:
-        from tools.notify.feishu_adapter import FeishuAdapter
+        from tools.notify.feishu_bot import FeishuBotAdapter
         from tools.config import build_thread_url
 
-        notifier = FeishuAdapter.from_env()
+        notifier = FeishuBotAdapter.from_env()
     except Exception as e:
         sys.stderr.write(f"discuss-new: notifier init skipped: {e}\n")
         return
 
     mention_list = [u.strip() for u in mention_users.split(",") if u.strip()]
     try:
-        notifier.send_card(
+        notifier.send_card_to_all(
             title=f"New thread: {category}/{title}",
             summary=summary or "(no summary)",
             thread_url=build_thread_url(category=category, thread=title),
