@@ -60,7 +60,6 @@ def main():
                     "last_updated": last_updated,
                 }
             },
-            ensure_ascii=False,
         )
     )
 

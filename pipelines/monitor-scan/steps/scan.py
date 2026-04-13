@@ -196,7 +196,6 @@ def main():
                     "notifications_sent": notifications_sent,
                 }
             },
-            ensure_ascii=False,
         )
     )
 

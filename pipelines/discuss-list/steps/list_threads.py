@@ -45,7 +45,7 @@ def main():
             }
         )
 
-    sys.stdout.write(json.dumps({"output": {"threads": enriched}}, ensure_ascii=False))
+    sys.stdout.write(json.dumps({"output": {"threads": enriched}}))
 
 
 if __name__ == "__main__":

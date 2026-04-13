@@ -82,6 +82,9 @@ def _write(file_path: str, frontmatter: dict[str, Any], body: str) -> None:
     )
     fm_yaml = fm_yaml.rstrip("\n")
     content = f"---\n{fm_yaml}\n---\n{body}"
+    # Replace surrogate chars that some LLMs produce (e.g. \udcae) — they
+    # are invalid in UTF-8 and would crash write_text.
+    content = content.encode("utf-8", errors="replace").decode("utf-8")
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(content, encoding="utf-8")
     os.replace(tmp, path)

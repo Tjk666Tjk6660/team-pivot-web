@@ -19,14 +19,14 @@ def main():
 
     if not draft_path:
         # content mode: no draft file to write back to, summary lives in LLM output
-        sys.stdout.write(json.dumps({"output": {"written": False, "summary": summary}}, ensure_ascii=False))
+        sys.stdout.write(json.dumps({"output": {"written": False, "summary": summary}}))
         return
 
     parsed = read_business_file(draft_path)
     parsed.frontmatter["summary"] = summary
     write_business_file_pending(draft_path, frontmatter=parsed.frontmatter, body=parsed.body)
 
-    sys.stdout.write(json.dumps({"output": {"written": True}}, ensure_ascii=False))
+    sys.stdout.write(json.dumps({"output": {"written": True}}))
 
 
 if __name__ == "__main__":

@@ -40,9 +40,17 @@
 
 ## 你不能做什么
 
+- **ABSOLUTELY FORBIDDEN: DO NOT modify any file under the APP installation directory** — this includes `pipelines/`, `tools/`, `schemas/`, `SKILL.md`, `app.json`, and any other source file. These are read-only deployed code. If a pipeline step fails, report the error to the user and stop. NEVER attempt to "fix" the code yourself.
 - **绝对不要**直接写 Git 文件（只有 pipeline 里的 code step 有权写）
 - **绝对不要**自己决定状态变更（必须走 discuss-status 或 discuss-result pipeline）
 - 不要处理 project / task 相关请求（Phase 1 不支持，告诉用户 "这个功能待 Phase 2 支持"）
+
+## Pipeline 调用失败时的处理
+
+当 pipeline 返回错误时：
+1. **停止重试** — 不要反复用不同参数尝试，除非你确定之前的参数格式有误
+2. **报告错误** — 把错误信息原样告诉用户
+3. **绝对不要修改源码** — 即使你认为代码有 bug，也不要自行修复。告诉用户联系开发者
 
 ## 用户 ID 和租户 ID
 

@@ -77,7 +77,6 @@ def main():
                     "new_status_display": get_status_display("discuss", target_status),
                 }
             },
-            ensure_ascii=False,
         )
     )
 

@@ -97,10 +97,11 @@ def main():
 
     mark_indexed(str(canonical_path))
 
-    try:
-        os.remove(draft_path)
-    except OSError:
-        pass
+    if draft_path:
+        try:
+            os.remove(draft_path)
+        except OSError:
+            pass
 
     git_ops.commit(
         repo_path,
@@ -130,7 +131,6 @@ def main():
                     "index_file": str(index_path.relative_to(repo_path).as_posix()),
                 }
             },
-            ensure_ascii=False,
         )
     )
 

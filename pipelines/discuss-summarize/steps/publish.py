@@ -57,7 +57,6 @@ def main():
                     "committed": True,
                 }
             },
-            ensure_ascii=False,
         )
     )
 

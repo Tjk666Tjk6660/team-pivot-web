@@ -22,7 +22,7 @@ def main():
     last_updated = fetched["last_updated"] or datetime.now(timezone.utc).astimezone().isoformat()
 
     if not ctx.user_id:
-        sys.stdout.write(json.dumps({"output": {"marked": False}}, ensure_ascii=False))
+        sys.stdout.write(json.dumps({"output": {"marked": False}}))
         return
 
     state_dir = Path(ctx.workspace_dir) / ".pivot-state"
@@ -41,9 +41,9 @@ def main():
     read_threads[f"{category}/{thread}"] = last_updated
     state["last_sync"] = datetime.now(timezone.utc).astimezone().isoformat()
 
-    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
-    sys.stdout.write(json.dumps({"output": {"marked": True}}, ensure_ascii=False))
+    sys.stdout.write(json.dumps({"output": {"marked": True}}))
 
 
 if __name__ == "__main__":

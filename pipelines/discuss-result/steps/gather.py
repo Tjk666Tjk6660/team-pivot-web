@@ -52,7 +52,6 @@ def main():
                     "posts": simplified,
                 }
             },
-            ensure_ascii=False,
         )
     )
 

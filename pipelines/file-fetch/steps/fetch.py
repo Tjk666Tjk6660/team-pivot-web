@@ -72,7 +72,6 @@ def main():
     sys.stdout.write(
         json.dumps(
             {"output": {"files": files_out, "attached_indexes": attached}},
-            ensure_ascii=False,
         )
     )
 

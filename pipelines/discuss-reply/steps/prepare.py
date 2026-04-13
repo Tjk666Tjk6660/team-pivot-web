@@ -56,7 +56,7 @@ def main():
             "mention_comments": inp.get("mention_comments", ""),
         }
     }
-    sys.stdout.write(json.dumps(output, ensure_ascii=False))
+    sys.stdout.write(json.dumps(output))
 
 
 if __name__ == "__main__":

@@ -25,7 +25,7 @@ def main():
     json.loads(sys.stdin.read())
     ctx = from_env()
     if not ctx.user_id:
-        sys.stdout.write(json.dumps({"output": {"unread": []}}, ensure_ascii=False))
+        sys.stdout.write(json.dumps({"output": {"unread": []}}))
         return
 
     read_state_path = (
@@ -59,7 +59,7 @@ def main():
                 }
             )
 
-    sys.stdout.write(json.dumps({"output": {"unread": unread}}, ensure_ascii=False))
+    sys.stdout.write(json.dumps({"output": {"unread": unread}}))
 
 
 if __name__ == "__main__":

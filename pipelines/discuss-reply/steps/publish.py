@@ -128,7 +128,6 @@ def main():
                     "post_number": next_num,
                 }
             },
-            ensure_ascii=False,
         )
     )
 
