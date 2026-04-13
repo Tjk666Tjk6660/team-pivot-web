@@ -130,7 +130,7 @@ class TestPublishNotification:
         assert body["msg_type"] == "interactive"
         content = body["card"]["elements"][0]["text"]["content"]
         assert '<at id="ou_ken"></at>' in content
-        assert "notify-test" in body["card"]["header"]["title"]["content"]
+        assert "New thread" in body["card"]["header"]["title"]["content"]
 
     def test_publish_succeeds_when_webhook_unreachable(self, tmp_git_repo: Path):
         draft_dir = tmp_git_repo / "discussions" / "enclaws" / "x" / "members" / "u"

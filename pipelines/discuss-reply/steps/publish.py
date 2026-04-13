@@ -23,7 +23,7 @@ def main():
 
     category = prepare_out["category"]
     thread = prepare_out["thread"]
-    draft_path = prepare_out["draft_path"]
+    draft_path = prepare_out.get("draft_path", "")
     author = prepare_out["author"]
     mention_users = prepare_out.get("mention_users", "")
     mention_comments = prepare_out.get("mention_comments", "")
@@ -33,7 +33,22 @@ def main():
     if not thread_dir.is_dir():
         raise FileNotFoundError(f"Thread not found: {thread_dir}")
 
-    parsed = read_business_file(draft_path)
+    # Resolve content + frontmatter: draft file mode vs content mode
+    if draft_path:
+        parsed = read_business_file(draft_path)
+        frontmatter = parsed.frontmatter
+        body = parsed.body
+    else:
+        body = prepare_out.get("content", "")
+        summary_text = ""
+        ws = payload.get("steps", {}).get("write_summary", {}).get("output", {})
+        gs = payload.get("steps", {}).get("generate_summary", {}).get("output", {})
+        summary_text = ws.get("summary", "") or gs.get("summary", "")
+        frontmatter = {
+            "type": "reply",
+            "author": author,
+            "summary": summary_text,
+        }
 
     next_num = threads.next_post_number(str(thread_dir))
     short = threads.ensure_unique_filename_hash(repo_path)
@@ -42,9 +57,11 @@ def main():
 
     write_business_file_pending(
         str(canonical_path),
-        frontmatter=parsed.frontmatter,
-        body=parsed.body,
+        frontmatter=frontmatter,
+        body=body,
     )
+
+    summary_for_index = frontmatter.get("summary", "")
 
     index_path = Path(repo_path) / "index" / f"{thread}-discuss.index.yaml"
     idx = index.load(str(index_path))
@@ -54,7 +71,7 @@ def main():
         idx,
         discussion_path=discussion_rel,
         file_path=canonical_name,
-        summary=parsed.frontmatter.get("summary", ""),
+        summary=summary_for_index,
         refs=[],
     )
 
@@ -67,7 +84,7 @@ def main():
     idx = index.add_timeline_entry(
         idx,
         time=now_iso,
-        event=f"{author} 回复",
+        event=f"{author} replied",
         file=str(canonical_path.relative_to(repo_path).as_posix()),
         mentions=mentions,
     )
@@ -96,7 +113,7 @@ def main():
         thread=thread,
         author=author,
         post_number=next_num,
-        summary=parsed.frontmatter.get("summary", ""),
+        summary=summary_for_index,
         mention_users=mention_users,
     )
 
@@ -138,8 +155,8 @@ def _send_reply_notification(
     mention_list = [u.strip() for u in mention_users.split(",") if u.strip()]
     try:
         notifier.send_card(
-            title=f"回复：{category}/{thread} #{post_number:03d}",
-            summary=summary or "（没有摘要）",
+            title=f"Reply: {category}/{thread} #{post_number:03d}",
+            summary=summary or "(no summary)",
             thread_url=build_thread_url(category=category, thread=thread),
             author=author,
             mention_names=mention_list or None,

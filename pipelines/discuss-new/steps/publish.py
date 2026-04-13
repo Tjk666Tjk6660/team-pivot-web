@@ -23,13 +23,30 @@ def main():
 
     category = prepare_out["category"]
     title = prepare_out["title"]
-    draft_path = prepare_out["draft_path"]
+    draft_path = prepare_out.get("draft_path", "")
     author = prepare_out["author"]
     mention_users = prepare_out.get("mention_users", "")
     mention_comments = prepare_out.get("mention_comments", "")
 
     repo_path = ctx.workspace_dir
-    parsed = read_business_file(draft_path)
+
+    # Resolve content + frontmatter: draft file mode vs content mode
+    if draft_path:
+        parsed = read_business_file(draft_path)
+        frontmatter = parsed.frontmatter
+        body = parsed.body
+    else:
+        body = prepare_out.get("content", "")
+        # Build summary from LLM output if available
+        summary_text = ""
+        ws = payload.get("steps", {}).get("write_summary", {}).get("output", {})
+        gs = payload.get("steps", {}).get("generate_summary", {}).get("output", {})
+        summary_text = ws.get("summary", "") or gs.get("summary", "")
+        frontmatter = {
+            "type": "proposal",
+            "author": author,
+            "summary": summary_text,
+        }
 
     thread_dir = Path(repo_path) / "discussions" / category / title
     thread_dir.mkdir(parents=True, exist_ok=True)
@@ -40,9 +57,11 @@ def main():
 
     write_business_file_pending(
         str(canonical_path),
-        frontmatter=parsed.frontmatter,
-        body=parsed.body,
+        frontmatter=frontmatter,
+        body=body,
     )
+
+    summary_for_index = frontmatter.get("summary", "")
 
     index_path = Path(repo_path) / "index" / f"{title}-discuss.index.yaml"
     now_iso = datetime.now(timezone.utc).astimezone().isoformat()
@@ -58,7 +77,7 @@ def main():
         idx,
         discussion_path=str(thread_dir.relative_to(repo_path).as_posix()) + "/",
         file_path=canonical_name,
-        summary=parsed.frontmatter.get("summary", ""),
+        summary=summary_for_index,
         refs=[],
     )
 
@@ -70,7 +89,7 @@ def main():
     idx = index.add_timeline_entry(
         idx,
         time=now_iso,
-        event=f"{author} 发起讨论",
+        event=f"{author} created thread",
         file=str(canonical_path.relative_to(repo_path).as_posix()),
         mentions=mentions,
     )
@@ -98,7 +117,7 @@ def main():
         category=category,
         title=title,
         author=author,
-        summary=parsed.frontmatter.get("summary", ""),
+        summary=summary_for_index,
         mention_users=mention_users,
     )
 
@@ -138,8 +157,8 @@ def _send_publish_notification(
     mention_list = [u.strip() for u in mention_users.split(",") if u.strip()]
     try:
         notifier.send_card(
-            title=f"新讨论：{category}/{title}",
-            summary=summary or "（没有摘要）",
+            title=f"New thread: {category}/{title}",
+            summary=summary or "(no summary)",
             thread_url=build_thread_url(category=category, thread=title),
             author=author,
             mention_names=mention_list or None,

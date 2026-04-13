@@ -64,7 +64,7 @@ class TestMentionCard:
                 author="ken",
             )
             content = _extract_summary_content(mock_post.call_args)
-            assert content == "**作者**：ken\n\nbody text"
+            assert content == "**Author**：ken\n\nbody text"
             assert "<at" not in content
 
     def test_mention_with_feishu_id_emits_at_element(self):
@@ -83,7 +83,7 @@ class TestMentionCard:
             )
             content = _extract_summary_content(mock_post.call_args)
             assert '<at id="ou_xxx"></at>' in content
-            assert content.find("<at") < content.find("**作者**")
+            assert content.find("<at") < content.find("**Author**")
 
     def test_mention_without_feishu_id_falls_back_to_text(self):
         cfg = FeishuConfig(webhook_url="https://h", secret="")

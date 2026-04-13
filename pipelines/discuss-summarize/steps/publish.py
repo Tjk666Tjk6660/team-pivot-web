@@ -34,7 +34,7 @@ def main():
         idx = index.add_timeline_entry(
             idx,
             time=now_iso,
-            event=f"{ctx.user_id} 生成 SUMMARY",
+            event=f"{ctx.user_id} generated SUMMARY",
             file=str(summary_path.relative_to(repo_path).as_posix()),
         )
         index.save(idx)

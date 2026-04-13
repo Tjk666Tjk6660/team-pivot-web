@@ -31,9 +31,9 @@ def main():
     reason = inp.get("reason", "")
 
     if not action:
-        raise ValueError("缺少必填参数 action（close / pending / reopen）")
+        raise ValueError("missing required param: action (close / pending / reopen)")
     if not category or not thread:
-        raise ValueError("缺少必填参数 category 或 thread")
+        raise ValueError("missing required params: category and thread")
 
     if action not in ACTION_TO_STATUS:
         raise ValueError(f"Unknown action: {action}")
@@ -54,9 +54,9 @@ def main():
 
     now_iso = datetime.now(timezone.utc).astimezone().isoformat()
     if action == "reopen":
-        event = f"reopen 由 {ctx.user_id}：从 {prev_state} 重新打开（原因：{reason}）"
+        event = f"reopen by {ctx.user_id}: from {prev_state} (reason: {reason})"
     else:
-        event = f"{action} 由 {ctx.user_id}"
+        event = f"{action} by {ctx.user_id}"
     idx = index.add_timeline_entry(idx, time=now_iso, event=event)
     index.save(idx)
 

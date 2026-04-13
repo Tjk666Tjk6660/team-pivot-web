@@ -162,7 +162,7 @@ class TestScanNotification:
         assert result["output"]["notifications_sent"] >= 1
         assert len(mock_feishu_server["received"]) >= 1
         body = mock_feishu_server["received"][0]
-        assert "notify-stale" in body["card"]["header"]["title"]["content"]
+        assert "Stale thread" in body["card"]["header"]["title"]["content"]
 
     def test_scan_sends_un_replied_mention_with_at(
         self, tmp_path: Path, mock_feishu_server

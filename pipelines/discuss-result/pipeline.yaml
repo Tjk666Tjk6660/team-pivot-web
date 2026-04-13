@@ -12,10 +12,16 @@ steps:
     type: llm
     model: reasoning
     prompt: |
-      根据以下讨论，生成 RESULT.md 结论文档。
+      根据以下讨论，生成结论文档。
+
       讨论内容：
       {{gather.output.posts}}
-      包含以下 section：背景、讨论的选项、最终决定、后续行动项。
+
+      要求：返回一个 JSON 对象，只有一个字段 "result_body"，值是一段 Markdown 文字。
+      内容包含以下 section：## 背景、## 讨论的选项、## 最终决定、## 后续行动项。
+      用内容的语言撰写。不要返回任何其他字段。
+
+      示例：{"result_body": "# 讨论结论\n\n## 背景\n...\n\n## 讨论的选项\n...\n\n## 最终决定\n...\n\n## 后续行动项\n- [ ] ..."}
     schema: schemas/result.json
     retry: 2
   - name: publish

@@ -33,7 +33,7 @@ def main():
     frontmatter = {
         "type": "result",
         "author": ctx.user_id or "unknown",
-        "summary": "讨论结论",
+        "summary": "discussion result",
     }
     write_business_file_pending(str(result_path), frontmatter=frontmatter, body=result_body)
 
@@ -44,7 +44,7 @@ def main():
         idx,
         discussion_path=discussion_rel,
         file_path=result_name,
-        summary="结论",
+        summary="result",
         refs=[],
     )
     idx = index.set_status(idx, discussion_rel, "concluded")
@@ -53,7 +53,7 @@ def main():
     idx = index.add_timeline_entry(
         idx,
         time=now_iso,
-        event=f"{ctx.user_id} 生成 RESULT（状态 -> concluded）",
+        event=f"{ctx.user_id} generated RESULT (status -> concluded)",
         file=str(result_path.relative_to(repo_path).as_posix()),
     )
     index.save(idx)

@@ -14,8 +14,13 @@ from tools.atomicity import read_business_file, write_business_file_pending  # n
 
 def main():
     payload = json.loads(sys.stdin.read())
-    draft_path = payload["steps"]["prepare"]["output"]["draft_path"]
+    draft_path = payload["steps"]["prepare"]["output"].get("draft_path", "")
     summary = payload["steps"]["generate_summary"]["output"]["summary"]
+
+    if not draft_path:
+        # content mode: no draft file to write back to, summary lives in LLM output
+        sys.stdout.write(json.dumps({"output": {"written": False, "summary": summary}}, ensure_ascii=False))
+        return
 
     parsed = read_business_file(draft_path)
     parsed.frontmatter["summary"] = summary

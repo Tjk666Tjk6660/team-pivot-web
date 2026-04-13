@@ -159,7 +159,7 @@ class TestReplyPublishNotification:
         body = mock_feishu_server["received"][0]
         content = body["card"]["elements"][0]["text"]["content"]
         assert '<at id="ou_ken"></at>' in content
-        assert "回复" in body["card"]["header"]["title"]["content"]
+        assert "Reply" in body["card"]["header"]["title"]["content"]
 
     def test_reply_succeeds_when_webhook_unreachable(self, tmp_git_repo: Path):
         category = "enclaws"

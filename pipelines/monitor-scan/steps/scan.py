@@ -225,10 +225,10 @@ def _send_notifications(
     for issue in issues.get("stale_open_threads", []):
         try:
             notifier.send_card(
-                title=f"讨论长时间未更新：{issue['thread']}",
+                title=f"Stale thread: {issue['thread']}",
                 summary=(
-                    f"该讨论自 {issue['last_updated']} 后没有新活动，"
-                    f"超过 {window_hours} 小时。"
+                    f"No activity since {issue['last_updated']}, "
+                    f"over {window_hours} hours."
                 ),
                 thread_url=build_thread_url(thread=issue["thread"]),
                 author="Pivot Monitor",
@@ -240,10 +240,10 @@ def _send_notifications(
     for m in issues.get("un_replied_mentions", []):
         try:
             notifier.send_card(
-                title=f"等待 {m['mentioned_user']} 的回复",
+                title=f"Awaiting reply from {m['mentioned_user']}",
                 summary=(
-                    f"你被 @了超过 {mention_window_hours} 小时尚未回复。"
-                    f"附言：{m.get('comments', '')}"
+                    f"Mentioned over {mention_window_hours} hours ago, no reply yet. "
+                    f"Comment: {m.get('comments', '')}"
                 ),
                 thread_url=build_thread_url(
                     thread=m["thread"].rstrip("/").split("/")[-1]

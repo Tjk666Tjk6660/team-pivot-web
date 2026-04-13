@@ -103,7 +103,7 @@ class FeishuAdapter:
         user_map: dict[str, dict[str, str]],
     ) -> dict[str, Any]:
         mention_prefix = self._build_mention_prefix(mention_names, user_map)
-        summary_content = f"**作者**：{author}\n\n{summary}"
+        summary_content = f"**Author**：{author}\n\n{summary}"
         if mention_prefix:
             summary_content = f"{mention_prefix}\n\n{summary_content}"
         return {
@@ -125,7 +125,7 @@ class FeishuAdapter:
                     "actions": [
                         {
                             "tag": "button",
-                            "text": {"tag": "plain_text", "content": "查看全文"},
+                            "text": {"tag": "plain_text", "content": "View"},
                             "url": thread_url,
                             "type": "primary",
                         }

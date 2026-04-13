@@ -17,9 +17,15 @@ steps:
     skip_if: "prepare.output.has_summary"
     prompt: |
       为以下讨论回复生成通知摘要。
+
       回复内容：
       {{prepare.output.content}}
-      要求：**摘要** 3-5 句话 + **亮点** 1-2 点。
+
+      要求：返回一个 JSON 对象，只有一个字段 "summary"，值是一段文字。
+      文字内容包括：**摘要**（3-5 句话总结回复要点）和 **亮点**（1-2 个要点）。
+      用内容的语言撰写。不要返回任何其他字段。
+
+      示例：{"summary": "**摘要**：回复者认为应优先处理...。**亮点**：1) ...；2) ..."}
     schema: schemas/summary.json
     retry: 2
   - name: write_summary
