@@ -1,0 +1,56 @@
+{
+  "pipeline": "discuss-new",
+  "pipeline_dir": "D:\\workspace\\team-pivot\\pipelines\\discuss-new",
+  "workspace": "C:/Users/Captain/AppData/Local/Temp/test-pivot-step",
+  "user_id": "huangshengli",
+  "params": {
+    "category": "discussion",
+    "title": "step-runner-demo",
+    "content": "# 分步执行器演示\n\n这是一个用 step_runner 分步执行的测试帖。\n\n## 目的\n验证 Claude Code 可以作为 LLM 后端直接生成摘要，不需要调用 claude -p。",
+    "mention_users": "",
+    "mention_comments": ""
+  },
+  "steps_def": [
+    {
+      "name": "prepare",
+      "type": "code",
+      "command": "python3 steps/prepare.py"
+    },
+    {
+      "name": "generate_summary",
+      "type": "llm",
+      "model": "standard",
+      "skip_if": "prepare.output.has_summary",
+      "prompt": "Generate a notification summary for the following new discussion.\n\nDiscussion content:\n{{prepare.output.content}}\n\nReturn a JSON object with exactly one field \"summary\" (string).\nThe summary should include: a brief overview (3-5 sentences) and\n1-2 key highlights. Write in the same language as the content.\nDo not include any other fields.\n\nExample: {\"summary\": \"Overview: The team proposed a new auth scheme... Highlights: 1) ...; 2) ...\"}\n",
+      "schema": "schemas/summary.json",
+      "retry": 2
+    },
+    {
+      "name": "publish",
+      "type": "code",
+      "command": "python3 steps/publish.py"
+    }
+  ],
+  "output_step": "publish",
+  "step_results": {
+    "prepare": {
+      "output": {
+        "category": "discussion",
+        "title": "step-runner-demo",
+        "content": "# 分步执行器演示\n\n这是一个用 step_runner 分步执行的测试帖。\n\n## 目的\n验证 Claude Code 可以作为 LLM 后端直接生成摘要，不需要调用 claude -p。",
+        "has_summary": false,
+        "author": "huangshengli",
+        "mention_users": "",
+        "mention_comments": ""
+      }
+    },
+    "generate_summary": {
+      "output": {
+        "summary": "概述：本提案提出使用 step_runner 分步执行器替代 claude -p 子进程调用，让 Claude Code 自身作为 LLM 后端直接生成摘要。该方案解决了 Claude 嵌套调用自己的死锁问题。亮点：1) 完全消除对 claude CLI 子进程的依赖；2) 分步执行架构使每一步可独立验证和录制。"
+      }
+    }
+  },
+  "current_step_idx": 2,
+  "status": "error",
+  "error": "Traceback (most recent call last):\n  File \"D:\\workspace\\team-pivot\\tools\\git_ops.py\", line 22, in _run\n    return subprocess.run(\n           ^^^^^^^^^^^^^^^\n  File \"C:\\Program Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0\\Lib\\subprocess.py\", line 571, in run\n    raise CalledProcessError(retcode, process.args,\nsubprocess.CalledProcessError: Command '['git', 'add', 'discussions/discussion/step-runner-demo/001_huangshengli_proposal_9bcc13.md', 'index/step-runner-demo-discuss.index.yaml']' returned non-zero exit status 128.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"D:\\workspace\\team-pivot\\pipelines\\discuss-new\\steps\\publish.py\", line 155, in <module>\n    main()\n  File \"D:\\workspace\\team-pivot\\pipelines\\discuss-new\\steps\\publish.py\", line 91, in main\n    git_ops.commit(\n  File \"D:\\workspace\\team-pivot\\tools\\git_ops.py\", line 52, in commit\n    _run([\"git\", \"add\", *paths], cwd=repo_dir)\n  File \"D:\\workspace\\team-pivot\\tools\\git_ops.py\", line 32, in _run\n    raise GitError(\ntools.git_ops.GitError: git command failed: git add discussions/discussion/step-runner-demo/001_huangshengli_proposal_9bcc13.md index/step-runner-demo-discuss.index.yaml"
+}

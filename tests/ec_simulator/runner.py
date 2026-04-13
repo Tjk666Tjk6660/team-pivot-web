@@ -54,6 +54,7 @@ class LocalPipelineRunner:
         user_id: str = "test-user",
         app_name: str = "pivot",
         env_extras: Optional[dict[str, str]] = None,
+        record_dir: Optional[str] = None,
     ):
         self.app_dir = Path(app_dir)
         self.workspace_dir = workspace_dir
@@ -62,6 +63,7 @@ class LocalPipelineRunner:
         self.user_id = user_id
         self.app_name = app_name
         self.env_extras = env_extras or {}
+        self.record_dir = Path(record_dir) if record_dir else None
 
     def run(self, pipeline_name: str, params: dict) -> PipelineResult:
         pipeline_dir = self.app_dir / "pipelines" / pipeline_name
@@ -114,11 +116,13 @@ class LocalPipelineRunner:
         if output_step and output_step in context:
             final_output = context[output_step].get("output", {})
 
-        return PipelineResult(
+        result = PipelineResult(
             status="completed",
             output=final_output,
             step_outputs=context,
         )
+        self._record_pipeline_result(pipeline_name, params, result)
+        return result
 
     def _parse_step(self, raw: dict) -> StepDef:
         return StepDef(
@@ -184,6 +188,7 @@ class LocalPipelineRunner:
                 f"{proc.stdout[:200]}"
             )
 
+        self._record_step(step.name, "code", stdin_payload, parsed, proc.stderr)
         return parsed
 
     def _run_llm_step(
@@ -204,6 +209,7 @@ class LocalPipelineRunner:
             schema_path=schema_path,
         )
 
+        self._record_step(step.name, "llm", prompt, response)
         return response
 
     def _render_template(
@@ -231,6 +237,54 @@ class LocalPipelineRunner:
             return match.group(0)  # leave unchanged if not resolvable
 
         return re.sub(r"\{\{(.+?)\}\}", replacer, template)
+
+    def _record_step(
+        self, step_name: str, step_type: str,
+        input_data: Any, output_data: Any, stderr: str = "",
+    ) -> None:
+        if not self.record_dir:
+            return
+        self.record_dir.mkdir(parents=True, exist_ok=True)
+        prefix = f"step_{step_name}"
+        if step_type == "llm":
+            (self.record_dir / f"{prefix}_prompt.txt").write_text(
+                str(input_data), encoding="utf-8"
+            )
+        else:
+            (self.record_dir / f"{prefix}_input.json").write_text(
+                input_data if isinstance(input_data, str)
+                else json.dumps(input_data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        (self.record_dir / f"{prefix}_output.json").write_text(
+            json.dumps(output_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        if stderr and stderr.strip():
+            (self.record_dir / f"{prefix}_stderr.txt").write_text(
+                stderr, encoding="utf-8"
+            )
+
+    def _record_pipeline_result(
+        self, pipeline_name: str, params: dict, result: "PipelineResult"
+    ) -> None:
+        if not self.record_dir:
+            return
+        self.record_dir.mkdir(parents=True, exist_ok=True)
+        (self.record_dir / "pipeline_input.json").write_text(
+            json.dumps({"pipeline": pipeline_name, "params": params},
+                       ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        (self.record_dir / "pipeline_result.json").write_text(
+            json.dumps({
+                "status": result.status,
+                "output": result.output,
+                "step_outputs": result.step_outputs,
+                "error": result.error,
+            }, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     def _eval_skip_if(self, expr: str, context: dict) -> bool:
         """Evaluate skip_if expression like 'prepare.output.has_summary'."""

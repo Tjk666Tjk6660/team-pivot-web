@@ -1,0 +1,67 @@
+{
+  "pipeline": "discuss-new",
+  "pipeline_dir": "D:\\workspace\\team-pivot\\pipelines\\discuss-new",
+  "workspace": "C:/Users/Captain/AppData/Local/Temp/test-step-runner",
+  "user_id": "huangshengli",
+  "params": {
+    "category": "discussion",
+    "title": "step-runner-real-test",
+    "content": "# 分步执行器真实测试\n\n## 背景\n验证 step_runner 分步编排方案在真实 git 仓库上的可行性。\n\n## 测试内容\n1. prepare 步骤正确解析参数\n2. Claude Code 自身作为 LLM 生成摘要\n3. publish 步骤写文件并 git commit 成功\n\n## 预期结果\n- discussions/discussion/step-runner-real-test/ 目录创建\n- 001_huangshengli_proposal_*.md 文件生成\n- git log 有对应 commit",
+    "mention_users": "",
+    "mention_comments": ""
+  },
+  "steps_def": [
+    {
+      "name": "prepare",
+      "type": "code",
+      "command": "python3 steps/prepare.py"
+    },
+    {
+      "name": "generate_summary",
+      "type": "llm",
+      "model": "standard",
+      "skip_if": "prepare.output.has_summary",
+      "prompt": "Generate a notification summary for the following new discussion.\n\nDiscussion content:\n{{prepare.output.content}}\n\nReturn a JSON object with exactly one field \"summary\" (string).\nThe summary should include: a brief overview (3-5 sentences) and\n1-2 key highlights. Write in the same language as the content.\nDo not include any other fields.\n\nExample: {\"summary\": \"Overview: The team proposed a new auth scheme... Highlights: 1) ...; 2) ...\"}\n",
+      "schema": "schemas/summary.json",
+      "retry": 2
+    },
+    {
+      "name": "publish",
+      "type": "code",
+      "command": "python3 steps/publish.py"
+    }
+  ],
+  "output_step": "publish",
+  "step_results": {
+    "prepare": {
+      "output": {
+        "category": "discussion",
+        "title": "step-runner-real-test",
+        "content": "# 分步执行器真实测试\n\n## 背景\n验证 step_runner 分步编排方案在真实 git 仓库上的可行性。\n\n## 测试内容\n1. prepare 步骤正确解析参数\n2. Claude Code 自身作为 LLM 生成摘要\n3. publish 步骤写文件并 git commit 成功\n\n## 预期结果\n- discussions/discussion/step-runner-real-test/ 目录创建\n- 001_huangshengli_proposal_*.md 文件生成\n- git log 有对应 commit",
+        "has_summary": false,
+        "author": "huangshengli",
+        "mention_users": "",
+        "mention_comments": ""
+      }
+    },
+    "generate_summary": {
+      "output": {
+        "summary": "概述：本提案验证 step_runner 分步执行器在真实 git 仓库上的端到端可行性，包括参数解析、LLM 摘要生成和文件发布三个阶段。该方案让 Claude Code 自身充当 LLM 后端，避免了嵌套调用 claude CLI 的死锁问题。亮点：1) 三步流程（prepare → generate_summary → publish）在真实 git 仓库上完整执行；2) 证明了无需 claude -p 子进程也能完成集成测试。"
+      }
+    },
+    "publish": {
+      "output": {
+        "committed": true,
+        "canonical_path": "discussions/discussion/step-runner-real-test/001_huangshengli_proposal_c83b54.md",
+        "index_file": "index/step-runner-real-test-discuss.index.yaml"
+      }
+    }
+  },
+  "current_step_idx": 3,
+  "status": "completed",
+  "final_output": {
+    "committed": true,
+    "canonical_path": "discussions/discussion/step-runner-real-test/001_huangshengli_proposal_c83b54.md",
+    "index_file": "index/step-runner-real-test-discuss.index.yaml"
+  }
+}
