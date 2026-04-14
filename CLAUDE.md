@@ -18,15 +18,15 @@ After setup, you should **directly execute** `pivot-cli` commands via Bash when 
 
 Available commands:
 ```bash
-pivot-cli discuss list [category]                    # List discussions
-pivot-cli discuss inbox                              # Unread messages
-pivot-cli discuss new [category] [title] <content> [--mention <users>] [--comments <text>]
-pivot-cli discuss reply <category>/<thread> <content> [--mention <users>] [--comments <text>]
-pivot-cli discuss read <category>/<thread>           # Read a discussion
-pivot-cli discuss close <category>/<thread>          # Close
-pivot-cli discuss pending <category>/<thread>        # Shelve
-pivot-cli discuss reopen <category>/<thread> --reason <text>
-pivot-cli file fetch <path> [<path2> ...]            # Fetch files
+pivot-cli discuss list [--category <cat>]
+pivot-cli discuss inbox
+pivot-cli discuss new --category <cat> --title <title> --content <text> [--mention <users>] [--comments <text>]
+pivot-cli discuss reply --category <cat> --thread <thread> --content <text> [--mention <users>] [--comments <text>]
+pivot-cli discuss read --category <cat> --thread <thread>
+pivot-cli discuss close --category <cat> --thread <thread>
+pivot-cli discuss pending --category <cat> --thread <thread>
+pivot-cli discuss reopen --category <cat> --thread <thread> --reason <text>
+pivot-cli file fetch --paths <path1,path2,...>
 ```
 
 Example workflow:

@@ -47,11 +47,12 @@ function Invoke-Rpc($Method, $Params) {
 }
 
 function Parse-Named-Args($argList, [string[]]$names) {
+    $argList = @($argList)
     $result = @{}
     $positional = @()
     $i = 0
     while ($i -lt $argList.Count) {
-        $a = $argList[$i]
+        $a = [string]$argList[$i]
         if ($a.StartsWith("--") -and $names -contains $a.Substring(2)) {
             $key = $a.Substring(2)
             $i++
@@ -60,6 +61,10 @@ function Parse-Named-Args($argList, [string[]]$names) {
             $positional += $a
         }
         $i++
+    }
+    # Ensure all declared names have at least empty string (avoid $null in JSON)
+    foreach ($n in $names) {
+        if (-not $result.ContainsKey($n)) { $result[$n] = "" }
     }
     $result["_positional"] = $positional
     return $result
@@ -78,57 +83,59 @@ function Cmd-Discuss($a) {
     $sub = if ($a.Count -gt 0) { $a[0] } else { "" }
     $rest = if ($a.Count -gt 1) { $a[1..($a.Count-1)] } else { @() }
 
+    # Parse all --key value pairs
+    $parsed = Parse-Named-Args $rest @("category","thread","title","content","mention","comments","reason")
+    $pos = @($parsed["_positional"] | Where-Object { $_ -ne $null -and $_ -ne "" })
+    if ($pos.Count -gt 0) { Write-Err "All parameters must use --key <value> format. Got positional: $($pos -join ', ')" }
+
     switch ($sub) {
         "new" {
-            $parsed = Parse-Named-Args $rest @("category","title","content","mention","comments")
-            $pos = $parsed["_positional"]
-            $cat = if ($parsed["category"]) { $parsed["category"] } elseif ($pos.Count -gt 0) { $pos[0] } else { "" }
-            $title = if ($parsed["title"]) { $parsed["title"] } elseif ($pos.Count -gt 1) { $pos[1] } else { "" }
-            $content = if ($parsed["content"]) { $parsed["content"] } elseif ($pos.Count -gt 2) { $pos[2] } else { "" }
-            if (-not $content) { Write-Err "Usage: pivot-cli discuss new [category] [title] <content> [--mention <users>] [--comments <text>]" }
+            if (-not $parsed["content"]) { Write-Err "Usage: pivot-cli discuss new --category <cat> --title <title> --content <text> [--mention <users>] [--comments <text>]" }
             Invoke-Rpc "app.pivot.discuss-new" @{
-                category=$cat; title=$title; content=$content
+                category=$parsed["category"]; title=$parsed["title"]; content=$parsed["content"]
                 mention_users=$parsed["mention"]; mention_comments=$parsed["comments"]
             }
         }
         "reply" {
-            $parsed = Parse-Named-Args $rest @("content","mention","comments")
-            $pos = $parsed["_positional"]
-            $target = if ($pos.Count -gt 0) { $pos[0] } else { "" }
-            $content = if ($parsed["content"]) { $parsed["content"] } elseif ($pos.Count -gt 1) { $pos[1] } else { "" }
-            if (-not $content) { Write-Err "Usage: pivot-cli discuss reply <category>/<thread> <content> [--mention <users>] [--comments <text>]" }
-            $parts = $target -split "/", 2
+            if (-not $parsed["category"]) { Write-Err "Usage: pivot-cli discuss reply --category <cat> --thread <thread> --content <text> [--mention <users>] [--comments <text>]" }
+            if (-not $parsed["thread"]) { Write-Err "reply requires --thread" }
+            if (-not $parsed["content"]) { Write-Err "reply requires --content" }
             Invoke-Rpc "app.pivot.discuss-reply" @{
-                category=$parts[0]; thread=$parts[1]; content=$content
+                category=$parsed["category"]; thread=$parsed["thread"]; content=$parsed["content"]
                 mention_users=$parsed["mention"]; mention_comments=$parsed["comments"]
             }
         }
         "list" {
-            $cat = if ($rest.Count -gt 0) { $rest[0] } else { "" }
-            Invoke-Rpc "app.pivot.discuss-list" @{ category=$cat }
+            Invoke-Rpc "app.pivot.discuss-list" @{ category=$parsed["category"] }
         }
         "inbox" {
             Invoke-Rpc "app.pivot.discuss-inbox" @{}
         }
         "read" {
-            $target = if ($rest.Count -gt 0) { $rest[0] } else { "" }
-            if (-not $target) { Write-Err "Usage: pivot-cli discuss read <category>/<thread>" }
-            $parts = $target -split "/", 2
-            Invoke-Rpc "app.pivot.discuss-read" @{ category=$parts[0]; thread=$parts[1] }
+            if (-not $parsed["category"]) { Write-Err "Usage: pivot-cli discuss read --category <cat> --thread <thread>" }
+            if (-not $parsed["thread"]) { Write-Err "read requires --thread" }
+            Invoke-Rpc "app.pivot.discuss-read" @{ category=$parsed["category"]; thread=$parsed["thread"] }
         }
         {$_ -in "close","pending"} {
-            $target = if ($rest.Count -gt 0) { $rest[0] } else { "" }
-            if (-not $target) { Write-Err "Usage: pivot-cli discuss $sub <category>/<thread>" }
-            $parts = $target -split "/", 2
-            Invoke-Rpc "app.pivot.discuss-status" @{ category=$parts[0]; thread=$parts[1]; action=$sub; reason="" }
+            if (-not $parsed["category"]) { Write-Err "Usage: pivot-cli discuss $sub --category <cat> --thread <thread>" }
+            if (-not $parsed["thread"]) { Write-Err "$sub requires --thread" }
+            Invoke-Rpc "app.pivot.discuss-status" @{ category=$parsed["category"]; thread=$parsed["thread"]; action=$sub; reason="" }
         }
         "reopen" {
-            $parsed = Parse-Named-Args $rest @("reason")
-            $pos = $parsed["_positional"]
-            $target = if ($pos.Count -gt 0) { $pos[0] } else { "" }
-            if (-not $target -or -not $parsed["reason"]) { Write-Err "Usage: pivot-cli discuss reopen <cat>/<thread> --reason <text>" }
-            $parts = $target -split "/", 2
-            Invoke-Rpc "app.pivot.discuss-status" @{ category=$parts[0]; thread=$parts[1]; action="reopen"; reason=$parsed["reason"] }
+            if (-not $parsed["category"]) { Write-Err "Usage: pivot-cli discuss reopen --category <cat> --thread <thread> --reason <text>" }
+            if (-not $parsed["thread"]) { Write-Err "reopen requires --thread" }
+            if (-not $parsed["reason"]) { Write-Err "reopen requires --reason" }
+            Invoke-Rpc "app.pivot.discuss-status" @{ category=$parsed["category"]; thread=$parsed["thread"]; action="reopen"; reason=$parsed["reason"] }
+        }
+        "summarize" {
+            if (-not $parsed["category"]) { Write-Err "Usage: pivot-cli discuss summarize --category <cat> --thread <thread>" }
+            if (-not $parsed["thread"]) { Write-Err "summarize requires --thread" }
+            Invoke-Rpc "app.pivot.discuss-summarize" @{ category=$parsed["category"]; thread=$parsed["thread"] }
+        }
+        "result" {
+            if (-not $parsed["category"]) { Write-Err "Usage: pivot-cli discuss result --category <cat> --thread <thread>" }
+            if (-not $parsed["thread"]) { Write-Err "result requires --thread" }
+            Invoke-Rpc "app.pivot.discuss-result" @{ category=$parsed["category"]; thread=$parsed["thread"] }
         }
         default { Write-Err "Unknown discuss command: $sub" }
     }
@@ -137,33 +144,53 @@ function Cmd-Discuss($a) {
 function Cmd-File($a) {
     Load-Config
     $sub = if ($a.Count -gt 0) { $a[0] } else { "" }
+    $rest = if ($a.Count -gt 1) { $a[1..($a.Count-1)] } else { @() }
     if ($sub -eq "fetch") {
-        $paths = ($a[1..($a.Count-1)]) -join ","
-        if (-not $paths) { Write-Err "Usage: pivot-cli file fetch <path> [<path2> ...]" }
-        Invoke-Rpc "app.pivot.file-fetch" @{ paths=$paths }
+        $parsed = Parse-Named-Args $rest @("paths")
+        if (-not $parsed["paths"]) { Write-Err "Usage: pivot-cli file fetch --paths <path1,path2,...>" }
+        Invoke-Rpc "app.pivot.file-fetch" @{ paths=$parsed["paths"] }
     } else {
         Write-Err "Unknown file command: $sub"
     }
 }
 
+function Cmd-Monitor($a) {
+    Load-Config
+    $sub = if ($a.Count -gt 0) { $a[0] } else { "" }
+    $rest = if ($a.Count -gt 1) { $a[1..($a.Count-1)] } else { @() }
+    if ($sub -eq "scan") {
+        $parsed = Parse-Named-Args $rest @("window-hours","mention-window-hours")
+        Invoke-Rpc "app.pivot.monitor-scan" @{
+            window_hours=$parsed["window-hours"]
+            mention_window_hours=$parsed["mention-window-hours"]
+        }
+    } else {
+        Write-Err "Unknown monitor command: $sub"
+    }
+}
+
 function Cmd-Help {
     Write-Output @"
-pivot-cli — Team-Pivot Agent CLI
+pivot-cli -- Team-Pivot Agent CLI
 
-Usage: pivot-cli <command> [options]
+Usage: pivot-cli <command> --key <value> ...
 
 Commands:
-  login --endpoint <url> --token <token>    Save credentials
-  discuss new [cat] [title] <content>        Start a new discussion
-  discuss reply <cat>/<thread> <content>    Reply to a discussion
-  discuss list [category]                   List discussions
-  discuss inbox                             Show unread
-  discuss read <category>/<thread>          Read a discussion
-  discuss close <category>/<thread>         Close a discussion
-  discuss pending <category>/<thread>       Shelve a discussion
-  discuss reopen <cat>/<thread> --reason X  Reopen a discussion
-  file fetch <path> [<path2> ...]           Fetch files
+  login      --endpoint <url> --token <token>
+  discuss new       --category <cat> --title <title> --content <text> [--mention <users>] [--comments <text>]
+  discuss reply     --category <cat> --thread <thread> --content <text> [--mention <users>] [--comments <text>]
+  discuss list      [--category <cat>]
+  discuss inbox
+  discuss read      --category <cat> --thread <thread>
+  discuss close     --category <cat> --thread <thread>
+  discuss pending   --category <cat> --thread <thread>
+  discuss reopen    --category <cat> --thread <thread> --reason <text>
+  discuss summarize --category <cat> --thread <thread>
+  discuss result    --category <cat> --thread <thread>
+  monitor scan      [--window-hours <N>] [--mention-window-hours <N>]
+  file fetch        --paths <path1,path2,...>
 
+All parameters must use --key <value> format.
 All commands return JSON.
 "@
 }
@@ -172,6 +199,7 @@ All commands return JSON.
 switch ($Command) {
     "login"   { Cmd-Login $Args }
     "discuss" { Cmd-Discuss $Args }
+    "monitor" { Cmd-Monitor $Args }
     "file"    { Cmd-File $Args }
     {$_ -in "help","--help","-h",""} { Cmd-Help }
     default   { Write-Err "Unknown command: $Command. Run 'pivot-cli help'." }

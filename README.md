@@ -83,17 +83,17 @@ Pivot APP is deployed through the EC platform's Agent management interface:
 
 ```bash
 # Discussion management
-pivot-cli discuss new [category] [title] <content> [--mention <users>] [--comments <text>]
-pivot-cli discuss reply <category>/<thread> <content> [--mention <users>] [--comments <text>]
-pivot-cli discuss list [category]
+pivot-cli discuss new --category <cat> --title <title> --content <text> [--mention <users>] [--comments <text>]
+pivot-cli discuss reply --category <cat> --thread <thread> --content <text> [--mention <users>] [--comments <text>]
+pivot-cli discuss list [--category <cat>]
 pivot-cli discuss inbox
-pivot-cli discuss read <category>/<thread>
-pivot-cli discuss close <category>/<thread>
-pivot-cli discuss pending <category>/<thread>
-pivot-cli discuss reopen <category>/<thread> --reason <text>
+pivot-cli discuss read --category <cat> --thread <thread>
+pivot-cli discuss close --category <cat> --thread <thread>
+pivot-cli discuss pending --category <cat> --thread <thread>
+pivot-cli discuss reopen --category <cat> --thread <thread> --reason <text>
 
 # File operations
-pivot-cli file fetch <path> [<path2> ...]
+pivot-cli file fetch --paths <path1,path2,...>
 ```
 
 All commands return JSON. When used through AI tools (Claude Code, Cursor, etc.), the AI parses the JSON and presents results in a human-readable format.

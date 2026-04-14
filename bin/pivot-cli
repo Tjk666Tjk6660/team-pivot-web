@@ -55,86 +55,67 @@ EOF
 cmd_discuss() {
   load_config
   local sub="${1:-}"; shift 2>/dev/null || true
+
+  # Parse all --key value pairs
+  local category="" thread="" title="" content="" mention="" comments="" reason=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --category) category="$2"; shift 2 ;;
+      --thread)   thread="$2";   shift 2 ;;
+      --title)    title="$2";    shift 2 ;;
+      --content)  content="$2";  shift 2 ;;
+      --mention)  mention="$2";  shift 2 ;;
+      --comments) comments="$2"; shift 2 ;;
+      --reason)   reason="$2";   shift 2 ;;
+      *) die "Unknown option: $1" ;;
+    esac
+  done
+
   case "$sub" in
     new)
-      local category="" title="" content="" mention="" comments=""
-      while [[ $# -gt 0 ]]; do
-        case "$1" in
-          --category) category="$2"; shift 2 ;;
-          --title)    title="$2";    shift 2 ;;
-          --content)  content="$2";  shift 2 ;;
-          --mention)  mention="$2";  shift 2 ;;
-          --comments) comments="$2"; shift 2 ;;
-          *) # positional args: category, title, content
-            if [ -z "$category" ]; then category="$1"
-            elif [ -z "$title" ]; then title="$1"
-            elif [ -z "$content" ]; then content="$1"
-            else die "Unknown option: $1"
-            fi
-            shift ;;
-        esac
-      done
-      [ -n "$content" ] || die "Usage: pivot-cli discuss new [category] [title] <content> [--mention <users>] [--comments <text>]"
+      [ -n "$content" ] || die "Usage: pivot-cli discuss new --category <cat> --title <title> --content <text> [--mention <users>] [--comments <text>]"
       rpc "app.pivot.discuss-new" "{\"category\":\"${category}\",\"title\":\"${title}\",\"content\":\"${content}\",\"mention_users\":\"${mention}\",\"mention_comments\":\"${comments}\"}"
       ;;
     reply)
-      local target="" content="" mention="" comments=""
-      while [[ $# -gt 0 ]]; do
-        case "$1" in
-          --content)  content="$2";  shift 2 ;;
-          --mention)  mention="$2";  shift 2 ;;
-          --comments) comments="$2"; shift 2 ;;
-          *) # positional args: target, content
-            if [ -z "$target" ]; then target="$1"
-            elif [ -z "$content" ]; then content="$1"
-            else die "Unknown option: $1"
-            fi
-            shift ;;
-        esac
-      done
-      local category="${target%%/*}"
-      local thread="${target#*/}"
-      [ -n "$content" ] || die "Usage: pivot-cli discuss reply <category>/<thread> <content> [--mention <users>] [--comments <text>]"
+      [ -n "$category" ] || die "Usage: pivot-cli discuss reply --category <cat> --thread <thread> --content <text> [--mention <users>] [--comments <text>]"
+      [ -n "$thread" ] || die "reply requires --thread"
+      [ -n "$content" ] || die "reply requires --content"
       rpc "app.pivot.discuss-reply" "{\"category\":\"${category}\",\"thread\":\"${thread}\",\"content\":\"${content}\",\"mention_users\":\"${mention}\",\"mention_comments\":\"${comments}\"}"
       ;;
     list)
-      local category="${1:-}"
       rpc "app.pivot.discuss-list" "{\"category\":\"${category}\"}"
       ;;
     inbox)
       rpc "app.pivot.discuss-inbox" "{}"
       ;;
     read)
-      local target="${1:-}"
-      local category="${target%%/*}"
-      local thread="${target#*/}"
-      [ -n "$target" ] || die "Usage: pivot-cli discuss read <category>/<thread>"
+      [ -n "$category" ] || die "Usage: pivot-cli discuss read --category <cat> --thread <thread>"
+      [ -n "$thread" ] || die "read requires --thread"
       rpc "app.pivot.discuss-read" "{\"category\":\"${category}\",\"thread\":\"${thread}\"}"
       ;;
     close|pending)
-      local target="${1:-}"
-      local category="${target%%/*}"
-      local thread="${target#*/}"
-      [ -n "$target" ] || die "Usage: pivot-cli discuss ${sub} <category>/<thread>"
+      [ -n "$category" ] || die "Usage: pivot-cli discuss ${sub} --category <cat> --thread <thread>"
+      [ -n "$thread" ] || die "${sub} requires --thread"
       rpc "app.pivot.discuss-status" "{\"category\":\"${category}\",\"thread\":\"${thread}\",\"action\":\"${sub}\",\"reason\":\"\"}"
       ;;
     reopen)
-      local target="${1:-}"; shift 2>/dev/null || true
-      local reason=""
-      while [[ $# -gt 0 ]]; do
-        case "$1" in
-          --reason) reason="$2"; shift 2 ;;
-          *) die "Unknown option: $1" ;;
-        esac
-      done
-      local category="${target%%/*}"
-      local thread="${target#*/}"
-      [ -n "$target" ] || die "Usage: pivot-cli discuss reopen <category>/<thread> --reason <text>"
+      [ -n "$category" ] || die "Usage: pivot-cli discuss reopen --category <cat> --thread <thread> --reason <text>"
+      [ -n "$thread" ] || die "reopen requires --thread"
       [ -n "$reason" ] || die "reopen requires --reason"
       rpc "app.pivot.discuss-status" "{\"category\":\"${category}\",\"thread\":\"${thread}\",\"action\":\"reopen\",\"reason\":\"${reason}\"}"
       ;;
+    summarize)
+      [ -n "$category" ] || die "Usage: pivot-cli discuss summarize --category <cat> --thread <thread>"
+      [ -n "$thread" ] || die "summarize requires --thread"
+      rpc "app.pivot.discuss-summarize" "{\"category\":\"${category}\",\"thread\":\"${thread}\"}"
+      ;;
+    result)
+      [ -n "$category" ] || die "Usage: pivot-cli discuss result --category <cat> --thread <thread>"
+      [ -n "$thread" ] || die "result requires --thread"
+      rpc "app.pivot.discuss-result" "{\"category\":\"${category}\",\"thread\":\"${thread}\"}"
+      ;;
     *)
-      die "Unknown discuss command: ${sub}\nAvailable: new | reply | list | inbox | read | close | pending | reopen"
+      die "Unknown discuss command: ${sub}\nAvailable: new | reply | list | inbox | read | close | pending | reopen | summarize | result"
       ;;
   esac
 }
@@ -145,11 +126,13 @@ cmd_file() {
   case "$sub" in
     fetch)
       local paths=""
-      for p in "$@"; do
-        [ -n "$paths" ] && paths="${paths},"
-        paths="${paths}${p}"
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --paths) paths="$2"; shift 2 ;;
+          *) die "Unknown option: $1" ;;
+        esac
       done
-      [ -n "$paths" ] || die "Usage: pivot-cli file fetch <path> [<path2> ...]"
+      [ -n "$paths" ] || die "Usage: pivot-cli file fetch --paths <path1,path2,...>"
       rpc "app.pivot.file-fetch" "{\"paths\":\"${paths}\"}"
       ;;
     *)
@@ -158,29 +141,51 @@ cmd_file() {
   esac
 }
 
+cmd_monitor() {
+  load_config
+  local sub="${1:-}"; shift 2>/dev/null || true
+
+  local window_hours="" mention_window_hours=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --window-hours)         window_hours="$2";         shift 2 ;;
+      --mention-window-hours) mention_window_hours="$2"; shift 2 ;;
+      *) die "Unknown option: $1" ;;
+    esac
+  done
+
+  case "$sub" in
+    scan)
+      rpc "app.pivot.monitor-scan" "{\"window_hours\":\"${window_hours}\",\"mention_window_hours\":\"${mention_window_hours}\"}"
+      ;;
+    *)
+      die "Unknown monitor command: ${sub}\nAvailable: scan"
+      ;;
+  esac
+}
+
 cmd_help() {
   cat <<'HELP'
-pivot-cli — Team-Pivot Agent CLI
+pivot-cli -- Team-Pivot Agent CLI
 
-Usage: pivot-cli <command> [options]
+Usage: pivot-cli <command> --key <value> ...
 
 Commands:
-  login --endpoint <url> --token <token>    Save credentials
-  discuss new [cat] [title] <content>        Start a new discussion
-  discuss reply <cat>/<thread> <content>    Reply to a discussion
-  discuss list [category]                   List discussions
-  discuss inbox                             Show unread
-  discuss read <category>/<thread>          Read a discussion
-  discuss close <category>/<thread>         Close a discussion
-  discuss pending <category>/<thread>       Shelve a discussion
-  discuss reopen <cat>/<thread> --reason X  Reopen a discussion
-  file fetch <path> [<path2> ...]           Fetch files
+  login      --endpoint <url> --token <token>
+  discuss new       --category <cat> --title <title> --content <text> [--mention <users>] [--comments <text>]
+  discuss reply     --category <cat> --thread <thread> --content <text> [--mention <users>] [--comments <text>]
+  discuss list      [--category <cat>]
+  discuss inbox
+  discuss read      --category <cat> --thread <thread>
+  discuss close     --category <cat> --thread <thread>
+  discuss pending   --category <cat> --thread <thread>
+  discuss reopen    --category <cat> --thread <thread> --reason <text>
+  discuss summarize --category <cat> --thread <thread>
+  discuss result    --category <cat> --thread <thread>
+  monitor scan      [--window-hours <N>] [--mention-window-hours <N>]
+  file fetch        --paths <path1,path2,...>
 
-Options for new/reply:
-  --content <text>     Discussion content (required for new/reply)
-  --mention <users>    Comma-separated user names to @mention
-  --comments <text>    Comment attached to mentions
-
+All parameters must use --key <value> format.
 All commands return JSON. Pipe to jq for pretty-printing:
   pivot-cli discuss list | jq .
 HELP
@@ -191,6 +196,7 @@ HELP
 case "${1:-}" in
   login)   shift; cmd_login "$@" ;;
   discuss) shift; cmd_discuss "$@" ;;
+  monitor) shift; cmd_monitor "$@" ;;
   file)    shift; cmd_file "$@" ;;
   help|--help|-h) cmd_help ;;
   "") cmd_help ;;

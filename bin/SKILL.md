@@ -15,11 +15,15 @@ You are the client of Team-Pivot, a team discussion management system. You execu
 pivot-cli login --endpoint <EC_ENDPOINT_URL> --token <YOUR_TOKEN>
 ```
 
+## CLI Parameter Format
+
+All `pivot-cli` commands use strict `--key <value>` format. When the user speaks naturally, you must parse their intent and assemble the correct parameters.
+
 ## Commands
 
-### `/pivot-cli list [category]`
+### `/pivot-cli list`
 ```bash
-pivot-cli discuss list [category]
+pivot-cli discuss list [--category <cat>]
 ```
 List all discussions, optionally filtered by category. Present as a readable table.
 
@@ -29,63 +33,63 @@ pivot-cli discuss inbox
 ```
 Show unread messages. Ask if the user wants to read any thread.
 
-### `/pivot-cli new [category] [title] <content>`
+### `/pivot-cli new`
 ```bash
-pivot-cli discuss new [category] [title] "<content>" [--mention <users>] [--comments <text>]
+pivot-cli discuss new --category <cat> --title <title> --content <text> [--mention <users>] [--comments <text>]
 ```
-Start a new discussion. `content` is required. `category` and `title` are optional — the server can infer them from content.
+Start a new discussion. `--content` is required. `--category` and `--title` are required by the server.
 
-### `/pivot-cli reply <category>/<thread> <content>`
+### `/pivot-cli reply`
 ```bash
-pivot-cli discuss reply <category>/<thread> "<content>" [--mention <users>] [--comments <text>]
+pivot-cli discuss reply --category <cat> --thread <thread> --content <text> [--mention <users>] [--comments <text>]
 ```
-Reply to an existing discussion. `content` is required.
+Reply to an existing discussion. `--category`, `--thread`, and `--content` are all required.
 
-### `/pivot-cli read <category>/<thread>`
+### `/pivot-cli read`
 ```bash
-pivot-cli discuss read <category>/<thread>
+pivot-cli discuss read --category <cat> --thread <thread>
 ```
 Read a discussion thread. Present with:
 - Thread title, category, status
 - Each post: author, date, content summary
 - Overall status and open questions
 
-### `/pivot-cli close <category>/<thread>`
+### `/pivot-cli close`
 ```bash
-pivot-cli discuss close <category>/<thread>
+pivot-cli discuss close --category <cat> --thread <thread>
 ```
 Close a discussion.
 
-### `/pivot-cli pending <category>/<thread>`
+### `/pivot-cli pending`
 ```bash
-pivot-cli discuss pending <category>/<thread>
+pivot-cli discuss pending --category <cat> --thread <thread>
 ```
 Shelve a discussion for later.
 
-### `/pivot-cli reopen <category>/<thread> --reason <text>`
+### `/pivot-cli reopen`
 ```bash
-pivot-cli discuss reopen <category>/<thread> --reason "<text>"
+pivot-cli discuss reopen --category <cat> --thread <thread> --reason <text>
 ```
-Reopen a closed/pending discussion. Reason is required.
+Reopen a closed/pending discussion. All three parameters are required.
 
-### `/pivot-cli fetch <path> [path2 ...]`
+### `/pivot-cli fetch`
 ```bash
-pivot-cli file fetch <path> [<path2> ...]
+pivot-cli file fetch --paths <path1,path2,...>
 ```
-Fetch files from the server.
+Fetch files from the server. Multiple paths are comma-separated.
 
 ## Natural Language Support
 
-Users may type `/pivot-cli` followed by natural language. Infer the intent:
+Users may type `/pivot-cli` followed by natural language. You must infer the intent and assemble the correct `--key <value>` parameters:
 
 | User input | Action |
 |------------|--------|
 | `有什么新消息` | `inbox` |
 | `看看讨论列表` | `list` |
-| `读一下那个讨论` | `read` (identify the thread) |
-| `回复` | `reply` (identify the thread) |
-| `发起一个讨论` | `new` (ask for category and title) |
-| `关闭这个讨论` | `close` |
+| `读一下那个API讨论` | `read` — identify category and thread from context, then `--category <cat> --thread <thread>` |
+| `回复那个帖子` | `reply` — identify category and thread, ask for content if not provided |
+| `发起一个关于API设计的讨论` | `new` — extract or ask for category, title, content |
+| `关闭这个讨论` | `close` — identify category and thread |
 
 ## Response Handling
 

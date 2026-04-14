@@ -138,7 +138,7 @@ def _send_publish_notification(
         sys.stderr.write(f"discuss-new: notifier init skipped: {e}\n")
         return
 
-    mention_list = [u.strip() for u in mention_users.split(",") if u.strip()]
+    mention_list = [u.strip() for u in (mention_users or "").split(",") if u.strip()]
     try:
         notifier.send_card_to_all(
             title=f"New thread: {category}/{title}",

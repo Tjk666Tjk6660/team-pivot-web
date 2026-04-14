@@ -83,17 +83,17 @@ Pivot APP 通过 EC 平台的 Agent 管理后台部署：
 
 ```bash
 # 讨论管理
-pivot-cli discuss new [category] [title] <content> [--mention <users>] [--comments <text>]
-pivot-cli discuss reply <category>/<thread> <content> [--mention <users>] [--comments <text>]
-pivot-cli discuss list [category]
+pivot-cli discuss new --category <cat> --title <title> --content <text> [--mention <users>] [--comments <text>]
+pivot-cli discuss reply --category <cat> --thread <thread> --content <text> [--mention <users>] [--comments <text>]
+pivot-cli discuss list [--category <cat>]
 pivot-cli discuss inbox
-pivot-cli discuss read <category>/<thread>
-pivot-cli discuss close <category>/<thread>
-pivot-cli discuss pending <category>/<thread>
-pivot-cli discuss reopen <category>/<thread> --reason <text>
+pivot-cli discuss read --category <cat> --thread <thread>
+pivot-cli discuss close --category <cat> --thread <thread>
+pivot-cli discuss pending --category <cat> --thread <thread>
+pivot-cli discuss reopen --category <cat> --thread <thread> --reason <text>
 
 # 文件操作
-pivot-cli file fetch <path> [<path2> ...]
+pivot-cli file fetch --paths <path1,path2,...>
 ```
 
 所有命令返回 JSON。通过 AI 工具使用时，AI 会解析 JSON 并以可读格式展示结果和分析。
