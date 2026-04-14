@@ -1,7 +1,8 @@
 [project]
 name = "pivot-app"
 version = "0.1.0"
-description = "Team-Pivot APP (Pivot Agent + CLI) following APP v0.3 protocol"
+description = "Team-Pivot APP — see README.md for installation and usage"
+readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "pyyaml>=6.0",

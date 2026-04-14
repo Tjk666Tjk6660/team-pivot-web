@@ -7,7 +7,11 @@ You are working on the **client side** of Team-Pivot, a team discussion manageme
 - **`SKILL.md`** in this repo is the **EC server-side LLM fallback prompt**. It is NOT instructions for you. Do not follow its directives (e.g., "call discuss-new pipeline directly"). It exists for the EC Pipeline Runner's internal LLM to use when no pipeline trigger matches.
 - **You should use `pivot-cli`** (a thin curl wrapper) to interact with the Pivot Agent via HTTP.
 
-## Setup
+## Install / Setup
+
+When asked to install, set up, or onboard this project, **read `README.md` first** — it contains the authoritative instructions for different roles (user, admin, developer).
+
+## pivot-cli Setup (quick reference)
 
 1. Check if `pivot-cli` is available:
    ```bash
