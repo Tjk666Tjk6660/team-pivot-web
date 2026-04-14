@@ -39,6 +39,13 @@ from pathlib import Path
 APP_DIR = str(Path(__file__).parent.parent.parent)  # team-pivot/
 
 
+def _out(data: dict) -> None:
+    """Write JSON to stdout using UTF-8, bypassing Windows GBK console encoding."""
+    sys.stdout.buffer.write(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+    sys.stdout.buffer.write(b"\n")
+    sys.stdout.buffer.flush()
+
+
 # ---------------------------------------------------------------------------
 # Context helpers — persist state between invocations
 # ---------------------------------------------------------------------------
@@ -100,7 +107,7 @@ def cmd_init(args):
     pipeline_dir = Path(APP_DIR) / "pipelines" / args.pipeline
     yaml_path = pipeline_dir / "pipeline.yaml"
     if not yaml_path.exists():
-        print(json.dumps({"error": f"pipeline.yaml not found: {yaml_path}"}))
+        _out({"error": f"pipeline.yaml not found: {yaml_path}"})
         sys.exit(1)
 
     with open(yaml_path, encoding="utf-8") as f:
@@ -119,12 +126,12 @@ def cmd_init(args):
         "status": "running",
     }
     _save_ctx(args.context, ctx)
-    print(json.dumps({
+    _out({
         "action": "initialized",
         "pipeline": args.pipeline,
         "total_steps": len(ctx["steps_def"]),
         "step_names": [s["name"] for s in ctx["steps_def"]],
-    }, ensure_ascii=False))
+    })
 
 
 def cmd_next(args):
@@ -132,8 +139,8 @@ def cmd_next(args):
     ctx = _load_ctx(args.context)
 
     if ctx["status"] != "running":
-        print(json.dumps({"action": "done", "status": ctx["status"],
-                          "output": ctx.get("final_output", {})}))
+        _out({"action": "done", "status": ctx["status"],
+              "output": ctx.get("final_output", {})})
         return
 
     idx = ctx["current_step_idx"]
@@ -144,7 +151,7 @@ def cmd_next(args):
         ctx["status"] = "completed"
         ctx["final_output"] = final
         _save_ctx(args.context, ctx)
-        print(json.dumps({"action": "done", "output": final}, ensure_ascii=False))
+        _out({"action": "done", "output": final})
         return
 
     step_def = ctx["steps_def"][idx]
@@ -156,7 +163,7 @@ def cmd_next(args):
     if skip_if and _eval_skip_if(skip_if, ctx["step_results"]):
         ctx["current_step_idx"] = idx + 1
         _save_ctx(args.context, ctx)
-        print(json.dumps({"action": "skipped", "step": step_name}))
+        _out({"action": "skipped", "step": step_name})
         return
 
     if step_type == "code":
@@ -164,7 +171,7 @@ def cmd_next(args):
     elif step_type == "llm":
         _request_llm_step(ctx, step_def, args.context)
     else:
-        print(json.dumps({"error": f"unknown step type: {step_type}"}))
+        _out({"error": f"unknown step type: {step_type}"})
         sys.exit(1)
 
 
@@ -209,11 +216,11 @@ def _exec_code_step(ctx: dict, step_def: dict, ctx_path: str):
         ctx["status"] = "error"
         ctx["error"] = proc.stderr.strip()
         _save_ctx(ctx_path, ctx)
-        print(json.dumps({
+        _out({
             "action": "error",
             "step": step_name,
             "stderr": proc.stderr.strip(),
-        }, ensure_ascii=False))
+        })
         sys.exit(1)
 
     try:
@@ -222,23 +229,23 @@ def _exec_code_step(ctx: dict, step_def: dict, ctx_path: str):
         ctx["status"] = "error"
         ctx["error"] = f"invalid JSON output: {proc.stdout[:300]}"
         _save_ctx(ctx_path, ctx)
-        print(json.dumps({
+        _out({
             "action": "error",
             "step": step_name,
             "raw_output": proc.stdout[:300],
-        }, ensure_ascii=False))
+        })
         sys.exit(1)
 
     ctx["step_results"][step_name] = result
     ctx["current_step_idx"] += 1
     _save_ctx(ctx_path, ctx)
 
-    print(json.dumps({
+    _out({
         "action": "step_done",
         "step": step_name,
         "type": "code",
         "output": result,
-    }, ensure_ascii=False))
+    })
 
 
 def _request_llm_step(ctx: dict, step_def: dict, ctx_path: str):
@@ -270,7 +277,7 @@ def _request_llm_step(ctx: dict, step_def: dict, ctx_path: str):
     }
     if schema:
         output["schema"] = schema
-    print(json.dumps(output, ensure_ascii=False))
+    _out(output)
 
 
 def cmd_respond(args):
@@ -279,7 +286,7 @@ def cmd_respond(args):
 
     pending = ctx.get("pending_llm")
     if not pending:
-        print(json.dumps({"error": "no pending LLM step"}))
+        _out({"error": "no pending LLM step"})
         sys.exit(1)
 
     response = json.loads(args.response)
@@ -291,11 +298,11 @@ def cmd_respond(args):
     del ctx["pending_llm"]
     _save_ctx(args.context, ctx)
 
-    print(json.dumps({
+    _out({
         "action": "llm_injected",
         "step": pending,
         "output": response,
-    }, ensure_ascii=False))
+    })
 
 
 def cmd_status(args):
@@ -317,7 +324,7 @@ def cmd_status(args):
         info["output"] = ctx.get("final_output", {})
     if ctx["status"] == "error":
         info["error"] = ctx.get("error", "")
-    print(json.dumps(info, ensure_ascii=False))
+    _out(info)
 
 
 # ---------------------------------------------------------------------------
