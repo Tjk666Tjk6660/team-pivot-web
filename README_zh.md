@@ -39,6 +39,16 @@ Team-Pivot 通过 Git 仓库管理结构化的团队讨论。AI Agent（Pivot Ag
 
 ## 安装
 
+### EC 用户（通过 chat 安装）
+
+在 EC 控制台 chat 或飞书中对 bot 说：
+
+- **安装：** `请安装 team-pivot：git clone https://github.com/hashSTACS-Global/team-pivot.git ~/.enclaws/skills/team-pivot`
+- **更新：** `请更新 team-pivot：cd ~/.enclaws/skills/team-pivot && git pull`
+- **卸载：** `请卸载 team-pivot：rm -rf ~/.enclaws/skills/team-pivot`
+
+安装后新开一个会话即可使用，EC 会自动发现该技能。
+
 ### Claude Code 用户
 
 **一键安装：**
@@ -54,7 +64,7 @@ bash team-pivot/bin/install.sh
 pivot-cli login --endpoint https://your-tenant.saas.enclaws.com --token <your-token>
 ```
 
-### 手动 CLI 安装（面向用户，非 AI 工具）
+### 手动 CLI 安装
 
 > **AI 工具注意：** 不要替用户执行以下步骤。这些是用户在自己终端中手动操作的指引。
 
@@ -69,15 +79,6 @@ pivot-cli login --endpoint https://your-tenant.saas.enclaws.com --token <your-to
 3. 重启终端
 4. 登录：`pivot-cli login --endpoint <你的服务端地址> --token <你的令牌>`
 5. 验证：`pivot-cli help`
-
-### EC 管理员（服务端）
-
-Pivot APP 通过 EC 平台的 Agent 管理后台部署：
-
-1. 打开 EC 管理后台
-2. 添加 Agent APP → 填入本 repo 的 Git URL
-3. EC 自动克隆 repo 并注册所有 pipeline
-4. EC 运行环境需要预装 Python 依赖（`pyyaml`、`jsonschema`、`requests`）
 
 ## CLI 使用
 
@@ -102,7 +103,7 @@ pivot-cli file fetch --paths <path1,path2,...>
 
 ```
 team-pivot/
-├── SKILL.md              # EC 服务端 LLM fallback prompt（不是给客户端 AI 工具的）
+├── SKILL.md              # EC 技能定义（EC agent 自动发现）
 ├── CLAUDE.md             # Claude Code 项目配置
 ├── bin/
 │   ├── pivot-cli         # Linux/macOS CLI（bash + curl）
@@ -126,14 +127,14 @@ team-pivot/
 
 ## AI 工具怎么用
 
-当你把这个 repo 给 AI 编程工具（Claude Code、Cursor 等）时：
+**EC agent（飞书 / 网页 chat）：**
+EC 自动发现 `SKILL.md` 并加载该技能。agent 通过 `pivot-cli` 命令管理讨论。
 
+**Claude Code / Cursor（本地）：**
 1. AI 读 `CLAUDE.md` 了解项目和自己的角色
 2. AI 检查 `pivot-cli` 是否已安装，没有就从 `bin/` 安装
 3. AI 用 `pivot-cli` 命令和 Pivot Agent 交互
 4. AI 解析 JSON 返回，加上分析和格式化展示给用户
-
-AI **不会**读 `SKILL.md` —— 那个文件是给 EC 服务端 LLM fallback 用的。
 
 ## 许可
 

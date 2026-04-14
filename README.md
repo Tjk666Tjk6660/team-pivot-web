@@ -39,7 +39,17 @@ Team-Pivot manages structured team discussions through a Git repository. An AI a
 
 ## Installation
 
-### For Claude Code users
+### EC users (via chat)
+
+Tell the EC bot in chat or Feishu:
+
+- **Install:** `请安装 team-pivot：git clone https://github.com/hashSTACS-Global/team-pivot.git ~/.enclaws/skills/team-pivot`
+- **Update:** `请更新 team-pivot：cd ~/.enclaws/skills/team-pivot && git pull`
+- **Uninstall:** `请卸载 team-pivot：rm -rf ~/.enclaws/skills/team-pivot`
+
+Start a new session after install. The skill is auto-discovered by EC.
+
+### Claude Code users
 
 **One-step install:**
 ```bash
@@ -54,7 +64,7 @@ This installs `pivot-cli` to your PATH, registers the `/pivot-cli` skill in Clau
 pivot-cli login --endpoint https://your-tenant.saas.enclaws.com --token <your-token>
 ```
 
-### Manual CLI setup (for users, not AI tools)
+### Manual CLI setup
 
 > **Note for AI tools:** Do NOT execute the steps below on behalf of the user. These are manual instructions for the user to follow in their own terminal.
 
@@ -69,15 +79,6 @@ pivot-cli login --endpoint https://your-tenant.saas.enclaws.com --token <your-to
 3. Restart your terminal
 4. Login: `pivot-cli login --endpoint <your-endpoint> --token <your-token>`
 5. Verify: `pivot-cli help`
-
-### For EC Administrators (server side)
-
-Pivot APP is deployed through the EC platform's Agent management interface:
-
-1. Open the EC admin panel
-2. Add a new Agent APP → enter this repo's Git URL
-3. EC automatically clones the repo and registers all pipelines
-4. Python dependencies (`pyyaml`, `jsonschema`, `requests`) must be available in the EC runtime environment
 
 ## CLI Usage
 
@@ -102,7 +103,7 @@ All commands return JSON. When used through AI tools (Claude Code, Cursor, etc.)
 
 ```
 team-pivot/
-├── SKILL.md              # EC server-side LLM fallback prompt (NOT for client AI tools)
+├── SKILL.md              # EC skill definition (auto-discovered by EC agent)
 ├── CLAUDE.md             # Claude Code project config
 ├── bin/
 │   ├── pivot-cli         # CLI for Linux/macOS (bash + curl)
@@ -132,14 +133,14 @@ team-pivot/
 
 ## How It Works with AI Tools
 
-When you give this repo to an AI coding tool (Claude Code, Cursor, etc.):
+**EC agent (Feishu / web chat):**
+EC auto-discovers `SKILL.md` and loads the skill into the agent. The agent calls `pivot-cli` commands to manage discussions.
 
+**Claude Code / Cursor (local):**
 1. The AI reads `CLAUDE.md` to understand the project and its role
 2. The AI checks if `pivot-cli` is installed; if not, installs it from `bin/`
 3. The AI uses `pivot-cli` commands to interact with the Pivot Agent
 4. The AI parses JSON responses and presents them with analysis and formatting
-
-The AI does **not** read `SKILL.md` — that file is for the EC server-side LLM fallback mode.
 
 ## License
 
