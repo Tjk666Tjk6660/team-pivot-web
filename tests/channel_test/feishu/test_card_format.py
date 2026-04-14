@@ -33,15 +33,11 @@ class TestCardFormat:
         assert div["text"]["tag"] == "lark_md"
         assert "My summary text" in div["text"]["content"]
 
-    def test_card_has_view_button(self):
+    def test_card_has_no_view_button(self):
+        # View button removed — thread_url is a placeholder. Re-add once configured.
         card = self._build(thread_url="https://pivot.example.com/thread/a/b")
-        action = card["elements"][1]
-        assert action["tag"] == "action"
-        button = action["actions"][0]
-        assert button["tag"] == "button"
-        assert button["url"] == "https://pivot.example.com/thread/a/b"
-        assert button["text"]["content"] == "View"
-        assert button["type"] == "primary"
+        for element in card["elements"]:
+            assert element.get("tag") != "action", "View button should not be rendered"
 
     def test_card_includes_author(self):
         card = self._build(author="shengli")

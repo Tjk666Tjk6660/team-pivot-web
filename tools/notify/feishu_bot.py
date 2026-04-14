@@ -115,17 +115,8 @@ class FeishuBotAdapter:
                         "content": summary_content,
                     },
                 },
-                {
-                    "tag": "action",
-                    "actions": [
-                        {
-                            "tag": "button",
-                            "text": {"tag": "plain_text", "content": "View"},
-                            "url": thread_url,
-                            "type": "primary",
-                        }
-                    ],
-                },
+                # View button removed — thread_url is currently a placeholder
+                # (pivot.example.com). Re-enable once build_thread_url is configured.
             ],
         }
 
