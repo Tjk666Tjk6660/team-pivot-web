@@ -39,29 +39,35 @@ Team-Pivot manages structured team discussions through a Git repository. An AI a
 
 ## Installation
 
-### For Users / AI Tools (client side)
+### For Claude Code users
+
+**One-step install:**
+```bash
+git clone https://github.com/hashSTACS-Global/team-pivot.git
+bash team-pivot/bin/install.sh
+```
+
+This installs `pivot-cli` to your PATH, registers the `/pivot-cli` skill in Claude Code, and configures permissions. After installation, restart Claude Code and use `/pivot-cli` commands directly.
+
+**Login:**
+```bash
+pivot-cli login --endpoint https://your-tenant.saas.enclaws.com --token <your-token>
+```
+
+### For other AI tools / manual CLI use
 
 **Requirements:** `curl` (pre-installed on most systems)
 
 **Linux / macOS:**
 ```bash
-# Option 1: Install from repo
-git clone https://github.com/your-org/team-pivot.git
+git clone https://github.com/hashSTACS-Global/team-pivot.git
 sudo cp team-pivot/bin/pivot-cli /usr/local/bin/
-chmod +x /usr/local/bin/pivot-cli
-
-# Option 2: Direct download
-curl -sL https://raw.githubusercontent.com/your-org/team-pivot/main/bin/pivot-cli -o /usr/local/bin/pivot-cli
 chmod +x /usr/local/bin/pivot-cli
 ```
 
 **Windows (PowerShell):**
 ```powershell
-# Clone and use directly
-git clone https://github.com/your-org/team-pivot.git
-# Run with: powershell -File team-pivot\bin\pivot-cli.ps1 <command>
-
-# Or copy to a directory in your PATH
+git clone https://github.com/hashSTACS-Global/team-pivot.git
 Copy-Item team-pivot\bin\pivot-cli.ps1 "$HOME\bin\pivot-cli.ps1"
 ```
 

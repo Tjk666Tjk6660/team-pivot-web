@@ -12,8 +12,11 @@ You are working on the **client side** of Team-Pivot, a team discussion manageme
 **STOP — Do NOT run `pip install` or any install command directly.**
 When asked to install, set up, or onboard this project, you MUST read `README.md` first and follow its instructions. README.md has separate guides for users, admins, and developers — the correct steps depend on the role.
 
-## Usage
+## Usage — You ARE the client
 
+After setup, you should **directly execute** `pivot-cli` commands via Bash when the user asks about discussions, inbox, etc. Do NOT tell the user to run commands themselves — you run them, parse the JSON response, and present the results in a readable format.
+
+Available commands:
 ```bash
 pivot-cli discuss list [category]                    # List discussions
 pivot-cli discuss inbox                              # Unread messages
@@ -26,7 +29,9 @@ pivot-cli discuss reopen <category>/<thread> --reason <text>
 pivot-cli file fetch <path> [<path2> ...]            # Fetch files
 ```
 
-All commands return JSON. Parse and present the results to the user in a readable format.
+Example workflow:
+- User: "有什么新消息？" → You run `pivot-cli discuss inbox`, parse JSON, present results
+- User: "发起一个讨论" → You ask for category/title, then run `pivot-cli discuss new ...`
 
 ## Development
 
