@@ -79,18 +79,6 @@ Pivot APP is deployed through the EC platform's Agent management interface:
 3. EC automatically clones the repo and registers all pipelines
 4. Python dependencies (`pyyaml`, `jsonschema`, `requests`) must be available in the EC runtime environment
 
-### For Developers
-
-```bash
-git clone https://github.com/your-org/team-pivot.git
-cd team-pivot
-python -m venv .venv
-source .venv/bin/activate   # Linux/Mac
-# .venv\Scripts\activate    # Windows
-pip install -e ".[dev]"
-pytest
-```
-
 ## CLI Usage
 
 ```bash

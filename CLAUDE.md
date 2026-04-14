@@ -9,23 +9,8 @@ You are working on the **client side** of Team-Pivot, a team discussion manageme
 
 ## Install / Setup
 
-When asked to install, set up, or onboard this project, **read `README.md` first** — it contains the authoritative instructions for different roles (user, admin, developer).
-
-## pivot-cli Setup (quick reference)
-
-1. Check if `pivot-cli` is available:
-   ```bash
-   which pivot-cli 2>/dev/null || echo "not installed"
-   ```
-
-2. If not installed:
-   - **Linux/Mac**: `cp bin/pivot-cli /usr/local/bin/ && chmod +x /usr/local/bin/pivot-cli`
-   - **Windows PowerShell**: Copy `bin/pivot-cli.ps1` to a directory in your PATH, or invoke directly: `powershell -File bin/pivot-cli.ps1`
-
-3. Login:
-   ```bash
-   pivot-cli login --endpoint <EC_ENDPOINT_URL> --token <YOUR_TOKEN>
-   ```
+**STOP — Do NOT run `pip install` or any install command directly.**
+When asked to install, set up, or onboard this project, you MUST read `README.md` first and follow its instructions. README.md has separate guides for users, admins, and developers — the correct steps depend on the role.
 
 ## Usage
 
@@ -45,7 +30,7 @@ All commands return JSON. Parse and present the results to the user in a readabl
 
 ## Development
 
-- Python 3.9+, install dev deps: `pip install -e ".[dev]"`
 - Run tests: `pytest`
 - **Do not auto-commit** without explicit user instruction.
 - `pipelines/` and `tools/` are server-side code (runs on EC). `bin/` is client-side.
+- For dev environment setup, see the "For Developers" section in `README.md`.
