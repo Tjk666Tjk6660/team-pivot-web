@@ -57,35 +57,45 @@ cmd_discuss() {
   local sub="${1:-}"; shift 2>/dev/null || true
   case "$sub" in
     new)
-      local category="${1:-}"; shift 2>/dev/null || true
-      local title="${1:-}"; shift 2>/dev/null || true
-      local draft="" mention="" comments=""
+      local category="" title="" content="" mention="" comments=""
       while [[ $# -gt 0 ]]; do
         case "$1" in
-          --draft)    draft="$2";    shift 2 ;;
+          --category) category="$2"; shift 2 ;;
+          --title)    title="$2";    shift 2 ;;
+          --content)  content="$2";  shift 2 ;;
           --mention)  mention="$2";  shift 2 ;;
           --comments) comments="$2"; shift 2 ;;
-          *) die "Unknown option: $1" ;;
+          *) # positional args: category, title, content
+            if [ -z "$category" ]; then category="$1"
+            elif [ -z "$title" ]; then title="$1"
+            elif [ -z "$content" ]; then content="$1"
+            else die "Unknown option: $1"
+            fi
+            shift ;;
         esac
       done
-      [ -n "$category" ] || die "Usage: pivot-cli discuss new <category> <title> [--draft <path>] [--mention <users>] [--comments <text>]"
-      rpc "app.pivot.discuss-new" "{\"category\":\"${category}\",\"title\":\"${title}\",\"draft_path\":\"${draft}\",\"mention_users\":\"${mention}\",\"mention_comments\":\"${comments}\"}"
+      [ -n "$content" ] || die "Usage: pivot-cli discuss new [category] [title] <content> [--mention <users>] [--comments <text>]"
+      rpc "app.pivot.discuss-new" "{\"category\":\"${category}\",\"title\":\"${title}\",\"content\":\"${content}\",\"mention_users\":\"${mention}\",\"mention_comments\":\"${comments}\"}"
       ;;
     reply)
-      local target="${1:-}"; shift 2>/dev/null || true
-      local draft="" mention="" comments=""
+      local target="" content="" mention="" comments=""
       while [[ $# -gt 0 ]]; do
         case "$1" in
-          --draft)    draft="$2";    shift 2 ;;
+          --content)  content="$2";  shift 2 ;;
           --mention)  mention="$2";  shift 2 ;;
           --comments) comments="$2"; shift 2 ;;
-          *) die "Unknown option: $1" ;;
+          *) # positional args: target, content
+            if [ -z "$target" ]; then target="$1"
+            elif [ -z "$content" ]; then content="$1"
+            else die "Unknown option: $1"
+            fi
+            shift ;;
         esac
       done
       local category="${target%%/*}"
       local thread="${target#*/}"
-      [ -n "$target" ] || die "Usage: pivot-cli discuss reply <category>/<thread> [--draft <path>] [--mention <users>] [--comments <text>]"
-      rpc "app.pivot.discuss-reply" "{\"category\":\"${category}\",\"thread\":\"${thread}\",\"draft_path\":\"${draft}\",\"mention_users\":\"${mention}\",\"mention_comments\":\"${comments}\"}"
+      [ -n "$content" ] || die "Usage: pivot-cli discuss reply <category>/<thread> <content> [--mention <users>] [--comments <text>]"
+      rpc "app.pivot.discuss-reply" "{\"category\":\"${category}\",\"thread\":\"${thread}\",\"content\":\"${content}\",\"mention_users\":\"${mention}\",\"mention_comments\":\"${comments}\"}"
       ;;
     list)
       local category="${1:-}"
@@ -156,8 +166,8 @@ Usage: pivot-cli <command> [options]
 
 Commands:
   login --endpoint <url> --token <token>    Save credentials
-  discuss new <category> <title> [options]  Start a new discussion
-  discuss reply <category>/<thread> [opts]  Reply to a discussion
+  discuss new [cat] [title] <content>        Start a new discussion
+  discuss reply <cat>/<thread> <content>    Reply to a discussion
   discuss list [category]                   List discussions
   discuss inbox                             Show unread
   discuss read <category>/<thread>          Read a discussion
@@ -167,7 +177,7 @@ Commands:
   file fetch <path> [<path2> ...]           Fetch files
 
 Options for new/reply:
-  --draft <path>       Path to draft markdown file
+  --content <text>     Discussion content (required for new/reply)
   --mention <users>    Comma-separated user names to @mention
   --comments <text>    Comment attached to mentions
 

@@ -54,27 +54,21 @@ This installs `pivot-cli` to your PATH, registers the `/pivot-cli` skill in Clau
 pivot-cli login --endpoint https://your-tenant.saas.enclaws.com --token <your-token>
 ```
 
-### For other AI tools / manual CLI use
+### Manual CLI setup (for users, not AI tools)
 
-**Requirements:** `curl` (pre-installed on most systems)
+> **Note for AI tools:** Do NOT execute the steps below on behalf of the user. These are manual instructions for the user to follow in their own terminal.
 
-**Linux / macOS:**
-```bash
-git clone https://github.com/hashSTACS-Global/team-pivot.git
-sudo cp team-pivot/bin/pivot-cli /usr/local/bin/
-chmod +x /usr/local/bin/pivot-cli
-```
+**Prerequisites:** `git`, `curl`
 
-**Windows (PowerShell):**
-```powershell
-git clone https://github.com/hashSTACS-Global/team-pivot.git
-Copy-Item team-pivot\bin\pivot-cli.ps1 "$HOME\bin\pivot-cli.ps1"
-```
+**Steps:**
 
-**Login:**
-```bash
-pivot-cli login --endpoint https://your-tenant.saas.enclaws.com --token <your-token>
-```
+1. Clone the repo: `git clone https://github.com/hashSTACS-Global/team-pivot.git`
+2. Add `team-pivot/bin/` to your system PATH
+   - **Linux / macOS:** copy `bin/pivot-cli` to `/usr/local/bin/`
+   - **Windows:** copy `bin/pivot-cli.cmd` and `bin/pivot-cli.ps1` to a directory in your PATH, or add `bin\` to your PATH environment variable
+3. Restart your terminal
+4. Login: `pivot-cli login --endpoint <your-endpoint> --token <your-token>`
+5. Verify: `pivot-cli help`
 
 ### For EC Administrators (server side)
 
@@ -89,8 +83,8 @@ Pivot APP is deployed through the EC platform's Agent management interface:
 
 ```bash
 # Discussion management
-pivot-cli discuss new <category> <title> [--draft <path>] [--mention <users>]
-pivot-cli discuss reply <category>/<thread> [--draft <path>] [--mention <users>]
+pivot-cli discuss new [category] [title] <content> [--mention <users>] [--comments <text>]
+pivot-cli discuss reply <category>/<thread> <content> [--mention <users>] [--comments <text>]
 pivot-cli discuss list [category]
 pivot-cli discuss inbox
 pivot-cli discuss read <category>/<thread>

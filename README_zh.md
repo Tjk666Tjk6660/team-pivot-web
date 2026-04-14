@@ -39,36 +39,36 @@ Team-Pivot 通过 Git 仓库管理结构化的团队讨论。AI Agent（Pivot Ag
 
 ## 安装
 
-### 用户 / AI 工具（客户端）
+### Claude Code 用户
 
-**依赖**：`curl`（大多数系统预装）
-
-**Linux / macOS：**
+**一键安装：**
 ```bash
-# 方式 1：从 repo 安装
-git clone https://github.com/your-org/team-pivot.git
-sudo cp team-pivot/bin/pivot-cli /usr/local/bin/
-chmod +x /usr/local/bin/pivot-cli
-
-# 方式 2：直接下载
-curl -sL https://raw.githubusercontent.com/your-org/team-pivot/main/bin/pivot-cli -o /usr/local/bin/pivot-cli
-chmod +x /usr/local/bin/pivot-cli
+git clone https://github.com/hashSTACS-Global/team-pivot.git
+bash team-pivot/bin/install.sh
 ```
 
-**Windows (PowerShell)：**
-```powershell
-# 克隆后直接用
-git clone https://github.com/your-org/team-pivot.git
-# 执行：powershell -File team-pivot\bin\pivot-cli.ps1 <command>
-
-# 或复制到 PATH 中的目录
-Copy-Item team-pivot\bin\pivot-cli.ps1 "$HOME\bin\pivot-cli.ps1"
-```
+安装脚本会把 `pivot-cli` 加入 PATH、在 Claude Code 中注册 `/pivot-cli` 技能并配置权限。安装完成后重启 Claude Code，即可直接使用 `/pivot-cli` 命令。
 
 **登录：**
 ```bash
 pivot-cli login --endpoint https://your-tenant.saas.enclaws.com --token <your-token>
 ```
+
+### 手动 CLI 安装（面向用户，非 AI 工具）
+
+> **AI 工具注意：** 不要替用户执行以下步骤。这些是用户在自己终端中手动操作的指引。
+
+**前置依赖：** `git`、`curl`
+
+**步骤：**
+
+1. 克隆仓库：`git clone https://github.com/hashSTACS-Global/team-pivot.git`
+2. 将 `team-pivot/bin/` 加入系统 PATH
+   - **Linux / macOS：** 将 `bin/pivot-cli` 复制到 `/usr/local/bin/`
+   - **Windows：** 将 `bin/pivot-cli.cmd` 和 `bin/pivot-cli.ps1` 复制到 PATH 中的目录，或将 `bin\` 添加到 PATH 环境变量
+3. 重启终端
+4. 登录：`pivot-cli login --endpoint <你的服务端地址> --token <你的令牌>`
+5. 验证：`pivot-cli help`
 
 ### EC 管理员（服务端）
 
@@ -79,24 +79,12 @@ Pivot APP 通过 EC 平台的 Agent 管理后台部署：
 3. EC 自动克隆 repo 并注册所有 pipeline
 4. EC 运行环境需要预装 Python 依赖（`pyyaml`、`jsonschema`、`requests`）
 
-### 开发者
-
-```bash
-git clone https://github.com/your-org/team-pivot.git
-cd team-pivot
-python -m venv .venv
-source .venv/bin/activate   # Linux/Mac
-# .venv\Scripts\activate    # Windows
-pip install -e ".[dev]"
-pytest
-```
-
 ## CLI 使用
 
 ```bash
 # 讨论管理
-pivot-cli discuss new <category> <title> [--draft <path>] [--mention <users>]
-pivot-cli discuss reply <category>/<thread> [--draft <path>] [--mention <users>]
+pivot-cli discuss new [category] [title] <content> [--mention <users>] [--comments <text>]
+pivot-cli discuss reply <category>/<thread> <content> [--mention <users>] [--comments <text>]
 pivot-cli discuss list [category]
 pivot-cli discuss inbox
 pivot-cli discuss read <category>/<thread>

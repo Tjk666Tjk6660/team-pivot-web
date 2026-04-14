@@ -29,17 +29,17 @@ pivot-cli discuss inbox
 ```
 Show unread messages. Ask if the user wants to read any thread.
 
-### `/pivot-cli new <category> <title>`
+### `/pivot-cli new [category] [title] <content>`
 ```bash
-pivot-cli discuss new <category> "<title>" [--draft <path>] [--mention <users>] [--comments <text>]
+pivot-cli discuss new [category] [title] "<content>" [--mention <users>] [--comments <text>]
 ```
-Start a new discussion. If the user doesn't specify a draft, ask if they want to write one first.
+Start a new discussion. `content` is required. `category` and `title` are optional — the server can infer them from content.
 
-### `/pivot-cli reply <category>/<thread>`
+### `/pivot-cli reply <category>/<thread> <content>`
 ```bash
-pivot-cli discuss reply <category>/<thread> [--draft <path>] [--mention <users>] [--comments <text>]
+pivot-cli discuss reply <category>/<thread> "<content>" [--mention <users>] [--comments <text>]
 ```
-Reply to an existing discussion.
+Reply to an existing discussion. `content` is required.
 
 ### `/pivot-cli read <category>/<thread>`
 ```bash

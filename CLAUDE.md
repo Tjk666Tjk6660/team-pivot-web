@@ -20,8 +20,8 @@ Available commands:
 ```bash
 pivot-cli discuss list [category]                    # List discussions
 pivot-cli discuss inbox                              # Unread messages
-pivot-cli discuss new <category> <title> [--draft <path>] [--mention <users>]
-pivot-cli discuss reply <category>/<thread> [--draft <path>] [--mention <users>]
+pivot-cli discuss new [category] [title] <content> [--mention <users>] [--comments <text>]
+pivot-cli discuss reply <category>/<thread> <content> [--mention <users>] [--comments <text>]
 pivot-cli discuss read <category>/<thread>           # Read a discussion
 pivot-cli discuss close <category>/<thread>          # Close
 pivot-cli discuss pending <category>/<thread>        # Shelve

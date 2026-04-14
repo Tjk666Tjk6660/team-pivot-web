@@ -80,25 +80,27 @@ function Cmd-Discuss($a) {
 
     switch ($sub) {
         "new" {
-            $parsed = Parse-Named-Args $rest @("draft","mention","comments")
+            $parsed = Parse-Named-Args $rest @("category","title","content","mention","comments")
             $pos = $parsed["_positional"]
-            $cat = if ($pos.Count -gt 0) { $pos[0] } else { "" }
-            $title = if ($pos.Count -gt 1) { $pos[1] } else { "" }
-            if (-not $cat) { Write-Err "Usage: pivot-cli discuss new <category> <title> [--draft <path>] [--mention <users>]" }
+            $cat = if ($parsed["category"]) { $parsed["category"] } elseif ($pos.Count -gt 0) { $pos[0] } else { "" }
+            $title = if ($parsed["title"]) { $parsed["title"] } elseif ($pos.Count -gt 1) { $pos[1] } else { "" }
+            $content = if ($parsed["content"]) { $parsed["content"] } elseif ($pos.Count -gt 2) { $pos[2] } else { "" }
+            if (-not $content) { Write-Err "Usage: pivot-cli discuss new [category] [title] <content> [--mention <users>] [--comments <text>]" }
             Invoke-Rpc "app.pivot.discuss-new" @{
-                category=$cat; title=$title
-                draft_path=$parsed["draft"]; mention_users=$parsed["mention"]; mention_comments=$parsed["comments"]
+                category=$cat; title=$title; content=$content
+                mention_users=$parsed["mention"]; mention_comments=$parsed["comments"]
             }
         }
         "reply" {
-            $parsed = Parse-Named-Args $rest @("draft","mention","comments")
+            $parsed = Parse-Named-Args $rest @("content","mention","comments")
             $pos = $parsed["_positional"]
             $target = if ($pos.Count -gt 0) { $pos[0] } else { "" }
-            if (-not $target) { Write-Err "Usage: pivot-cli discuss reply <category>/<thread> [--draft <path>]" }
+            $content = if ($parsed["content"]) { $parsed["content"] } elseif ($pos.Count -gt 1) { $pos[1] } else { "" }
+            if (-not $content) { Write-Err "Usage: pivot-cli discuss reply <category>/<thread> <content> [--mention <users>] [--comments <text>]" }
             $parts = $target -split "/", 2
             Invoke-Rpc "app.pivot.discuss-reply" @{
-                category=$parts[0]; thread=$parts[1]
-                draft_path=$parsed["draft"]; mention_users=$parsed["mention"]; mention_comments=$parsed["comments"]
+                category=$parts[0]; thread=$parts[1]; content=$content
+                mention_users=$parsed["mention"]; mention_comments=$parsed["comments"]
             }
         }
         "list" {
@@ -152,8 +154,8 @@ Usage: pivot-cli <command> [options]
 
 Commands:
   login --endpoint <url> --token <token>    Save credentials
-  discuss new <category> <title> [options]  Start a new discussion
-  discuss reply <category>/<thread> [opts]  Reply to a discussion
+  discuss new [cat] [title] <content>        Start a new discussion
+  discuss reply <cat>/<thread> <content>    Reply to a discussion
   discuss list [category]                   List discussions
   discuss inbox                             Show unread
   discuss read <category>/<thread>          Read a discussion
