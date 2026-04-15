@@ -17,25 +17,38 @@
 
 ### 先判断你所处的环境
 
-查看当前工作目录：
+执行下面的代码段自动检测 tenant 根目录：
 
 ```bash
-pwd
+TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')"
+if [ "$TENANT_ROOT" = "$(pwd)" ] || [ ! -d "$TENANT_ROOT" ]; then
+  echo "NOT_IN_TENANT_SANDBOX"
+else
+  echo "TENANT_ROOT=$TENANT_ROOT"
+fi
 ```
 
-- 如果路径以 `users/<unionId>/workspace/` 结尾（每用户独立沙箱），走 **Path A**。
-- 否则（普通本地机器），走 **Path B**。
+- 输出以 `TENANT_ROOT=/...` 开头 → 走 **Path A**（沙箱聊天助手）
+- 输出 `NOT_IN_TENANT_SANDBOX` → 走 **Path B**（本地机器）
 
 ### Path A — 沙箱工作区
 
-tenant 根目录在当前 cwd 的上两级。
+`$TENANT_ROOT` 变量已在上一步探测出来。
 
 #### Step 1 — 移动代码 + 注册 skill
 
 ```bash
-mv team-pivot ../../team-pivot
-mkdir -p ../../skills/pivot
-cp ../../team-pivot/SKILL.md ../../skills/pivot/SKILL.md
+# 把刚 clone 下来的代码挪到 tenant 根目录（共享位置，所有用户 session 都能发现）
+if [ -d team-pivot ]; then
+  rm -rf "$TENANT_ROOT/team-pivot"
+  mv team-pivot "$TENANT_ROOT/team-pivot"
+else
+  git clone https://github.com/hashSTACS-Global/team-pivot.git "$TENANT_ROOT/team-pivot"
+fi
+
+# 注册 skill 入口（用 cp 不用 symlink，跨平台兼容）
+mkdir -p "$TENANT_ROOT/skills/pivot"
+cp "$TENANT_ROOT/team-pivot/SKILL.md" "$TENANT_ROOT/skills/pivot/SKILL.md"
 ```
 
 #### Step 2 — 通过飞书表单卡片收集配置
@@ -59,10 +72,16 @@ questions:
 
 #### Step 3 — 收到用户答复后（新一轮对话）
 
+重新探测 `TENANT_ROOT`（变量在对话轮次之间会丢失）：
+
+```bash
+TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')"
+```
+
 写入配置文件：
 
 ```bash
-cat > ../../team-pivot/.pivot-config.yaml <<EOF
+cat > "$TENANT_ROOT/team-pivot/.pivot-config.yaml" <<EOF
 workspace_repo: <用户填写的 WORKSPACE_GIT_URL>
 git_token: <用户填写的 WORKSPACE_GIT_TOKEN>
 git_user: pivot-bot
@@ -75,7 +94,7 @@ Clone 讨论数据仓库：
 
 ```bash
 export GIT_HTTPS_TOKEN="<用户填写的 WORKSPACE_GIT_TOKEN>"
-cd ../../team-pivot
+cd "$TENANT_ROOT/team-pivot"
 git -c credential.helper='!f() { echo username=x-access-token; echo password='$GIT_HTTPS_TOKEN'; }; f' \
   clone "<用户填写的 WORKSPACE_GIT_URL>" workspace
 ```
@@ -149,20 +168,21 @@ Team-Pivot 以 **EC skill** 形式发布。EC 机器人的 LLM 充当 pipeline r
 AI 助手会 clone 仓库、读本 README，并按顶部的 **post-clone 指令** 继续执行——
 包括调用飞书表单卡片向你收集数据仓库 URL 和 git token。
 
-如果某种原因助手没有继续执行，你可以发完整命令兜底：
+如果某种原因助手没有继续执行，你可以发下面的兜底命令
+（它会自动探测 tenant 根目录，不依赖助手的当前 cwd）：
 
 ```
-请完成 team-pivot 安装：mv team-pivot ../../team-pivot && mkdir -p ../../skills/pivot && cp ../../team-pivot/SKILL.md ../../skills/pivot/SKILL.md
+请完成 team-pivot 安装：TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')" && rm -rf "$TENANT_ROOT/team-pivot" && mv team-pivot "$TENANT_ROOT/team-pivot" && mkdir -p "$TENANT_ROOT/skills/pivot" && cp "$TENANT_ROOT/team-pivot/SKILL.md" "$TENANT_ROOT/skills/pivot/SKILL.md"
 ```
 
 **更新：**
 ```
-请更新 team-pivot：cd ../../team-pivot && git pull && cp SKILL.md ../skills/pivot/SKILL.md
+请更新 team-pivot：TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')" && cd "$TENANT_ROOT/team-pivot" && git pull && cp SKILL.md "$TENANT_ROOT/skills/pivot/SKILL.md"
 ```
 
 **卸载：**
 ```
-请卸载 team-pivot：rm -rf ../../team-pivot ../../skills/pivot
+请卸载 team-pivot：TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')" && rm -rf "$TENANT_ROOT/team-pivot" "$TENANT_ROOT/skills/pivot"
 ```
 
 **安装后的目录布局：**

@@ -17,26 +17,39 @@ immediately. Do not stop or ask the user for confirmation until Step 3 succeeds.
 
 ### Detect your environment
 
-Check the current working directory:
+Run this snippet to detect the tenant root directory:
 
 ```bash
-pwd
+TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')"
+if [ "$TENANT_ROOT" = "$(pwd)" ] || [ ! -d "$TENANT_ROOT" ]; then
+  echo "NOT_IN_TENANT_SANDBOX"
+else
+  echo "TENANT_ROOT=$TENANT_ROOT"
+fi
 ```
 
-- If it ends in `users/<unionId>/workspace/` (a sandboxed per-user workspace),
-  follow **Path A**.
-- Otherwise (a regular local machine), follow **Path B**.
+- If the output starts with `TENANT_ROOT=/...` → follow **Path A** (sandboxed chat agent).
+- If it prints `NOT_IN_TENANT_SANDBOX` → follow **Path B** (local machine).
 
 ### Path A — Sandboxed workspace
 
-The tenant root is two levels up from your cwd.
+Your `$TENANT_ROOT` variable is already set from the detection step above.
 
 #### Step 1 — Relocate code and register the skill
 
 ```bash
-mv team-pivot ../../team-pivot
-mkdir -p ../../skills/pivot
-cp ../../team-pivot/SKILL.md ../../skills/pivot/SKILL.md
+# Move the freshly cloned repo to the tenant root (shared location,
+# discoverable across user sessions). Handle the case where it already exists.
+if [ -d team-pivot ]; then
+  rm -rf "$TENANT_ROOT/team-pivot"
+  mv team-pivot "$TENANT_ROOT/team-pivot"
+else
+  git clone https://github.com/hashSTACS-Global/team-pivot.git "$TENANT_ROOT/team-pivot"
+fi
+
+# Register the skill entry (copy, not symlink, for portability)
+mkdir -p "$TENANT_ROOT/skills/pivot"
+cp "$TENANT_ROOT/team-pivot/SKILL.md" "$TENANT_ROOT/skills/pivot/SKILL.md"
 ```
 
 #### Step 2 — Collect configuration from the user
@@ -61,10 +74,16 @@ answers will arrive as a new message.
 
 #### Step 3 — On receiving the user's answers (new conversation turn)
 
+Re-detect `TENANT_ROOT` (the variable may be lost between turns):
+
+```bash
+TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')"
+```
+
 Write the configuration file:
 
 ```bash
-cat > ../../team-pivot/.pivot-config.yaml <<EOF
+cat > "$TENANT_ROOT/team-pivot/.pivot-config.yaml" <<EOF
 workspace_repo: <user's WORKSPACE_GIT_URL>
 git_token: <user's WORKSPACE_GIT_TOKEN>
 git_user: pivot-bot
@@ -77,7 +96,7 @@ Clone the workspace data repo:
 
 ```bash
 export GIT_HTTPS_TOKEN="<user's WORKSPACE_GIT_TOKEN>"
-cd ../../team-pivot
+cd "$TENANT_ROOT/team-pivot"
 git -c credential.helper='!f() { echo username=x-access-token; echo password='$GIT_HTTPS_TOKEN'; }; f' \
   clone "<user's WORKSPACE_GIT_URL>" workspace
 ```
@@ -155,20 +174,21 @@ The AI assistant will clone the repo, read this README, and follow the
 Feishu form card to collect your workspace repo URL and git token.
 
 If for some reason the assistant does not follow through automatically,
-you can send it the full install command as a fallback:
+you can send it the fallback install command (uses auto-detection of
+tenant root — works regardless of the assistant's current working dir):
 
 ```
-请完成 team-pivot 安装：mv team-pivot ../../team-pivot && mkdir -p ../../skills/pivot && cp ../../team-pivot/SKILL.md ../../skills/pivot/SKILL.md
+请完成 team-pivot 安装：TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')" && rm -rf "$TENANT_ROOT/team-pivot" && mv team-pivot "$TENANT_ROOT/team-pivot" && mkdir -p "$TENANT_ROOT/skills/pivot" && cp "$TENANT_ROOT/team-pivot/SKILL.md" "$TENANT_ROOT/skills/pivot/SKILL.md"
 ```
 
 **Update:**
 ```
-请更新 team-pivot：cd ../../team-pivot && git pull && cp SKILL.md ../skills/pivot/SKILL.md
+请更新 team-pivot：TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')" && cd "$TENANT_ROOT/team-pivot" && git pull && cp SKILL.md "$TENANT_ROOT/skills/pivot/SKILL.md"
 ```
 
 **Uninstall:**
 ```
-请卸载 team-pivot：rm -rf ../../team-pivot ../../skills/pivot
+请卸载 team-pivot：TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')" && rm -rf "$TENANT_ROOT/team-pivot" "$TENANT_ROOT/skills/pivot"
 ```
 
 **Layout after install:**

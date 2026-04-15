@@ -19,19 +19,26 @@ Team-Pivot 的**代码仓库**和 **EC skill 注册入口**在不同位置：
 - **EC skill 入口**（EC 扫描发现）：`<tenant_dir>/skills/pivot/SKILL.md`
 - **代码仓库**（真正执行 pipeline 的地方）：`<tenant_dir>/team-pivot/`
 
-你的 Bash 沙箱 cwd 永远是 `<tenant_dir>/users/<unionId>/workspace/`。从 cwd 出发，**代码仓库的相对路径始终是 `../../team-pivot`**。
+你的 Bash 沙箱 cwd 落在 `<tenant_dir>/users/<unionId>/...` 下的某个位置——
+具体深度（是否有 `workspace/` 子目录等）视 EC 版本而定。**不要用 `../../` 这种固定层级**，
+改用从 cwd 反推 tenant 根的方式。
 
-**每次使用前先设置 REPO_PATH 变量**（所有后续命令都用它）：
+**每次调 pipeline 前**，先初始化 `REPO_PATH` 变量（所有后续命令都用它）：
 
 ```bash
-export REPO_PATH="$(cd ../../team-pivot 2>/dev/null && pwd)"
-if [ -z "$REPO_PATH" ]; then
-  echo "Team-Pivot code not found. Install it with: git clone https://github.com/hashSTACS-Global/team-pivot.git ../../team-pivot && cp ../../team-pivot/SKILL.md ../../skills/pivot/SKILL.md"
+TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')"
+if [ "$TENANT_ROOT" = "$(pwd)" ] || [ ! -d "$TENANT_ROOT" ]; then
+  echo "ERROR: cannot locate tenant root from cwd=$(pwd). Are you inside an EC sandbox?"
+  exit 1
+fi
+export REPO_PATH="$TENANT_ROOT/team-pivot"
+if [ ! -d "$REPO_PATH" ]; then
+  echo "ERROR: Team-Pivot not installed at $REPO_PATH. Run the install flow first (see README.md)."
   exit 1
 fi
 ```
 
-从这里开始，`$REPO_PATH` 指向代码仓库根（含 `pipelines/`、`tools/`、`schemas/`）。
+从这里开始，`$REPO_PATH` 指向代码仓库根（含 `pipelines/`、`tools/`、`schemas/`、`workspace/`）。
 
 ## 配置检测（兜底）
 
