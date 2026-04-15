@@ -1,7 +1,7 @@
 # Team-Pivot 配置文件
 # 空字段将在首次使用时通过飞书卡片引导填写
 
-version: 0.1.0
+version: 0.1.1
 
 data_space_repo:
 git_token:
