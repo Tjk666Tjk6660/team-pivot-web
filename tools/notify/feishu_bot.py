@@ -1,11 +1,10 @@
 """Feishu Bot API adapter. Sends interactive cards via application messaging.
 
-Replaces the webhook adapter to enable real @mention. EC manages token
-acquisition and chat discovery; this adapter only sends cards.
+Auto-discovers all groups the bot has joined via Feishu API, then broadcasts
+cards to all of them. No manual FEISHU_CHAT_IDS configuration needed.
 
 ENV vars required (injected by EC):
   FEISHU_ACCESS_TOKEN — tenant_access_token (cached by EC)
-  FEISHU_CHAT_IDS — JSON array of chat_id strings (cached by EC)
   PIVOT_USER_MAP — {name: {feishu_id: "ou_xxx"}} (existing)
 """
 from __future__ import annotations
@@ -22,23 +21,45 @@ class FeishuBotConfigError(Exception):
 
 
 class FeishuBotAdapter:
-    def __init__(self, access_token: str, chat_ids: list[str]):
+    def __init__(self, access_token: str):
         self.access_token = access_token
-        self.chat_ids = chat_ids
 
     @classmethod
     def from_env(cls) -> "FeishuBotAdapter":
         token = os.environ.get("FEISHU_ACCESS_TOKEN", "")
         if not token:
             raise FeishuBotConfigError("FEISHU_ACCESS_TOKEN not set")
-        chat_ids_raw = os.environ.get("FEISHU_CHAT_IDS", "[]")
-        try:
-            chat_ids = json.loads(chat_ids_raw)
-        except json.JSONDecodeError:
-            chat_ids = []
-        if not chat_ids:
-            raise FeishuBotConfigError("FEISHU_CHAT_IDS is empty")
-        return cls(access_token=token, chat_ids=chat_ids)
+        return cls(access_token=token)
+
+    def _get_bot_chats(self) -> list[str]:
+        """Auto-discover all groups the bot has joined via Feishu API."""
+        chat_ids: list[str] = []
+        page_token = ""
+        while True:
+            params = {"page_size": 100}
+            if page_token:
+                params["page_token"] = page_token
+            try:
+                resp = requests.get(
+                    "https://open.feishu.cn/open-apis/im/v1/chats",
+                    params=params,
+                    headers={"Authorization": f"Bearer {self.access_token}"},
+                    timeout=10,
+                )
+                data = resp.json()
+                if resp.status_code != 200 or data.get("code") != 0:
+                    break
+                items = data.get("data", {}).get("items", [])
+                for item in items:
+                    chat_id = item.get("chat_id", "")
+                    if chat_id:
+                        chat_ids.append(chat_id)
+                page_token = data.get("data", {}).get("page_token", "")
+                if not data.get("data", {}).get("has_more", False):
+                    break
+            except requests.RequestException:
+                break
+        return chat_ids
 
     def send_card_to_all(
         self,
@@ -50,7 +71,7 @@ class FeishuBotAdapter:
         mention_names: Optional[list[str]] = None,
         user_map: Optional[dict[str, dict[str, str]]] = None,
     ) -> int:
-        """Send a card to all bot groups. Returns count of successful sends."""
+        """Send a card to all groups the bot has joined. Returns count of successful sends."""
         if mention_names and user_map is None:
             from tools.config import get_user_map
             user_map = get_user_map()
@@ -64,8 +85,10 @@ class FeishuBotAdapter:
             user_map=user_map or {},
         )
         card_json = json.dumps(card)
+
+        chat_ids = self._get_bot_chats()
         sent = 0
-        for chat_id in self.chat_ids:
+        for chat_id in chat_ids:
             try:
                 resp = requests.post(
                     "https://open.feishu.cn/open-apis/im/v1/messages",

@@ -75,7 +75,6 @@ class TestPublishNotification:
             "PIVOT_DATA_SPACE_DIR": str(tmp_git_repo),
             "PIVOT_APP_NAME": "pivot",
             "FEISHU_ACCESS_TOKEN": "t-test",
-            "FEISHU_CHAT_IDS": json.dumps([mock_feishu_server["url"].split("//")[1]]),
             "PIVOT_USER_MAP": '{"ken": {"feishu_id": "ou_ken"}}',
         }
         proc = subprocess.run(
