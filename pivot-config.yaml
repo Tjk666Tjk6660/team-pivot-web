@@ -3,8 +3,14 @@
 
 version: 0.1.1
 
+# --- 数据仓库 ---
 data_space_repo:
 git_token:
 git_user: pivot-bot
 git_email: pivot-bot@enclaws.local
 admin_user:
+
+# --- 升级 ---
+upgrade_repo: https://github.com/hashSTACS-Global/team-pivot.git
+upgrade_user:
+upgrade_token:
