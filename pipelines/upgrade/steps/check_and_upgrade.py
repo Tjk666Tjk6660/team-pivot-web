@@ -55,7 +55,6 @@ def main():
     config = _read_config(repo_path)
     local_version = str(config.get("version", "0.0.0"))
     upgrade_repo = config.get("upgrade_repo", "")
-    upgrade_user = config.get("upgrade_user", "")
     upgrade_token = config.get("upgrade_token", "")
 
     # Check required fields
@@ -90,10 +89,7 @@ def main():
         return
 
     # Build authenticated remote URL
-    if upgrade_user:
-        auth_url = upgrade_repo.replace("https://", f"https://{upgrade_user}:{upgrade_token}@")
-    else:
-        auth_url = upgrade_repo.replace("https://", f"https://x-access-token:{upgrade_token}@")
+    auth_url = upgrade_repo.replace("https://", f"https://x-access-token:{upgrade_token}@")
 
     # Set remote URL with credentials and pull
     try:
