@@ -19,7 +19,7 @@ Team-Pivot 的**代码仓库**和 **EC skill 注册入口**在不同位置：
 - **EC skill 入口**（EC 扫描发现）：`<tenant_dir>/skills/pivot/SKILL.md`
 - **代码仓库**（真正执行 pipeline 的地方）：`<tenant_dir>/team-pivot/`
 
-你（bot）的 Bash 沙箱 cwd 永远是 `<tenant_dir>/users/<openId>/workspace/`。从 cwd 出发，**代码仓库的相对路径始终是 `../../team-pivot`**。
+你的 Bash 沙箱 cwd 永远是 `<tenant_dir>/users/<unionId>/workspace/`。从 cwd 出发，**代码仓库的相对路径始终是 `../../team-pivot`**。
 
 **每次使用前先设置 REPO_PATH 变量**（所有后续命令都用它）：
 
@@ -33,17 +33,18 @@ fi
 
 从这里开始，`$REPO_PATH` 指向代码仓库根（含 `pipelines/`、`tools/`、`schemas/`）。
 
-## 初次使用：配置检测
+## 配置检测（兜底）
 
-**在执行任何 pipeline 之前**，检查配置文件是否存在：
+正常情况下 `.pivot-config.yaml` 和 `workspace/` 目录在**安装阶段**就已创建完成
+（见 README 顶部的 post-clone 指令）。每次执行 pipeline 前先快速校验：
 
 ```bash
-cat $REPO_PATH/.pivot-config.yaml 2>/dev/null
+test -f $REPO_PATH/.pivot-config.yaml && test -d $REPO_PATH/workspace || echo "NEEDS_INIT"
 ```
 
-如果文件不存在或字段缺失，走首次配置流程：
+**如果任一检查失败**（通常是安装被中断或配置被误删），走兜底初始化流程：
 
-1. 告诉用户："首次使用 Team-Pivot，需要配置数据仓库"
+1. 告诉用户："检测到 Team-Pivot 尚未完成配置，现在补齐。"
 2. 调用 `feishu_ask_user_question`：
    ```
    questions:
@@ -56,7 +57,7 @@ cat $REPO_PATH/.pivot-config.yaml 2>/dev/null
        options: []
        multiSelect: false
    ```
-3. 用户提交后，把答案写入 `$REPO_PATH/.pivot-config.yaml`：
+3. 用户提交后（新一轮对话），把答案写入 `$REPO_PATH/.pivot-config.yaml`：
    ```yaml
    workspace_repo: <user's answer>
    git_token: <user's answer>
@@ -64,13 +65,15 @@ cat $REPO_PATH/.pivot-config.yaml 2>/dev/null
    git_email: pivot-bot@enclaws.local
    admin_user: ${PIVOT_USER_ID}    # 由 EC 注入，首个完成初始化的人即为管理员
    ```
-4. 第一次 clone workspace 到 `$REPO_PATH/workspace/`：
+4. Clone workspace 到 `$REPO_PATH/workspace/`：
    ```bash
    export WORKSPACE_GIT_URL="..." WORKSPACE_GIT_TOKEN="..."
    git clone -c "credential.helper=!f() { echo username=x-access-token; echo password=$WORKSPACE_GIT_TOKEN; }; f" \
      $WORKSPACE_GIT_URL $REPO_PATH/workspace
    ```
 5. 告诉用户："✅ 配置完成，管理员：${PIVOT_USER_ID}"
+
+**如果检查通过**，直接进入 Pipeline 执行协议，不要询问用户。
 
 ## Pipeline 执行协议
 

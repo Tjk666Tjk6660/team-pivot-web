@@ -4,6 +4,104 @@ A team discussion management system powered by AI, built on Markdown + Git. Pivo
 
 [中文文档](README_zh.md)
 
+<!-- ================================================================
+  Post-clone instructions for AI agents.
+  If you just cloned this repo, installation is NOT complete.
+  Follow the steps below before telling the user you are done.
+  ================================================================ -->
+
+## If you just cloned this repo (AI assistant reading this)
+
+You are not done after `git clone`. Continue with the steps below
+immediately. Do not stop or ask the user for confirmation until Step 3 succeeds.
+
+### Detect your environment
+
+Check the current working directory:
+
+```bash
+pwd
+```
+
+- If it ends in `users/<unionId>/workspace/` (a sandboxed per-user workspace),
+  follow **Path A**.
+- Otherwise (a regular local machine), follow **Path B**.
+
+### Path A — Sandboxed workspace
+
+The tenant root is two levels up from your cwd.
+
+#### Step 1 — Relocate code and register the skill
+
+```bash
+mv team-pivot ../../team-pivot
+mkdir -p ../../skills/pivot
+cp ../../team-pivot/SKILL.md ../../skills/pivot/SKILL.md
+```
+
+#### Step 2 — Collect configuration from the user
+
+Call the `feishu_ask_user_question` tool with exactly these two questions
+(do NOT add extras — tenantId / userId / Feishu access token are auto-injected):
+
+```
+questions:
+  - question: "请提供讨论数据仓库的 Git URL（HTTPS，如 https://github.com/your-org/teamDocs.git）"
+    header: "数据仓库 URL"
+    options: []
+    multiSelect: false
+  - question: "请提供数据仓库的 Git Token（HTTPS PAT，需具备 commit/push 权限）。⚠️ 建议在私聊中完成，避免群内泄露。"
+    header: "Git Token"
+    options: []
+    multiSelect: false
+```
+
+The tool returns `status: pending` immediately. Stop responding. The user's
+answers will arrive as a new message.
+
+#### Step 3 — On receiving the user's answers (new conversation turn)
+
+Write the configuration file:
+
+```bash
+cat > ../../team-pivot/.pivot-config.yaml <<EOF
+workspace_repo: <user's WORKSPACE_GIT_URL>
+git_token: <user's WORKSPACE_GIT_TOKEN>
+git_user: pivot-bot
+git_email: pivot-bot@enclaws.local
+admin_user: ${PIVOT_USER_ID}
+EOF
+```
+
+Clone the workspace data repo:
+
+```bash
+export GIT_HTTPS_TOKEN="<user's WORKSPACE_GIT_TOKEN>"
+cd ../../team-pivot
+git -c credential.helper='!f() { echo username=x-access-token; echo password='$GIT_HTTPS_TOKEN'; }; f' \
+  clone "<user's WORKSPACE_GIT_URL>" workspace
+```
+
+Finally tell the user:
+
+> ✅ Team-Pivot 已安装并初始化。管理员：${PIVOT_USER_ID}。请开启新会话以激活技能。
+
+### Path B — Local machine (Claude Code / Cursor / etc.)
+
+Run the local installer:
+
+```bash
+bash team-pivot/bin/install.sh
+```
+
+Then follow its output to complete login.
+
+<!-- ================================================================
+  End of post-clone instructions for AI agents.
+  Below is reference documentation for human readers and fallback
+  manual install paths.
+  ================================================================ -->
+
 ## What It Does
 
 Team-Pivot manages structured team discussions through a Git repository. An AI agent (Pivot Agent) handles document creation, status tracking, notifications, and workflow orchestration. Humans contribute ideas and decisions; AI drives the organizational machinery.
@@ -46,44 +144,43 @@ below.
 ## Installation
 
 <!-- ENCLAWS-BOT-INSTALL-START -->
-### For EnClaws bot users (chat-driven install)
+### Chat-driven install (human user guide)
 
-The EC bot runs in a per-user sandbox whose cwd is `<tenant_dir>/users/<openId>/workspace/`. All install commands use the relative path `../../` to reach the tenant root.
+Normally you just send a message like:
 
-Tell the EC bot in chat (Feishu or web):
+> 帮我安装 https://github.com/hashSTACS-Global/team-pivot.git
 
-- **Install:**
-  ```
-  请安装 team-pivot：git clone https://github.com/hashSTACS-Global/team-pivot.git ../../team-pivot && mkdir -p ../../skills/pivot && cp ../../team-pivot/SKILL.md ../../skills/pivot/SKILL.md
-  ```
-- **Update:**
-  ```
-  请更新 team-pivot：cd ../../team-pivot && git pull && cp SKILL.md ../skills/pivot/SKILL.md
-  ```
-- **Uninstall:**
-  ```
-  请卸载 team-pivot：rm -rf ../../team-pivot ../../skills/pivot
-  ```
+The AI assistant will clone the repo, read this README, and follow the
+**post-clone instructions** at the top of this file — including calling a
+Feishu form card to collect your workspace repo URL and git token.
+
+If for some reason the assistant does not follow through automatically,
+you can send it the full install command as a fallback:
+
+```
+请完成 team-pivot 安装：mv team-pivot ../../team-pivot && mkdir -p ../../skills/pivot && cp ../../team-pivot/SKILL.md ../../skills/pivot/SKILL.md
+```
+
+**Update:**
+```
+请更新 team-pivot：cd ../../team-pivot && git pull && cp SKILL.md ../skills/pivot/SKILL.md
+```
+
+**Uninstall:**
+```
+请卸载 team-pivot：rm -rf ../../team-pivot ../../skills/pivot
+```
 
 **Layout after install:**
 ```
 <tenant_dir>/
 ├── skills/pivot/SKILL.md    ← EC skill discovery entry (copy)
-└── team-pivot/              ← actual code (pipelines/, tools/, etc.)
+└── team-pivot/              ← actual code (pipelines/, tools/, workspace/, .pivot-config.yaml)
 ```
 
-After install, **start a new session** so EC re-discovers skills.
+After install, **start a new session** so EC re-discovers the skill.
 
-The first time you actually use Team-Pivot in chat (e.g. "发起一个讨论" / "看看讨论列表"), the bot will ask you for:
-
-1. **数据仓库 URL** — your team's discussion data repo (e.g. `https://github.com/your-org/teamDocs.git`)
-2. **Git Token** — an HTTPS PAT with commit/push access
-
-It collects these via a Feishu form card and stores them at `<tenant_dir>/team-pivot/.pivot-config.yaml`. The first user to complete this becomes the admin.
-
-> ⚠️ Do this in a **private chat** with the bot, not in a group, to avoid token exposure.
-
-The bot reads `SKILL.md` (loaded from `skills/pivot/SKILL.md` but resolved to `team-pivot/` for all operations) — you don't need to memorize anything.
+> ⚠️ Always install in a **private chat** with the assistant, never a group — the git token is collected via card and would otherwise be visible to other members.
 <!-- ENCLAWS-BOT-INSTALL-END -->
 
 ### For Claude Code users (local pivot-cli, separate path)
