@@ -47,11 +47,29 @@ Team-Pivot 以 **EC skill** 形式发布。EC 机器人的 LLM 充当 pipeline r
 <!-- ENCLAWS-BOT-INSTALL-START -->
 ### EnClaws 飞书机器人用户（chat 安装）
 
+EC 机器人在每用户独立的沙箱中运行，其 cwd 为 `<tenant_dir>/users/<openId>/workspace/`。所有安装命令都通过相对路径 `../../` 定位到 tenant 根。
+
 在 EC 机器人的对话（飞书或网页）中告诉它：
 
-- **安装：**  `请安装 team-pivot：git clone https://github.com/hashSTACS-Global/team-pivot.git ~/.enclaws/skills/team-pivot`
-- **更新：**  `请更新 team-pivot：cd ~/.enclaws/skills/team-pivot && git pull`
-- **卸载：** `请卸载 team-pivot：rm -rf ~/.enclaws/skills/team-pivot`
+- **安装：**
+  ```
+  请安装 team-pivot：git clone https://github.com/hashSTACS-Global/team-pivot.git ../../team-pivot && mkdir -p ../../skills/pivot && cp ../../team-pivot/SKILL.md ../../skills/pivot/SKILL.md
+  ```
+- **更新：**
+  ```
+  请更新 team-pivot：cd ../../team-pivot && git pull && cp SKILL.md ../skills/pivot/SKILL.md
+  ```
+- **卸载：**
+  ```
+  请卸载 team-pivot：rm -rf ../../team-pivot ../../skills/pivot
+  ```
+
+**安装后的目录布局：**
+```
+<tenant_dir>/
+├── skills/pivot/SKILL.md    ← EC 扫描的 skill 入口（拷贝）
+└── team-pivot/              ← 真正的代码（pipelines/、tools/ 等）
+```
 
 安装后**开启新会话**，让 EC 重新发现 skill。
 
@@ -60,11 +78,11 @@ Team-Pivot 以 **EC skill** 形式发布。EC 机器人的 LLM 充当 pipeline r
 1. **数据仓库 URL** —— 团队的讨论数据仓库（如 `https://github.com/your-org/teamDocs.git`）
 2. **Git Token** —— 具备 commit/push 权限的 HTTPS PAT
 
-收集后存到 `~/.enclaws/skills/team-pivot/.pivot-config.yaml`。第一个完成初始化的用户即为管理员。
+收集后存到 `<tenant_dir>/team-pivot/.pivot-config.yaml`。第一个完成初始化的用户即为管理员。
 
 > ⚠️ 建议在**与机器人的私聊**中完成首次配置，避免在群里暴露 token。
 
-机器人通过读取 `SKILL.md` 完成所有执行，你不需要记任何命令。
+机器人读取 `SKILL.md`（从 `skills/pivot/SKILL.md` 加载，但所有操作都解析到 `team-pivot/`）完成执行，你不需要记任何命令。
 <!-- ENCLAWS-BOT-INSTALL-END -->
 
 ### Claude Code 用户（本地 pivot-cli，独立路径）

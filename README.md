@@ -48,11 +48,29 @@ below.
 <!-- ENCLAWS-BOT-INSTALL-START -->
 ### For EnClaws bot users (chat-driven install)
 
+The EC bot runs in a per-user sandbox whose cwd is `<tenant_dir>/users/<openId>/workspace/`. All install commands use the relative path `../../` to reach the tenant root.
+
 Tell the EC bot in chat (Feishu or web):
 
-- **Install:**  `请安装 team-pivot：git clone https://github.com/hashSTACS-Global/team-pivot.git ~/.enclaws/skills/team-pivot`
-- **Update:**  `请更新 team-pivot：cd ~/.enclaws/skills/team-pivot && git pull`
-- **Uninstall:** `请卸载 team-pivot：rm -rf ~/.enclaws/skills/team-pivot`
+- **Install:**
+  ```
+  请安装 team-pivot：git clone https://github.com/hashSTACS-Global/team-pivot.git ../../team-pivot && mkdir -p ../../skills/pivot && cp ../../team-pivot/SKILL.md ../../skills/pivot/SKILL.md
+  ```
+- **Update:**
+  ```
+  请更新 team-pivot：cd ../../team-pivot && git pull && cp SKILL.md ../skills/pivot/SKILL.md
+  ```
+- **Uninstall:**
+  ```
+  请卸载 team-pivot：rm -rf ../../team-pivot ../../skills/pivot
+  ```
+
+**Layout after install:**
+```
+<tenant_dir>/
+├── skills/pivot/SKILL.md    ← EC skill discovery entry (copy)
+└── team-pivot/              ← actual code (pipelines/, tools/, etc.)
+```
 
 After install, **start a new session** so EC re-discovers skills.
 
@@ -61,11 +79,11 @@ The first time you actually use Team-Pivot in chat (e.g. "发起一个讨论" / 
 1. **数据仓库 URL** — your team's discussion data repo (e.g. `https://github.com/your-org/teamDocs.git`)
 2. **Git Token** — an HTTPS PAT with commit/push access
 
-It collects these via a Feishu form card and stores them locally under `~/.enclaws/skills/team-pivot/.pivot-config.yaml`. The first user to complete this becomes the admin.
+It collects these via a Feishu form card and stores them at `<tenant_dir>/team-pivot/.pivot-config.yaml`. The first user to complete this becomes the admin.
 
 > ⚠️ Do this in a **private chat** with the bot, not in a group, to avoid token exposure.
 
-The bot reads `SKILL.md` for the full execution protocol — you don't need to memorize anything.
+The bot reads `SKILL.md` (loaded from `skills/pivot/SKILL.md` but resolved to `team-pivot/` for all operations) — you don't need to memorize anything.
 <!-- ENCLAWS-BOT-INSTALL-END -->
 
 ### For Claude Code users (local pivot-cli, separate path)

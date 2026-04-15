@@ -12,14 +12,33 @@ metadata:
 
 你是 Team-Pivot 的执行层。**你（LLM）充当 pipeline-runner 的角色**——根据用户意图查找对应的 pipeline，按 pipeline.yaml 定义的 step 顺序执行，并处理 LLM 类型的 step。
 
-本 skill 部署在 `$repo_path` 下（通常是 `~/.enclaws/skills/team-pivot/`）。所有 pipeline 定义在 `$repo_path/pipelines/`。
+## 路径模型（先读懂这段）
+
+Team-Pivot 的**代码仓库**和 **EC skill 注册入口**在不同位置：
+
+- **EC skill 入口**（EC 扫描发现）：`<tenant_dir>/skills/pivot/SKILL.md`
+- **代码仓库**（真正执行 pipeline 的地方）：`<tenant_dir>/team-pivot/`
+
+你（bot）的 Bash 沙箱 cwd 永远是 `<tenant_dir>/users/<openId>/workspace/`。从 cwd 出发，**代码仓库的相对路径始终是 `../../team-pivot`**。
+
+**每次使用前先设置 REPO_PATH 变量**（所有后续命令都用它）：
+
+```bash
+export REPO_PATH="$(cd ../../team-pivot 2>/dev/null && pwd)"
+if [ -z "$REPO_PATH" ]; then
+  echo "Team-Pivot code not found. Install it with: git clone https://github.com/hashSTACS-Global/team-pivot.git ../../team-pivot && cp ../../team-pivot/SKILL.md ../../skills/pivot/SKILL.md"
+  exit 1
+fi
+```
+
+从这里开始，`$REPO_PATH` 指向代码仓库根（含 `pipelines/`、`tools/`、`schemas/`）。
 
 ## 初次使用：配置检测
 
 **在执行任何 pipeline 之前**，检查配置文件是否存在：
 
 ```bash
-cat $repo_path/.pivot-config.yaml 2>/dev/null
+cat $REPO_PATH/.pivot-config.yaml 2>/dev/null
 ```
 
 如果文件不存在或字段缺失，走首次配置流程：
@@ -37,7 +56,7 @@ cat $repo_path/.pivot-config.yaml 2>/dev/null
        options: []
        multiSelect: false
    ```
-3. 用户提交后，把答案写入 `$repo_path/.pivot-config.yaml`：
+3. 用户提交后，把答案写入 `$REPO_PATH/.pivot-config.yaml`：
    ```yaml
    workspace_repo: <user's answer>
    git_token: <user's answer>
@@ -45,11 +64,11 @@ cat $repo_path/.pivot-config.yaml 2>/dev/null
    git_email: pivot-bot@enclaws.local
    admin_user: ${PIVOT_USER_ID}    # 由 EC 注入，首个完成初始化的人即为管理员
    ```
-4. 第一次 clone workspace 到 `$repo_path/workspace/`：
+4. 第一次 clone workspace 到 `$REPO_PATH/workspace/`：
    ```bash
    export WORKSPACE_GIT_URL="..." WORKSPACE_GIT_TOKEN="..."
    git clone -c "credential.helper=!f() { echo username=x-access-token; echo password=$WORKSPACE_GIT_TOKEN; }; f" \
-     $WORKSPACE_GIT_URL $repo_path/workspace
+     $WORKSPACE_GIT_URL $REPO_PATH/workspace
    ```
 5. 告诉用户："✅ 配置完成，管理员：${PIVOT_USER_ID}"
 
@@ -62,7 +81,7 @@ cat $repo_path/.pivot-config.yaml 2>/dev/null
 **`type: code`** —— 调用 Python 子进程：
 
 ```bash
-cd $repo_path/pipelines/<pipeline-name>
+cd $REPO_PATH/pipelines/<pipeline-name>
 echo '<JSON_PAYLOAD>' | python3 steps/<step-name>.py
 ```
 
@@ -88,7 +107,7 @@ step 从 stdin 读 payload，向 stdout 写 JSON `{"output": {...}}`。
 ### 必须设置的环境变量（每次调 Python step 前）
 
 ```bash
-export PIVOT_WORKSPACE_DIR=$repo_path/workspace
+export PIVOT_WORKSPACE_DIR=$REPO_PATH/workspace
 export PIVOT_TENANT_ID=${PIVOT_TENANT_ID}       # EC 自动注入
 export PIVOT_USER_ID=${PIVOT_USER_ID}           # EC 自动注入
 export PIVOT_APP_NAME=team-pivot
@@ -234,7 +253,7 @@ export GIT_HTTPS_TOKEN=<git_token>
 
 ```bash
 # Step 1: prepare
-cd $repo_path/pipelines/discuss-new
+cd $REPO_PATH/pipelines/discuss-new
 PAYLOAD='{"input":{"category":"engineering","title":"auth-redesign","content":"我们要改造认证模块...","mention_users":"","mention_comments":""}}'
 echo "$PAYLOAD" | python3 steps/prepare.py > /tmp/prepare.out
 # 读 prepare.out 里的 output 字段
@@ -261,7 +280,7 @@ echo "$PAYLOAD2" | python3 steps/publish.py
 |-----|-----|
 | Python step exit != 0 | 读 stderr，把错误原样告诉用户，**不要重试**、**不要改源码** |
 | `prepare: missing required params` | 问用户补上缺的参数 |
-| `git push rejected (fetch first)` | 在 `$repo_path/workspace/` 里跑 `git pull --rebase` 然后重新调 publish |
+| `git push rejected (fetch first)` | 在 `$REPO_PATH/workspace/` 里跑 `git pull --rebase` 然后重新调 publish |
 | LLM step 返回的 JSON 不符合 schema | 重新生成一次，严格按 schema 要求，**最多重试 2 次** |
 | workspace 目录不存在 | 走首次配置流程（文档顶部） |
 | 中文路径 Windows 报错 | 这是已知问题，建议用户 category/title 用英文 slug |
@@ -275,7 +294,7 @@ echo "$PAYLOAD2" | python3 steps/publish.py
 
 ## 绝对禁止
 
-- ❌ 修改 `$repo_path/pipelines/`、`$repo_path/tools/`、`$repo_path/schemas/`、`$repo_path/SKILL.md`、`$repo_path/app.json` —— 这些是部署代码
+- ❌ 修改 `$REPO_PATH/pipelines/`、`$REPO_PATH/tools/`、`$REPO_PATH/schemas/`、`$REPO_PATH/SKILL.md` —— 这些是部署代码
 - ❌ 绕过 pipeline 直接 git commit/push —— 只有 pipeline 的 publish step 有这个权限
 - ❌ 自己决定状态变更（必须走 `discuss-status` / `discuss-result`）
 - ❌ pipeline 出错时尝试"修复"源码
