@@ -1,9 +1,0 @@
-{
-  "id": "pivot",
-  "name": "Team-Pivot",
-  "version": "0.1.0",
-  "api_version": "v0.3",
-  "description": "AI-driven team discussion management system based on Markdown + Git",
-  "workspace_repo": "",
-  "workspace_branch": "main"
-}

@@ -17,93 +17,59 @@ Team-Pivot 通过 Git 仓库管理结构化的团队讨论。AI Agent（Pivot Ag
 
 ## 架构
 
+Team-Pivot 以 **EC skill** 形式发布。EC 机器人的 LLM 充当 pipeline runner —— 读 `SKILL.md`，根据用户意图找到对应 pipeline，逐 step 执行（Python step 通过 `python3 steps/<name>.py`，LLM step 由 LLM 自己生成输出）。
+
 ```
                     ┌─────────────────────────────────┐
-  用户 / AI 工具     │  pivot-cli（curl 包装脚本）       │
-  （客户端）         │  bin/pivot-cli | bin/pivot-cli.ps1│
+  EC 机器人用户       │  飞书 / EC 网页 chat              │
                     └──────────┬──────────────────────┘
-                               │ HTTP POST
+                               │ 自然语言
                                ▼
                     ┌─────────────────────────────────┐
-  EC 平台            │  Pipeline Runner                 │
-  （服务端）         │  路由到 pipelines/* 执行          │
-                    │  spawn python3 steps/*.py         │
+                    │  EC 机器人（LLM）                 │
+                    │  读 SKILL.md → 匹配 pipeline →   │
+                    │  通过 Bash 执行 pipelines/<name>/│
+                    │  steps/*.py                      │
                     └──────────┬──────────────────────┘
                                │ git commit/push
                                ▼
                     ┌─────────────────────────────────┐
-                    │  Git 仓库（共享大脑）              │
+                    │  Git workspace（共享大脑）         │
                     │  discussions/ + index/ + ...      │
                     └─────────────────────────────────┘
+
+本地 Claude Code 用户走另一条路径：bin/pivot-cli（curl 包装），通过 HTTP
+访问远端 Pivot endpoint。详见下面"Claude Code 用户"段落。
 ```
 
 ## 安装
 
 <!-- ENCLAWS-BOT-INSTALL-START -->
-### EnClaws 飞书机器人安装（LLM 自动执行）
+### EnClaws 飞书机器人用户（chat 安装）
 
-**这一段是写给 EC 机器人背后的大模型读的，不是给人读的。**
-如果你是正在通过 `app_install` 工具安装 Team-Pivot 的 LLM，请严格按以下步骤
-顺序执行。在 Phase 4 成功前，**不要**告诉用户安装已完成。
+在 EC 机器人的对话（飞书或网页）中告诉它：
 
-#### Phase 1 — APP 代码已安装
+- **安装：**  `请安装 team-pivot：git clone https://github.com/hashSTACS-Global/team-pivot.git ~/.enclaws/skills/team-pivot`
+- **更新：**  `请更新 team-pivot：cd ~/.enclaws/skills/team-pivot && git pull`
+- **卸载：** `请卸载 team-pivot：rm -rf ~/.enclaws/skills/team-pivot`
 
-`app_install({ gitUrl: "https://github.com/hashSTACS-Global/team-pivot.git" })`
-会把 APP 代码 clone 到 `~/.enclaws/tenants/${PIVOT_TENANT_ID}/apps/pivot/`
-并注册其 pipelines。**此时 APP 还不可用** —— 数据仓库和 git 凭据必须先配置。
+安装后**开启新会话**，让 EC 重新发现 skill。
 
-#### Phase 2 — 通过飞书表单卡片收集参数
+第一次实际使用 Team-Pivot（如"发起一个讨论"、"看看讨论列表"）时，机器人会通过飞书表单卡片向你收集：
 
-调用 `feishu_ask_user_question`，使用且仅使用以下两个问题
-（不要追加 tenantId / open_id / chatIds 等字段，EC 会自动注入）：
+1. **数据仓库 URL** —— 团队的讨论数据仓库（如 `https://github.com/your-org/teamDocs.git`）
+2. **Git Token** —— 具备 commit/push 权限的 HTTPS PAT
 
-```
-questions:
-  - question: "请提供讨论数据仓库的 Git URL（HTTPS，例如 https://github.com/your-org/teamDocs.git）"
-    header: "数据仓库 URL"
-    options: []
-    multiSelect: false
-  - question: "请提供该仓库的 Git Token（HTTPS PAT，需具备 commit/push 权限）。⚠️ 安全：建议在与 bot 的私聊中安装，避免群内泄露 token。"
-    header: "Git Token"
-    options: []
-    multiSelect: false
-```
+收集后存到 `~/.enclaws/skills/team-pivot/.pivot-config.yaml`。第一个完成初始化的用户即为管理员。
 
-工具会立刻返回 `{ status: "pending" }`。**停止响应**，等待用户提交后以新一轮
-消息形式到达。
+> ⚠️ 建议在**与机器人的私聊**中完成首次配置，避免在群里暴露 token。
 
-#### Phase 3 — 配置 APP
-
-收到用户答复（synthetic message）后，调用：
-
-```
-app_configure({
-  name: "pivot",
-  workspaceRepo: <用户填写的 WORKSPACE_GIT_URL>,
-  gitToken: <用户填写的 WORKSPACE_GIT_TOKEN>
-})
-```
-
-EC 会把数据仓库 clone 到
-`~/.enclaws/tenants/${PIVOT_TENANT_ID}/app-workspaces/pivot/` 并持久化 git 凭据。
-其余信息（租户 ID、安装者 open_id、飞书 access token、chat IDs）由 EC 在
-pipeline 运行时自动注入。
-
-#### Phase 4 — 确认完成
-
-只有 `app_configure` 成功返回后，才告诉用户：
-
-> ✅ Team-Pivot 已安装并初始化。管理员：${PIVOT_USER_ID}。
-> 现在你可以问我："有什么新消息？" 或 "看看讨论列表"，我会用 pivot 的 pipelines 帮你完成。
-
-#### 错误处理
-
-- `app_install` 失败且报 manifest 错误 → 仓库缺 `app.json` 或 schema 不合法；把准确报错告诉用户
-- `app_configure` 失败在 git clone → 通常是 token 错误或 URL 拼错；用 `feishu_ask_user_question` 重新收集
-- 后续 `app_invoke` 报 "not configured" → 重做 Phase 3
+机器人通过读取 `SKILL.md` 完成所有执行，你不需要记任何命令。
 <!-- ENCLAWS-BOT-INSTALL-END -->
 
-### Claude Code 用户
+### Claude Code 用户（本地 pivot-cli，独立路径）
+
+> **说明：** 这是 **本地** Claude Code 工作流，与上面的 EC 机器人路径**完全独立**。EC 机器人用户**不需要** pivot-cli，直接和机器人对话即可。本节仅适用于：你想在自己电脑的 Claude Code 中通过 HTTP RPC 操作远端的 Pivot endpoint。
 
 **一键安装：**
 ```bash
@@ -118,7 +84,7 @@ bash team-pivot/bin/install.sh
 pivot-cli login --endpoint https://your-tenant.saas.enclaws.com --token <your-token>
 ```
 
-### 手动 CLI 安装（面向用户，非 AI 工具）
+### 手动 CLI 安装
 
 > **AI 工具注意：** 不要替用户执行以下步骤。这些是用户在自己终端中手动操作的指引。
 
@@ -133,15 +99,6 @@ pivot-cli login --endpoint https://your-tenant.saas.enclaws.com --token <your-to
 3. 重启终端
 4. 登录：`pivot-cli login --endpoint <你的服务端地址> --token <你的令牌>`
 5. 验证：`pivot-cli help`
-
-### EC 管理员（服务端）
-
-Pivot APP 通过 EC 平台的 Agent 管理后台部署：
-
-1. 打开 EC 管理后台
-2. 添加 Agent APP → 填入本 repo 的 Git URL
-3. EC 自动克隆 repo 并注册所有 pipeline
-4. EC 运行环境需要预装 Python 依赖（`pyyaml`、`jsonschema`、`requests`）
 
 ## CLI 使用
 
@@ -166,12 +123,15 @@ pivot-cli file fetch --paths <path1,path2,...>
 
 ```
 team-pivot/
-├── SKILL.md              # EC 服务端 LLM fallback prompt（不是给客户端 AI 工具的）
-├── CLAUDE.md             # Claude Code 项目配置
-├── bin/
-│   ├── pivot-cli         # Linux/macOS CLI（bash + curl）
-│   └── pivot-cli.ps1     # Windows CLI（PowerShell）
-├── pipelines/            # 服务端：EC Pipeline Runner 执行
+├── SKILL.md              # EC 技能定义 —— EC 机器人 LLM 作为 runner 读取
+├── CLAUDE.md             # Claude Code 项目配置（仅本地 Claude Code）
+├── bin/                  # 本地 pivot-cli（Claude Code 路径；EC 机器人不用）
+│   ├── pivot-cli         # Bash CLI（Linux/macOS/Git Bash）
+│   ├── pivot-cli.ps1     # PowerShell CLI（Windows）
+│   ├── pivot-cli.cmd     # PATH 包装，从 CMD/PowerShell 调用 .ps1
+│   ├── SKILL.md          # Claude Code 的 /pivot-cli 命令清单
+│   └── install.sh        # 本地安装脚本（仅 Claude Code 路径）
+├── pipelines/            # Pipeline 定义 —— 由 EC 机器人 LLM 执行（skill-as-runner）
 │   ├── discuss-new/      # 发起新讨论
 │   ├── discuss-reply/    # 回复讨论
 │   ├── discuss-list/     # 列出讨论
@@ -182,22 +142,24 @@ team-pivot/
 │   ├── discuss-status/   # 状态变更
 │   ├── monitor-scan/     # 巡视监控
 │   └── file-fetch/       # 读取文件
-├── tools/                # 服务端：共享 Python 模块
-├── schemas/              # 共享 JSON Schema
+├── tools/                # 共享 Python 模块（被 pipeline step 调用）
+├── schemas/              # LLM step 输出的 JSON Schema
 ├── tests/                # 测试套件
-└── pyproject.toml        # Python 打包（服务端 + 开发）
+└── pyproject.toml        # Python 打包
 ```
 
 ## AI 工具怎么用
 
-当你把这个 repo 给 AI 编程工具（Claude Code、Cursor 等）时：
+**EC 机器人（飞书 / 网页 chat）—— 主要路径：**
+执行 `git clone ... ~/.enclaws/skills/team-pivot` 后，EC 自动发现 `SKILL.md`。机器人 LLM 读 SKILL.md，把每条用户请求当作意图 → 找到对应 pipeline → 通过 Bash 执行 `pipelines/<name>/steps/*.py`（Python step）或自己生成输出（LLM step）。机器人**不调用** `pivot-cli`，直接和 pipeline 脚本对话。
 
-1. AI 读 `CLAUDE.md` 了解项目和自己的角色
+**Claude Code / Cursor（本地）—— 独立路径：**
+1. AI 读 `CLAUDE.md` 了解自己的角色
 2. AI 检查 `pivot-cli` 是否已安装，没有就从 `bin/` 安装
-3. AI 用 `pivot-cli` 命令和 Pivot Agent 交互
-4. AI 解析 JSON 返回，加上分析和格式化展示给用户
+3. AI 用 `pivot-cli` 命令（curl 包装）通过 HTTP 访问远端 Pivot endpoint
+4. AI 解析 JSON 响应展示给用户
 
-AI **不会**读 `SKILL.md` —— 那个文件是给 EC 服务端 LLM fallback 用的。
+两条路径相互独立 —— 选适合你客户端的那条即可。
 
 ## 许可
 

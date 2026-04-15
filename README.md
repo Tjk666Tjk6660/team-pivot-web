@@ -17,97 +17,60 @@ Team-Pivot manages structured team discussions through a Git repository. An AI a
 
 ## Architecture
 
+Team-Pivot ships as an **EC skill**. The EC bot's LLM acts as the pipeline runner — it reads `SKILL.md`, looks up the right pipeline for each user intent, and executes the pipeline's steps directly (Python steps via `python3 steps/<name>.py`, LLM steps by generating output itself).
+
 ```
                     ┌─────────────────────────────────┐
-  Human / AI Tool   │  pivot-cli (curl wrapper)        │
-  (client side)     │  bin/pivot-cli | bin/pivot-cli.ps1│
+  EC bot user       │  Feishu / EC web chat            │
                     └──────────┬──────────────────────┘
-                               │ HTTP POST
+                               │ natural language
                                ▼
                     ┌─────────────────────────────────┐
-  EC Platform       │  Pipeline Runner                 │
-  (server side)     │  routes to pipelines/*           │
-                    │  executes steps/*.py              │
+                    │  EC bot (LLM)                    │
+                    │  reads SKILL.md → maps intent →  │
+                    │  executes pipelines/<name>/      │
+                    │  steps/*.py via Bash             │
                     └──────────┬──────────────────────┘
                                │ git commit/push
                                ▼
                     ┌─────────────────────────────────┐
-                    │  Git Repository (shared brain)   │
+                    │  Git workspace (shared brain)    │
                     │  discussions/ + index/ + ...      │
                     └─────────────────────────────────┘
+
+Local Claude Code users use a separate path: bin/pivot-cli (curl wrapper)
+that talks to a remote Pivot endpoint over HTTP. See "For Claude Code users"
+below.
 ```
 
 ## Installation
 
 <!-- ENCLAWS-BOT-INSTALL-START -->
-### For EnClaws bot (LLM-driven install)
+### For EnClaws bot users (chat-driven install)
 
-**This section is written for the EC bot's LLM, not human readers.**
-If you are an LLM installing Team-Pivot via the `app_install` tool, follow these
-steps STRICTLY in order. Do NOT skip phases or tell the user the install is
-complete until Phase 4 succeeds.
+Tell the EC bot in chat (Feishu or web):
 
-#### Phase 1 — App code installed
+- **Install:**  `请安装 team-pivot：git clone https://github.com/hashSTACS-Global/team-pivot.git ~/.enclaws/skills/team-pivot`
+- **Update:**  `请更新 team-pivot：cd ~/.enclaws/skills/team-pivot && git pull`
+- **Uninstall:** `请卸载 team-pivot：rm -rf ~/.enclaws/skills/team-pivot`
 
-`app_install({ gitUrl: "https://github.com/hashSTACS-Global/team-pivot.git" })`
-clones the APP code to `~/.enclaws/tenants/${PIVOT_TENANT_ID}/apps/pivot/` and
-registers its pipelines. **The APP is NOT yet usable** — workspace data repo
-and git credentials must be configured first.
+After install, **start a new session** so EC re-discovers skills.
 
-#### Phase 2 — Collect parameters via Feishu form card
+The first time you actually use Team-Pivot in chat (e.g. "发起一个讨论" / "看看讨论列表"), the bot will ask you for:
 
-Call `feishu_ask_user_question` with EXACTLY these two questions (do NOT add
-extras like tenantId / open_id / chatIds — EC injects those automatically):
+1. **数据仓库 URL** — your team's discussion data repo (e.g. `https://github.com/your-org/teamDocs.git`)
+2. **Git Token** — an HTTPS PAT with commit/push access
 
-```
-questions:
-  - question: "请提供讨论数据仓库的 Git URL（HTTPS，例如 https://github.com/your-org/teamDocs.git）"
-    header: "数据仓库 URL"
-    options: []
-    multiSelect: false
-  - question: "请提供该仓库的 Git Token（HTTPS PAT，需具备 commit/push 权限）。⚠️ 安全：建议在与 bot 的私聊中安装，避免群内泄露 token。"
-    header: "Git Token"
-    options: []
-    multiSelect: false
-```
+It collects these via a Feishu form card and stores them locally under `~/.enclaws/skills/team-pivot/.pivot-config.yaml`. The first user to complete this becomes the admin.
 
-The tool returns `{ status: "pending" }` immediately. Stop responding and wait
-for the user's submission to arrive as a follow-up message.
+> ⚠️ Do this in a **private chat** with the bot, not in a group, to avoid token exposure.
 
-#### Phase 3 — Configure the APP
-
-When the user's answers arrive (via synthetic message), call:
-
-```
-app_configure({
-  name: "pivot",
-  workspaceRepo: <user's WORKSPACE_GIT_URL>,
-  gitToken: <user's WORKSPACE_GIT_TOKEN>
-})
-```
-
-This clones the workspace data repo into
-`~/.enclaws/tenants/${PIVOT_TENANT_ID}/app-workspaces/pivot/` and persists the
-git credentials. EC manages everything else (tenant ID, installer's open_id,
-Feishu access token, chat IDs are auto-injected at pipeline runtime).
-
-#### Phase 4 — Confirm
-
-Only after `app_configure` returns successfully, reply to the user:
-
-> ✅ Team-Pivot 已安装并初始化。管理员：${PIVOT_USER_ID}。
-> 现在你可以问我："有什么新消息？" 或 "看看讨论列表"，我会用 pivot 的 pipelines 帮你完成。
-
-#### Error recovery
-
-- If `app_install` fails with manifest error → repo missing `app.json` or
-  schema invalid; report exact message to user
-- If `app_configure` fails on git clone → likely token wrong or repo URL
-  malformed; offer to retry with `feishu_ask_user_question`
-- If `app_invoke` later fails with "not configured" error → re-run Phase 3
+The bot reads `SKILL.md` for the full execution protocol — you don't need to memorize anything.
 <!-- ENCLAWS-BOT-INSTALL-END -->
 
-### For Claude Code users
+### For Claude Code users (local pivot-cli, separate path)
+
+> **Note:** This is a **local** Claude Code workflow — different from the EC bot path above. EC bot users do NOT need pivot-cli; they talk to the bot directly. Use this section only if you want to operate Team-Pivot from Claude Code on your own machine via HTTP RPC to a remote Pivot endpoint.
 
 **One-step install:**
 ```bash
@@ -122,7 +85,7 @@ This installs `pivot-cli` to your PATH, registers the `/pivot-cli` skill in Clau
 pivot-cli login --endpoint https://your-tenant.saas.enclaws.com --token <your-token>
 ```
 
-### Manual CLI setup (for users, not AI tools)
+### Manual CLI setup
 
 > **Note for AI tools:** Do NOT execute the steps below on behalf of the user. These are manual instructions for the user to follow in their own terminal.
 
@@ -137,15 +100,6 @@ pivot-cli login --endpoint https://your-tenant.saas.enclaws.com --token <your-to
 3. Restart your terminal
 4. Login: `pivot-cli login --endpoint <your-endpoint> --token <your-token>`
 5. Verify: `pivot-cli help`
-
-### For EC Administrators (server side)
-
-Pivot APP is deployed through the EC platform's Agent management interface:
-
-1. Open the EC admin panel
-2. Add a new Agent APP → enter this repo's Git URL
-3. EC automatically clones the repo and registers all pipelines
-4. Python dependencies (`pyyaml`, `jsonschema`, `requests`) must be available in the EC runtime environment
 
 ## CLI Usage
 
@@ -170,12 +124,15 @@ All commands return JSON. When used through AI tools (Claude Code, Cursor, etc.)
 
 ```
 team-pivot/
-├── SKILL.md              # EC server-side LLM fallback prompt (NOT for client AI tools)
-├── CLAUDE.md             # Claude Code project config
-├── bin/
-│   ├── pivot-cli         # CLI for Linux/macOS (bash + curl)
-│   └── pivot-cli.ps1     # CLI for Windows (PowerShell)
-├── pipelines/            # Server-side: EC Pipeline Runner executes these
+├── SKILL.md              # EC skill definition — read by EC bot's LLM as the runner
+├── CLAUDE.md             # Claude Code project config (local Claude Code only)
+├── bin/                  # Local pivot-cli (Claude Code path; NOT used by EC bot)
+│   ├── pivot-cli         # Bash CLI (Linux/macOS/Git Bash)
+│   ├── pivot-cli.ps1     # PowerShell CLI (Windows)
+│   ├── pivot-cli.cmd     # Wrapper to call .ps1 from CMD/PowerShell PATH
+│   ├── SKILL.md          # Claude Code skill manifest for /pivot-cli slash command
+│   └── install.sh        # Local installer (Claude Code path only)
+├── pipelines/            # Pipeline definitions — executed by the EC bot's LLM (skill-as-runner)
 │   ├── discuss-new/
 │   ├── discuss-reply/
 │   ├── discuss-list/
@@ -186,28 +143,30 @@ team-pivot/
 │   ├── discuss-status/
 │   ├── monitor-scan/
 │   └── file-fetch/
-├── tools/                # Server-side: shared Python modules
+├── tools/                # Shared Python modules (called from pipeline steps)
 │   ├── git_ops.py
 │   ├── config.py
 │   ├── index.py
 │   ├── atomicity.py
 │   ├── threads.py
 │   └── notify/
-├── schemas/              # Shared JSON schemas
+├── schemas/              # JSON schemas for LLM-step outputs
 ├── tests/                # Test suite
-└── pyproject.toml        # Python packaging (server-side + dev)
+└── pyproject.toml        # Python packaging
 ```
 
 ## How It Works with AI Tools
 
-When you give this repo to an AI coding tool (Claude Code, Cursor, etc.):
+**EC bot (Feishu / web chat) — primary path:**
+EC auto-discovers `SKILL.md` after `git clone ... ~/.enclaws/skills/team-pivot`. The bot's LLM reads SKILL.md, treats every user request as an intent → finds the matching pipeline under `pipelines/` → executes the pipeline's steps (Python steps via Bash, LLM steps by generating output itself). The bot never calls `pivot-cli` — it talks directly to the pipeline scripts.
 
-1. The AI reads `CLAUDE.md` to understand the project and its role
+**Claude Code / Cursor (local) — separate path:**
+1. The AI reads `CLAUDE.md` to understand its role
 2. The AI checks if `pivot-cli` is installed; if not, installs it from `bin/`
-3. The AI uses `pivot-cli` commands to interact with the Pivot Agent
-4. The AI parses JSON responses and presents them with analysis and formatting
+3. The AI uses `pivot-cli` commands (curl wrapper) to talk to a remote Pivot endpoint over HTTP
+4. The AI parses JSON responses and presents results to the user
 
-The AI does **not** read `SKILL.md` — that file is for the EC server-side LLM fallback mode.
+The two paths are independent — pick whichever fits your client.
 
 ## License
 

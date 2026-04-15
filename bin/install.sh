@@ -4,10 +4,9 @@
 # This script is for END USERS who want to use Team-Pivot via Claude Code CLI on
 # their own machine. It does NOT install Team-Pivot as an EC APP.
 #
-# EC APP installation is triggered automatically when the EC bot calls
-# `app_install` LLM tool with this repo's git URL — no manual script needed.
-# See INSTALL_BOT.md (or the ENCLAWS-BOT-INSTALL section in README.md) for the
-# bot-driven flow.
+# EC bot users do NOT run this script. They install Team-Pivot by telling the
+# bot in chat: `请安装 team-pivot：git clone ... ~/.enclaws/skills/team-pivot`
+# See the ENCLAWS-BOT-INSTALL section in README.md for the bot-driven flow.
 #
 # Usage:
 #   git clone https://github.com/hashSTACS-Global/team-pivot.git
