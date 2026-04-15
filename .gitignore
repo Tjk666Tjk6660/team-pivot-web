@@ -13,3 +13,6 @@ docs/superpowers/
 
 # .claude/
 .claude/
+
+# tests/test_output/
+tests/test_output/

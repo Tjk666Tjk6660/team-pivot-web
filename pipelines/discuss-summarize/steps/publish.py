@@ -24,6 +24,7 @@ def main():
 
     repo_path = ctx.workspace_dir
     thread_dir = Path(repo_path) / "discussions" / category / thread
+    thread_dir.mkdir(parents=True, exist_ok=True)
     summary_path = thread_dir / "SUMMARY.md"
     summary_path.write_text(summary_text, encoding="utf-8")
 

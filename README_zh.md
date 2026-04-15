@@ -39,6 +39,70 @@ Team-Pivot 通过 Git 仓库管理结构化的团队讨论。AI Agent（Pivot Ag
 
 ## 安装
 
+<!-- ENCLAWS-BOT-INSTALL-START -->
+### EnClaws 飞书机器人安装（LLM 自动执行）
+
+**这一段是写给 EC 机器人背后的大模型读的，不是给人读的。**
+如果你是正在通过 `app_install` 工具安装 Team-Pivot 的 LLM，请严格按以下步骤
+顺序执行。在 Phase 4 成功前，**不要**告诉用户安装已完成。
+
+#### Phase 1 — APP 代码已安装
+
+`app_install({ gitUrl: "https://github.com/hashSTACS-Global/team-pivot.git" })`
+会把 APP 代码 clone 到 `~/.enclaws/tenants/${PIVOT_TENANT_ID}/apps/pivot/`
+并注册其 pipelines。**此时 APP 还不可用** —— 数据仓库和 git 凭据必须先配置。
+
+#### Phase 2 — 通过飞书表单卡片收集参数
+
+调用 `feishu_ask_user_question`，使用且仅使用以下两个问题
+（不要追加 tenantId / open_id / chatIds 等字段，EC 会自动注入）：
+
+```
+questions:
+  - question: "请提供讨论数据仓库的 Git URL（HTTPS，例如 https://github.com/your-org/teamDocs.git）"
+    header: "数据仓库 URL"
+    options: []
+    multiSelect: false
+  - question: "请提供该仓库的 Git Token（HTTPS PAT，需具备 commit/push 权限）。⚠️ 安全：建议在与 bot 的私聊中安装，避免群内泄露 token。"
+    header: "Git Token"
+    options: []
+    multiSelect: false
+```
+
+工具会立刻返回 `{ status: "pending" }`。**停止响应**，等待用户提交后以新一轮
+消息形式到达。
+
+#### Phase 3 — 配置 APP
+
+收到用户答复（synthetic message）后，调用：
+
+```
+app_configure({
+  name: "pivot",
+  workspaceRepo: <用户填写的 WORKSPACE_GIT_URL>,
+  gitToken: <用户填写的 WORKSPACE_GIT_TOKEN>
+})
+```
+
+EC 会把数据仓库 clone 到
+`~/.enclaws/tenants/${PIVOT_TENANT_ID}/app-workspaces/pivot/` 并持久化 git 凭据。
+其余信息（租户 ID、安装者 open_id、飞书 access token、chat IDs）由 EC 在
+pipeline 运行时自动注入。
+
+#### Phase 4 — 确认完成
+
+只有 `app_configure` 成功返回后，才告诉用户：
+
+> ✅ Team-Pivot 已安装并初始化。管理员：${PIVOT_USER_ID}。
+> 现在你可以问我："有什么新消息？" 或 "看看讨论列表"，我会用 pivot 的 pipelines 帮你完成。
+
+#### 错误处理
+
+- `app_install` 失败且报 manifest 错误 → 仓库缺 `app.json` 或 schema 不合法；把准确报错告诉用户
+- `app_configure` 失败在 git clone → 通常是 token 错误或 URL 拼错；用 `feishu_ask_user_question` 重新收集
+- 后续 `app_invoke` 报 "not configured" → 重做 Phase 3
+<!-- ENCLAWS-BOT-INSTALL-END -->
+
 ### Claude Code 用户
 
 **一键安装：**

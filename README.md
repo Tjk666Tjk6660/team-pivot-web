@@ -39,6 +39,74 @@ Team-Pivot manages structured team discussions through a Git repository. An AI a
 
 ## Installation
 
+<!-- ENCLAWS-BOT-INSTALL-START -->
+### For EnClaws bot (LLM-driven install)
+
+**This section is written for the EC bot's LLM, not human readers.**
+If you are an LLM installing Team-Pivot via the `app_install` tool, follow these
+steps STRICTLY in order. Do NOT skip phases or tell the user the install is
+complete until Phase 4 succeeds.
+
+#### Phase 1 — App code installed
+
+`app_install({ gitUrl: "https://github.com/hashSTACS-Global/team-pivot.git" })`
+clones the APP code to `~/.enclaws/tenants/${PIVOT_TENANT_ID}/apps/pivot/` and
+registers its pipelines. **The APP is NOT yet usable** — workspace data repo
+and git credentials must be configured first.
+
+#### Phase 2 — Collect parameters via Feishu form card
+
+Call `feishu_ask_user_question` with EXACTLY these two questions (do NOT add
+extras like tenantId / open_id / chatIds — EC injects those automatically):
+
+```
+questions:
+  - question: "请提供讨论数据仓库的 Git URL（HTTPS，例如 https://github.com/your-org/teamDocs.git）"
+    header: "数据仓库 URL"
+    options: []
+    multiSelect: false
+  - question: "请提供该仓库的 Git Token（HTTPS PAT，需具备 commit/push 权限）。⚠️ 安全：建议在与 bot 的私聊中安装，避免群内泄露 token。"
+    header: "Git Token"
+    options: []
+    multiSelect: false
+```
+
+The tool returns `{ status: "pending" }` immediately. Stop responding and wait
+for the user's submission to arrive as a follow-up message.
+
+#### Phase 3 — Configure the APP
+
+When the user's answers arrive (via synthetic message), call:
+
+```
+app_configure({
+  name: "pivot",
+  workspaceRepo: <user's WORKSPACE_GIT_URL>,
+  gitToken: <user's WORKSPACE_GIT_TOKEN>
+})
+```
+
+This clones the workspace data repo into
+`~/.enclaws/tenants/${PIVOT_TENANT_ID}/app-workspaces/pivot/` and persists the
+git credentials. EC manages everything else (tenant ID, installer's open_id,
+Feishu access token, chat IDs are auto-injected at pipeline runtime).
+
+#### Phase 4 — Confirm
+
+Only after `app_configure` returns successfully, reply to the user:
+
+> ✅ Team-Pivot 已安装并初始化。管理员：${PIVOT_USER_ID}。
+> 现在你可以问我："有什么新消息？" 或 "看看讨论列表"，我会用 pivot 的 pipelines 帮你完成。
+
+#### Error recovery
+
+- If `app_install` fails with manifest error → repo missing `app.json` or
+  schema invalid; report exact message to user
+- If `app_configure` fails on git clone → likely token wrong or repo URL
+  malformed; offer to retry with `feishu_ask_user_question`
+- If `app_invoke` later fails with "not configured" error → re-run Phase 3
+<!-- ENCLAWS-BOT-INSTALL-END -->
+
 ### For Claude Code users
 
 **One-step install:**
