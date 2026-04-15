@@ -15,12 +15,60 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
+
+import yaml
 
 
 class ConfigError(Exception):
     """Raised when a required configuration env var is missing."""
+
+
+class ConfigNotReady(Exception):
+    """Raised when pivot-config.yaml has empty required fields."""
+
+    def __init__(self, missing: list[str]):
+        self.missing = missing
+        super().__init__(f"Config not ready, missing: {', '.join(missing)}")
+
+
+_REQUIRED_FIELDS = ["data_space_repo", "git_token"]
+
+
+def check_config(repo_path: str | Path) -> dict:
+    """Check pivot-config.yaml for completeness.
+
+    Returns {"ready": True} or {"ready": False, "missing": [...]}.
+    """
+    config_file = Path(repo_path) / "pivot-config.yaml"
+    if not config_file.exists():
+        return {"ready": False, "missing": ["config_file"]}
+
+    with open(config_file, encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+
+    missing = [k for k in _REQUIRED_FIELDS if not data.get(k)]
+
+    data_space_dir = Path(repo_path) / "data_space"
+    if not data_space_dir.is_dir():
+        missing.append("data_space_dir")
+
+    if missing:
+        return {"ready": False, "missing": missing}
+    return {"ready": True}
+
+
+def require_config_ready(repo_path: str | Path) -> None:
+    """Raise ConfigNotReady if pivot-config.yaml is incomplete.
+
+    Call this at the start of any pipeline step to fail fast with a
+    structured error instead of crashing mid-execution.
+    """
+    result = check_config(repo_path)
+    if not result["ready"]:
+        raise ConfigNotReady(result["missing"])
 
 
 @dataclass(frozen=True)
@@ -43,7 +91,10 @@ def _require(key: str) -> str:
 
 
 def from_env() -> PipelineContext:
-    """Construct a PipelineContext from environment variables."""
+    """Construct a PipelineContext from environment variables.
+
+    Config completeness is checked by the _constructor pipeline, not here.
+    """
     return PipelineContext(
         tenant_id=_require("PIVOT_TENANT_ID"),
         user_id=os.environ.get("PIVOT_USER_ID"),
