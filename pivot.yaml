@@ -4,4 +4,3 @@ version: 0.1.3
 
 # --- 升级 ---
 upgrade_repo: https://github.com/hashSTACS-Global/team-pivot.git
-upgrade_token:

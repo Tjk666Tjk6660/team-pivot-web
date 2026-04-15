@@ -52,10 +52,18 @@ def main():
     data_space_dir = os.environ.get("PIVOT_DATA_SPACE_DIR", "")
     repo_path = os.environ.get("PIVOT_REPO_PATH") or str(Path(data_space_dir).parent)
 
-    config = _read_config(repo_path)
-    local_version = str(config.get("version", "0.0.0"))
-    upgrade_repo = config.get("upgrade_repo", "")
-    upgrade_token = config.get("upgrade_token", "")
+    # pivot.yaml: version + upgrade_repo (git-tracked)
+    project_info = _read_config(repo_path)
+    local_version = str(project_info.get("version", "0.0.0"))
+    upgrade_repo = project_info.get("upgrade_repo", "")
+
+    # pivot-config.yaml: upgrade_token (gitignored, sensitive)
+    user_config_file = Path(repo_path) / "pivot-config.yaml"
+    user_config = {}
+    if user_config_file.exists():
+        with open(user_config_file, encoding="utf-8") as f:
+            user_config = yaml.safe_load(f) or {}
+    upgrade_token = user_config.get("upgrade_token", "")
 
     # Check required fields
     missing = []
