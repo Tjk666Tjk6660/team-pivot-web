@@ -1,16 +1,14 @@
 #!/bin/bash
-# install.sh — Local installation for Claude Code users.
+# pivot-cli-install.sh — Local installation for Claude Code users.
 #
 # This script is for END USERS who want to use Team-Pivot via Claude Code CLI on
 # their own machine. It does NOT install Team-Pivot as an EC APP.
 #
-# EC bot users do NOT run this script. They install Team-Pivot by telling the
-# bot in chat: `请安装 team-pivot：git clone ... ~/.enclaws/skills/team-pivot`
-# See the ENCLAWS-BOT-INSTALL section in README.md for the bot-driven flow.
+# For EC/OpenClaw installation, use pivot-app-install.sh instead.
 #
 # Usage:
 #   git clone https://github.com/hashSTACS-Global/team-pivot.git
-#   bash team-pivot/bin/install.sh
+#   bash team-pivot/bin/pivot-cli-install.sh
 
 set -e
 

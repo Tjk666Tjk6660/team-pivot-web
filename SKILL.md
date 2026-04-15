@@ -42,8 +42,8 @@ fi
 
 ## 配置检测（兜底）
 
-正常情况下 `.pivot-config.yaml` 和 `workspace/` 目录在**安装阶段**就已创建完成
-（见 README 顶部的 post-clone 指令）。每次执行 pipeline 前先快速校验：
+正常情况下 `.pivot-config.yaml` 和 `workspace/` 目录在首次配置时创建。
+每次执行 pipeline 前先快速校验：
 
 ```bash
 test -f $REPO_PATH/.pivot-config.yaml && test -d $REPO_PATH/workspace || echo "NEEDS_INIT"
