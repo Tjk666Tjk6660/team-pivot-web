@@ -13,6 +13,27 @@
 set -e
 
 REPO_URL="https://github.com/hashSTACS-Global/team-pivot.git"
+REMOTE_CONFIG_URL="https://raw.githubusercontent.com/hashSTACS-Global/team-pivot/main/pivot-config.yaml"
+
+# ---------------------------------------------------------------------------
+# 版本比较辅助函数
+# ---------------------------------------------------------------------------
+get_local_version() {
+  local config="$1/pivot-config.yaml"
+  [ -f "$config" ] && grep -m1 '^version:' "$config" | sed 's/version: *//' || echo "0.0.0"
+}
+
+get_remote_version() {
+  curl -sL --max-time 5 "$REMOTE_CONFIG_URL" 2>/dev/null | grep -m1 '^version:' | sed 's/version: *//' || echo ""
+}
+
+# 返回 0 如果 $1 < $2（需要升级），返回 1 如果 $1 >= $2（已是最新）
+version_lt() {
+  [ "$1" = "$2" ] && return 1
+  local lowest
+  lowest=$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)
+  [ "$lowest" = "$1" ]
+}
 
 # ---------------------------------------------------------------------------
 # 1. 检测 tenant root
@@ -31,11 +52,23 @@ SKILL_DIR="$TENANT_ROOT/skills/pivot"
 # 2. 安装或升级
 # ---------------------------------------------------------------------------
 if [ -d "$REPO_DIR/.git" ]; then
-  # 已存在 → 升级
-  echo "检测到已安装的 team-pivot，正在升级..."
-  cd "$REPO_DIR"
-  git pull --ff-only
-  echo "✅ 代码已更新到最新版本。"
+  # 已存在 → 检查是否需要升级
+  LOCAL_VER=$(get_local_version "$REPO_DIR")
+  REMOTE_VER=$(get_remote_version)
+
+  if [ -z "$REMOTE_VER" ]; then
+    echo "⚠️ 无法获取远端版本号，跳过版本检查，直接升级..."
+    cd "$REPO_DIR"
+    git pull --ff-only
+    echo "✅ 代码已更新。"
+  elif version_lt "$LOCAL_VER" "$REMOTE_VER"; then
+    echo "检测到新版本：$LOCAL_VER → $REMOTE_VER，正在升级..."
+    cd "$REPO_DIR"
+    git pull --ff-only
+    echo "✅ 已升级到 $REMOTE_VER"
+  else
+    echo "✅ 当前版本 $LOCAL_VER 已是最新，无需升级。"
+  fi
 else
   # 不存在 → 首次安装
   echo "正在安装 team-pivot..."
