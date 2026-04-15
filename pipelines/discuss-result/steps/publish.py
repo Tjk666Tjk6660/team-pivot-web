@@ -23,7 +23,7 @@ def main():
     thread = gather_out["thread"]
     result_body = payload["steps"]["generate_result"]["output"]["result_body"]
 
-    repo_path = ctx.workspace_dir
+    repo_path = ctx.data_space_dir
     thread_dir = Path(repo_path) / "discussions" / category / thread
 
     short = threads.ensure_unique_filename_hash(repo_path)

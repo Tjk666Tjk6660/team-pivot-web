@@ -36,7 +36,7 @@ Team-Pivot ships as an **EC skill**. The EC bot's LLM acts as the pipeline runne
                                │ git commit/push
                                ▼
                     ┌─────────────────────────────────┐
-                    │  Git workspace (shared brain)    │
+                    │  Git data_space (shared brain)   │
                     │  discussions/ + index/ + ...      │
                     └─────────────────────────────────┘
 

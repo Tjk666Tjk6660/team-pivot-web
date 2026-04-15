@@ -8,7 +8,7 @@ Usage:
     # 1. Init — create context file
     python step_runner.py init \\
         --pipeline discuss-new \\
-        --workspace /path/to/repo \\
+        --data_space /path/to/repo \\
         --user-id huangshengli \\
         --params '{"category":"discussion","title":"test","content":"..."}' \\
         --context run_ctx.json
@@ -116,7 +116,7 @@ def cmd_init(args):
     ctx = {
         "pipeline": args.pipeline,
         "pipeline_dir": str(pipeline_dir),
-        "workspace": args.workspace,
+        "data_space": args.data_space,
         "user_id": args.user_id,
         "params": json.loads(args.params),
         "steps_def": pipeline_def.get("steps", []),
@@ -191,7 +191,7 @@ def _exec_code_step(ctx: dict, step_def: dict, ctx_path: str):
     env = {
         **os.environ,
         "PYTHONIOENCODING": "utf-8",
-        "PIVOT_WORKSPACE_DIR": ctx["workspace"],
+        "PIVOT_DATA_SPACE_DIR": ctx["data_space"],
         "PIVOT_TENANT_ID": "test-tenant",
         "PIVOT_USER_ID": ctx["user_id"],
         "PIVOT_APP_NAME": "pivot",
@@ -337,7 +337,7 @@ def main():
 
     p_init = sub.add_parser("init")
     p_init.add_argument("--pipeline", required=True)
-    p_init.add_argument("--workspace", required=True)
+    p_init.add_argument("--data_space", required=True)
     p_init.add_argument("--user-id", default="test-user")
     p_init.add_argument("--params", required=True, help="JSON string")
     p_init.add_argument("--context", default="run_ctx.json")

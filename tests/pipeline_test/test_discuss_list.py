@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 class TestDiscussList:
-    def test_empty_workspace_returns_empty(self, runner):
+    def test_empty_data_space_returns_empty(self, runner):
         result = runner.run("discuss-list", {"category": ""})
         assert result.status == "completed"
         assert result.output["threads"] == []

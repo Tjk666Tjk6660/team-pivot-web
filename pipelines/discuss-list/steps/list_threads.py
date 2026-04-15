@@ -17,12 +17,12 @@ def main():
     payload = json.loads(sys.stdin.read())
     ctx = from_env()
     category = payload["input"].get("category") or None
-    discussions_root = f"{ctx.workspace_dir}/discussions"
+    discussions_root = f"{ctx.data_space_dir}/discussions"
     found = threads.list_threads(discussions_root, category=category)
 
     enriched = []
     for t in found:
-        idx_file = f"{ctx.workspace_dir}/index/{t['slug']}-discuss.index.yaml"
+        idx_file = f"{ctx.data_space_dir}/index/{t['slug']}-discuss.index.yaml"
         status = "unknown"
         last_updated = ""
         summary = ""

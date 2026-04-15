@@ -59,14 +59,33 @@ cp "$REPO_DIR/SKILL.md" "$SKILL_DIR/SKILL.md"
 echo "✅ skill 入口已注册到 $SKILL_DIR/SKILL.md"
 
 # ---------------------------------------------------------------------------
-# 4. 报告结果
+# 4. 创建配置文件（如果不存在）
 # ---------------------------------------------------------------------------
-if [ -f "$REPO_DIR/.pivot-config.yaml" ] && [ -d "$REPO_DIR/workspace" ]; then
-  echo ""
-  echo "=== 升级完成 ==="
-  echo "配置和 workspace 均已就绪，请开启新会话以加载最新 skill。"
-else
+CONFIG_FILE="$REPO_DIR/pivot-config.yaml"
+if [ ! -f "$CONFIG_FILE" ]; then
+  cat > "$CONFIG_FILE" <<'EOF'
+# Team-Pivot 配置文件
+# 空字段将在首次使用时通过飞书卡片引导填写
+
+data_space_repo:
+git_token:
+git_user: pivot-bot
+git_email: pivot-bot@enclaws.local
+admin_user:
+EOF
+  echo "✅ 配置文件已创建：$CONFIG_FILE（待填写）"
+fi
+
+# ---------------------------------------------------------------------------
+# 5. 报告结果
+# ---------------------------------------------------------------------------
+# 检查必填字段是否已填写
+if grep -q 'data_space_repo: *$' "$CONFIG_FILE" || ! [ -d "$REPO_DIR/data_space" ]; then
   echo ""
   echo "=== 安装完成，待配置 ==="
-  echo "请开启新会话。首次使用 team-pivot 时，会自动弹出飞书卡片引导你完成配置。"
+  echo "请开启新会话。首次使用 team-pivot 时，会自动引导你完成配置。"
+else
+  echo ""
+  echo "=== 升级完成 ==="
+  echo "配置和 data_space 均已就绪，请开启新会话以加载最新 skill。"
 fi

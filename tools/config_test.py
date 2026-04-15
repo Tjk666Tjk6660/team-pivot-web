@@ -10,13 +10,13 @@ class TestConfig:
     def test_from_env_reads_required_vars(self, monkeypatch):
         monkeypatch.setenv("PIVOT_TENANT_ID", "tenant-a")
         monkeypatch.setenv("PIVOT_USER_ID", "huangshengli")
-        monkeypatch.setenv("PIVOT_WORKSPACE_DIR", "/tmp/ws")
+        monkeypatch.setenv("PIVOT_DATA_SPACE_DIR", "/tmp/ws")
         monkeypatch.setenv("PIVOT_APP_NAME", "pivot")
 
         ctx = config.from_env()
         assert ctx.tenant_id == "tenant-a"
         assert ctx.user_id == "huangshengli"
-        assert ctx.workspace_dir == "/tmp/ws"
+        assert ctx.data_space_dir == "/tmp/ws"
         assert ctx.app_name == "pivot"
 
     def test_from_env_raises_when_missing(self, monkeypatch):
@@ -26,7 +26,7 @@ class TestConfig:
 
     def test_user_id_optional_for_system_triggers(self, monkeypatch):
         monkeypatch.setenv("PIVOT_TENANT_ID", "tenant-a")
-        monkeypatch.setenv("PIVOT_WORKSPACE_DIR", "/tmp/ws")
+        monkeypatch.setenv("PIVOT_DATA_SPACE_DIR", "/tmp/ws")
         monkeypatch.setenv("PIVOT_APP_NAME", "pivot")
         monkeypatch.delenv("PIVOT_USER_ID", raising=False)
 

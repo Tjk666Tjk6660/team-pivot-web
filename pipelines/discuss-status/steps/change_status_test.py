@@ -35,7 +35,7 @@ def _run(tmp_git_repo: Path, action: str, reason: str = "") -> subprocess.Comple
         **os.environ,
         "PIVOT_TENANT_ID": "t",
         "PIVOT_USER_ID": "ken",
-        "PIVOT_WORKSPACE_DIR": str(tmp_git_repo),
+        "PIVOT_DATA_SPACE_DIR": str(tmp_git_repo),
         "PIVOT_APP_NAME": "pivot",
     }
     return subprocess.run(

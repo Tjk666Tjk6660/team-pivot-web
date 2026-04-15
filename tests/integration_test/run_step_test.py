@@ -67,7 +67,7 @@ class StepTestSession:
         else:
             self.session_dir = TEST_OUTPUT / f"step_test_{_ts()}"
         self.session_dir.mkdir(parents=True, exist_ok=True)
-        self.workspace = self.session_dir / "workspace"
+        self.data_space = self.session_dir / "data_space"
         self.new_ctx = str(self.session_dir / "new_ctx.json")
         self.list_ctx = str(self.session_dir / "list_ctx.json")
         self.read_ctx = str(self.session_dir / "read_ctx.json")
@@ -75,11 +75,11 @@ class StepTestSession:
         self.exchange_file = str(self.session_dir / "llm_exchange.json")
 
     def setup(self) -> dict:
-        """Clone repo into session workspace."""
-        if self.workspace.exists():
-            shutil.rmtree(self.workspace)
+        """Clone repo into session data_space."""
+        if self.data_space.exists():
+            shutil.rmtree(self.data_space)
         proc = subprocess.run(
-            ["git", "clone", REPO_URL, str(self.workspace)],
+            ["git", "clone", REPO_URL, str(self.data_space)],
             capture_output=True, text=True,
         )
         if proc.returncode != 0:
@@ -88,7 +88,7 @@ class StepTestSession:
         # Save session info
         info = {
             "session_dir": str(self.session_dir),
-            "workspace": str(self.workspace),
+            "data_space": str(self.data_space),
             "new_ctx": self.new_ctx,
             "reply_ctx": self.reply_ctx,
             "exchange_file": self.exchange_file,
@@ -164,7 +164,7 @@ class StepTestSession:
         # Init
         r = _run_step(["init",
                         "--pipeline", "discuss-new",
-                        "--workspace", str(self.workspace),
+                        "--data_space", str(self.data_space),
                         "--user-id", "huangshengli",
                         "--params", json.dumps(params),
                         "--context", self.new_ctx])
@@ -221,7 +221,7 @@ class StepTestSession:
         # Init
         r = _run_step(["init",
                         "--pipeline", pipeline,
-                        "--workspace", str(self.workspace),
+                        "--data_space", str(self.data_space),
                         "--user-id", user_id,
                         "--params", json.dumps(params),
                         "--context", ctx_path])
@@ -315,7 +315,7 @@ class StepTestSession:
         # Init
         r = _run_step(["init",
                         "--pipeline", "discuss-reply",
-                        "--workspace", str(self.workspace),
+                        "--data_space", str(self.data_space),
                         "--user-id", "ken",
                         "--params", json.dumps(params),
                         "--context", self.reply_ctx])
@@ -367,13 +367,13 @@ class StepTestSession:
 
     def verify(self) -> dict:
         """Verify git state and generated files for all pipelines."""
-        ws = str(self.workspace)
+        ws = str(self.data_space)
         log = subprocess.run(
             ["git", "-C", ws, "log", "--oneline", "-10"],
             capture_output=True, text=True,
         )
         title = (self.session_dir / "thread_title.txt").read_text(encoding="utf-8").strip()
-        thread_dir = self.workspace / "discussions" / "discussion" / title
+        thread_dir = self.data_space / "discussions" / "discussion" / title
         files = sorted(str(f.name) for f in thread_dir.glob("*.md")) if thread_dir.exists() else []
 
         # Check each pipeline's context for completion status
@@ -392,7 +392,7 @@ class StepTestSession:
             "thread_dir_exists": thread_dir.exists(),
             "thread_files": files,
             "file_count": len(files),
-            "index_exists": (self.workspace / "index" / f"{title}-discuss.index.yaml").exists(),
+            "index_exists": (self.data_space / "index" / f"{title}-discuss.index.yaml").exists(),
             "pipeline_status": pipeline_status,
             "all_passed": all(s == "completed" for s in pipeline_status.values()),
         }

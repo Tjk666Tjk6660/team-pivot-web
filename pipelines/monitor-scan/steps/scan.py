@@ -21,7 +21,7 @@ from tools.atomicity import find_un_indexed_files, mark_indexed, read_business_f
 from tools.config import from_env  # noqa: E402
 
 
-def _try_recover_un_indexed(workspace: Path, business_file: str) -> bool:
+def _try_recover_un_indexed(data_space: Path, business_file: str) -> bool:
     """Attempt idempotent recovery for a file stuck at index_state=un-indexed."""
     path = Path(business_file)
     try:
@@ -30,7 +30,7 @@ def _try_recover_un_indexed(workspace: Path, business_file: str) -> bool:
         return False
 
     try:
-        rel = path.relative_to(workspace)
+        rel = path.relative_to(data_space)
         parts = rel.parts
         if len(parts) < 4 or parts[0] != "discussions":
             return False
@@ -38,7 +38,7 @@ def _try_recover_un_indexed(workspace: Path, business_file: str) -> bool:
     except ValueError:
         return False
 
-    idx_path = workspace / "index" / f"{thread}-discuss.index.yaml"
+    idx_path = data_space / "index" / f"{thread}-discuss.index.yaml"
     if not idx_path.exists():
         return False
 
@@ -62,7 +62,7 @@ def _try_recover_un_indexed(workspace: Path, business_file: str) -> bool:
             idx,
             time=now_iso,
             event=f"recovery: re-indexed {file_name} after crash",
-            file=str(path.relative_to(workspace).as_posix()),
+            file=str(path.relative_to(data_space).as_posix()),
         )
         index.save(idx)
 
@@ -72,7 +72,7 @@ def _try_recover_un_indexed(workspace: Path, business_file: str) -> bool:
 
 def _check_un_replied_mentions(
     idx: "index.IndexFile",
-    workspace: Path,
+    data_space: Path,
     mention_window: timedelta,
     now: datetime,
 ) -> list[dict]:
@@ -90,7 +90,7 @@ def _check_un_replied_mentions(
         if not idx.discussions:
             continue
         thread_rel = idx.discussions[0].path
-        thread_dir = workspace / thread_rel
+        thread_dir = data_space / thread_rel
         if not thread_dir.is_dir():
             continue
         for mention in entry.mentions:
@@ -131,7 +131,7 @@ def main():
     window = int(payload["input"].get("window_hours") or 24)
     mention_window_hours = int(payload["input"].get("mention_window_hours") or 48)
 
-    workspace = Path(ctx.workspace_dir)
+    data_space = Path(ctx.data_space_dir)
     now = datetime.now(timezone.utc).astimezone()
     stale_threshold = now - timedelta(hours=window)
     mention_window = timedelta(hours=mention_window_hours)
@@ -143,15 +143,15 @@ def main():
         "un_replied_mentions": [],
     }
 
-    discussions_root = workspace / "discussions"
+    discussions_root = data_space / "discussions"
     if discussions_root.is_dir():
         for f in find_un_indexed_files(str(discussions_root)):
-            if _try_recover_un_indexed(workspace, f):
+            if _try_recover_un_indexed(data_space, f):
                 issues["un_indexed_recovered"].append(f)
             else:
                 issues["unrecoverable"].append(f)
 
-    index_dir = workspace / "index"
+    index_dir = data_space / "index"
     if index_dir.is_dir():
         for idx_file in index_dir.glob("*-discuss.index.yaml"):
             try:
@@ -172,7 +172,7 @@ def main():
                             }
                         )
             issues["un_replied_mentions"].extend(
-                _check_un_replied_mentions(idx, workspace, mention_window, now)
+                _check_un_replied_mentions(idx, data_space, mention_window, now)
             )
 
     # Phase 1.1: actual notifier wiring (spec 5.3)

@@ -48,7 +48,7 @@ class LocalPipelineRunner:
     def __init__(
         self,
         app_dir: str,
-        workspace_dir: str,
+        data_space_dir: str,
         llm_backend: LLMBackend,
         tenant_id: str = "test-tenant",
         user_id: str = "test-user",
@@ -57,7 +57,7 @@ class LocalPipelineRunner:
         record_dir: Optional[str] = None,
     ):
         self.app_dir = Path(app_dir)
-        self.workspace_dir = workspace_dir
+        self.data_space_dir = data_space_dir
         self.llm_backend = llm_backend
         self.tenant_id = tenant_id
         self.user_id = user_id
@@ -151,7 +151,7 @@ class LocalPipelineRunner:
         env = {
             **os.environ,
             "PYTHONIOENCODING": "utf-8",
-            "PIVOT_WORKSPACE_DIR": self.workspace_dir,
+            "PIVOT_DATA_SPACE_DIR": self.data_space_dir,
             "PIVOT_TENANT_ID": self.tenant_id,
             "PIVOT_USER_ID": self.user_id,
             "PIVOT_APP_NAME": self.app_name,

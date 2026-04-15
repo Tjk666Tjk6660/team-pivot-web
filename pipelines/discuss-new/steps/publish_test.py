@@ -15,7 +15,7 @@ class TestPublish:
             **os.environ,
             "PIVOT_TENANT_ID": "t",
             "PIVOT_USER_ID": "huangshengli",
-            "PIVOT_WORKSPACE_DIR": str(tmp_git_repo),
+            "PIVOT_DATA_SPACE_DIR": str(tmp_git_repo),
             "PIVOT_APP_NAME": "pivot",
         }
         proc = subprocess.run(
@@ -72,7 +72,7 @@ class TestPublishNotification:
             **os.environ,
             "PIVOT_TENANT_ID": "t",
             "PIVOT_USER_ID": "huangshengli",
-            "PIVOT_WORKSPACE_DIR": str(tmp_git_repo),
+            "PIVOT_DATA_SPACE_DIR": str(tmp_git_repo),
             "PIVOT_APP_NAME": "pivot",
             "FEISHU_ACCESS_TOKEN": "t-test",
             "FEISHU_CHAT_IDS": json.dumps([mock_feishu_server["url"].split("//")[1]]),
@@ -119,7 +119,7 @@ class TestPublishNotification:
             **os.environ,
             "PIVOT_TENANT_ID": "t",
             "PIVOT_USER_ID": "u",
-            "PIVOT_WORKSPACE_DIR": str(tmp_git_repo),
+            "PIVOT_DATA_SPACE_DIR": str(tmp_git_repo),
             "PIVOT_APP_NAME": "pivot",
         }
         env.pop("FEISHU_ACCESS_TOKEN", None)

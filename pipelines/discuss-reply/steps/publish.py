@@ -27,7 +27,7 @@ def main():
     mention_users = prepare_out.get("mention_users", "")
     mention_comments = prepare_out.get("mention_comments", "")
 
-    repo_path = ctx.workspace_dir
+    repo_path = ctx.data_space_dir
     thread_dir = Path(repo_path) / "discussions" / category / thread
     if not thread_dir.is_dir():
         raise FileNotFoundError(f"Thread not found: {thread_dir}")

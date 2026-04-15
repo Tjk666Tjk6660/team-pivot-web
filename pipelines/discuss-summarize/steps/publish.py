@@ -22,7 +22,7 @@ def main():
     thread = gather_out["thread"]
     summary_text = payload["steps"]["generate_summary"]["output"]["summary"]
 
-    repo_path = ctx.workspace_dir
+    repo_path = ctx.data_space_dir
     thread_dir = Path(repo_path) / "discussions" / category / thread
     thread_dir.mkdir(parents=True, exist_ok=True)
     summary_path = thread_dir / "SUMMARY.md"

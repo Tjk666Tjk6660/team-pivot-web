@@ -27,7 +27,7 @@ def main():
     mention_users = prepare_out.get("mention_users", "")
     mention_comments = prepare_out.get("mention_comments", "")
 
-    repo_path = ctx.workspace_dir
+    repo_path = ctx.data_space_dir
     body = prepare_out.get("content", "")
 
     summary_text = ""

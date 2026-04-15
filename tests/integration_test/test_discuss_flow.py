@@ -12,7 +12,7 @@ def runner(tmp_git_repo: Path) -> LocalPipelineRunner:
     app_dir = str(Path(__file__).parent.parent.parent)
     return LocalPipelineRunner(
         app_dir=app_dir,
-        workspace_dir=str(tmp_git_repo),
+        data_space_dir=str(tmp_git_repo),
         llm_backend=PrerecordedBackend.from_dict({
             "generate_summary": {
                 "output": {"summary": "Integration test summary"}

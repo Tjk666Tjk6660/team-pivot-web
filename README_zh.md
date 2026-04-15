@@ -36,7 +36,7 @@ Team-Pivot 以 **EC skill** 形式发布。EC 机器人的 LLM 充当 pipeline r
                                │ git commit/push
                                ▼
                     ┌─────────────────────────────────┐
-                    │  Git workspace（共享大脑）         │
+                    │  Git data_space（共享大脑）        │
                     │  discussions/ + index/ + ...      │
                     └─────────────────────────────────┘
 

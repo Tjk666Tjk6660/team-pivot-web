@@ -5,9 +5,9 @@ from pathlib import Path
 import yaml
 
 
-def _write_stale_index(workspace: str, slug: str):
+def _write_stale_index(data_space: str, slug: str):
     """Create a stale-open thread INDEX file directly."""
-    ws = Path(workspace)
+    ws = Path(data_space)
     thread_dir = ws / "discussions" / "test" / slug
     thread_dir.mkdir(parents=True)
     (thread_dir / "001_ken_proposal_x.md").write_text(
@@ -35,7 +35,7 @@ def _write_stale_index(workspace: str, slug: str):
 
 class TestMonitorScan:
     def test_detects_stale_open_thread(self, runner):
-        _write_stale_index(runner.workspace_dir, "stale-thread")
+        _write_stale_index(runner.data_space_dir, "stale-thread")
         result = runner.run("monitor-scan", {
             "window_hours": "24",
             "mention_window_hours": "48",
@@ -43,7 +43,7 @@ class TestMonitorScan:
         assert result.status == "completed", result.error
         assert result.output["stale_open_threads_count"] >= 1
 
-    def test_empty_workspace_no_issues(self, runner):
+    def test_empty_data_space_no_issues(self, runner):
         result = runner.run("monitor-scan", {
             "window_hours": "24",
             "mention_window_hours": "48",

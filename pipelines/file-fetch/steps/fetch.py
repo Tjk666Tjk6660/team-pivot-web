@@ -19,7 +19,7 @@ from tools.config import from_env  # noqa: E402
 
 
 def _classify(rel_path: str) -> tuple[str, str | None]:
-    """Return (kind, thread_slug_or_None) for a workspace-relative path."""
+    """Return (kind, thread_slug_or_None) for a data_space-relative path."""
     parts = rel_path.replace("\\", "/").split("/")
     if len(parts) >= 4 and parts[0] == "discussions":
         return "business", parts[2]
@@ -36,7 +36,7 @@ def _classify(rel_path: str) -> tuple[str, str | None]:
 def main():
     payload = json.loads(sys.stdin.read())
     ctx = from_env()
-    workspace = Path(ctx.workspace_dir)
+    data_space = Path(ctx.data_space_dir)
 
     raw_paths = payload["input"].get("paths", "")
     paths = [p.strip() for p in raw_paths.split(",") if p.strip()]
@@ -45,11 +45,11 @@ def main():
     attached: dict[str, str] = {}
 
     for p in paths:
-        abs_path = (workspace / p).resolve() if not Path(p).is_absolute() else Path(p)
+        abs_path = (data_space / p).resolve() if not Path(p).is_absolute() else Path(p)
         try:
-            rel = abs_path.relative_to(workspace)
+            rel = abs_path.relative_to(data_space)
         except ValueError:
-            files_out.append({"path": p, "error": "outside workspace", "kind": "other"})
+            files_out.append({"path": p, "error": "outside data_space", "kind": "other"})
             continue
         if not abs_path.exists():
             files_out.append(
@@ -65,7 +65,7 @@ def main():
 
         if kind == "business" and thread_slug and thread_slug not in attached:
             idx_rel = f"index/{thread_slug}-discuss.index.yaml"
-            idx_abs = workspace / idx_rel
+            idx_abs = data_space / idx_rel
             if idx_abs.exists():
                 attached[thread_slug] = idx_abs.read_text(encoding="utf-8")
 

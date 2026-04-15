@@ -13,7 +13,7 @@ def runner(tmp_git_repo: Path) -> LocalPipelineRunner:
     app_dir = str(Path(__file__).parent.parent.parent)  # team-pivot/
     return LocalPipelineRunner(
         app_dir=app_dir,
-        workspace_dir=str(tmp_git_repo),
+        data_space_dir=str(tmp_git_repo),
         llm_backend=PrerecordedBackend.from_dict({
             "generate_summary": {
                 "output": {"summary": "Test summary from prerecorded backend"}
@@ -23,7 +23,7 @@ def runner(tmp_git_repo: Path) -> LocalPipelineRunner:
 
 
 class TestRunnerCodeStep:
-    def test_runs_discuss_list_on_empty_workspace(self, runner):
+    def test_runs_discuss_list_on_empty_data_space(self, runner):
         result = runner.run("discuss-list", {"category": ""})
         assert result.status == "completed"
         assert result.output["threads"] == []
@@ -39,7 +39,7 @@ class TestRunnerCodeStep:
         assert result.status == "completed", result.error
         assert result.output["committed"] is True
 
-        ws = Path(runner.workspace_dir)
+        ws = Path(runner.data_space_dir)
         canonical = list((ws / "discussions/test/runner-test").glob("001_*.md"))
         assert len(canonical) == 1
         idx = ws / "index/runner-test-discuss.index.yaml"

@@ -20,7 +20,7 @@ Team-Pivot 的**代码仓库**和 **EC skill 注册入口**在不同位置：
 - **代码仓库**（真正执行 pipeline 的地方）：`<tenant_dir>/team-pivot/`
 
 你的 Bash 沙箱 cwd 落在 `<tenant_dir>/users/<unionId>/...` 下的某个位置——
-具体深度（是否有 `workspace/` 子目录等）视 EC 版本而定。**不要用 `../../` 这种固定层级**，
+具体深度（是否有 `data_space/` 子目录等）视 EC 版本而定。**不要用 `../../` 这种固定层级**，
 改用从 cwd 反推 tenant 根的方式。
 
 **每次调 pipeline 前**，先初始化 `REPO_PATH` 变量（所有后续命令都用它）：
@@ -38,20 +38,22 @@ if [ ! -d "$REPO_PATH" ]; then
 fi
 ```
 
-从这里开始，`$REPO_PATH` 指向代码仓库根（含 `pipelines/`、`tools/`、`schemas/`、`workspace/`）。
+从这里开始，`$REPO_PATH` 指向代码仓库根（含 `pipelines/`、`tools/`、`schemas/`、`data_space/`）。
 
-## 配置检测（兜底）
+## 配置检测
 
-正常情况下 `.pivot-config.yaml` 和 `workspace/` 目录在首次配置时创建。
-每次执行 pipeline 前先快速校验：
+`pivot-config.yaml` 在安装时由 `pivot-app-install.sh` 创建，包含所有字段。
+每次执行 pipeline 前，检查必填字段是否已填写：
 
 ```bash
-test -f $REPO_PATH/.pivot-config.yaml && test -d $REPO_PATH/workspace || echo "NEEDS_INIT"
+grep -q 'data_space_repo: *$' $REPO_PATH/pivot-config.yaml && echo "NEEDS_INIT" || true
+grep -q 'git_token: *$' $REPO_PATH/pivot-config.yaml && echo "NEEDS_INIT" || true
+test -d $REPO_PATH/data_space || echo "NEEDS_INIT"
 ```
 
-**如果任一检查失败**（通常是安装被中断或配置被误删），走兜底初始化流程：
+**如果任一字段为空或 data_space 目录不存在**，走初始化流程：
 
-1. 告诉用户："检测到 Team-Pivot 尚未完成配置，现在补齐。"
+1. 告诉用户："Team-Pivot 配置尚未完成，现在帮你补齐。"
 2. 调用 `feishu_ask_user_question`：
    ```
    questions:
@@ -64,23 +66,22 @@ test -f $REPO_PATH/.pivot-config.yaml && test -d $REPO_PATH/workspace || echo "N
        options: []
        multiSelect: false
    ```
-3. 用户提交后（新一轮对话），把答案写入 `$REPO_PATH/.pivot-config.yaml`：
-   ```yaml
-   workspace_repo: <user's answer>
-   git_token: <user's answer>
-   git_user: pivot-bot
-   git_email: pivot-bot@enclaws.local
-   admin_user: ${PIVOT_USER_ID}    # 由 EC 注入，首个完成初始化的人即为管理员
-   ```
-4. Clone workspace 到 `$REPO_PATH/workspace/`：
+3. 用户提交后（新一轮对话），更新 `$REPO_PATH/pivot-config.yaml` 中的空字段：
    ```bash
-   export WORKSPACE_GIT_URL="..." WORKSPACE_GIT_TOKEN="..."
-   git clone -c "credential.helper=!f() { echo username=x-access-token; echo password=$WORKSPACE_GIT_TOKEN; }; f" \
-     $WORKSPACE_GIT_URL $REPO_PATH/workspace
+   sed -i'' -e "s|^data_space_repo:.*|data_space_repo: <用户填写的 URL>|" \
+            -e "s|^git_token:.*|git_token: <用户填写的 Token>|" \
+            -e "s|^admin_user:.*|admin_user: ${PIVOT_USER_ID}|" \
+     $REPO_PATH/pivot-config.yaml
+   ```
+4. Clone data_space 到 `$REPO_PATH/data_space/`：
+   ```bash
+   export DATA_SPACE_GIT_URL="..." DATA_SPACE_GIT_TOKEN="..."
+   git clone -c "credential.helper=!f() { echo username=x-access-token; echo password=$DATA_SPACE_GIT_TOKEN; }; f" \
+     $DATA_SPACE_GIT_URL $REPO_PATH/data_space
    ```
 5. 告诉用户："✅ 配置完成，管理员：${PIVOT_USER_ID}"
 
-**如果检查通过**，直接进入 Pipeline 执行协议，不要询问用户。
+**如果所有字段已填且 data_space 存在**，直接进入 Pipeline 执行协议，不要询问用户。
 
 ## Pipeline 执行协议
 
@@ -117,13 +118,13 @@ step 从 stdin 读 payload，向 stdout 写 JSON `{"output": {...}}`。
 ### 必须设置的环境变量（每次调 Python step 前）
 
 ```bash
-export PIVOT_WORKSPACE_DIR=$REPO_PATH/workspace
+export PIVOT_DATA_SPACE_DIR=$REPO_PATH/data_space
 export PIVOT_TENANT_ID=${PIVOT_TENANT_ID}       # EC 自动注入
 export PIVOT_USER_ID=${PIVOT_USER_ID}           # EC 自动注入
 export PIVOT_APP_NAME=team-pivot
 export FEISHU_ACCESS_TOKEN=${FEISHU_ACCESS_TOKEN}   # EC 自动注入
 export FEISHU_CHAT_IDS=${FEISHU_CHAT_IDS}           # EC 自动注入
-# git 凭据（从 .pivot-config.yaml 读出后设置）
+# git 凭据（从 pivot-config.yaml 读出后设置）
 export GIT_AUTHOR_NAME=<git_user>
 export GIT_AUTHOR_EMAIL=<git_email>
 export GIT_ASKPASS=/bin/echo
@@ -290,16 +291,16 @@ echo "$PAYLOAD2" | python3 steps/publish.py
 |-----|-----|
 | Python step exit != 0 | 读 stderr，把错误原样告诉用户，**不要重试**、**不要改源码** |
 | `prepare: missing required params` | 问用户补上缺的参数 |
-| `git push rejected (fetch first)` | 在 `$REPO_PATH/workspace/` 里跑 `git pull --rebase` 然后重新调 publish |
+| `git push rejected (fetch first)` | 在 `$REPO_PATH/data_space/` 里跑 `git pull --rebase` 然后重新调 publish |
 | LLM step 返回的 JSON 不符合 schema | 重新生成一次，严格按 schema 要求，**最多重试 2 次** |
-| workspace 目录不存在 | 走首次配置流程（文档顶部） |
+| data_space 目录不存在 | 走首次配置流程（文档顶部） |
 | 中文路径 Windows 报错 | 这是已知问题，建议用户 category/title 用英文 slug |
 
 ## 权限与身份
 
 - `${PIVOT_USER_ID}` 由 EC 在每次调用时自动注入，代表当前用户
 - `discuss-summarize` / `discuss-result` 只能由 thread 发起者触发，其他人请求时直接拒绝
-- 首次完成 `.pivot-config.yaml` 初始化的用户自动成为 `admin_user`（记录但暂不做其他权限校验）
+- 首次完成 `pivot-config.yaml` 初始化的用户自动成为 `admin_user`（记录但暂不做其他权限校验）
 - 不要代表别人操作
 
 ## 绝对禁止

@@ -27,12 +27,12 @@ class ConfigError(Exception):
 class PipelineContext:
     tenant_id: str
     user_id: Optional[str]
-    workspace_dir: str
+    data_space_dir: str
     app_name: str
 
     @property
     def repo_path(self) -> str:
-        return self.workspace_dir
+        return self.data_space_dir
 
 
 def _require(key: str) -> str:
@@ -47,7 +47,7 @@ def from_env() -> PipelineContext:
     return PipelineContext(
         tenant_id=_require("PIVOT_TENANT_ID"),
         user_id=os.environ.get("PIVOT_USER_ID"),
-        workspace_dir=_require("PIVOT_WORKSPACE_DIR"),
+        data_space_dir=_require("PIVOT_DATA_SPACE_DIR"),
         app_name=_require("PIVOT_APP_NAME"),
     )
 

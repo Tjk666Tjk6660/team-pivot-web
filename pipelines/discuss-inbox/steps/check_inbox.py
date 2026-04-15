@@ -1,6 +1,6 @@
 """Check inbox: return threads updated after the user's last_read timestamp.
 
-read_state file layout: <workspace>/.pivot-state/read_state_<user_id>.json
+read_state file layout: <data_space>/.pivot-state/read_state_<user_id>.json
 {
   "user_id": "...",
   "read_threads": {"<cat>/<slug>": "<iso_time>"},
@@ -29,7 +29,7 @@ def main():
         return
 
     read_state_path = (
-        Path(ctx.workspace_dir) / ".pivot-state" / f"read_state_{ctx.user_id}.json"
+        Path(ctx.data_space_dir) / ".pivot-state" / f"read_state_{ctx.user_id}.json"
     )
     read_state: dict[str, str] = {}
     if read_state_path.exists():
@@ -40,8 +40,8 @@ def main():
             read_state = {}
 
     unread = []
-    for t in threads.list_threads(f"{ctx.workspace_dir}/discussions"):
-        idx_file = f"{ctx.workspace_dir}/index/{t['slug']}-discuss.index.yaml"
+    for t in threads.list_threads(f"{ctx.data_space_dir}/discussions"):
+        idx_file = f"{ctx.data_space_dir}/index/{t['slug']}-discuss.index.yaml"
         try:
             idx = index.load(idx_file)
         except Exception:

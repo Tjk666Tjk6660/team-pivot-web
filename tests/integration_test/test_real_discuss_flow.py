@@ -52,7 +52,7 @@ def run_dir():
 
 
 @pytest.fixture(scope="module")
-def workspace(tmp_path_factory, run_dir):
+def data_space(tmp_path_factory, run_dir):
     """Clone the real repo once per module."""
     tmp = tmp_path_factory.mktemp("real_test")
     work = _clone_repo(tmp)
@@ -71,12 +71,12 @@ def workspace(tmp_path_factory, run_dir):
 class TestRealDiscussFlow:
     """Full flow test with real git repo and real Claude LLM."""
 
-    def test_01_new_thread(self, workspace: Path, run_dir: Path):
+    def test_01_new_thread(self, data_space: Path, run_dir: Path):
         """Create a new discussion thread."""
         step_dir = run_dir / "01_discuss_new"
         runner = LocalPipelineRunner(
             app_dir=APP_DIR,
-            workspace_dir=str(workspace),
+            data_space_dir=str(data_space),
             llm_backend=ClaudeCLIBackend(record_dir=step_dir),
             user_id="huangshengli",
             record_dir=str(step_dir),
@@ -106,7 +106,7 @@ class TestRealDiscussFlow:
         assert result.output["committed"] is True
 
         # Verify thread files created
-        thread_dir = workspace / "discussions/discussion/test-restructure-proposal"
+        thread_dir = data_space / "discussions/discussion/test-restructure-proposal"
         assert thread_dir.exists(), f"thread dir not created: {thread_dir}"
         posts = list(thread_dir.glob("001_*.md"))
         assert len(posts) == 1, f"expected 1 post, found {len(posts)}"
@@ -127,12 +127,12 @@ class TestRealDiscussFlow:
             encoding="utf-8",
         )
 
-    def test_02_reply_thread(self, workspace: Path, run_dir: Path):
+    def test_02_reply_thread(self, data_space: Path, run_dir: Path):
         """Reply to the thread created in test_01."""
         step_dir = run_dir / "02_discuss_reply"
         runner = LocalPipelineRunner(
             app_dir=APP_DIR,
-            workspace_dir=str(workspace),
+            data_space_dir=str(data_space),
             llm_backend=ClaudeCLIBackend(record_dir=step_dir),
             user_id="ken",
             record_dir=str(step_dir),
@@ -158,7 +158,7 @@ class TestRealDiscussFlow:
         assert result.output["post_number"] == 2
 
         # Verify reply file
-        thread_dir = workspace / "discussions/discussion/test-restructure-proposal"
+        thread_dir = data_space / "discussions/discussion/test-restructure-proposal"
         replies = list(thread_dir.glob("002_*.md"))
         assert len(replies) == 1
 
@@ -177,12 +177,12 @@ class TestRealDiscussFlow:
             encoding="utf-8",
         )
 
-    def test_03_list_threads(self, workspace: Path, run_dir: Path):
+    def test_03_list_threads(self, data_space: Path, run_dir: Path):
         """List threads to verify both operations are visible."""
         step_dir = run_dir / "03_discuss_list"
         runner = LocalPipelineRunner(
             app_dir=APP_DIR,
-            workspace_dir=str(workspace),
+            data_space_dir=str(data_space),
             llm_backend=ClaudeCLIBackend(record_dir=step_dir),
             user_id="huangshengli",
             record_dir=str(step_dir),
@@ -202,12 +202,12 @@ class TestRealDiscussFlow:
             encoding="utf-8",
         )
 
-    def test_04_read_thread(self, workspace: Path, run_dir: Path):
+    def test_04_read_thread(self, data_space: Path, run_dir: Path):
         """Read the thread to verify all posts are present."""
         step_dir = run_dir / "04_discuss_read"
         runner = LocalPipelineRunner(
             app_dir=APP_DIR,
-            workspace_dir=str(workspace),
+            data_space_dir=str(data_space),
             llm_backend=ClaudeCLIBackend(record_dir=step_dir),
             user_id="huangshengli",
             record_dir=str(step_dir),
@@ -231,10 +231,10 @@ class TestRealDiscussFlow:
             encoding="utf-8",
         )
 
-    def test_05_verify_git_state(self, workspace: Path, run_dir: Path):
+    def test_05_verify_git_state(self, data_space: Path, run_dir: Path):
         """Verify git commits were actually made and pushed."""
         log = subprocess.run(
-            ["git", "-C", str(workspace), "log", "--oneline", "-10"],
+            ["git", "-C", str(data_space), "log", "--oneline", "-10"],
             capture_output=True, text=True,
         )
         assert log.returncode == 0
@@ -245,7 +245,7 @@ class TestRealDiscussFlow:
 
         # Verify push status (check if local is ahead of remote)
         status = subprocess.run(
-            ["git", "-C", str(workspace), "status", "-sb"],
+            ["git", "-C", str(data_space), "status", "-sb"],
             capture_output=True, text=True,
         )
 

@@ -55,7 +55,7 @@ def _base_env(tmp_path: Path) -> dict:
         **os.environ,
         "PIVOT_TENANT_ID": "t",
         "PIVOT_USER_ID": "shengli",
-        "PIVOT_WORKSPACE_DIR": str(tmp_path),
+        "PIVOT_DATA_SPACE_DIR": str(tmp_path),
         "PIVOT_APP_NAME": "pivot",
     }
 

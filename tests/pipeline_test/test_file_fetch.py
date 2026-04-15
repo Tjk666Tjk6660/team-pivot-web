@@ -12,7 +12,7 @@ class TestFileFetch:
             "mention_users": "",
             "mention_comments": "",
         })
-        ws = Path(runner.workspace_dir)
+        ws = Path(runner.data_space_dir)
         canonical = list((ws / "discussions/test/fetch-target").glob("001_*.md"))
         assert len(canonical) == 1
 

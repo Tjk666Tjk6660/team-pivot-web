@@ -41,7 +41,7 @@ def main():
         raise ValueError("reopen requires a reason")
 
     target_status = ACTION_TO_STATUS[action]
-    index_path = Path(ctx.workspace_dir) / "index" / f"{thread}-discuss.index.yaml"
+    index_path = Path(ctx.data_space_dir) / "index" / f"{thread}-discuss.index.yaml"
     idx = index.load(str(index_path))
 
     discussion_path = f"discussions/{category}/{thread}/"
@@ -61,11 +61,11 @@ def main():
     index.save(idx)
 
     git_ops.commit(
-        ctx.workspace_dir,
+        ctx.data_space_dir,
         message=f"status: {thread} {prev_state} -> {target_status}",
         paths=[f"index/{thread}-discuss.index.yaml"],
     )
-    git_ops.push(ctx.workspace_dir)
+    git_ops.push(ctx.data_space_dir)
 
     sys.stdout.write(
         json.dumps(

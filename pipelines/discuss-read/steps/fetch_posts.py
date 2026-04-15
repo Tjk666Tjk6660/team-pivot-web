@@ -23,10 +23,10 @@ def main():
         sys.stderr.write("fetch_posts: missing required params: category and thread\n")
         sys.exit(1)
 
-    thread_dir = f"{ctx.workspace_dir}/discussions/{category}/{thread}"
+    thread_dir = f"{ctx.data_space_dir}/discussions/{category}/{thread}"
     posts = threads.list_posts(thread_dir)
 
-    idx_file = f"{ctx.workspace_dir}/index/{thread}-discuss.index.yaml"
+    idx_file = f"{ctx.data_space_dir}/index/{thread}-discuss.index.yaml"
     status = "unknown"
     last_updated = ""
     try:

@@ -33,9 +33,9 @@ def tmp_git_repo(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def tmp_workspace(tmp_path: Path) -> Path:
-    """A temporary workspace dir simulating PIVOT_WORKSPACE_DIR."""
-    ws = tmp_path / "workspace"
+def tmp_data_space(tmp_path: Path) -> Path:
+    """A temporary data_space dir simulating PIVOT_DATA_SPACE_DIR."""
+    ws = tmp_path / "data_space"
     ws.mkdir()
     return ws
 

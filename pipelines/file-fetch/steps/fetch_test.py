@@ -33,7 +33,7 @@ def _run(tmp_path: Path, paths: list[str]) -> dict:
         **os.environ,
         "PIVOT_TENANT_ID": "t",
         "PIVOT_USER_ID": "u",
-        "PIVOT_WORKSPACE_DIR": str(tmp_path),
+        "PIVOT_DATA_SPACE_DIR": str(tmp_path),
         "PIVOT_APP_NAME": "pivot",
     }
     proc = subprocess.run(

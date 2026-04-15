@@ -28,6 +28,6 @@ LLM_RESPONSES = {
 def runner(tmp_git_repo: Path) -> LocalPipelineRunner:
     return LocalPipelineRunner(
         app_dir=APP_DIR,
-        workspace_dir=str(tmp_git_repo),
+        data_space_dir=str(tmp_git_repo),
         llm_backend=PrerecordedBackend.from_dict(LLM_RESPONSES),
     )

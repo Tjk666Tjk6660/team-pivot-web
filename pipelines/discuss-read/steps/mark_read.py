@@ -25,7 +25,7 @@ def main():
         sys.stdout.write(json.dumps({"output": {"marked": False}}))
         return
 
-    state_dir = Path(ctx.workspace_dir) / ".pivot-state"
+    state_dir = Path(ctx.data_space_dir) / ".pivot-state"
     state_dir.mkdir(parents=True, exist_ok=True)
     state_path = state_dir / f"read_state_{ctx.user_id}.json"
 

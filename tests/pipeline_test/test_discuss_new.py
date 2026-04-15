@@ -16,7 +16,7 @@ class TestDiscussNew:
         assert result.status == "completed", result.error
         assert result.output["committed"] is True
 
-        ws = Path(runner.workspace_dir)
+        ws = Path(runner.data_space_dir)
         canonical = list((ws / "discussions/test/new-thread").glob("001_*.md"))
         assert len(canonical) == 1
         idx = ws / "index/new-thread-discuss.index.yaml"

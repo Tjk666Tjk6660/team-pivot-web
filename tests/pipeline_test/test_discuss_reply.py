@@ -31,7 +31,7 @@ class TestDiscussReply:
         assert result.output["committed"] is True
         assert result.output["post_number"] == 2
 
-        ws = Path(runner.workspace_dir)
+        ws = Path(runner.data_space_dir)
         replies = list((ws / "discussions/test/reply-target").glob("002_*.md"))
         assert len(replies) == 1
 

@@ -22,7 +22,7 @@ def main():
     if not category or not thread:
         sys.stderr.write("gather: missing required params: category and thread\n")
         sys.exit(1)
-    thread_dir = f"{ctx.workspace_dir}/discussions/{category}/{thread}"
+    thread_dir = f"{ctx.data_space_dir}/discussions/{category}/{thread}"
 
     author = threads.get_thread_author(thread_dir)
     if author and author != ctx.user_id:
