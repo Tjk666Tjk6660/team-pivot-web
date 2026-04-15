@@ -16,3 +16,6 @@ docs/superpowers/
 
 # tests/test_output/
 tests/test_output/
+
+# User config (contains tokens, not tracked)
+pivot-config.yaml

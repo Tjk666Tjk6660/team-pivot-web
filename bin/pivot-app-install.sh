@@ -13,13 +13,13 @@
 set -e
 
 REPO_URL="https://github.com/hashSTACS-Global/team-pivot.git"
-REMOTE_CONFIG_URL="https://raw.githubusercontent.com/hashSTACS-Global/team-pivot/main/pivot-config.yaml"
+REMOTE_CONFIG_URL="https://raw.githubusercontent.com/hashSTACS-Global/team-pivot/main/pivot.yaml"
 
 # ---------------------------------------------------------------------------
 # 版本比较辅助函数
 # ---------------------------------------------------------------------------
 get_local_version() {
-  local config="$1/pivot-config.yaml"
+  local config="$1/pivot.yaml"
   [ -f "$config" ] && grep -m1 '^version:' "$config" | sed 's/version: *//' || echo "0.0.0"
 }
 
@@ -95,7 +95,7 @@ echo "✅ skill 入口已注册到 $SKILL_DIR/SKILL.md"
 # 4. 报告结果
 # ---------------------------------------------------------------------------
 CONFIG_FILE="$REPO_DIR/pivot-config.yaml"
-if grep -q 'data_space_repo: *$' "$CONFIG_FILE" || ! [ -d "$REPO_DIR/data_space" ]; then
+if [ ! -f "$CONFIG_FILE" ] || grep -q 'data_space_repo: *$' "$CONFIG_FILE" || ! [ -d "$REPO_DIR/data_space" ]; then
   echo ""
   echo "=== 安装完成，待配置 ==="
   echo "请开启新会话。首次使用 team-pivot 时，会自动引导你完成配置。"

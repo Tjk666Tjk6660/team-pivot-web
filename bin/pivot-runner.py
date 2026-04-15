@@ -114,8 +114,8 @@ class PipelineRunner:
         self.version = self._read_version()
 
     def _read_version(self) -> str:
-        """Read version from pivot-config.yaml."""
-        config_file = self.app_dir / "pivot-config.yaml"
+        """Read version from pivot.yaml."""
+        config_file = self.app_dir / "pivot.yaml"
         if not config_file.exists():
             return "unknown"
         try:

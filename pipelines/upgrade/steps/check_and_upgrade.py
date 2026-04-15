@@ -15,7 +15,8 @@ import yaml
 
 
 def _read_config(repo_path: str) -> dict:
-    config_file = Path(repo_path) / "pivot-config.yaml"
+    """Read pivot.yaml (version + upgrade credentials)."""
+    config_file = Path(repo_path) / "pivot.yaml"
     if not config_file.exists():
         return {}
     with open(config_file, encoding="utf-8") as f:
@@ -23,10 +24,9 @@ def _read_config(repo_path: str) -> dict:
 
 
 def _get_remote_version(upgrade_url: str) -> str | None:
-    """Fetch version from remote pivot-config.yaml via git archive."""
+    """Fetch version from remote pivot.yaml."""
     try:
-        # Use raw GitHub URL to fetch remote config
-        raw_url = upgrade_url.replace("github.com", "raw.githubusercontent.com").rstrip(".git") + "/main/pivot-config.yaml"
+        raw_url = upgrade_url.replace("github.com", "raw.githubusercontent.com").rstrip(".git") + "/main/pivot.yaml"
         import urllib.request
         with urllib.request.urlopen(raw_url, timeout=10) as resp:
             remote_config = yaml.safe_load(resp.read().decode("utf-8")) or {}
