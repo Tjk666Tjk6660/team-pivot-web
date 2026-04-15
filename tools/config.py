@@ -37,6 +37,44 @@ class ConfigNotReady(Exception):
 _REQUIRED_FIELDS = ["data_space_repo", "git_token"]
 
 
+def get_version() -> str:
+    """Read version from pivot-config.yaml.
+
+    Tries multiple strategies to locate the config file:
+    1. PIVOT_REPO_PATH env var
+    2. PIVOT_DATA_SPACE_DIR parent
+    3. Walk up from this file to find pivot-config.yaml
+    Falls back to PIVOT_VERSION env var, then "unknown".
+    """
+    # Strategy 1 & 2: from env vars
+    repo_path = os.environ.get("PIVOT_REPO_PATH", "")
+    if not repo_path:
+        ds = os.environ.get("PIVOT_DATA_SPACE_DIR", "")
+        if ds:
+            repo_path = str(Path(ds).parent)
+
+    # Strategy 3: walk up from this file
+    if not repo_path:
+        candidate = Path(__file__).parent.parent / "pivot-config.yaml"
+        if candidate.exists():
+            repo_path = str(candidate.parent)
+
+    if repo_path:
+        config_file = Path(repo_path) / "pivot-config.yaml"
+        if config_file.exists():
+            try:
+                with open(config_file, encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+                v = data.get("version")
+                if v:
+                    return str(v)
+            except Exception:
+                pass
+
+    # Fallback to env var (set by Runner)
+    return os.environ.get("PIVOT_VERSION", "unknown")
+
+
 def check_config(repo_path: str | Path) -> dict:
     """Check pivot-config.yaml for completeness.
 

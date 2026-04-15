@@ -101,7 +101,8 @@ class FeishuBotAdapter:
         summary_content = f"**Author**: {author}\n\n{summary}"
         if mention_prefix:
             summary_content = f"{mention_prefix}\n\n{summary_content}"
-        version = os.environ.get("PIVOT_VERSION", "")
+        from tools.config import get_version
+        version = get_version()
         elements = [
             {
                 "tag": "div",
@@ -111,7 +112,7 @@ class FeishuBotAdapter:
                 },
             },
         ]
-        if version:
+        if version and version != "unknown":
             elements.append({"tag": "hr"})
             elements.append({
                 "tag": "note",
