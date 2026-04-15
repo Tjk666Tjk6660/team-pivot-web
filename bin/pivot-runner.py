@@ -111,6 +111,19 @@ class PipelineRunner:
         self.user_id = user_id or os.environ.get("PIVOT_USER_ID", "")
         self.app_name = app_name
         self.env_extras = env_extras or {}
+        self.version = self._read_version()
+
+    def _read_version(self) -> str:
+        """Read version from pivot-config.yaml."""
+        config_file = self.app_dir / "pivot-config.yaml"
+        if not config_file.exists():
+            return "unknown"
+        try:
+            with open(config_file, encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            return str(data.get("version", "unknown"))
+        except Exception:
+            return "unknown"
 
     # -- Discovery ----------------------------------------------------------
 
@@ -223,7 +236,7 @@ class PipelineRunner:
             "PIVOT_TENANT_ID": self.tenant_id,
             "PIVOT_USER_ID": self.user_id,
             "PIVOT_APP_NAME": self.app_name,
-            "PIVOT_SKIP_CONFIG_CHECK": "1",  # constructor handles config checks
+            "PIVOT_VERSION": self.version,
             **self.env_extras,
         }
 
@@ -390,6 +403,7 @@ def main():
         params = json.loads(args.params)
         result = runner.run(args.pipeline, params)
         print(json.dumps({
+            "version": runner.version,
             "status": result.status,
             "output": result.output,
             "error": result.error,

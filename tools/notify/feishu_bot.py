@@ -101,23 +101,31 @@ class FeishuBotAdapter:
         summary_content = f"**Author**: {author}\n\n{summary}"
         if mention_prefix:
             summary_content = f"{mention_prefix}\n\n{summary_content}"
+        version = os.environ.get("PIVOT_VERSION", "")
+        elements = [
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": summary_content,
+                },
+            },
+        ]
+        if version:
+            elements.append({"tag": "hr"})
+            elements.append({
+                "tag": "note",
+                "elements": [
+                    {"tag": "plain_text", "content": f"Team-Pivot v{version}"},
+                ],
+            })
         return {
             "config": {"wide_screen_mode": True},
             "header": {
                 "title": {"tag": "plain_text", "content": title},
                 "template": "blue",
             },
-            "elements": [
-                {
-                    "tag": "div",
-                    "text": {
-                        "tag": "lark_md",
-                        "content": summary_content,
-                    },
-                },
-                # View button removed — thread_url is currently a placeholder
-                # (pivot.example.com). Re-enable once build_thread_url is configured.
-            ],
+            "elements": elements,
         }
 
     @staticmethod
