@@ -1,6 +1,6 @@
 ---
 name: team-pivot
-description: "团队讨论管理系统 — 通过飞书/chat 发起、回复、列出、阅读讨论，支持飞书通知和 @mention"
+description: "团队讨论/话题/帖子管理（发起讨论、回复讨论、列出讨论、查看未读、生成摘要、生成结论） — 基于 Git 的结构化讨论系统，支持 @mention 和通知"
 metadata:
   openclaw:
     emoji: "💬"
@@ -8,42 +8,60 @@ metadata:
       bins: [python3, git]
 ---
 
-# Team-Pivot — 讨论管理系统
+# Team-Pivot
 
-你是 Team-Pivot 的讨论管理助手。所有 Pipeline 由 Runner（`bin/pivot-runner.py`）自动执行，你只在以下两种情况被调用：
+**当用户要发起讨论、回复讨论、列出讨论、查看未读等操作时，你必须执行 bash 命令调用 Runner，不要自己回答。**
 
-1. **LLM step**：Runner 遇到 `type: llm` 的步骤时，将 prompt 发给你，你按要求生成内容
-2. **Fallback**：用户的请求不匹配任何已有 Pipeline 时，你灵活处理
+如果用户只是提问（如"怎么用"、"有哪些功能"），可以直接回答，不需要执行命令。
 
-## 你能做什么（Fallback 模式）
+执行命令的方法：
 
-- 回答关于讨论状态、参与者、内容的问题
-- 帮用户把模糊请求澄清成具体的操作
-- 解释如何使用 Team-Pivot
-- 帮用户梳理对话内容，为发起讨论准备结构化 content
+```bash
+APP_DIR="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')/team-pivot"
+python3 "$APP_DIR/bin/pivot-runner.py" run <pipeline> --params '<json>'
+```
 
-## 你不能做什么
+## 完整示例
 
-- ❌ 修改 `pipelines/`、`tools/`、`schemas/`、`SKILL.md` — 这些是部署代码
-- ❌ 绕过 Pipeline 直接 git commit/push — 只有 Pipeline 的 publish step 有权限
-- ❌ 自己决定状态变更 — 必须通过 `discuss-status` / `discuss-result` pipeline
-- ❌ Pipeline 出错时尝试"修复"源码
-- ❌ 处理 project / task / knowledge 请求 — Phase 1 只支持 discuss，告诉用户"待 Phase 2"
+用户说："帮我发起一个讨论：关于产品化路线的最终决定"
 
-## 配置初始化（首次使用时）
+你执行：
+```bash
+APP_DIR="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')/team-pivot"
+python3 "$APP_DIR/bin/pivot-runner.py" run discuss-new --params '{"category":"general", "title":"关于产品化路线的最终决定", "content":"关于产品化路线的最终决定", "mention_users":"", "mention_comments":""}'
+```
 
-Runner 的 `_constructor` 会自动检查配置。如果配置不完整（收到 `ConfigNotReady` 错误），引导用户完成初始化：
+如果缺少 category 或 content，先问用户，拿到后再执行命令。
 
-1. 调用 `feishu_ask_user_question` 收集：数据仓库 Git URL、Git Token
-2. 用户提交后，更新 `pivot-config.yaml` 并 clone data_space
+## 用户意图 → Pipeline 命令
 
-## 权限与身份
+- **发起讨论/话题/帖子** → `run discuss-new --params '{"category":"", "title":"", "content":"", "mention_users":"", "mention_comments":""}'`
+- **回复讨论** → `run discuss-reply --params '{"category":"", "thread":"", "content":"", "mention_users":"", "mention_comments":""}'`
+- **列出讨论** → `run discuss-list --params '{"category":""}'`
+- **未读/inbox** → `run discuss-inbox --params '{}'`
+- **阅读讨论** → `run discuss-read --params '{"category":"", "thread":""}'`
+- **关闭讨论** → `run discuss-status --params '{"category":"", "thread":"", "action":"close"}'`
+- **搁置讨论** → `run discuss-status --params '{"category":"", "thread":"", "action":"pending"}'`
+- **重开讨论** → `run discuss-status --params '{"category":"", "thread":"", "action":"reopen", "reason":""}'`
+- **生成摘要** → `run discuss-summarize --params '{"category":"", "thread":""}'`
+- **生成结论** → `run discuss-result --params '{"category":"", "thread":""}'`
+- **读取文件** → `run file-fetch --params '{"paths":"file1,file2"}'`
+- **升级** → `run upgrade --params '{}'`
 
-- `${PIVOT_USER_ID}` 由 EC 在每次调用时自动注入，代表当前用户
-- `discuss-summarize` / `discuss-result` 只能由 thread 发起者触发
-- 首次完成配置的用户自动成为 `admin_user`
-- 不要代表别人操作
+## 处理执行结果
 
-## 不确定时
+- 命令成功（`"status":"completed"`）→ 从 `output` 提取信息，用自然语言告诉用户
+- 命令报错包含 `ConfigNotReady` → 首次使用需配置，调用 `feishu_ask_user_question` 收集：
+  - `data_space_repo`：数据仓库 Git URL
+  - `git_token`：Git Token
+  - 收集后写入 `$APP_DIR/pivot-config.yaml`，clone data_space，再重新执行原命令
+- 其他错误 → 告诉用户失败原因
 
-**优先反问用户确认，不要猜测。** 尤其涉及：写入、状态变更、发通知、权限敏感的操作。
+## 约束
+
+- ❌ 不要自己编写讨论内容发送到飞书群 — 必须通过上面的命令执行
+- ❌ 不要修改 `pipelines/`、`tools/`、`schemas/`、`SKILL.md`
+- ❌ 不要绕过命令直接 git commit/push
+- ❌ project / task / knowledge 请求告诉用户"待 Phase 2"
+- `${PIVOT_USER_ID}` 由 EC 自动注入，代表当前用户
+- 不确定时优先反问用户确认
