@@ -140,10 +140,13 @@ def main():
             "message": "升级超时，请稍后重试。",
         }}))
     except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
         sys.stdout.write(json.dumps({"output": {
             "upgraded": False,
             "error": "exception",
-            "message": f"升级异常：{str(e)}",
+            "message": f"升级异常：{type(e).__name__}: {str(e)}",
+            "traceback": tb,
         }}))
     finally:
         # Cleanup tmp (install script should have done this, but just in case)
