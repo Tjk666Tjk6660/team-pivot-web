@@ -81,7 +81,8 @@ def main():
             subprocess.run(["rm", "-rf", str(tmp_dir)], check=True)
 
         # If upgrade_repo needs auth, read token from pivot-config.yaml
-        user_config_file = skill_dir / "pivot-config.yaml"
+        data_dir = tenant_root / "workspace" / "skill-team-pivot"
+        user_config_file = data_dir / "pivot-config.yaml"
         user_config = {}
         if user_config_file.exists():
             with open(user_config_file, encoding="utf-8") as f:

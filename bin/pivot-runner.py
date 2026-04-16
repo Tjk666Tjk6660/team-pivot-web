@@ -97,6 +97,7 @@ class PipelineRunner:
     def __init__(
         self,
         app_dir: str | Path,
+        data_dir: str = "",
         data_space_dir: str = "",
         llm_backend: LLMBackend | None = None,
         tenant_id: str = "",
@@ -105,7 +106,8 @@ class PipelineRunner:
         env_extras: Optional[dict[str, str]] = None,
     ):
         self.app_dir = Path(app_dir)
-        self.data_space_dir = data_space_dir
+        self.data_dir = data_dir
+        self.data_space_dir = data_space_dir or (str(Path(data_dir) / "data_space") if data_dir else "")
         self.llm_backend = llm_backend or StubLLMBackend()
         self.tenant_id = tenant_id or os.environ.get("PIVOT_TENANT_ID", "")
         self.user_id = user_id or os.environ.get("PIVOT_USER_ID", "")
@@ -244,7 +246,10 @@ class PipelineRunner:
         env = {
             **os.environ,
             "PYTHONIOENCODING": "utf-8",
+            "PIVOT_APP_DIR": str(self.app_dir),
+            "PIVOT_DATA_DIR": self.data_dir,
             "PIVOT_DATA_SPACE_DIR": self.data_space_dir,
+            "PIVOT_REPO_PATH": self.data_dir,
             "PIVOT_TENANT_ID": self.tenant_id,
             "PIVOT_USER_ID": self.user_id,
             "PIVOT_APP_NAME": self.app_name,
@@ -382,7 +387,8 @@ def main():
     p_run.add_argument("pipeline", help="Pipeline name")
     p_run.add_argument("--params", default="{}", help="JSON input parameters")
     p_run.add_argument("--app-dir", default=None, help="APP root directory")
-    p_run.add_argument("--data-space-dir", default=None, help="Data space directory")
+    p_run.add_argument("--data-dir", default=None, help="Data directory (config + data_space)")
+    p_run.add_argument("--data-space-dir", default=None, help="Data space directory (overrides --data-dir/data_space)")
 
     # list
     sub.add_parser("list", help="List discovered pipelines")
@@ -395,14 +401,24 @@ def main():
 
     # Resolve app dir
     app_dir = args.app_dir if hasattr(args, "app_dir") and args.app_dir else str(Path(__file__).parent.parent)
+
+    # Resolve data dir: --data-dir > env > app_dir (legacy fallback)
+    data_dir = ""
+    if hasattr(args, "data_dir") and args.data_dir:
+        data_dir = args.data_dir
+    else:
+        data_dir = os.environ.get("PIVOT_DATA_DIR", app_dir)
+
+    # Resolve data_space dir: --data-space-dir > env > data_dir/data_space
     data_space_dir = ""
     if hasattr(args, "data_space_dir") and args.data_space_dir:
         data_space_dir = args.data_space_dir
     else:
-        data_space_dir = os.environ.get("PIVOT_DATA_SPACE_DIR", str(Path(app_dir) / "data_space"))
+        data_space_dir = os.environ.get("PIVOT_DATA_SPACE_DIR", str(Path(data_dir) / "data_space"))
 
     runner = PipelineRunner(
         app_dir=app_dir,
+        data_dir=data_dir,
         data_space_dir=data_space_dir,
     )
 

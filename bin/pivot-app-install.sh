@@ -48,8 +48,10 @@ fi
 
 TMP_DIR="$TENANT_ROOT/tmp/team-pivot"
 SKILL_DIR="$TENANT_ROOT/skills/team-pivot"
+DATA_DIR="$TENANT_ROOT/workspace/skill-team-pivot"
 echo "[INFO] TENANT_ROOT=$TENANT_ROOT"
 echo "[INFO] SKILL_DIR=$SKILL_DIR"
+echo "[INFO] DATA_DIR=$DATA_DIR"
 
 # ---------------------------------------------------------------------------
 # 2. 获取源码到临时目录
@@ -114,29 +116,40 @@ if [ "$NEED_COPY" = true ]; then
   cp -R "$TMP_DIR/pipelines" "$SKILL_DIR/pipelines"
   cp -R "$TMP_DIR/tools"     "$SKILL_DIR/tools"
 
-  # 用户数据：仅在不存在时复制模板
-  [ ! -f "$SKILL_DIR/pivot-config.yaml" ] && [ -f "$TMP_DIR/pivot-config.yaml" ] \
-    && cp "$TMP_DIR/pivot-config.yaml" "$SKILL_DIR/pivot-config.yaml"
-
   INSTALLED_VER=$(get_local_version "$SKILL_DIR")
   echo "✅ 已安装 v$INSTALLED_VER 到 $SKILL_DIR"
 fi
 
 # ---------------------------------------------------------------------------
-# 4. 清理旧安装路径（从 $TENANT_ROOT/team-pivot 迁移过来的情况）
+# 4. 创建数据目录并迁移旧数据
 # ---------------------------------------------------------------------------
+mkdir -p "$DATA_DIR"
+
+# 从旧安装路径迁移（$TENANT_ROOT/team-pivot）
 OLD_DIR="$TENANT_ROOT/team-pivot"
-if [ -d "$OLD_DIR" ] && [ "$OLD_DIR" != "$SKILL_DIR" ]; then
-  # 迁移用户数据
-  [ -f "$OLD_DIR/pivot-config.yaml" ] && [ ! -f "$SKILL_DIR/pivot-config.yaml" ] \
-    && cp "$OLD_DIR/pivot-config.yaml" "$SKILL_DIR/pivot-config.yaml"
-  [ -d "$OLD_DIR/data_space/.git" ] && [ ! -d "$SKILL_DIR/data_space" ] \
-    && mv "$OLD_DIR/data_space" "$SKILL_DIR/data_space"
+if [ -d "$OLD_DIR" ]; then
+  [ -f "$OLD_DIR/pivot-config.yaml" ] && [ ! -f "$DATA_DIR/pivot-config.yaml" ] \
+    && mv "$OLD_DIR/pivot-config.yaml" "$DATA_DIR/pivot-config.yaml"
+  [ -d "$OLD_DIR/data_space/.git" ] && [ ! -d "$DATA_DIR/data_space" ] \
+    && mv "$OLD_DIR/data_space" "$DATA_DIR/data_space"
   rm -rf "$OLD_DIR"
-  echo "[INFO] 已清理旧安装路径: $OLD_DIR"
+  echo "[INFO] 已从旧路径迁移数据: $OLD_DIR → $DATA_DIR"
 fi
 
-# 清理旧的 skills/pivot 目录（skill 名从 pivot 改为 team-pivot）
+# 从 skill 目录迁移（之前版本把数据放在 skill 目录下）
+if [ -f "$SKILL_DIR/pivot-config.yaml" ] && [ ! -f "$DATA_DIR/pivot-config.yaml" ]; then
+  mv "$SKILL_DIR/pivot-config.yaml" "$DATA_DIR/pivot-config.yaml"
+  echo "[INFO] 已从 skill 目录迁移 pivot-config.yaml → $DATA_DIR"
+fi
+if [ -d "$SKILL_DIR/data_space/.git" ] && [ ! -d "$DATA_DIR/data_space" ]; then
+  mv "$SKILL_DIR/data_space" "$DATA_DIR/data_space"
+  echo "[INFO] 已从 skill 目录迁移 data_space → $DATA_DIR"
+fi
+# 清理 skill 目录中残留的数据文件
+rm -f "$SKILL_DIR/pivot-config.yaml" 2>/dev/null
+rm -rf "$SKILL_DIR/data_space" 2>/dev/null
+
+# 清理旧的 skills/pivot 目录
 OLD_SKILL="$TENANT_ROOT/skills/pivot"
 if [ -d "$OLD_SKILL" ] && [ "$OLD_SKILL" != "$SKILL_DIR" ]; then
   rm -rf "$OLD_SKILL"
@@ -147,19 +160,19 @@ fi
 # 5. 清理临时目录
 # ---------------------------------------------------------------------------
 rm -rf "$TMP_DIR"
-# 如果 tmp 目录为空则也删掉
 rmdir "$TENANT_ROOT/tmp" 2>/dev/null || true
 echo "[INFO] 已清理临时目录"
 
 # ---------------------------------------------------------------------------
 # 6. 报告结果
 # ---------------------------------------------------------------------------
-CONFIG_FILE="$SKILL_DIR/pivot-config.yaml"
+CONFIG_FILE="$DATA_DIR/pivot-config.yaml"
 HAS_CONFIG="no"
 HAS_DATA_SPACE="no"
 [ -f "$CONFIG_FILE" ] && ! grep -q 'data_space_repo: *$' "$CONFIG_FILE" && HAS_CONFIG="yes"
-[ -d "$SKILL_DIR/data_space/.git" ] && HAS_DATA_SPACE="yes"
+[ -d "$DATA_DIR/data_space/.git" ] && HAS_DATA_SPACE="yes"
 echo "[INFO] config=$HAS_CONFIG, data_space=$HAS_DATA_SPACE"
+echo "[INFO] DATA_DIR=$DATA_DIR"
 
 if [ "$HAS_CONFIG" = "no" ] || [ "$HAS_DATA_SPACE" = "no" ]; then
   echo ""

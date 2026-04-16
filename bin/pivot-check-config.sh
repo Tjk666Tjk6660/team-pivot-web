@@ -5,12 +5,12 @@
 #   {"ready": true}
 #   {"ready": false, "missing": ["data_space_repo", "git_token"]}
 #
-# 用法：bash $REPO_PATH/bin/pivot-check-config.sh $REPO_PATH
+# 用法：bash pivot-check-config.sh $DATA_DIR
 
 set -e
 
-REPO_PATH="${1:-.}"
-CONFIG_FILE="$REPO_PATH/pivot-config.yaml"
+DATA_PATH="${1:-.}"
+CONFIG_FILE="$DATA_PATH/pivot-config.yaml"
 
 if [ ! -f "$CONFIG_FILE" ]; then
   echo '{"ready": false, "missing": ["config_file"], "error": "pivot-config.yaml not found"}'
@@ -22,7 +22,7 @@ MISSING=""
 grep -q 'data_space_repo: *$' "$CONFIG_FILE" && MISSING="${MISSING}\"data_space_repo\","
 grep -q 'git_token: *$' "$CONFIG_FILE" && MISSING="${MISSING}\"git_token\","
 
-if [ ! -d "$REPO_PATH/data_space" ]; then
+if [ ! -d "$DATA_PATH/data_space" ]; then
   MISSING="${MISSING}\"data_space_dir\","
 fi
 

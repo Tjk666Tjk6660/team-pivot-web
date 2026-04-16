@@ -19,12 +19,14 @@ from tools.config import check_config  # noqa: E402
 def main():
     payload = json.loads(sys.stdin.read())
 
-    # PIVOT_DATA_SPACE_DIR points to data_space/; repo root is its parent
     import os
-    data_space_dir = os.environ.get("PIVOT_DATA_SPACE_DIR", "")
-    repo_path = os.environ.get("PIVOT_REPO_PATH") or str(Path(data_space_dir).parent)
+    data_dir = os.environ.get("PIVOT_DATA_DIR", "")
+    if not data_dir:
+        # Legacy fallback: derive from PIVOT_DATA_SPACE_DIR
+        ds = os.environ.get("PIVOT_DATA_SPACE_DIR", "")
+        data_dir = os.environ.get("PIVOT_REPO_PATH") or (str(Path(ds).parent) if ds else "")
 
-    result = check_config(repo_path)
+    result = check_config(data_dir)
 
     if not result["ready"]:
         print(json.dumps({

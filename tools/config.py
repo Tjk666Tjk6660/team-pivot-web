@@ -37,18 +37,24 @@ class ConfigNotReady(Exception):
 _REQUIRED_FIELDS = ["data_space_repo", "git_token"]
 
 
-def _resolve_repo_path() -> str:
-    """Resolve the repo root path from env vars or file location."""
+def _resolve_data_dir() -> str:
+    """Resolve the data directory from env vars.
+
+    Priority: PIVOT_DATA_DIR > PIVOT_REPO_PATH (legacy) > parent of PIVOT_DATA_SPACE_DIR > app dir.
+    """
+    data_dir = os.environ.get("PIVOT_DATA_DIR", "")
+    if data_dir:
+        return data_dir
     repo_path = os.environ.get("PIVOT_REPO_PATH", "")
-    if not repo_path:
-        ds = os.environ.get("PIVOT_DATA_SPACE_DIR", "")
-        if ds:
-            repo_path = str(Path(ds).parent)
-    if not repo_path:
-        candidate = Path(__file__).parent.parent / "pivot.yaml"
-        if candidate.exists():
-            repo_path = str(candidate.parent)
-    return repo_path
+    if repo_path:
+        return repo_path
+    ds = os.environ.get("PIVOT_DATA_SPACE_DIR", "")
+    if ds:
+        return str(Path(ds).parent)
+    candidate = Path(__file__).parent.parent / "pivot.yaml"
+    if candidate.exists():
+        return str(candidate.parent)
+    return ""
 
 
 def get_version() -> str:
@@ -56,9 +62,14 @@ def get_version() -> str:
 
     Falls back to PIVOT_VERSION env var, then "unknown".
     """
-    repo_path = _resolve_repo_path()
-    if repo_path:
-        pivot_file = Path(repo_path) / "pivot.yaml"
+    # pivot.yaml lives in the app dir, not the data dir
+    app_dir = os.environ.get("PIVOT_APP_DIR", "")
+    if not app_dir:
+        candidate = Path(__file__).parent.parent / "pivot.yaml"
+        if candidate.exists():
+            app_dir = str(candidate.parent)
+    if app_dir:
+        pivot_file = Path(app_dir) / "pivot.yaml"
         if pivot_file.exists():
             try:
                 with open(pivot_file, encoding="utf-8") as f:
@@ -73,12 +84,15 @@ def get_version() -> str:
     return os.environ.get("PIVOT_VERSION", "unknown")
 
 
-def check_config(repo_path: str | Path) -> dict:
+def check_config(data_dir: str | Path) -> dict:
     """Check pivot-config.yaml for completeness.
+
+    Args:
+        data_dir: The data directory containing pivot-config.yaml and data_space/.
 
     Returns {"ready": True} or {"ready": False, "missing": [...]}.
     """
-    config_file = Path(repo_path) / "pivot-config.yaml"
+    config_file = Path(data_dir) / "pivot-config.yaml"
     if not config_file.exists():
         return {"ready": False, "missing": ["config_file"]}
 
@@ -87,7 +101,7 @@ def check_config(repo_path: str | Path) -> dict:
 
     missing = [k for k in _REQUIRED_FIELDS if not data.get(k)]
 
-    data_space_dir = Path(repo_path) / "data_space"
+    data_space_dir = Path(data_dir) / "data_space"
     if not data_space_dir.is_dir():
         missing.append("data_space_dir")
 
@@ -96,13 +110,13 @@ def check_config(repo_path: str | Path) -> dict:
     return {"ready": True}
 
 
-def require_config_ready(repo_path: str | Path) -> None:
+def require_config_ready(data_dir: str | Path) -> None:
     """Raise ConfigNotReady if pivot-config.yaml is incomplete.
 
     Call this at the start of any pipeline step to fail fast with a
     structured error instead of crashing mid-execution.
     """
-    result = check_config(repo_path)
+    result = check_config(data_dir)
     if not result["ready"]:
         raise ConfigNotReady(result["missing"])
 

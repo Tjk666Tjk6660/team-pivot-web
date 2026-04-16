@@ -17,8 +17,10 @@ metadata:
 执行命令的方法：
 
 ```bash
-APP_DIR="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')/skills/team-pivot"
-python3 "$APP_DIR/bin/pivot-runner.py" run <pipeline> --params '<json>'
+TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')"
+APP_DIR="$TENANT_ROOT/skills/team-pivot"
+DATA_DIR="$TENANT_ROOT/workspace/skill-team-pivot"
+python3 "$APP_DIR/bin/pivot-runner.py" run <pipeline> --params '<json>' --data-dir "$DATA_DIR"
 ```
 
 ## 完整示例
@@ -27,8 +29,10 @@ python3 "$APP_DIR/bin/pivot-runner.py" run <pipeline> --params '<json>'
 
 你执行：
 ```bash
-APP_DIR="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')/skills/team-pivot"
-python3 "$APP_DIR/bin/pivot-runner.py" run discuss-new --params '{"category":"general", "title":"关于产品化路线的最终决定", "content":"关于产品化路线的最终决定", "mention_users":"", "mention_comments":""}'
+TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')"
+APP_DIR="$TENANT_ROOT/skills/team-pivot"
+DATA_DIR="$TENANT_ROOT/workspace/skill-team-pivot"
+python3 "$APP_DIR/bin/pivot-runner.py" run discuss-new --params '{"category":"general", "title":"关于产品化路线的最终决定", "content":"关于产品化路线的最终决定", "mention_users":"", "mention_comments":""}' --data-dir "$DATA_DIR"
 ```
 
 如果缺少 category 或 content，先问用户，拿到后再执行命令。
@@ -54,7 +58,7 @@ python3 "$APP_DIR/bin/pivot-runner.py" run discuss-new --params '{"category":"ge
 - 命令报错包含 `ConfigNotReady` → 首次使用需配置，调用 `feishu_ask_user_question` 收集：
   - `data_space_repo`：数据仓库 Git URL
   - `git_token`：Git Token
-  - 收集后写入 `$APP_DIR/pivot-config.yaml`，clone data_space，再重新执行原命令
+  - 收集后写入 `$DATA_DIR/pivot-config.yaml`，clone data_space 到 `$DATA_DIR/data_space`，再重新执行原命令
 - 其他错误 → 告诉用户失败原因
 
 ## 约束
