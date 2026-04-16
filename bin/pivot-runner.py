@@ -178,6 +178,18 @@ class PipelineRunner:
                 destructor_error = dtor_result.error
 
         biz_result.destructor_error = destructor_error
+
+        # Format output as Feishu card if a formatter exists
+        if biz_result.status == "completed" and biz_result.output:
+            try:
+                sys.path.insert(0, str(self.app_dir))
+                from tools.card_formatter import format_as_card
+                card = format_as_card(pipeline_name, biz_result.output)
+                if card:
+                    biz_result.output["channelData"] = {"feishu": {"card": card}}
+            except Exception:
+                pass  # formatter failure doesn't break pipeline
+
         return biz_result
 
     def _run_pipeline_steps(self, pipeline_dir: Path, params: dict) -> PipelineResult:
