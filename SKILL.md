@@ -68,7 +68,18 @@ python3 "$APP_DIR/bin/app-runner.py" run discuss-new --params '{"category":"gene
      ```
   3. 执行 `git clone` 将数据仓库克隆到 `$DATA_DIR/data_space`
   4. 重新执行用户原来的命令
-- 其他错误 → 告诉用户失败原因
+- 其他错误 → **直接告诉用户错误信息，不要尝试修复**
+
+## 错误处理原则
+
+**你是 pipeline 的调用者，不是调试者。pipeline 出错时报告给用户，不要自己修。**
+
+- ❌ 不要自行修改配置文件、环境变量或代码来绕过错误
+- ❌ 不要换一种方式重试（如换命令、改参数、手动执行 pipeline 的单个步骤）
+- ❌ 不要用 fallback 方案替代 pipeline（如自己写 git 命令、自己生成内容）
+- ❌ 不要创建脚本或临时文件来"修复"问题
+- ✅ 唯一的例外：用户意图未匹配到任何 pipeline 时，可以自由组合 `pipelines/` 目录下的各个脚本（steps/*.py）来完成用户请求。阅读对应目录下的 `pipeline.yaml` 了解每个脚本的用途和参数。但仍然**不允许直接操作数据仓库**（不能直接 git commit/push、手动写文件到 data_space 等）
+- ✅ `ConfigNotReady` 错误按上面的流程处理（弹飞书卡片收集配置）
 
 ## 约束
 
