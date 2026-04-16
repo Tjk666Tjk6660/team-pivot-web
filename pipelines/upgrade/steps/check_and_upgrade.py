@@ -96,7 +96,7 @@ def main():
         tmp_dir.parent.mkdir(parents=True, exist_ok=True)
         result = subprocess.run(
             ["git", "clone", "--depth", "1", clone_url, str(tmp_dir)],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, errors="replace", timeout=60,
         )
         if result.returncode != 0:
             sys.stdout.write(json.dumps({"output": {
@@ -109,7 +109,7 @@ def main():
         # Run the install script (it handles copying files and cleanup)
         result = subprocess.run(
             ["bash", str(tmp_dir / "bin" / "pivot-app-install.sh")],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True, text=True, errors="replace", timeout=120,
             cwd=str(skill_dir),  # pwd must be under .enclaws/tenants/{id}/
         )
 
