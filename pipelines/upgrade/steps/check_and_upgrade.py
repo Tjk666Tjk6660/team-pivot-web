@@ -49,7 +49,7 @@ def _version_lt(a: str, b: str) -> bool:
 def main():
     payload = json.loads(sys.stdin.read())
 
-    # Locate skill directory: pivot-runner.py is at skills/team-pivot/bin/,
+    # Locate skill directory: app-runner.py is at skills/team-pivot/bin/,
     # so the pipeline cwd is skills/team-pivot/pipelines/upgrade/.
     # Walk up to find skill root (where pivot.yaml lives).
     pipeline_dir = Path(os.getcwd())
@@ -81,7 +81,7 @@ def main():
             subprocess.run(["rm", "-rf", str(tmp_dir)], check=True)
 
         # If upgrade_repo needs auth, read token from pivot-config.yaml
-        data_dir = tenant_root / "workspace" / "skill-team-pivot"
+        data_dir = Path(os.environ.get("PIVOT_DATA_DIR", "")) or (tenant_root / "workspace" / "skill-team-pivot")
         user_config_file = data_dir / "pivot-config.yaml"
         user_config = {}
         if user_config_file.exists():

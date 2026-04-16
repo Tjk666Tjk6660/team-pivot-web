@@ -20,7 +20,7 @@ metadata:
 TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')"
 APP_DIR="$TENANT_ROOT/skills/team-pivot"
 DATA_DIR="$TENANT_ROOT/workspace/skill-team-pivot"
-python3 "$APP_DIR/bin/pivot-runner.py" run <pipeline> --params '<json>' --data-dir "$DATA_DIR"
+python3 "$APP_DIR/bin/app-runner.py" run <pipeline> --params '<json>' --data-dir "$DATA_DIR"
 ```
 
 ## 完整示例
@@ -32,7 +32,7 @@ python3 "$APP_DIR/bin/pivot-runner.py" run <pipeline> --params '<json>' --data-d
 TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')"
 APP_DIR="$TENANT_ROOT/skills/team-pivot"
 DATA_DIR="$TENANT_ROOT/workspace/skill-team-pivot"
-python3 "$APP_DIR/bin/pivot-runner.py" run discuss-new --params '{"category":"general", "title":"关于产品化路线的最终决定", "content":"关于产品化路线的最终决定", "mention_users":"", "mention_comments":""}' --data-dir "$DATA_DIR"
+python3 "$APP_DIR/bin/app-runner.py" run discuss-new --params '{"category":"general", "title":"关于产品化路线的最终决定", "content":"关于产品化路线的最终决定", "mention_users":"", "mention_comments":""}' --data-dir "$DATA_DIR"
 ```
 
 如果缺少 category 或 content，先问用户，拿到后再执行命令。

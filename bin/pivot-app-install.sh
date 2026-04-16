@@ -170,8 +170,10 @@ if [ "$NEED_COPY" = true ]; then
   cp "$TMP_DIR/SKILL.md"               "$SKILL_DIR/SKILL.md"
   log_debug "cp pivot.yaml"
   cp "$TMP_DIR/pivot.yaml"             "$SKILL_DIR/pivot.yaml"
-  log_debug "cp pivot-runner.py"
-  cp "$TMP_DIR/bin/pivot-runner.py"     "$SKILL_DIR/bin/pivot-runner.py"
+  log_debug "cp app-runner.py"
+  cp "$TMP_DIR/bin/app-runner.py"     "$SKILL_DIR/bin/app-runner.py"
+  log_debug "cp llm_gateway.py"
+  cp "$TMP_DIR/bin/llm_gateway.py"    "$SKILL_DIR/bin/llm_gateway.py"
   log_debug "cp pivot-check-config.sh"
   cp "$TMP_DIR/bin/pivot-check-config.sh" "$SKILL_DIR/bin/pivot-check-config.sh"
 

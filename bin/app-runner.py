@@ -9,13 +9,13 @@ Standalone program that:
 
 Usage:
     # Run a specific pipeline
-    python3 bin/pivot-runner.py run <pipeline-name> --params '{"key": "value"}'
+    python3 bin/app-runner.py run <pipeline-name> --params '{"key": "value"}'
 
     # List all discovered pipelines
-    python3 bin/pivot-runner.py list
+    python3 bin/app-runner.py list
 
     # Run with custom app/data dirs
-    python3 bin/pivot-runner.py run discuss-list \\
+    python3 bin/app-runner.py run discuss-list \\
         --app-dir /path/to/team-pivot \\
         --data-space-dir /path/to/data_space
 """
@@ -35,22 +35,10 @@ import yaml
 
 
 # ---------------------------------------------------------------------------
-# LLM Backend Protocol
+# LLM Backend (via EC Gateway API)
 # ---------------------------------------------------------------------------
 
-class LLMBackend(Protocol):
-    def call(self, prompt: str, step_name: str, schema_path: str | None = None) -> dict:
-        """Send prompt to LLM, return parsed JSON response matching schema."""
-        ...
-
-
-class StubLLMBackend:
-    """Placeholder backend that errors — real integrations override this."""
-    def call(self, prompt: str, step_name: str, schema_path: str | None = None) -> dict:
-        raise RuntimeError(
-            f"LLM step '{step_name}' requires an LLM backend. "
-            "Set PIVOT_LLM_BACKEND or provide --llm-backend."
-        )
+from llm_gateway import LLMBackend, GatewayLLMBackend, resolve_gateway_connection
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +96,11 @@ class PipelineRunner:
         self.app_dir = Path(app_dir)
         self.data_dir = data_dir
         self.data_space_dir = data_space_dir or (str(Path(data_dir) / "data_space") if data_dir else "")
-        self.llm_backend = llm_backend or StubLLMBackend()
+        if llm_backend:
+            self.llm_backend = llm_backend
+        else:
+            url, token = resolve_gateway_connection()
+            self.llm_backend = GatewayLLMBackend(url, token)
         self.tenant_id = tenant_id or os.environ.get("ENCLAWS_TENANT_ID", "")
         self.user_id = user_id or os.environ.get("ENCLAWS_TENANT_USER_ID", "")
         self.app_name = app_name
