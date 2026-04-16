@@ -16,8 +16,21 @@ REPO_URL="https://github.com/hashSTACS-Global/team-pivot.git"
 REMOTE_CONFIG_URL="https://raw.githubusercontent.com/hashSTACS-Global/team-pivot/main/pivot.yaml"
 
 # ---------------------------------------------------------------------------
-# 日志函数
+# 日志：同时输出到 stdout 和临时日志文件
 # ---------------------------------------------------------------------------
+_TMP_LOG="$(pwd)/pivot-app-install-$$.log"
+_FINAL_LOG=""  # 安装成功后移到 DATA_DIR
+exec > >(tee -a "$_TMP_LOG") 2>&1
+
+_move_log() {
+  if [ -n "$_FINAL_LOG" ] && [ -f "$_TMP_LOG" ]; then
+    mkdir -p "$(dirname "$_FINAL_LOG")"
+    cp "$_TMP_LOG" "$_FINAL_LOG"
+  fi
+  rm -f "$_TMP_LOG"
+}
+trap _move_log EXIT
+
 log_info()  { echo "[INFO]  $*"; }
 log_warn()  { echo "[WARN]  $*"; }
 log_error() { echo "[ERROR] $*"; }
@@ -89,6 +102,8 @@ DATA_DIR="$TENANT_ROOT/workspace/skill-team-pivot"
 log_info "TMP_DIR=$TMP_DIR"
 log_info "SKILL_DIR=$SKILL_DIR"
 log_info "DATA_DIR=$DATA_DIR"
+_FINAL_LOG="$DATA_DIR/install.log"
+log_info "LOG_FILE=$_FINAL_LOG"
 
 # ---------------------------------------------------------------------------
 # 2. 获取源码到临时目录
