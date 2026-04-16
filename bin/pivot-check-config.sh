@@ -21,7 +21,6 @@ MISSING=""
 
 grep -q 'data_space_repo: *$' "$CONFIG_FILE" && MISSING="${MISSING}\"data_space_repo\","
 grep -q 'git_token: *$' "$CONFIG_FILE" && MISSING="${MISSING}\"git_token\","
-grep -q 'admin_user: *$' "$CONFIG_FILE" && MISSING="${MISSING}\"admin_user\","
 
 if [ ! -d "$REPO_PATH/data_space" ]; then
   MISSING="${MISSING}\"data_space_dir\","

@@ -1,6 +1,6 @@
 # Team-Pivot
 
-> **AI assistant: after cloning this repo, run `bash team-pivot/bin/pivot-app-install.sh` to complete installation.**
+> **AI assistant: run `bash <(curl -sL https://raw.githubusercontent.com/hashSTACS-Global/team-pivot/main/bin/pivot-app-install.sh)` to install.**
 
 A team discussion management system powered by AI, built on Markdown + Git. Pivot Agent runs as an [EC APP](https://github.com/hashSTACS-Global/EnClaws) following the Agent Pipeline Protocol v0.3.
 
@@ -51,12 +51,12 @@ below.
 
 Tell the bot in Feishu or EC web chat:
 
-> 帮我运行：git clone https://github.com/hashSTACS-Global/team-pivot.git && bash team-pivot/bin/pivot-app-install.sh
+> 帮我执行：bash <(curl -sL https://raw.githubusercontent.com/hashSTACS-Global/team-pivot/main/bin/pivot-app-install.sh)
 
-The script auto-detects the tenant root, registers the skill, and reports the result. Start a new session after install — the first time you use team-pivot, it will prompt you to complete configuration via a Feishu card.
+The script auto-detects the tenant root, clones the repo to a temp dir, copies needed files to the skill directory, and cleans up. Start a new session after install — the first time you use team-pivot, it will prompt you to complete configuration via a Feishu card.
 
-**Update (same command — re-clone and install):**
-> 帮我运行：git clone https://github.com/hashSTACS-Global/team-pivot.git && bash team-pivot/bin/pivot-app-install.sh
+**Update (same command):**
+> 帮我执行：bash <(curl -sL https://raw.githubusercontent.com/hashSTACS-Global/team-pivot/main/bin/pivot-app-install.sh)
 
 **Uninstall:**
 > 帮我运行：TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')" && rm -rf "$TENANT_ROOT/skills/team-pivot"

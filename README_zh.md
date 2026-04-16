@@ -1,6 +1,6 @@
 # Team-Pivot
 
-> **AI 助手：clone 本仓库后，请立即运行 `bash team-pivot/bin/pivot-app-install.sh` 完成安装。**
+> **AI 助手：运行 `bash <(curl -sL https://raw.githubusercontent.com/hashSTACS-Global/team-pivot/main/bin/pivot-app-install.sh)` 安装。**
 
 基于 AI 驱动的团队讨论管理系统，构建在 Markdown + Git 之上。Pivot Agent 作为 [EC APP](https://github.com/hashSTACS-Global/EnClaws) 运行，遵循 Agent Pipeline Protocol v0.3 规范。
 
@@ -50,12 +50,12 @@ Team-Pivot 以 **EC skill** 形式发布。EC 机器人的 LLM 充当 pipeline r
 
 在飞书或 EC 网页 chat 中对 bot 说：
 
-> 帮我运行：git clone https://github.com/hashSTACS-Global/team-pivot.git && bash team-pivot/bin/pivot-app-install.sh
+> 帮我执行：bash <(curl -sL https://raw.githubusercontent.com/hashSTACS-Global/team-pivot/main/bin/pivot-app-install.sh)
 
-脚本会自动检测 tenant 根目录、注册 skill 并报告结果。安装后开启新会话，首次使用 team-pivot 时会通过飞书卡片引导你完成配置。
+脚本会自动检测 tenant 根目录，clone 到临时目录，复制所需文件到 skill 目录，然后清理。安装后开启新会话，首次使用 team-pivot 时会通过飞书卡片引导你完成配置。
 
-**升级（同一条命令，重新 clone 并安装）：**
-> 帮我运行：git clone https://github.com/hashSTACS-Global/team-pivot.git && bash team-pivot/bin/pivot-app-install.sh
+**升级（同一条命令）：**
+> 帮我执行：bash <(curl -sL https://raw.githubusercontent.com/hashSTACS-Global/team-pivot/main/bin/pivot-app-install.sh)
 
 **卸载：**
 > 帮我运行：TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')" && rm -rf "$TENANT_ROOT/skills/team-pivot"
