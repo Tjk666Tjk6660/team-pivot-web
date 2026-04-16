@@ -109,8 +109,8 @@ class PipelineRunner:
         self.data_dir = data_dir
         self.data_space_dir = data_space_dir or (str(Path(data_dir) / "data_space") if data_dir else "")
         self.llm_backend = llm_backend or StubLLMBackend()
-        self.tenant_id = tenant_id or os.environ.get("PIVOT_TENANT_ID", "")
-        self.user_id = user_id or os.environ.get("PIVOT_USER_ID", "")
+        self.tenant_id = tenant_id or os.environ.get("ENCLAWS_TENANT_ID", "")
+        self.user_id = user_id or os.environ.get("ENCLAWS_TENANT_USER_ID", "")
         self.app_name = app_name
         self.env_extras = env_extras or {}
         self.version = self._read_version()
@@ -250,8 +250,8 @@ class PipelineRunner:
             "PIVOT_DATA_DIR": self.data_dir,
             "PIVOT_DATA_SPACE_DIR": self.data_space_dir,
             "PIVOT_REPO_PATH": self.data_dir,
-            "PIVOT_TENANT_ID": self.tenant_id,
-            "PIVOT_USER_ID": self.user_id,
+            "ENCLAWS_TENANT_ID": self.tenant_id,
+            "ENCLAWS_TENANT_USER_ID": self.user_id,
             "PIVOT_APP_NAME": self.app_name,
             "PIVOT_VERSION": self.version,
             **self.env_extras,

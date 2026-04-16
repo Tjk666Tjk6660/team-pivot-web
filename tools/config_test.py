@@ -8,8 +8,8 @@ from tools import config
 
 class TestConfig:
     def test_from_env_reads_required_vars(self, monkeypatch):
-        monkeypatch.setenv("PIVOT_TENANT_ID", "tenant-a")
-        monkeypatch.setenv("PIVOT_USER_ID", "huangshengli")
+        monkeypatch.setenv("ENCLAWS_TENANT_ID", "tenant-a")
+        monkeypatch.setenv("ENCLAWS_TENANT_USER_ID", "huangshengli")
         monkeypatch.setenv("PIVOT_DATA_SPACE_DIR", "/tmp/ws")
         monkeypatch.setenv("PIVOT_APP_NAME", "pivot")
 
@@ -20,15 +20,15 @@ class TestConfig:
         assert ctx.app_name == "pivot"
 
     def test_from_env_raises_when_missing(self, monkeypatch):
-        monkeypatch.delenv("PIVOT_TENANT_ID", raising=False)
-        with pytest.raises(config.ConfigError, match="PIVOT_TENANT_ID"):
+        monkeypatch.delenv("ENCLAWS_TENANT_ID", raising=False)
+        with pytest.raises(config.ConfigError, match="ENCLAWS_TENANT_ID"):
             config.from_env()
 
     def test_user_id_optional_for_system_triggers(self, monkeypatch):
-        monkeypatch.setenv("PIVOT_TENANT_ID", "tenant-a")
+        monkeypatch.setenv("ENCLAWS_TENANT_ID", "tenant-a")
         monkeypatch.setenv("PIVOT_DATA_SPACE_DIR", "/tmp/ws")
         monkeypatch.setenv("PIVOT_APP_NAME", "pivot")
-        monkeypatch.delenv("PIVOT_USER_ID", raising=False)
+        monkeypatch.delenv("ENCLAWS_TENANT_USER_ID", raising=False)
 
         ctx = config.from_env()
         assert ctx.user_id is None

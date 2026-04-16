@@ -45,8 +45,8 @@ class TestReplyPublish:
 
         env = {
             **os.environ,
-            "PIVOT_TENANT_ID": "t",
-            "PIVOT_USER_ID": "shengli",
+            "ENCLAWS_TENANT_ID": "t",
+            "ENCLAWS_TENANT_USER_ID": "shengli",
             "PIVOT_DATA_SPACE_DIR": str(tmp_git_repo),
             "PIVOT_APP_NAME": "pivot",
         }
@@ -101,8 +101,8 @@ class TestReplyPublishNotification:
 
         env = {
             **os.environ,
-            "PIVOT_TENANT_ID": "t",
-            "PIVOT_USER_ID": "shengli",
+            "ENCLAWS_TENANT_ID": "t",
+            "ENCLAWS_TENANT_USER_ID": "shengli",
             "PIVOT_DATA_SPACE_DIR": str(tmp_git_repo),
             "PIVOT_APP_NAME": "pivot",
         }

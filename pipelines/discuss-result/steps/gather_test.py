@@ -21,8 +21,8 @@ def _seed(tmp_path: Path, author: str = "ken"):
 def _run(tmp_path: Path, user: str) -> subprocess.CompletedProcess:
     env = {
         **os.environ,
-        "PIVOT_TENANT_ID": "t",
-        "PIVOT_USER_ID": user,
+        "ENCLAWS_TENANT_ID": "t",
+        "ENCLAWS_TENANT_USER_ID": user,
         "PIVOT_DATA_SPACE_DIR": str(tmp_path),
         "PIVOT_APP_NAME": "pivot",
     }

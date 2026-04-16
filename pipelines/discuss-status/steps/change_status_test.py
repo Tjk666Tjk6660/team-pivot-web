@@ -33,8 +33,8 @@ def _seed(tmp_git_repo: Path, status: str = "open"):
 def _run(tmp_git_repo: Path, action: str, reason: str = "") -> subprocess.CompletedProcess:
     env = {
         **os.environ,
-        "PIVOT_TENANT_ID": "t",
-        "PIVOT_USER_ID": "ken",
+        "ENCLAWS_TENANT_ID": "t",
+        "ENCLAWS_TENANT_USER_ID": "ken",
         "PIVOT_DATA_SPACE_DIR": str(tmp_git_repo),
         "PIVOT_APP_NAME": "pivot",
     }

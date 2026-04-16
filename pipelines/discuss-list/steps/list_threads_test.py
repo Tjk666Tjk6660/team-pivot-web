@@ -36,8 +36,8 @@ def _seed(tmp_path: Path, category: str, thread: str, status: str):
 def _run(tmp_path: Path, category_filter: str = "") -> dict:
     env = {
         **os.environ,
-        "PIVOT_TENANT_ID": "t",
-        "PIVOT_USER_ID": "u",
+        "ENCLAWS_TENANT_ID": "t",
+        "ENCLAWS_TENANT_USER_ID": "u",
         "PIVOT_DATA_SPACE_DIR": str(tmp_path),
         "PIVOT_APP_NAME": "pivot",
     }

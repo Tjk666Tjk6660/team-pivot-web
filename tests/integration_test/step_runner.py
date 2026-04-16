@@ -192,8 +192,8 @@ def _exec_code_step(ctx: dict, step_def: dict, ctx_path: str):
         **os.environ,
         "PYTHONIOENCODING": "utf-8",
         "PIVOT_DATA_SPACE_DIR": ctx["data_space"],
-        "PIVOT_TENANT_ID": "test-tenant",
-        "PIVOT_USER_ID": ctx["user_id"],
+        "ENCLAWS_TENANT_ID": "test-tenant",
+        "ENCLAWS_TENANT_USER_ID": ctx["user_id"],
         "PIVOT_APP_NAME": "pivot",
     }
 

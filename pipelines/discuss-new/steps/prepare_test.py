@@ -12,8 +12,8 @@ STEP = Path(__file__).parent / "prepare.py"
 def _base_env(tmp_path: Path) -> dict:
     return {
         **os.environ,
-        "PIVOT_TENANT_ID": "t",
-        "PIVOT_USER_ID": "u",
+        "ENCLAWS_TENANT_ID": "t",
+        "ENCLAWS_TENANT_USER_ID": "u",
         "PIVOT_DATA_SPACE_DIR": str(tmp_path),
         "PIVOT_APP_NAME": "pivot",
     }

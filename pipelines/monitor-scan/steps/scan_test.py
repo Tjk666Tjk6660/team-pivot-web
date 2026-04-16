@@ -51,8 +51,8 @@ def _write_idx(tmp_path: Path, slug: str, status: str, last_updated: str, timeli
 def _run(tmp_path: Path, window: str = "24", mention_window: str = "48") -> dict:
     env = {
         **os.environ,
-        "PIVOT_TENANT_ID": "t",
-        "PIVOT_USER_ID": "monitor",
+        "ENCLAWS_TENANT_ID": "t",
+        "ENCLAWS_TENANT_USER_ID": "monitor",
         "PIVOT_DATA_SPACE_DIR": str(tmp_path),
         "PIVOT_APP_NAME": "pivot",
     }
@@ -135,8 +135,8 @@ class TestScanNotification:
 
         env = {
             **os.environ,
-            "PIVOT_TENANT_ID": "t",
-            "PIVOT_USER_ID": "monitor",
+            "ENCLAWS_TENANT_ID": "t",
+            "ENCLAWS_TENANT_USER_ID": "monitor",
             "PIVOT_DATA_SPACE_DIR": str(tmp_path),
             "PIVOT_APP_NAME": "pivot",
         }

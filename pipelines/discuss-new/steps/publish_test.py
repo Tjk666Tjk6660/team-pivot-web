@@ -13,8 +13,8 @@ class TestPublish:
     def test_publish_creates_file_and_updates_index(self, tmp_git_repo: Path):
         env = {
             **os.environ,
-            "PIVOT_TENANT_ID": "t",
-            "PIVOT_USER_ID": "huangshengli",
+            "ENCLAWS_TENANT_ID": "t",
+            "ENCLAWS_TENANT_USER_ID": "huangshengli",
             "PIVOT_DATA_SPACE_DIR": str(tmp_git_repo),
             "PIVOT_APP_NAME": "pivot",
         }
@@ -70,8 +70,8 @@ class TestPublishNotification:
     ):
         env = {
             **os.environ,
-            "PIVOT_TENANT_ID": "t",
-            "PIVOT_USER_ID": "huangshengli",
+            "ENCLAWS_TENANT_ID": "t",
+            "ENCLAWS_TENANT_USER_ID": "huangshengli",
             "PIVOT_DATA_SPACE_DIR": str(tmp_git_repo),
             "PIVOT_APP_NAME": "pivot",
             "FEISHU_ACCESS_TOKEN": "t-test",
@@ -116,8 +116,8 @@ class TestPublishNotification:
     def test_publish_succeeds_without_bot_config(self, tmp_git_repo: Path):
         env = {
             **os.environ,
-            "PIVOT_TENANT_ID": "t",
-            "PIVOT_USER_ID": "u",
+            "ENCLAWS_TENANT_ID": "t",
+            "ENCLAWS_TENANT_USER_ID": "u",
             "PIVOT_DATA_SPACE_DIR": str(tmp_git_repo),
             "PIVOT_APP_NAME": "pivot",
         }

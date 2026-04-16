@@ -76,5 +76,5 @@ python3 "$APP_DIR/bin/pivot-runner.py" run discuss-new --params '{"category":"ge
 - ❌ 不要修改 `pipelines/`、`tools/`、`schemas/`、`SKILL.md`
 - ❌ 不要绕过命令直接 git commit/push
 - ❌ project / task / knowledge 请求告诉用户"待 Phase 2"
-- `${PIVOT_USER_ID}` 由 EC 自动注入，代表当前用户
+- `${ENCLAWS_TENANT_USER_ID}` 由 EC 自动注入，代表当前用户
 - 不确定时优先反问用户确认

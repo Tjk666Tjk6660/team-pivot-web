@@ -152,8 +152,8 @@ class LocalPipelineRunner:
             **os.environ,
             "PYTHONIOENCODING": "utf-8",
             "PIVOT_DATA_SPACE_DIR": self.data_space_dir,
-            "PIVOT_TENANT_ID": self.tenant_id,
-            "PIVOT_USER_ID": self.user_id,
+            "ENCLAWS_TENANT_ID": self.tenant_id,
+            "ENCLAWS_TENANT_USER_ID": self.user_id,
             "PIVOT_APP_NAME": self.app_name,
             **self.env_extras,
         }

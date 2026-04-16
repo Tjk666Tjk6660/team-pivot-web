@@ -4,7 +4,7 @@ Unlike appv2 which reads ~/.config/claude-discuss/config.json (single-user),
 Pivot pipeline steps receive their context via environment variables
 injected by the EC Pipeline Runner. User identity mapping (name <-> feishu_id
 <-> pivot_token, see 004 8.4) is handled by the EC Agent config backend,
-NOT in Pivot APP code — by the time a pipeline step runs, PIVOT_USER_ID
+NOT in Pivot APP code — by the time a pipeline step runs, ENCLAWS_TENANT_USER_ID
 is already resolved to the canonical name.
 
 This module also owns the discuss module's status display map (004 8.3).
@@ -146,8 +146,8 @@ def from_env() -> PipelineContext:
     Config completeness is checked by the _constructor pipeline, not here.
     """
     return PipelineContext(
-        tenant_id=_require("PIVOT_TENANT_ID"),
-        user_id=os.environ.get("PIVOT_USER_ID"),
+        tenant_id=_require("ENCLAWS_TENANT_ID"),
+        user_id=os.environ.get("ENCLAWS_TENANT_USER_ID"),
         data_space_dir=_require("PIVOT_DATA_SPACE_DIR"),
         app_name=_require("PIVOT_APP_NAME"),
     )
