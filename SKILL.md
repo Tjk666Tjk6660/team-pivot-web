@@ -54,7 +54,9 @@ python3 "$APP_DIR/bin/pivot-runner.py" run discuss-new --params '{"category":"ge
 
 ## 处理执行结果
 
-- 命令成功（`"status":"completed"`）→ 从 `output` 提取信息，用自然语言告诉用户
+- 命令成功（`"status":"completed"`）：
+  - 如果 `output` 中包含 `channelData` 字段 → **直接返回原始 output，不要用自然语言转述**（channelData 包含已格式化的飞书卡片，由飞书直接渲染）
+  - 如果 `output` 中不包含 `channelData` → 从 `output` 提取信息，用自然语言告诉用户
 - 命令报错包含 `ConfigNotReady` → **必须调用 `feishu_ask_user_question` 工具弹出飞书卡片收集配置，禁止用纯文本提问**。具体步骤：
   1. 调用 `feishu_ask_user_question` 工具，提问内容包含两个字段：
      - `data_space_repo`：数据仓库 Git URL（例如 https://github.com/yourorg/team-pivot-data.git）
