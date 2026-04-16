@@ -42,68 +42,123 @@ echo "[INFO] pwd=$(pwd)"
 TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')"
 if [ "$TENANT_ROOT" = "$(pwd)" ] || [ ! -d "$TENANT_ROOT" ]; then
   echo "[FAIL] 未检测到 EC 沙箱环境 (TENANT_ROOT=$TENANT_ROOT)"
-  echo "  如果你在本地机器上，请用：git clone $REPO_URL && bash team-pivot/bin/pivot-cli-install.sh"
+  echo "  如果你在本地机器上，请用：git clone $REPO_URL && bash team-pivot/client/cli-client/pivot-cli-install.sh"
   exit 1
 fi
 
-REPO_DIR="$TENANT_ROOT/team-pivot"
-SKILL_DIR="$TENANT_ROOT/skills/pivot"
+TMP_DIR="$TENANT_ROOT/tmp/team-pivot"
+SKILL_DIR="$TENANT_ROOT/skills/team-pivot"
 echo "[INFO] TENANT_ROOT=$TENANT_ROOT"
+echo "[INFO] SKILL_DIR=$SKILL_DIR"
 
 # ---------------------------------------------------------------------------
-# 2. 安装或升级
+# 2. 获取源码到临时目录
 # ---------------------------------------------------------------------------
-if [ -d "$REPO_DIR/.git" ]; then
-  # 已存在 → 检查是否需要升级
-  LOCAL_VER=$(get_local_version "$REPO_DIR")
+NEED_COPY=false
+
+if [ -d "$TMP_DIR/.git" ]; then
+  # 临时目录已存在 → git pull
+  LOCAL_VER=$(get_local_version "$TMP_DIR")
   REMOTE_VER=$(get_remote_version)
-  echo "[INFO] 已有安装: local=$LOCAL_VER, remote=${REMOTE_VER:-unreachable}"
+  echo "[INFO] 已有缓存: local=$LOCAL_VER, remote=${REMOTE_VER:-unreachable}"
 
   if [ -z "$REMOTE_VER" ]; then
     echo "[WARN] 无法获取远端版本号，跳过版本检查，直接 git pull..."
-    cd "$REPO_DIR"
+    cd "$TMP_DIR"
     git pull --ff-only 2>&1 | tail -1
-    echo "✅ 代码已更新。"
+    NEED_COPY=true
   elif version_lt "$LOCAL_VER" "$REMOTE_VER"; then
     echo "[INFO] 需要升级: $LOCAL_VER → $REMOTE_VER"
-    cd "$REPO_DIR"
+    cd "$TMP_DIR"
     git pull --ff-only 2>&1 | tail -1
-    echo "✅ 已升级到 $REMOTE_VER"
+    NEED_COPY=true
   else
-    echo "✅ 当前版本 $LOCAL_VER 已是最新，无需升级。"
+    # 检查 skill 目录是否存在，不存在也需要复制
+    if [ ! -f "$SKILL_DIR/SKILL.md" ]; then
+      NEED_COPY=true
+    else
+      echo "✅ 当前版本 $LOCAL_VER 已是最新，无需升级。"
+    fi
   fi
 else
-  # 不存在 → 首次安装
-  echo "[INFO] 首次安装，目标: $REPO_DIR"
+  # 首次安装
+  mkdir -p "$(dirname "$TMP_DIR")"
 
   # 如果当前目录下有刚 clone 的 team-pivot，直接移过去
   if [ -d "team-pivot/.git" ]; then
-    echo "[INFO] 检测到当前目录下已有 clone，移动到 $REPO_DIR"
-    rm -rf "$REPO_DIR"
-    mv team-pivot "$REPO_DIR"
+    echo "[INFO] 检测到当前目录下已有 clone，移动到临时目录"
+    rm -rf "$TMP_DIR"
+    mv team-pivot "$TMP_DIR"
   else
-    echo "[INFO] git clone --depth 1 $REPO_URL"
-    git clone --depth 1 "$REPO_URL" "$REPO_DIR" 2>&1 | tail -1
+    echo "[INFO] git clone --depth 1 $REPO_URL → $TMP_DIR"
+    git clone --depth 1 "$REPO_URL" "$TMP_DIR" 2>&1 | tail -1
   fi
-
-  echo "✅ 代码已安装到 $REPO_DIR"
+  NEED_COPY=true
 fi
 
 # ---------------------------------------------------------------------------
-# 3. 注册 skill 入口（每次都刷新，确保 SKILL.md 是最新的）
+# 3. 复制运行必需的文件到 skill 目录
 # ---------------------------------------------------------------------------
-mkdir -p "$SKILL_DIR"
-cp "$REPO_DIR/SKILL.md" "$SKILL_DIR/SKILL.md"
-echo "✅ skill 已注册: $SKILL_DIR/SKILL.md"
+if [ "$NEED_COPY" = true ]; then
+  echo "[INFO] 复制文件到 $SKILL_DIR ..."
+  mkdir -p "$SKILL_DIR/bin"
+
+  # 核心文件
+  cp "$TMP_DIR/SKILL.md"               "$SKILL_DIR/SKILL.md"
+  cp "$TMP_DIR/pivot.yaml"             "$SKILL_DIR/pivot.yaml"
+  cp "$TMP_DIR/bin/pivot-runner.py"     "$SKILL_DIR/bin/pivot-runner.py"
+  cp "$TMP_DIR/bin/pivot-check-config.sh" "$SKILL_DIR/bin/pivot-check-config.sh"
+
+  # pipelines 和 tools（整目录同步，删除已移除的文件）
+  rm -rf "$SKILL_DIR/pipelines" "$SKILL_DIR/tools"
+  cp -R "$TMP_DIR/pipelines" "$SKILL_DIR/pipelines"
+  cp -R "$TMP_DIR/tools"     "$SKILL_DIR/tools"
+
+  # 用户数据：仅在不存在时复制模板
+  [ ! -f "$SKILL_DIR/pivot-config.yaml" ] && [ -f "$TMP_DIR/pivot-config.yaml" ] \
+    && cp "$TMP_DIR/pivot-config.yaml" "$SKILL_DIR/pivot-config.yaml"
+
+  INSTALLED_VER=$(get_local_version "$SKILL_DIR")
+  echo "✅ 已安装 v$INSTALLED_VER 到 $SKILL_DIR"
+fi
 
 # ---------------------------------------------------------------------------
-# 4. 报告结果
+# 4. 清理旧安装路径（从 $TENANT_ROOT/team-pivot 迁移过来的情况）
 # ---------------------------------------------------------------------------
-CONFIG_FILE="$REPO_DIR/pivot-config.yaml"
+OLD_DIR="$TENANT_ROOT/team-pivot"
+if [ -d "$OLD_DIR" ] && [ "$OLD_DIR" != "$SKILL_DIR" ]; then
+  # 迁移用户数据
+  [ -f "$OLD_DIR/pivot-config.yaml" ] && [ ! -f "$SKILL_DIR/pivot-config.yaml" ] \
+    && cp "$OLD_DIR/pivot-config.yaml" "$SKILL_DIR/pivot-config.yaml"
+  [ -d "$OLD_DIR/data_space/.git" ] && [ ! -d "$SKILL_DIR/data_space" ] \
+    && mv "$OLD_DIR/data_space" "$SKILL_DIR/data_space"
+  rm -rf "$OLD_DIR"
+  echo "[INFO] 已清理旧安装路径: $OLD_DIR"
+fi
+
+# 清理旧的 skills/pivot 目录（skill 名从 pivot 改为 team-pivot）
+OLD_SKILL="$TENANT_ROOT/skills/pivot"
+if [ -d "$OLD_SKILL" ] && [ "$OLD_SKILL" != "$SKILL_DIR" ]; then
+  rm -rf "$OLD_SKILL"
+  echo "[INFO] 已清理旧 skill 目录: $OLD_SKILL"
+fi
+
+# ---------------------------------------------------------------------------
+# 5. 清理临时目录
+# ---------------------------------------------------------------------------
+rm -rf "$TMP_DIR"
+# 如果 tmp 目录为空则也删掉
+rmdir "$TENANT_ROOT/tmp" 2>/dev/null || true
+echo "[INFO] 已清理临时目录"
+
+# ---------------------------------------------------------------------------
+# 6. 报告结果
+# ---------------------------------------------------------------------------
+CONFIG_FILE="$SKILL_DIR/pivot-config.yaml"
 HAS_CONFIG="no"
 HAS_DATA_SPACE="no"
 [ -f "$CONFIG_FILE" ] && ! grep -q 'data_space_repo: *$' "$CONFIG_FILE" && HAS_CONFIG="yes"
-[ -d "$REPO_DIR/data_space/.git" ] && HAS_DATA_SPACE="yes"
+[ -d "$SKILL_DIR/data_space/.git" ] && HAS_DATA_SPACE="yes"
 echo "[INFO] config=$HAS_CONFIG, data_space=$HAS_DATA_SPACE"
 
 if [ "$HAS_CONFIG" = "no" ] || [ "$HAS_DATA_SPACE" = "no" ]; then
@@ -111,7 +166,7 @@ if [ "$HAS_CONFIG" = "no" ] || [ "$HAS_DATA_SPACE" = "no" ]; then
   echo "=== 安装完成，待配置 ==="
   echo "请开启新会话。首次使用 team-pivot 时，会自动引导你完成配置。"
 else
-  INSTALLED_VER=$(get_local_version "$REPO_DIR")
+  INSTALLED_VER=$(get_local_version "$SKILL_DIR")
   echo ""
   echo "=== 升级完成 (v$INSTALLED_VER) ==="
   echo "配置和 data_space 均已就绪，请开启新会话以加载最新 skill。"

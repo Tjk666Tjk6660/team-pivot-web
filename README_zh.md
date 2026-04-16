@@ -40,7 +40,7 @@ Team-Pivot 以 **EC skill** 形式发布。EC 机器人的 LLM 充当 pipeline r
                     │  discussions/ + index/ + ...      │
                     └─────────────────────────────────┘
 
-本地 Claude Code 用户走另一条路径：bin/pivot-cli（curl 包装），通过 HTTP
+本地 Claude Code 用户走另一条路径：client/cli-client/pivot-cli（curl 包装），通过 HTTP
 访问远端 Pivot endpoint。详见下面"Claude Code 用户"段落。
 ```
 
@@ -54,11 +54,11 @@ Team-Pivot 以 **EC skill** 形式发布。EC 机器人的 LLM 充当 pipeline r
 
 脚本会自动检测 tenant 根目录、注册 skill 并报告结果。安装后开启新会话，首次使用 team-pivot 时会通过飞书卡片引导你完成配置。
 
-**升级（同一条命令即可）：**
-> 帮我运行：bash team-pivot/bin/pivot-app-install.sh
+**升级（同一条命令，重新 clone 并安装）：**
+> 帮我运行：git clone https://github.com/hashSTACS-Global/team-pivot.git && bash team-pivot/bin/pivot-app-install.sh
 
 **卸载：**
-> 帮我运行：TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')" && rm -rf "$TENANT_ROOT/team-pivot" "$TENANT_ROOT/skills/pivot"
+> 帮我运行：TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')" && rm -rf "$TENANT_ROOT/skills/team-pivot"
 
 > ⚠️ 请在**与助手的私聊**中安装，不要在群里——配置过程可能涉及敏感 token。
 
@@ -66,7 +66,7 @@ Team-Pivot 以 **EC skill** 形式发布。EC 机器人的 LLM 充当 pipeline r
 
 ```bash
 git clone https://github.com/hashSTACS-Global/team-pivot.git
-bash team-pivot/bin/pivot-cli-install.sh
+bash team-pivot/client/cli-client/pivot-cli-install.sh
 ```
 
 安装后重启 Claude Code 并登录：

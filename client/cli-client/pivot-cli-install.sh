@@ -8,12 +8,12 @@
 #
 # Usage:
 #   git clone https://github.com/hashSTACS-Global/team-pivot.git
-#   bash team-pivot/bin/pivot-cli-install.sh
+#   bash team-pivot/client/cli-client/pivot-cli-install.sh
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 echo "=== Installing Team-Pivot APP ==="
 echo ""

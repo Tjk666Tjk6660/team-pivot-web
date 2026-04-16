@@ -1,7 +1,8 @@
-"""Upgrade pipeline: check remote version and pull if newer.
+"""Upgrade pipeline: re-clone and install the latest version.
 
-Reads upgrade_repo / upgrade_user / upgrade_token from pivot-config.yaml.
-If credentials are missing, returns an error asking the user to provide them.
+Since the skill directory contains only copied files (no .git), upgrading
+works by re-running the install script which clones to a tmp dir, copies
+the needed files, and cleans up.
 """
 from __future__ import annotations
 
@@ -14,19 +15,19 @@ from pathlib import Path
 import yaml
 
 
-def _read_config(repo_path: str) -> dict:
-    """Read pivot.yaml (version + upgrade credentials)."""
-    config_file = Path(repo_path) / "pivot.yaml"
+def _read_config(skill_path: str) -> dict:
+    """Read pivot.yaml (version info)."""
+    config_file = Path(skill_path) / "pivot.yaml"
     if not config_file.exists():
         return {}
     with open(config_file, encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
-def _get_remote_version(upgrade_url: str) -> str | None:
+def _get_remote_version(repo_url: str) -> str | None:
     """Fetch version from remote pivot.yaml."""
     try:
-        raw_url = upgrade_url.replace("github.com", "raw.githubusercontent.com").rstrip(".git") + "/main/pivot.yaml"
+        raw_url = repo_url.replace("github.com", "raw.githubusercontent.com").rstrip(".git") + "/main/pivot.yaml"
         import urllib.request
         with urllib.request.urlopen(raw_url, timeout=10) as resp:
             remote_config = yaml.safe_load(resp.read().decode("utf-8")) or {}
@@ -48,46 +49,20 @@ def _version_lt(a: str, b: str) -> bool:
 def main():
     payload = json.loads(sys.stdin.read())
 
-    # Locate repo root
-    data_space_dir = os.environ.get("PIVOT_DATA_SPACE_DIR", "")
-    repo_path = os.environ.get("PIVOT_REPO_PATH") or str(Path(data_space_dir).parent)
+    # Locate skill directory: pivot-runner.py is at skills/team-pivot/bin/,
+    # so the pipeline cwd is skills/team-pivot/pipelines/upgrade/.
+    # Walk up to find skill root (where pivot.yaml lives).
+    pipeline_dir = Path(os.getcwd())
+    skill_dir = pipeline_dir.parent.parent  # pipelines/upgrade → skills/team-pivot
 
-    # pivot.yaml: version + upgrade_repo (git-tracked)
-    project_info = _read_config(repo_path)
+    project_info = _read_config(str(skill_dir))
     local_version = str(project_info.get("version", "0.0.0"))
-    upgrade_repo = project_info.get("upgrade_repo", "")
+    upgrade_repo = project_info.get("upgrade_repo", "https://github.com/hashSTACS-Global/team-pivot.git")
 
-    # pivot-config.yaml: upgrade_token (gitignored, sensitive)
-    user_config_file = Path(repo_path) / "pivot-config.yaml"
-    user_config = {}
-    if user_config_file.exists():
-        with open(user_config_file, encoding="utf-8") as f:
-            user_config = yaml.safe_load(f) or {}
-    upgrade_token = user_config.get("upgrade_token", "")
-
-    # Check required fields
-    missing = []
-    if not upgrade_repo:
-        missing.append("upgrade_repo")
-    if not upgrade_token:
-        missing.append("upgrade_token")
-
-    if missing:
-        sys.stdout.write(json.dumps({"output": {
-            "upgraded": False,
-            "error": "credentials_missing",
-            "missing": missing,
-            "message": f"升级需要配置 {', '.join(missing)}，请在 pivot-config.yaml 中填写，或告诉我这些信息。",
-        }}))
-        return
-
-    # Check remote version (use public URL, token only needed for git pull)
+    # Check remote version
     remote_version = _get_remote_version(upgrade_repo)
-    if remote_version is None:
-        # Can't fetch remote version, try upgrade anyway
-        remote_version = "unknown"
 
-    if remote_version != "unknown" and not _version_lt(local_version, remote_version):
+    if remote_version and remote_version != "unknown" and not _version_lt(local_version, remote_version):
         sys.stdout.write(json.dumps({"output": {
             "upgraded": False,
             "local_version": local_version,
@@ -96,48 +71,64 @@ def main():
         }}))
         return
 
-    # Build authenticated remote URL
-    auth_url = upgrade_repo.replace("https://", f"https://x-access-token:{upgrade_token}@")
+    # Determine tenant root from skill_dir path: .../tenants/{id}/skills/team-pivot
+    tenant_root = skill_dir.parent.parent  # skills/team-pivot → tenant root
+    tmp_dir = tenant_root / "tmp" / "team-pivot"
 
-    # Set remote URL with credentials and pull
     try:
-        subprocess.run(
-            ["git", "remote", "set-url", "origin", auth_url],
-            cwd=repo_path, check=True, capture_output=True, text=True,
-        )
-        result = subprocess.run(
-            ["git", "pull", "--ff-only"],
-            cwd=repo_path, capture_output=True, text=True, timeout=60,
-        )
+        # Clone to tmp
+        if tmp_dir.exists():
+            subprocess.run(["rm", "-rf", str(tmp_dir)], check=True)
 
-        # Restore remote URL without credentials (security)
-        subprocess.run(
-            ["git", "remote", "set-url", "origin", upgrade_repo],
-            cwd=repo_path, check=True, capture_output=True, text=True,
+        # If upgrade_repo needs auth, read token from pivot-config.yaml
+        user_config_file = skill_dir / "pivot-config.yaml"
+        user_config = {}
+        if user_config_file.exists():
+            with open(user_config_file, encoding="utf-8") as f:
+                user_config = yaml.safe_load(f) or {}
+        upgrade_token = user_config.get("upgrade_token", "")
+
+        clone_url = upgrade_repo
+        if upgrade_token:
+            clone_url = upgrade_repo.replace("https://", f"https://x-access-token:{upgrade_token}@")
+
+        tmp_dir.parent.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            ["git", "clone", "--depth", "1", clone_url, str(tmp_dir)],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode != 0:
+            sys.stdout.write(json.dumps({"output": {
+                "upgraded": False,
+                "error": "git_clone_failed",
+                "message": f"git clone 失败：{result.stderr.strip()}",
+            }}))
+            return
+
+        # Run the install script (it handles copying files and cleanup)
+        result = subprocess.run(
+            ["bash", str(tmp_dir / "bin" / "pivot-app-install.sh")],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(skill_dir),  # pwd must be under .enclaws/tenants/{id}/
         )
 
         if result.returncode != 0:
             sys.stdout.write(json.dumps({"output": {
                 "upgraded": False,
-                "error": "git_pull_failed",
-                "message": f"git pull 失败：{result.stderr.strip()}",
+                "error": "install_failed",
+                "message": f"安装脚本执行失败：{result.stderr.strip()}\n{result.stdout.strip()}",
             }}))
             return
 
-        # Re-read version after pull
-        new_config = _read_config(repo_path)
+        # Re-read version after upgrade
+        new_config = _read_config(str(skill_dir))
         new_version = str(new_config.get("version", local_version))
-
-        # Copy SKILL.md to skill entry (same as install script)
-        skill_dir = Path(repo_path).parent / "skills" / "pivot"
-        if skill_dir.exists():
-            import shutil
-            shutil.copy2(Path(repo_path) / "SKILL.md", skill_dir / "SKILL.md")
 
         sys.stdout.write(json.dumps({"output": {
             "upgraded": True,
             "old_version": local_version,
             "new_version": new_version,
+            "install_log": result.stdout.strip(),
             "message": f"✅ 已从 {local_version} 升级到 {new_version}。请开启新会话以加载最新版本。",
         }}))
 
@@ -145,7 +136,7 @@ def main():
         sys.stdout.write(json.dumps({"output": {
             "upgraded": False,
             "error": "timeout",
-            "message": "git pull 超时，请稍后重试。",
+            "message": "升级超时，请稍后重试。",
         }}))
     except Exception as e:
         sys.stdout.write(json.dumps({"output": {
@@ -153,6 +144,14 @@ def main():
             "error": "exception",
             "message": f"升级异常：{str(e)}",
         }}))
+    finally:
+        # Cleanup tmp (install script should have done this, but just in case)
+        if tmp_dir.exists():
+            subprocess.run(["rm", "-rf", str(tmp_dir)], check=False)
+        try:
+            (tenant_root / "tmp").rmdir()
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":

@@ -40,7 +40,7 @@ Team-Pivot ships as an **EC skill**. The EC bot's LLM acts as the pipeline runne
                     │  discussions/ + index/ + ...      │
                     └─────────────────────────────────┘
 
-Local Claude Code users use a separate path: bin/pivot-cli (curl wrapper)
+Local Claude Code users use a separate path: client/cli-client/pivot-cli (curl wrapper)
 that talks to a remote Pivot endpoint over HTTP. See "For Claude Code users"
 below.
 ```
@@ -55,11 +55,11 @@ Tell the bot in Feishu or EC web chat:
 
 The script auto-detects the tenant root, registers the skill, and reports the result. Start a new session after install — the first time you use team-pivot, it will prompt you to complete configuration via a Feishu card.
 
-**Update (same command works):**
-> 帮我运行：bash team-pivot/bin/pivot-app-install.sh
+**Update (same command — re-clone and install):**
+> 帮我运行：git clone https://github.com/hashSTACS-Global/team-pivot.git && bash team-pivot/bin/pivot-app-install.sh
 
 **Uninstall:**
-> 帮我运行：TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')" && rm -rf "$TENANT_ROOT/team-pivot" "$TENANT_ROOT/skills/pivot"
+> 帮我运行：TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')" && rm -rf "$TENANT_ROOT/skills/team-pivot"
 
 > ⚠️ Install in a **private chat**, not a group — configuration may involve sensitive tokens.
 
@@ -67,7 +67,7 @@ The script auto-detects the tenant root, registers the skill, and reports the re
 
 ```bash
 git clone https://github.com/hashSTACS-Global/team-pivot.git
-bash team-pivot/bin/pivot-cli-install.sh
+bash team-pivot/client/cli-client/pivot-cli-install.sh
 ```
 
 After installation, restart Claude Code and login:

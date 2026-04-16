@@ -17,7 +17,7 @@ metadata:
 执行命令的方法：
 
 ```bash
-APP_DIR="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')/team-pivot"
+APP_DIR="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')/skills/team-pivot"
 python3 "$APP_DIR/bin/pivot-runner.py" run <pipeline> --params '<json>'
 ```
 
@@ -27,7 +27,7 @@ python3 "$APP_DIR/bin/pivot-runner.py" run <pipeline> --params '<json>'
 
 你执行：
 ```bash
-APP_DIR="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')/team-pivot"
+APP_DIR="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')/skills/team-pivot"
 python3 "$APP_DIR/bin/pivot-runner.py" run discuss-new --params '{"category":"general", "title":"关于产品化路线的最终决定", "content":"关于产品化路线的最终决定", "mention_users":"", "mention_comments":""}'
 ```
 
