@@ -52,25 +52,75 @@ python3 "$APP_DIR/bin/app-runner.py" run draft-new --params '{"type":"proposal",
 python3 "$APP_DIR/bin/app-runner.py" run discuss-new --params '{"draft_id":"<上一步返回的 id>","mention_users":"","mention_comments":""}' --data-dir "$DATA_DIR"
 ```
 
+## 意图识别原则
+
+**凡是涉及"草稿 / draft"的任何操作，都必须走 team-pivot 的 draft-* pipeline**。
+**凡是涉及"讨论 / 话题 / 帖子 / thread"的任何操作，都必须走 team-pivot 的 discuss-* pipeline**。
+
+**不允许擅自把"草稿"理解为"通用文档"或"文字创作"**，team-pivot 里的草稿**只有两种**：
+- `proposal`：发起新讨论用的草稿
+- `reply`：回复某个讨论用的草稿
+
+**不允许编造"文档草稿""文字草稿""文案草稿"等不存在的类型**。如果用户只说"写草稿/编写草稿"，默认按 `proposal` 处理；或者反问一下是新讨论还是回复。
+
 ## 用户意图 → Pipeline 命令
 
-### 草稿管理
-- **创建草稿/起草** → `run draft-new --params '{"type":"proposal|reply","category":"","title":"","content":"","thread":""}'`
-  - `type`：`proposal`（新讨论）或 `reply`（回复）
-  - `thread`：仅 reply 时需要
-- **列出我的草稿/我的草稿** → `run draft-list --params '{}'`
-- **查看某个草稿/读取草稿** → `run draft-read --params '{"draft_id":""}'`
-- **编辑草稿** → `run draft-edit --params '{"draft_id":"","title":"","content":""}'`
-- **删除草稿** → `run draft-delete --params '{"draft_id":""}'`
-- **上传文件为草稿** → `run draft-new-from-file --params '{"file_path":"","type":"proposal|reply","category":"","title":"","thread":""}'`
+### 草稿管理（任何涉及"草稿"的请求）
 
-### 发布讨论（依赖草稿）
-- **发起讨论/话题/帖子** → 先 `draft-list`（或创建草稿），再 `run discuss-new --params '{"draft_id":"","mention_users":"","mention_comments":""}'`
-- **回复讨论** → 先创建 reply 草稿，再 `run discuss-reply --params '{"draft_id":"","mention_users":"","mention_comments":""}'`
+**创建草稿** — 触发词举例：
+> "新建草稿" / "创建草稿" / "起草" / "编写草稿" / "写草稿" / "写个草稿" / "起个草稿" / "我想写草稿" / "draft" / "new draft" / "create draft" / "草稿"（孤词也算）
 
-### 查询与管理
+→ `run draft-new --params '{"type":"proposal","category":"<分类>","title":"<标题>","content":"<内容>","thread":""}'`
+  - `type`：`proposal`（新讨论草稿，默认） 或 `reply`（回复草稿）
+  - `category`：仅 `proposal` 时必填；`reply` 时可留空（从 thread 推导）
+  - `thread`：仅 `reply` 时必填
+
+**上传文件为草稿** — 用户发送 `.md/.txt/.docx/.doc/.pdf` 文件时：
+→ `run draft-new-from-file --params '{"file_path":"<EC 保存的路径>","type":"proposal","category":"<分类>","title":"","thread":""}'`
+
+**列出我的草稿** — 触发词举例：
+> "我的草稿" / "草稿列表" / "查看草稿" / "列出草稿" / "有哪些草稿" / "list drafts" / "draft list"
+
+→ `run draft-list --params '{}'`
+
+**查看某个草稿的完整内容** — 触发词举例：
+> "读取草稿 xxx" / "查看草稿 xxx" / "打开 xxx" / "显示 xxx"（xxx 是 draft_id 或列表里的序号）
+
+→ `run draft-read --params '{"draft_id":"<draft_id>"}'`
+
+**编辑草稿** — 触发词举例：
+> "编辑草稿 xxx" / "修改草稿 xxx" / "改草稿"
+
+→ `run draft-edit --params '{"draft_id":"","title":"","content":""}'`
+
+**删除草稿** — 触发词举例：
+> "删除草稿 xxx" / "删草稿"
+
+→ `run draft-delete --params '{"draft_id":""}'`
+
+### 发布讨论（必须基于已有草稿）
+
+**发起新讨论** — 触发词举例：
+> "发起讨论" / "创建讨论" / "发布讨论" / "发起话题" / "发帖" / "new discussion"
+
+→ 步骤：
+1. 先 `run draft-list` 看用户有什么草稿
+2. 如果没有 `proposal` 草稿，引导用户先 `draft-new` 或上传文件
+3. 有一个 proposal 草稿 → 与用户确认后发布
+4. 有多个 proposal 草稿 → 列出让用户选
+5. 发布命令：`run discuss-new --params '{"draft_id":"<id>","mention_users":"","mention_comments":""}'`
+
+**回复讨论** — 触发词举例：
+> "回复 xxx" / "回复讨论" / "跟帖" / "reply"
+
+→ 同上，但草稿类型必须是 `reply`，然后 `run discuss-reply --params '{"draft_id":"<id>","mention_users":"","mention_comments":""}'`
+
+### 查询与管理讨论
+
 - **列出讨论** → `run discuss-list --params '{"category":""}'`
+  - 触发词：`列出讨论` / `讨论列表` / `有什么讨论` / `list discussions`
 - **未读/inbox** → `run discuss-inbox --params '{}'`
+  - 触发词：`未读` / `新消息` / `inbox` / `我的通知`
 - **阅读讨论** → `run discuss-read --params '{"category":"", "thread":""}'`
 - **关闭讨论** → `run discuss-status --params '{"category":"", "thread":"", "action":"close"}'`
 - **搁置讨论** → `run discuss-status --params '{"category":"", "thread":"", "action":"pending"}'`
