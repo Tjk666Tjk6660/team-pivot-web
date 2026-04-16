@@ -23,24 +23,52 @@ DATA_DIR="$TENANT_ROOT/workspace/skill-team-pivot"
 python3 "$APP_DIR/bin/app-runner.py" run <pipeline> --params '<json>' --data-dir "$DATA_DIR"
 ```
 
+## 草稿机制（重要）
+
+**发起讨论 / 回复讨论都必须先有草稿**。用户说"发起讨论"或"回复"时，按这个流程：
+
+1. 运行 `draft-list` 查看当前草稿
+2. 如果没有草稿 → 引导用户先创建（用 `draft-new`，或让用户上传文件用 `draft-new-from-file`）
+3. 如果有一个草稿 → 与用户确认后，用 `discuss-new` 或 `discuss-reply` 发布
+4. 如果有多个草稿 → 列出来让用户选择，拿到 `draft_id` 后发布
+5. 发布成功后草稿会自动删除
+
+**如果用户上传了文件**：用 `draft-new-from-file` 把文件转为草稿，支持 `.md` `.txt` `.docx` `.doc` `.pdf`。其他格式直接报错。
+
 ## 完整示例
 
 用户说："帮我发起一个讨论：关于产品化路线的最终决定"
 
-你执行：
+**第一步**：先创建草稿（如果用户还没有准备好内容，询问用户；准备好了再调用）
 ```bash
 TENANT_ROOT="$(pwd | sed -E 's|(.*/\.enclaws/tenants/[^/]+).*|\1|')"
 APP_DIR="$TENANT_ROOT/skills/team-pivot"
 DATA_DIR="$TENANT_ROOT/workspace/skill-team-pivot"
-python3 "$APP_DIR/bin/app-runner.py" run discuss-new --params '{"category":"general", "title":"关于产品化路线的最终决定", "content":"关于产品化路线的最终决定", "mention_users":"", "mention_comments":""}' --data-dir "$DATA_DIR"
+python3 "$APP_DIR/bin/app-runner.py" run draft-new --params '{"type":"proposal","category":"general","title":"关于产品化路线的最终决定","content":"..."}' --data-dir "$DATA_DIR"
 ```
 
-如果缺少 category 或 content，先问用户，拿到后再执行命令。
+**第二步**：用返回的 `draft_id` 发布
+```bash
+python3 "$APP_DIR/bin/app-runner.py" run discuss-new --params '{"draft_id":"<上一步返回的 id>","mention_users":"","mention_comments":""}' --data-dir "$DATA_DIR"
+```
 
 ## 用户意图 → Pipeline 命令
 
-- **发起讨论/话题/帖子** → `run discuss-new --params '{"category":"", "title":"", "content":"", "mention_users":"", "mention_comments":""}'`
-- **回复讨论** → `run discuss-reply --params '{"category":"", "thread":"", "content":"", "mention_users":"", "mention_comments":""}'`
+### 草稿管理
+- **创建草稿/起草** → `run draft-new --params '{"type":"proposal|reply","category":"","title":"","content":"","thread":""}'`
+  - `type`：`proposal`（新讨论）或 `reply`（回复）
+  - `thread`：仅 reply 时需要
+- **列出我的草稿/我的草稿** → `run draft-list --params '{}'`
+- **查看某个草稿/读取草稿** → `run draft-read --params '{"draft_id":""}'`
+- **编辑草稿** → `run draft-edit --params '{"draft_id":"","title":"","content":""}'`
+- **删除草稿** → `run draft-delete --params '{"draft_id":""}'`
+- **上传文件为草稿** → `run draft-new-from-file --params '{"file_path":"","type":"proposal|reply","category":"","title":"","thread":""}'`
+
+### 发布讨论（依赖草稿）
+- **发起讨论/话题/帖子** → 先 `draft-list`（或创建草稿），再 `run discuss-new --params '{"draft_id":"","mention_users":"","mention_comments":""}'`
+- **回复讨论** → 先创建 reply 草稿，再 `run discuss-reply --params '{"draft_id":"","mention_users":"","mention_comments":""}'`
+
+### 查询与管理
 - **列出讨论** → `run discuss-list --params '{"category":""}'`
 - **未读/inbox** → `run discuss-inbox --params '{}'`
 - **阅读讨论** → `run discuss-read --params '{"category":"", "thread":""}'`
@@ -50,6 +78,9 @@ python3 "$APP_DIR/bin/app-runner.py" run discuss-new --params '{"category":"gene
 - **生成摘要** → `run discuss-summarize --params '{"category":"", "thread":""}'`
 - **生成结论** → `run discuss-result --params '{"category":"", "thread":""}'`
 - **读取文件** → `run file-fetch --params '{"paths":"file1,file2"}'`
+
+### 系统
+- **检查环境** → `run check-env --params '{}'`
 - **升级** → `run upgrade --params '{}'`
 
 ## 处理执行结果

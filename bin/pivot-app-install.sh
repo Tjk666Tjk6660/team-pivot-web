@@ -177,10 +177,11 @@ if [ "$NEED_COPY" = true ]; then
   log_debug "cp pivot-check-config.sh"
   cp "$TMP_DIR/bin/pivot-check-config.sh" "$SKILL_DIR/bin/pivot-check-config.sh"
 
-  log_debug "同步 pipelines/ 和 tools/"
-  rm -rf "$SKILL_DIR/pipelines" "$SKILL_DIR/tools"
+  log_debug "同步 pipelines/ / tools/ / adapters/"
+  rm -rf "$SKILL_DIR/pipelines" "$SKILL_DIR/tools" "$SKILL_DIR/adapters"
   cp -R "$TMP_DIR/pipelines" "$SKILL_DIR/pipelines"
   cp -R "$TMP_DIR/tools"     "$SKILL_DIR/tools"
+  cp -R "$TMP_DIR/adapters"  "$SKILL_DIR/adapters"
 
   INSTALLED_VER=$(get_local_version "$SKILL_DIR")
   log_info "文件复制完成, 版本=$INSTALLED_VER"

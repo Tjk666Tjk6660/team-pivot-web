@@ -1,0 +1,17 @@
+name: draft-edit
+description: 编辑已有草稿的内容（可修改 title 或 content）
+triggers:
+  - "edit draft"
+  - "修改草稿"
+
+input:
+  draft_id: string
+  title: string           # 可选，传空字符串则保留原值
+  content: string         # 可选，传空字符串则保留原值
+
+steps:
+  - name: edit
+    type: code
+    command: "python3 steps/edit.py"
+
+output: edit

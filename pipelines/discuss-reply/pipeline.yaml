@@ -1,13 +1,11 @@
 name: discuss-reply
 description: >
-  Reply to an existing discussion thread. Pass the reply content directly
-  as the 'content' parameter. Do NOT create draft files — the pipeline
-  handles all file creation internally.
+  Reply to an existing discussion thread using a draft. The draft must
+  be created first via draft-new (type=reply) or draft-new-from-file.
+  The draft will be deleted after successful publication.
 triggers: ["reply", "respond"]
 input:
-  category: string
-  thread: string
-  content: string
+  draft_id: string
   mention_users: string
   mention_comments: string
 steps:
@@ -35,4 +33,7 @@ steps:
   - name: publish
     type: code
     command: "python3 steps/publish.py"
+  - name: cleanup
+    type: code
+    command: "python3 steps/cleanup.py"
 output: publish

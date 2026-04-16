@@ -1,0 +1,19 @@
+name: draft-new
+description: 创建新草稿（用于后续的 discuss-new 或 discuss-reply）
+triggers:
+  - "create draft"
+  - "新建草稿"
+  - "起草"
+input:
+  type: string            # "proposal" 或 "reply"
+  category: string
+  title: string
+  content: string
+  thread: string          # 仅 reply 需要
+
+steps:
+  - name: create
+    type: code
+    command: "python3 steps/create.py"
+
+output: create

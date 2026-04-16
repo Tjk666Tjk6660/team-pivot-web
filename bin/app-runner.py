@@ -177,7 +177,7 @@ class PipelineRunner:
         if biz_result.status == "completed" and biz_result.output:
             try:
                 sys.path.insert(0, str(self.app_dir))
-                from tools.card_formatter import format_as_card
+                from adapters.feishu.card_formatter import format_as_card
                 card = format_as_card(pipeline_name, biz_result.output)
                 if card:
                     biz_result.output["channelData"] = {"feishu": {"card": card}}
