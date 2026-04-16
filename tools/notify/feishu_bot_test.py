@@ -15,10 +15,10 @@ def _mock_success():
 
 
 def _extract_card_content(mock_post_call):
-    """Extract the lark_md content from the card in a mock requests.post call."""
+    """Extract the markdown content from the v2 card in a mock requests.post call."""
     body = mock_post_call[1].get("json", {})
     card = json.loads(body["content"])
-    return card["elements"][0]["text"]["content"]
+    return card["body"]["elements"][0]["content"]
 
 
 class TestFromEnv:

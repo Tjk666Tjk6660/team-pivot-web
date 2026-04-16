@@ -120,36 +120,32 @@ class FeishuBotAdapter:
         mention_names: list[str],
         user_map: dict[str, dict[str, str]],
     ) -> dict[str, Any]:
+        """Build a CardKit v2 card with full Markdown support."""
         mention_prefix = self._build_mention_prefix(mention_names, user_map)
-        summary_content = f"**Author**: {author}\n\n{summary}"
+        md_parts = []
         if mention_prefix:
-            summary_content = f"{mention_prefix}\n\n{summary_content}"
+            md_parts.append(mention_prefix)
+        md_parts.append(f"**Author**: {author}")
+        md_parts.append(summary)
+
         from tools.config import get_version
         version = get_version()
-        elements = [
-            {
-                "tag": "div",
-                "text": {
-                    "tag": "lark_md",
-                    "content": summary_content,
-                },
-            },
+
+        elements: list[dict[str, Any]] = [
+            {"tag": "markdown", "content": "\n\n".join(md_parts)},
         ]
         if version and version != "unknown":
             elements.append({"tag": "hr"})
-            elements.append({
-                "tag": "note",
-                "elements": [
-                    {"tag": "plain_text", "content": f"Team-Pivot v{version}"},
-                ],
-            })
+            elements.append({"tag": "markdown", "content": f"*Team-Pivot v{version}*"})
+
         return {
+            "schema": "2.0",
             "config": {"wide_screen_mode": True},
             "header": {
                 "title": {"tag": "plain_text", "content": title},
                 "template": "blue",
             },
-            "elements": elements,
+            "body": {"elements": elements},
         }
 
     @staticmethod
