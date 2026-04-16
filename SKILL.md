@@ -55,10 +55,17 @@ python3 "$APP_DIR/bin/pivot-runner.py" run discuss-new --params '{"category":"ge
 ## 处理执行结果
 
 - 命令成功（`"status":"completed"`）→ 从 `output` 提取信息，用自然语言告诉用户
-- 命令报错包含 `ConfigNotReady` → 首次使用需配置，调用 `feishu_ask_user_question` 收集：
-  - `data_space_repo`：数据仓库 Git URL
-  - `git_token`：Git Token
-  - 收集后写入 `$DATA_DIR/pivot-config.yaml`，clone data_space 到 `$DATA_DIR/data_space`，再重新执行原命令
+- 命令报错包含 `ConfigNotReady` → **必须调用 `feishu_ask_user_question` 工具弹出飞书卡片收集配置，禁止用纯文本提问**。具体步骤：
+  1. 调用 `feishu_ask_user_question` 工具，提问内容包含两个字段：
+     - `data_space_repo`：数据仓库 Git URL（例如 https://github.com/yourorg/team-pivot-data.git）
+     - `git_token`：Git 访问凭证（GitHub PAT）
+  2. 用户通过飞书卡片填写并提交后，将收到的值写入 `$DATA_DIR/pivot-config.yaml`：
+     ```yaml
+     data_space_repo: <用户填写的 URL>
+     git_token: <用户填写的 token>
+     ```
+  3. 执行 `git clone` 将数据仓库克隆到 `$DATA_DIR/data_space`
+  4. 重新执行用户原来的命令
 - 其他错误 → 告诉用户失败原因
 
 ## 约束
