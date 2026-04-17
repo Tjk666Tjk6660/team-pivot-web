@@ -68,6 +68,29 @@
 
 待验证：EC bash 环境中是否实际注入了 `FEISHU_TENANT_ACCESS_TOKEN`（对机器人执行 `echo $FEISHU_TENANT_ACCESS_TOKEN` 确认）
 
+### from_env() 重构：从配置文件和安装路径推断，去除强依赖环境变量
+
+`from_env()` 原先通过 `_require()` 强制要求 `PIVOT_TENANT_ID`、`PIVOT_DATA_SPACE_DIR`、`PIVOT_APP_NAME` 三个环境变量，缺失任何一个即抛异常终止 pipeline。但在 EC 环境下，Runner 由 LLM 的 bash tool call 启动，这些变量未被注入，导致所有 pipeline step 的 `from_env()` 调用都会崩溃。
+
+改动：
+- `tenant_id` — 从 `pivot-config.yaml`（安装时写入）读取，fallback env
+- `app_name` — 从 `pivot-config.yaml` 读取，fallback 目录名
+- `data_space_dir` — 固定为 `<app_dir>/data_space`，不再读 env
+- `user_id` — 不变，仍从 env 读取（待解决的动态变量问题）
+- 删除 `_require()` 对 `from_env()` 的依赖，三个变量缺失不再崩溃
+- 新增 `_load_pivot_config()` 从配置文件加载，`_infer_app_dir()` 从文件位置推断 app 根目录
+
+### 待讨论：通知机制方案选择
+
+`FEISHU_TENANT_ACCESS_TOKEN` 可以通过 EC 的 bash-tool extraEnv 机制（per-invocation 构建）传入 Python 子进程。但 `PIVOT_USER_ID` 是动态变量（每次请求对应不同用户），EC 是多租户多用户并发平台，无法通过 Node `process.env` 注入——需要 EC 的 `buildExecExtraEnv` 在每次 tool invocation 时根据请求上下文动态构建。此外 `PIVOT_USER_ID` 是 team-pivot 自定义的变量名，EC 作为通用平台不会为特定 skill 定制变量名，team-pivot 应适配 EC 提供的通用用户标识变量。
+
+备选方案：通知卡片改为通过 pipeline 输出特殊字段（如 `notification`），交由外层 LLM 调用 EC 的飞书发卡片接口。该方案下：
+- token 和用户身份由 EC 内部管理，APP 不需要感知
+- 但需要 SKILL.md 指引 LLM 识别 notification 字段并发送
+- 且 LLM 的执行可靠性依赖模型能力（弱模型可能跳过通知步骤）
+
+两个方案各有 trade-off，待与 EC 侧对齐 extraEnv 的变量约定后决定。
+
 ### 待优化
 
 - **EC skill 数量过多导致路由失败** — 实测发现 agent 加载 68 个 skills 时，qwen3.5-plus 在意图分类阶段未能将"帮我发起一个讨论"匹配到 team-pivot（日志显示 `Skills used: none`），而是用通用知识回答。team-pivot 的 SKILL.md 已正确加载（`snapshot skills count = 68`，包含 team-pivot），但 LLM 被其他 skills（尤其是飞书系列）干扰，跳过了 team-pivot 直接走了通用飞书逻辑。可能的优化方向：缩小 agent 的 skillFilter 只保留必要 skills；或优化 team-pivot 的 description 提高匹配权重；或在 EC 侧改进 skill 路由算法（如分层匹配）。

@@ -140,7 +140,7 @@ class TestScanNotification:
             "PIVOT_DATA_SPACE_DIR": str(tmp_path),
             "PIVOT_APP_NAME": "pivot",
         }
-        env.pop("FEISHU_ACCESS_TOKEN", None)
+        env.pop("FEISHU_TENANT_ACCESS_TOKEN", None)
         proc = subprocess.run(
             [sys.executable, str(STEP)],
             input=json.dumps(

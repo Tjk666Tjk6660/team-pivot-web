@@ -209,7 +209,7 @@ def _send_notifications(
     """Send best-effort Feishu Bot notifications for stale-open and un-replied mention issues.
 
     Returns the count of successful card sends (across all chats).
-    Returns 0 when FEISHU_ACCESS_TOKEN is not configured.
+    Returns 0 when FEISHU_TENANT_ACCESS_TOKEN is not configured.
     """
     try:
         from tools.notify.feishu_bot import FeishuBotAdapter

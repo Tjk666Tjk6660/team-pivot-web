@@ -4,7 +4,7 @@ Auto-discovers all groups the bot has joined via Feishu API, then broadcasts
 cards to all of them. No manual FEISHU_CHAT_IDS configuration needed.
 
 ENV vars required (injected by EC):
-  FEISHU_ACCESS_TOKEN — tenant_access_token (cached by EC)
+  FEISHU_TENANT_ACCESS_TOKEN — tenant_access_token (cached by EC)
   PIVOT_USER_MAP — {name: {feishu_id: "ou_xxx"}} (existing)
 """
 from __future__ import annotations
@@ -26,9 +26,9 @@ class FeishuBotAdapter:
 
     @classmethod
     def from_env(cls) -> "FeishuBotAdapter":
-        token = os.environ.get("FEISHU_ACCESS_TOKEN", "")
+        token = os.environ.get("FEISHU_TENANT_ACCESS_TOKEN", "")
         if not token:
-            raise FeishuBotConfigError("FEISHU_ACCESS_TOKEN not set")
+            raise FeishuBotConfigError("FEISHU_TENANT_ACCESS_TOKEN not set")
         return cls(access_token=token)
 
     def _get_bot_chats(self) -> list[str]:

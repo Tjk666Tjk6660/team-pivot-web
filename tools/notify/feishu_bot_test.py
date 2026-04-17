@@ -23,12 +23,12 @@ def _extract_card_content(mock_post_call):
 
 class TestFromEnv:
     def test_loads_token(self, monkeypatch):
-        monkeypatch.setenv("FEISHU_ACCESS_TOKEN", "t-xxx")
+        monkeypatch.setenv("FEISHU_TENANT_ACCESS_TOKEN", "t-xxx")
         adapter = FeishuBotAdapter.from_env()
         assert adapter.access_token == "t-xxx"
 
     def test_raises_without_token(self, monkeypatch):
-        monkeypatch.delenv("FEISHU_ACCESS_TOKEN", raising=False)
+        monkeypatch.delenv("FEISHU_TENANT_ACCESS_TOKEN", raising=False)
         with pytest.raises(FeishuBotConfigError, match="ACCESS_TOKEN"):
             FeishuBotAdapter.from_env()
 

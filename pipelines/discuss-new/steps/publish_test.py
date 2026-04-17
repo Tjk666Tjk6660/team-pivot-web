@@ -74,7 +74,7 @@ class TestPublishNotification:
             "ENCLAWS_TENANT_USER_ID": "huangshengli",
             "PIVOT_DATA_SPACE_DIR": str(tmp_git_repo),
             "PIVOT_APP_NAME": "pivot",
-            "FEISHU_ACCESS_TOKEN": "t-test",
+            "FEISHU_TENANT_ACCESS_TOKEN": "t-test",
             "PIVOT_USER_MAP": '{"ken": {"feishu_id": "ou_ken"}}',
         }
         proc = subprocess.run(
@@ -121,7 +121,7 @@ class TestPublishNotification:
             "PIVOT_DATA_SPACE_DIR": str(tmp_git_repo),
             "PIVOT_APP_NAME": "pivot",
         }
-        env.pop("FEISHU_ACCESS_TOKEN", None)
+        env.pop("FEISHU_TENANT_ACCESS_TOKEN", None)
         proc = subprocess.run(
             [sys.executable, str(STEP)],
             input=json.dumps(
