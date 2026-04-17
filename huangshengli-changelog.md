@@ -66,19 +66,6 @@
 - `pipelines/discuss-reply/steps/publish_test.py` — 测试
 - `pipelines/monitor-scan/steps/scan_test.py` — 测试
 
-待验证：EC bash 环境中是否实际注入了 `FEISHU_TENANT_ACCESS_TOKEN`（对机器人执行 `echo $FEISHU_TENANT_ACCESS_TOKEN` 确认）
-
-### from_env() 重构：从配置文件和安装路径推断，去除强依赖环境变量
-
-`from_env()` 原先通过 `_require()` 强制要求 `PIVOT_TENANT_ID`、`PIVOT_DATA_SPACE_DIR`、`PIVOT_APP_NAME` 三个环境变量，缺失任何一个即抛异常终止 pipeline。但在 EC 环境下，Runner 由 LLM 的 bash tool call 启动，这些变量未被注入，导致所有 pipeline step 的 `from_env()` 调用都会崩溃。
-
-改动：
-- `tenant_id` — 从 `pivot-config.yaml`（安装时写入）读取，fallback env
-- `app_name` — 从 `pivot-config.yaml` 读取，fallback 目录名
-- `data_space_dir` — 固定为 `<app_dir>/data_space`，不再读 env
-- `user_id` — 不变，仍从 env 读取（待解决的动态变量问题）
-- 删除 `_require()` 对 `from_env()` 的依赖，三个变量缺失不再崩溃
-- 新增 `_load_pivot_config()` 从配置文件加载，`_infer_app_dir()` 从文件位置推断 app 根目录
 
 ### 待讨论：通知机制方案选择
 
