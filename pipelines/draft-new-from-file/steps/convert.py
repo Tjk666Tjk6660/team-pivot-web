@@ -95,14 +95,11 @@ def main():
 
     file_path = (inp.get("file_path", "") or "").strip()
     type_ = (inp.get("type", "") or "proposal").strip().lower()
-    category = (inp.get("category", "") or "").strip()
     title_override = (inp.get("title", "") or "").strip()
     thread = (inp.get("thread", "") or "").strip() or None
 
     if not file_path:
         _fail("missing required param: file_path")
-    if not category:
-        _fail("missing required param: category")
     if type_ not in ("proposal", "reply"):
         _fail(f"invalid type: {type_!r} (must be 'proposal' or 'reply')")
     if type_ == "reply" and not thread:
@@ -126,7 +123,6 @@ def main():
     try:
         draft = save_draft(
             type_=type_,
-            category=category,
             title=title,
             content=content,
             thread=thread,

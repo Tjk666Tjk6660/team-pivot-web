@@ -86,7 +86,6 @@ def generate_draft_id() -> str:
 class Draft:
     draft_id: str
     type: str
-    category: str
     title: str
     thread: Optional[str]
     source: str
@@ -102,7 +101,6 @@ def _now_iso() -> str:
 def save_draft(
     *,
     type_: str,
-    category: str,
     title: str,
     content: str,
     thread: Optional[str] = None,
@@ -130,7 +128,6 @@ def save_draft(
     frontmatter: dict = {
         "draft_id": draft_id,
         "type": type_,
-        "category": category,
         "title": title,
         "source": source,
         "created_at": _now_iso(),
@@ -145,7 +142,6 @@ def save_draft(
     return Draft(
         draft_id=draft_id,
         type=type_,
-        category=category,
         title=title,
         thread=thread,
         source=source,
@@ -180,7 +176,6 @@ def load_draft(draft_id: str) -> Optional[Draft]:
     return Draft(
         draft_id=str(fm.get("draft_id", draft_id)),
         type=str(fm.get("type", "")),
-        category=str(fm.get("category", "")),
         title=str(fm.get("title", "")),
         thread=fm.get("thread"),
         source=str(fm.get("source", "text")),
@@ -217,7 +212,6 @@ def draft_to_dict(d: Draft) -> dict:
     return {
         "draft_id": d.draft_id,
         "type": d.type,
-        "category": d.category,
         "title": d.title,
         "thread": d.thread,
         "source": d.source,

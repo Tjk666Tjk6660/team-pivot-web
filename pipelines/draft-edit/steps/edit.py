@@ -35,7 +35,6 @@ def main():
     # Keep original draft_id, just overwrite
     updated = save_draft(
         type_=existing.type,
-        category=existing.category,
         title=new_title,
         content=new_content,
         thread=existing.thread,

@@ -8,6 +8,7 @@ triggers:
   - "create discussion"
 input:
   draft_id: string
+  category: string          # 可选，默认 "general"
   mention_users: string
   mention_comments: string
 steps:

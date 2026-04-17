@@ -1,6 +1,6 @@
 ---
 name: team-pivot
-description: "团队讨论/话题/帖子管理（发起讨论、回复讨论、列出讨论、查看未读、生成摘要、生成结论） — 基于 Git 的结构化讨论系统，支持 @mention 和通知"
+description: "团队讨论与草稿管理 — 编写草稿、文件转草稿（PDF/Word/MD）、列出草稿、编辑草稿、发起讨论、回复讨论、列出讨论、查看未读、生成摘要、生成结论。基于 Git 的结构化讨论系统，支持 @mention 和通知。所有涉及『草稿/draft』『讨论/话题/帖子』的请求都必须通过本 skill 处理"
 metadata:
   openclaw:
     emoji: "💬"
@@ -70,13 +70,32 @@ python3 "$APP_DIR/bin/app-runner.py" run discuss-new --params '{"draft_id":"<上
 **创建草稿** — 触发词举例：
 > "新建草稿" / "创建草稿" / "起草" / "编写草稿" / "写草稿" / "写个草稿" / "起个草稿" / "我想写草稿" / "draft" / "new draft" / "create draft" / "草稿"（孤词也算）
 
-→ `run draft-new --params '{"type":"proposal","category":"<分类>","title":"<标题>","content":"<内容>","thread":""}'`
-  - `type`：`proposal`（新讨论草稿，默认） 或 `reply`（回复草稿）
-  - `category`：仅 `proposal` 时必填；`reply` 时可留空（从 thread 推导）
-  - `thread`：仅 `reply` 时必填
+**严格步骤**（禁止偏离）：
+
+1. **立即**调用 `feishu_ask_user_question` 工具弹出卡片。**禁止先发送任何文字消息**（不要说"我来帮你创建草稿"、不要问"是新讨论还是回复"、不要加任何额外说明）。
+2. 卡片参数固定为两个字段（**注意**：`header` 字段有 12 字符上限，必须用短标签；详细说明放在 `question` 字段）：
+   - 字段 1：
+     - `header`: `标题`
+     - `question`: `草稿标题`
+     - `options`: `[]`
+     - `multiSelect`: `false`
+   - 字段 2：
+     - `header`: `内容`
+     - `question`: `草稿内容（💡 有现成文件可直接发送，支持 .md/.txt/.docx/.pdf）`
+     - `options`: `[]`
+     - `multiSelect`: `false`
+3. **禁止把 type 也作为问题问用户**。默认 type=`proposal`。只有用户在之前的对话里**明确说过**"回复 xxx / 回复草稿 / reply"时，才按 reply 处理（此时还需要先让用户选 thread，参考下面"回复讨论"章节）。
+4. 用户提交卡片后，调用 pipeline：
+   ```
+   run draft-new --params '{"type":"proposal","title":"<用户填写的标题>","content":"<用户填写的内容>"}'
+   ```
+
+**注意**：
+- 草稿本身**不再有 `category` 字段**——分类是发布讨论时（`discuss-new`）才指定的，不属于草稿属性。
+- 当前"草稿内容"字段是**单行输入**（EC `feishu_ask_user_question` 工具暂未支持多行）。如果用户的内容较长，建议让他们**发送文件**，由 `draft-new-from-file` 自动转为草稿。
 
 **上传文件为草稿** — 用户发送 `.md/.txt/.docx/.doc/.pdf` 文件时：
-→ `run draft-new-from-file --params '{"file_path":"<EC 保存的路径>","type":"proposal","category":"<分类>","title":"","thread":""}'`
+→ `run draft-new-from-file --params '{"file_path":"<EC 保存的路径>","type":"proposal","title":"","thread":""}'`
 
 **列出我的草稿** — 触发词举例：
 > "我的草稿" / "草稿列表" / "查看草稿" / "列出草稿" / "有哪些草稿" / "list drafts" / "draft list"
@@ -108,7 +127,8 @@ python3 "$APP_DIR/bin/app-runner.py" run discuss-new --params '{"draft_id":"<上
 2. 如果没有 `proposal` 草稿，引导用户先 `draft-new` 或上传文件
 3. 有一个 proposal 草稿 → 与用户确认后发布
 4. 有多个 proposal 草稿 → 列出让用户选
-5. 发布命令：`run discuss-new --params '{"draft_id":"<id>","mention_users":"","mention_comments":""}'`
+5. 发布命令：`run discuss-new --params '{"draft_id":"<id>","category":"general","mention_users":"","mention_comments":""}'`
+   - `category`：可选，默认 `general`。如果用户指定了分类（如 enclaws / product / tech），就传用户指定的值。
 
 **回复讨论** — 触发词举例：
 > "回复 xxx" / "回复讨论" / "跟帖" / "reply"

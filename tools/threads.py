@@ -53,6 +53,25 @@ def next_post_number(thread_dir: str) -> int:
     return (max(numbers) if numbers else 0) + 1
 
 
+def find_thread_category(discussions_root: str, thread_slug: str) -> Optional[str]:
+    """Scan discussions/ to find which category a given thread belongs to.
+
+    Returns the category name if found, None otherwise. If the same thread
+    slug exists under multiple categories (shouldn't happen), returns the
+    first one found.
+    """
+    root = Path(discussions_root)
+    if not root.is_dir() or not thread_slug:
+        return None
+    for cat_dir in root.iterdir():
+        if not cat_dir.is_dir():
+            continue
+        thread_dir = cat_dir / thread_slug
+        if thread_dir.is_dir():
+            return cat_dir.name
+    return None
+
+
 def list_threads(
     discussions_root: str,
     category: Optional[str] = None,

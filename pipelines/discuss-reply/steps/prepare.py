@@ -11,6 +11,7 @@ sys.path.insert(0, str(_ROOT))
 
 from tools.config import from_env  # noqa: E402
 from tools.drafts import load_draft  # noqa: E402
+from tools.threads import find_thread_category  # noqa: E402
 
 
 def _fail(msg: str) -> None:
@@ -47,10 +48,19 @@ def main():
     if not draft.thread:
         _fail(f"回复草稿缺少 thread 字段: {draft_id}")
 
+    # Derive category from thread location in data_space.
+    discussions_root = f"{ctx.data_space_dir}/discussions"
+    category = find_thread_category(discussions_root, draft.thread)
+    if not category:
+        _fail(
+            f"找不到 thread '{draft.thread}' 所在的分类目录。\n"
+            f"请确认该讨论存在于 {discussions_root}/ 下。"
+        )
+
     output = {
         "output": {
             "draft_id": draft.draft_id,
-            "category": draft.category,
+            "category": category,
             "thread": draft.thread,
             "content": draft.content,
             "has_summary": False,

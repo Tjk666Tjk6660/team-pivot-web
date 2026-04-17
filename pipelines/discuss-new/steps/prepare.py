@@ -44,10 +44,14 @@ def main():
             f"此草稿是为回复讨论准备的，请用 discuss-reply 发布。"
         )
 
+    # Category is specified at publish time (not on the draft).
+    # Default to "general" when not provided.
+    category = (inp.get("category", "") or "general").strip() or "general"
+
     output = {
         "output": {
             "draft_id": draft.draft_id,
-            "category": draft.category,
+            "category": category,
             "title": draft.title,
             "content": draft.content,
             "has_summary": False,

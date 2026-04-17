@@ -8,7 +8,6 @@ triggers:
 input:
   file_path: string       # 上传文件的绝对路径（由 EC 保存）
   type: string            # "proposal" 或 "reply"，默认 proposal
-  category: string
   title: string           # 可选，空则用文件名（去扩展名）
   thread: string          # 仅 reply 需要
 

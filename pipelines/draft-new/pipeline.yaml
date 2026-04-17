@@ -5,8 +5,7 @@ triggers:
   - "新建草稿"
   - "起草"
 input:
-  type: string            # "proposal" 或 "reply"
-  category: string
+  type: string            # "proposal" 或 "reply"（默认 proposal）
   title: string
   content: string
   thread: string          # 仅 reply 需要

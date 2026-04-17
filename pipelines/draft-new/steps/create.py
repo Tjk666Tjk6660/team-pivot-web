@@ -28,15 +28,12 @@ def main():
     inp = payload.get("input", {})
 
     type_ = inp.get("type", "").strip().lower() or "proposal"
-    category = inp.get("category", "").strip()
     title = inp.get("title", "").strip()
     content = inp.get("content", "")
     thread = inp.get("thread", "").strip() or None
 
     if type_ not in ("proposal", "reply"):
         _fail(f"invalid type: {type_!r} (must be 'proposal' or 'reply')")
-    if not category:
-        _fail("missing required param: category")
     if not title:
         _fail("missing required param: title")
     if not content.strip():
@@ -47,7 +44,6 @@ def main():
     try:
         draft = save_draft(
             type_=type_,
-            category=category,
             title=title,
             content=content,
             thread=thread,
