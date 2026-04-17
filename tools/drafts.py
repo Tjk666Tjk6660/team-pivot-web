@@ -46,13 +46,10 @@ class DraftLimitExceeded(Exception):
 
 
 def _user_workspace() -> str:
-    """Return the EC user workspace path, falling back to env var parents."""
-    ws = os.environ.get("ENCLAWS_USER_WORKSPACE", "")
+    """Return the EC user workspace path from env var."""
+    ws = os.environ.get("ENCLAWS_USER_WORKSPACE", "").strip()
     if not ws:
-        raise RuntimeError(
-            "ENCLAWS_USER_WORKSPACE environment variable not set. "
-            "Drafts require EC to inject the user workspace path."
-        )
+        raise RuntimeError("ENCLAWS_USER_WORKSPACE not set — EC must inject this env var")
     return ws
 
 

@@ -134,9 +134,9 @@ class PipelineContext:
 
 
 def _require(key: str) -> str:
-    val = os.environ.get(key)
+    val = os.environ.get(key, "").strip()
     if not val:
-        raise ConfigError(f"Required environment variable {key} is not set")
+        raise ConfigError(f"{key} not set — EC must inject this env var")
     return val
 
 

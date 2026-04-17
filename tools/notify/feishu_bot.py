@@ -4,8 +4,13 @@ Auto-discovers all groups the bot has joined via Feishu API, then broadcasts
 cards to all of them. No manual FEISHU_CHAT_IDS configuration needed.
 
 ENV vars required (injected by EC):
-  FEISHU_TENANT_ACCESS_TOKEN — tenant_access_token (cached by EC)
-  PIVOT_USER_MAP — {name: {feishu_id: "ou_xxx"}} (existing)
+  FEISHU_APP_ID      — Feishu app ID
+  FEISHU_APP_SECRET  — Feishu app secret
+  PIVOT_USER_MAP     — {name: {feishu_id: "ou_xxx"}} (optional, for @mention)
+
+Token is fetched and cached automatically by tools.notify.feishu_token.
+Cache file: $PIVOT_DATA_DIR/.feishu-token-{app_id}.json（按 app_id 分文件，
+支持同租户多机器人绑定不同飞书应用）。
 """
 from __future__ import annotations
 
@@ -26,9 +31,19 @@ class FeishuBotAdapter:
 
     @classmethod
     def from_env(cls) -> "FeishuBotAdapter":
-        token = os.environ.get("FEISHU_TENANT_ACCESS_TOKEN", "")
-        if not token:
-            raise FeishuBotConfigError("FEISHU_TENANT_ACCESS_TOKEN not set")
+        """从 FEISHU_APP_ID / FEISHU_APP_SECRET 获取 token 构造 adapter。
+
+        Token 由 tools.notify.feishu_token 管理（自动缓存 + 过期刷新）。
+        凭证缺失或 API 失败时抛 FeishuBotConfigError（保持上层 try/except 行为）。
+        """
+        from tools.notify.feishu_token import (
+            FeishuTokenError,
+            get_tenant_access_token,
+        )
+        try:
+            token = get_tenant_access_token()
+        except FeishuTokenError as e:
+            raise FeishuBotConfigError(str(e)) from e
         return cls(access_token=token)
 
     def _get_bot_chats(self) -> list[str]:

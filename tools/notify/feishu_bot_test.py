@@ -22,15 +22,24 @@ def _extract_card_content(mock_post_call):
 
 
 class TestFromEnv:
-    def test_loads_token(self, monkeypatch):
-        monkeypatch.setenv("FEISHU_TENANT_ACCESS_TOKEN", "t-xxx")
-        adapter = FeishuBotAdapter.from_env()
-        assert adapter.access_token == "t-xxx"
+    def test_loads_token_via_token_module(self, monkeypatch):
+        """from_env() 应该调 get_tenant_access_token() 拿 token。"""
+        with patch(
+            "tools.notify.feishu_token.get_tenant_access_token",
+            return_value="t-fetched",
+        ):
+            adapter = FeishuBotAdapter.from_env()
+            assert adapter.access_token == "t-fetched"
 
-    def test_raises_without_token(self, monkeypatch):
-        monkeypatch.delenv("FEISHU_TENANT_ACCESS_TOKEN", raising=False)
-        with pytest.raises(FeishuBotConfigError, match="ACCESS_TOKEN"):
-            FeishuBotAdapter.from_env()
+    def test_raises_when_token_module_raises(self, monkeypatch):
+        """token 模块抛 FeishuTokenError 时，from_env 转为 FeishuBotConfigError。"""
+        from tools.notify.feishu_token import FeishuTokenError
+        with patch(
+            "tools.notify.feishu_token.get_tenant_access_token",
+            side_effect=FeishuTokenError("FEISHU_APP_ID or FEISHU_APP_SECRET not set"),
+        ):
+            with pytest.raises(FeishuBotConfigError, match="FEISHU_APP_ID"):
+                FeishuBotAdapter.from_env()
 
 
 class TestSendCardToAll:

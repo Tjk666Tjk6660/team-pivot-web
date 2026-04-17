@@ -408,11 +408,20 @@ def main():
     else:
         data_space_dir = os.environ.get("PIVOT_DATA_SPACE_DIR", str(Path(data_dir) / "data_space"))
 
-    runner = PipelineRunner(
-        app_dir=app_dir,
-        data_dir=data_dir,
-        data_space_dir=data_space_dir,
-    )
+    try:
+        runner = PipelineRunner(
+            app_dir=app_dir,
+            data_dir=data_dir,
+            data_space_dir=data_space_dir,
+        )
+    except Exception as e:
+        # Runner init failed (e.g. ENCLAWS_GATEWAY_URL missing).
+        # Emit a clean JSON error so the LLM doesn't see a Python traceback.
+        print(json.dumps({
+            "status": "error",
+            "error": f"Runner init failed: {e}",
+        }, ensure_ascii=False))
+        sys.exit(1)
 
     if args.command == "list":
         pipelines = runner.discover_pipelines()

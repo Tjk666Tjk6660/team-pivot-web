@@ -3,11 +3,14 @@
 Calls the local EC Gateway's OpenAI-compatible API (/v1/chat/completions)
 to execute LLM steps in pipelines.
 
-Connection info resolution priority:
-  1. ENCLAWS_GATEWAY_URL + ENCLAWS_GATEWAY_TOKEN env vars
-     (standard path after EC hashSTACS-Global/EnClaws#29)
-  2. Default URL + token read from EC's SQLite database
-     (temporary workaround, remove after #29 is merged)
+Required env var:
+  ENCLAWS_GATEWAY_URL   — EC Gateway endpoint (must be injected by EC)
+
+Optional env vars:
+  ENCLAWS_GATEWAY_TOKEN — Gateway auth token. If missing, token is read
+                          from EC's SQLite DB as a temporary fallback.
+  ENCLAWS_SESSION_KEY   — Session attribution header (EnClaws#29)
+  ENCLAWS_TENANT_ID     — Tenant attribution header (EnClaws#29)
 
 TODO(EnClaws#29): Remove _read_token_from_db() and the DB fallback in
 resolve_gateway_connection() once EC injects ENCLAWS_GATEWAY_TOKEN into
@@ -76,18 +79,20 @@ def resolve_gateway_connection() -> tuple[str, str]:
     Returns:
         (gateway_url, token) tuple.
 
-    Priority:
-        1. ENCLAWS_GATEWAY_URL + ENCLAWS_GATEWAY_TOKEN env vars
-        2. Default localhost URL + token from EC database
-        3. Default localhost URL + empty token (will likely fail on auth)
+    Raises:
+        RuntimeError: if ENCLAWS_GATEWAY_URL is not set (must be injected by EC).
+
+    Token fallback (temporary):
+        If ENCLAWS_GATEWAY_TOKEN is missing, read from EC's SQLite DB.
+        Remove after EnClaws#29 is merged.
     """
-    url = os.environ.get("ENCLAWS_GATEWAY_URL", "")
-    token = os.environ.get("ENCLAWS_GATEWAY_TOKEN", "")
-
+    url = os.environ.get("ENCLAWS_GATEWAY_URL", "").strip()
     if not url:
-        port = os.environ.get("ENCLAWS_GATEWAY_PORT", "18888")
-        url = f"http://127.0.0.1:{port}"
+        raise RuntimeError(
+            "ENCLAWS_GATEWAY_URL not set — EC must inject this env var"
+        )
 
+    token = os.environ.get("ENCLAWS_GATEWAY_TOKEN", "").strip()
     # TODO(EnClaws#29): Remove this fallback once EC injects the token.
     if not token:
         token = _read_token_from_db()

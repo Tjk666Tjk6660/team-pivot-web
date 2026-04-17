@@ -81,3 +81,70 @@
 ### 待优化
 
 - **EC skill 数量过多导致路由失败** — 实测发现 agent 加载 68 个 skills 时，qwen3.5-plus 在意图分类阶段未能将"帮我发起一个讨论"匹配到 team-pivot（日志显示 `Skills used: none`），而是用通用知识回答。team-pivot 的 SKILL.md 已正确加载（`snapshot skills count = 68`，包含 team-pivot），但 LLM 被其他 skills（尤其是飞书系列）干扰，跳过了 team-pivot 直接走了通用飞书逻辑。可能的优化方向：缩小 agent 的 skillFilter 只保留必要 skills；或优化 team-pivot 的 description 提高匹配权重；或在 EC 侧改进 skill 路由算法（如分层匹配）。
+
+## 2026-04-17 — 飞书 Token 自管理 + Runner 错误处理克制化
+
+### 飞书 Token 从"EC 注入"改为"APP 自管"
+
+背景：EC 作为多租户平台无法用单一 env 持有 `FEISHU_TENANT_ACCESS_TOKEN`（token 2 小时过期 + 不同租户绑定不同飞书应用）。方案调整为：EC 只注入静态凭证 `FEISHU_APP_ID` + `FEISHU_APP_SECRET`，token 由 APP 自己获取、缓存、过期刷新。
+
+新增模块 `tools/notify/feishu_token.py`：
+- `get_tenant_access_token()` — 统一入口，先读缓存，剩余有效期 < 5 分钟时重新向 `/auth/v3/tenant_access_token/internal` 换 token
+- 缓存路径 `$PIVOT_DATA_DIR/.feishu-token-{app_id}.json` — **按 app_id 分文件，支持同租户多机器人绑定不同飞书应用**（不同 bot 用不同 app_id 不会互相覆盖缓存）
+- 原子写入（先 `.tmp` 再 `os.replace()`）+ 无锁并发（last-writer-wins，飞书同时签发的多个 token 都有效）
+- app_id 非法字符过滤（`[^A-Za-z0-9_-]` → `_`），防路径逃逸
+- 获取失败抛 `FeishuTokenError` → 被 `FeishuBotAdapter.from_env()` 转为 `FeishuBotConfigError` → 被 `publish.py` 已有 try/except 吞掉，保持现有"通知失败不影响 pipeline 成功"的行为
+
+改造 `tools/notify/feishu_bot.py`：
+- `from_env()` 改为调 token 模块，不再读 `FEISHU_TENANT_ACCESS_TOKEN`
+- docstring 更新声明 `FEISHU_APP_ID / FEISHU_APP_SECRET`
+
+代码全量清理 `FEISHU_TENANT_ACCESS_TOKEN`：
+- `tools/notify/feishu_bot.py` — `from_env()` 改写
+- `pipelines/monitor-scan/steps/scan.py` — 注释更新
+- 3 个测试文件的 `env.pop` 残留清理
+
+新增单测 `tools/notify/feishu_token_test.py`（16 个）：缓存命中/过期刷新/多 app_id 隔离/凭证缺失/API 失败/非法字符/写入失败降级/畸形缓存忽略。
+
+### Runner 错误处理克制化
+
+关键错误节点的日志统一为"一行 + 变量名明确"格式，避免 LLM 上下文被冗长 traceback 污染。
+
+**`ENCLAWS_GATEWAY_URL` 去 fallback**：
+- 原本缺失时 fallback 到 `http://127.0.0.1:18888`
+- 改为直接抛 `RuntimeError("ENCLAWS_GATEWAY_URL not set — EC must inject this env var")`
+- 同步移除未使用的 `ENCLAWS_GATEWAY_PORT` fallback
+
+**`app-runner.py` main() 捕获 Runner 初始化异常**：
+- 输出干净 JSON `{"status":"error","error":"Runner init failed: ..."}` 
+- 避免 Python traceback（含文件路径、行号）进入 LLM 上下文
+
+**错误信息统一简洁**：
+- `tools/config.py:_require()` — "X not set — EC must inject this env var"
+- `tools/drafts.py:_user_workspace()` — 同格式，原本的两行提示压缩为一行
+
+### 关键变量注入责任划分（本期对齐 004 讨论结果）
+
+| 变量 | 来源 | 缺失时行为 |
+|------|------|-----------|
+| `ENCLAWS_TENANT_ID` | EC 注入 | `ConfigError` 崩溃 |
+| `ENCLAWS_TENANT_USER_ID` | EC 注入（displayName） | 降级为 "unknown" |
+| `ENCLAWS_USER_WORKSPACE` | EC 注入（绝对路径） | `RuntimeError` 崩溃（草稿相关） |
+| `ENCLAWS_GATEWAY_URL` | EC 注入 | `RuntimeError` 崩溃（LLM step 需要） |
+| `ENCLAWS_GATEWAY_TOKEN` | EC 注入（未来）或 SQLite DB fallback | 无 token 时请求不带 Authorization |
+| `ENCLAWS_SESSION_KEY` | EC 注入 | header 不发送（归因缺失） |
+| `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | EC 注入 | `FeishuTokenError` 被吞掉，通知失效 |
+| `PIVOT_DATA_DIR` | Runner --data-dir 参数 + LLM 从 SKILL.md 拼装 | `PIVOT_DATA_DIR` 就是 fallback 到 app_dir |
+| `PIVOT_APP_NAME` | Runner 硬编码 "team-pivot" | 不会缺 |
+| `PIVOT_APP_DIR` | Runner 从 `__file__` 推算 | 不会缺 |
+| `PIVOT_VERSION` | Runner 从 pivot.yaml 读 | 降级为 "unknown" |
+
+### 测试结果
+
+80 个测试全过（16 新 feishu_token + 9 feishu_bot + pipelines 测试 + tools 目录其他测试）。项目级仍有 28 个失败是 Ken v0.2.0/v0.2.1 改动带来的旧测试未跟上，与本次改动无关（通过 `git stash` 对比确认）。
+
+### 待解决（依赖 EC 侧完成）
+
+- EC Issue #29 合并前 `ENCLAWS_GATEWAY_TOKEN` 仍靠 `_read_token_from_db()` 临时从 EC SQLite DB 读取；合并后可删除该 fallback
+- `sessionKey` 统一 user 标识（openId + unionId 拼接）由 EC 侧另行推进
+- `ENCLAWS_TENANT_USER_ID` 语义从 unionId → displayName 由 EC 侧改造（已规划在 EC `pi-tools.ts` 扩展）

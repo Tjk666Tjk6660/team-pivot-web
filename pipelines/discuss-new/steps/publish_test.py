@@ -66,15 +66,24 @@ class TestPublish:
 
 class TestPublishNotification:
     def test_publish_sends_notification_via_bot(
-        self, tmp_git_repo: Path, mock_feishu_server
+        self, tmp_git_repo: Path, tmp_path: Path, mock_feishu_server
     ):
+        # 预写 token 缓存，避免子进程访问真实飞书 API
+        import time as _time
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / ".feishu-token-cli_test.json").write_text(
+            json.dumps({"token": "t-test", "expire_at": _time.time() + 7200})
+        )
         env = {
             **os.environ,
             "ENCLAWS_TENANT_ID": "t",
             "ENCLAWS_TENANT_USER_ID": "huangshengli",
             "PIVOT_DATA_SPACE_DIR": str(tmp_git_repo),
             "PIVOT_APP_NAME": "pivot",
-            "FEISHU_TENANT_ACCESS_TOKEN": "t-test",
+            "PIVOT_DATA_DIR": str(data_dir),
+            "FEISHU_APP_ID": "cli_test",
+            "FEISHU_APP_SECRET": "s-test",
             "PIVOT_USER_MAP": '{"ken": {"feishu_id": "ou_ken"}}',
         }
         proc = subprocess.run(
@@ -121,7 +130,8 @@ class TestPublishNotification:
             "PIVOT_DATA_SPACE_DIR": str(tmp_git_repo),
             "PIVOT_APP_NAME": "pivot",
         }
-        env.pop("FEISHU_TENANT_ACCESS_TOKEN", None)
+        env.pop("FEISHU_APP_ID", None)
+        env.pop("FEISHU_APP_SECRET", None)
         proc = subprocess.run(
             [sys.executable, str(STEP)],
             input=json.dumps(
