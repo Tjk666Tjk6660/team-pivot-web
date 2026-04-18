@@ -14,11 +14,13 @@ class Config:
     feishu_redirect_uri: str
     session_secret: str
     web_dev_origin: str
+    data_dir: Path
 
 
 def load_config(env_file: str | Path | None = None) -> Config:
+    project_root = Path(__file__).resolve().parent.parent
     if env_file is None:
-        env_file = Path(__file__).resolve().parent.parent / ".env"
+        env_file = project_root / ".env"
     load_dotenv(env_file, override=False)
     return Config(
         feishu_app_id=_require("FEISHU_APP_ID"),
@@ -26,6 +28,7 @@ def load_config(env_file: str | Path | None = None) -> Config:
         feishu_redirect_uri=_require("FEISHU_REDIRECT_URI"),
         session_secret=_require("SESSION_SECRET"),
         web_dev_origin=os.getenv("WEB_DEV_ORIGIN", "http://localhost:5173"),
+        data_dir=Path(os.getenv("DATA_DIR", project_root / "var")),
     )
 
 

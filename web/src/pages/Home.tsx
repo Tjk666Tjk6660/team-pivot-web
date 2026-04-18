@@ -15,7 +15,10 @@ export function Home({ me, onLogout }: { me: Me; onLogout: () => void }) {
         )}
         <div>
           <div style={{ fontWeight: 600 }}>{me.name}</div>
-          <div style={{ fontSize: 12, color: "#666" }}>{me.open_id}</div>
+          <div style={{ fontSize: 12, color: "#666" }}>
+            {me.pinyin}
+            {me.github_username ? ` · @${me.github_username}` : ""}
+          </div>
         </div>
         <button onClick={onLogout} style={{ marginLeft: "auto" }}>
           Sign out
