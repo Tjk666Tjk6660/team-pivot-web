@@ -251,26 +251,28 @@ Pipeline 输出统一格式：
 
 ## 7. LLM 调用机制
 
-### 7.1 当前：GatewayLLMBackend
+### 7.1 GatewayLLMBackend
 
-Pipeline 中的 `llm` step 通过本地 EC Gateway 的 OpenAI 兼容 API 调用：
+Pipeline 中的 `llm` step 通过本地 EC Gateway 的 agent chat 接口调用：
 
 ```
-POST http://127.0.0.1:18888/v1/chat/completions
-Authorization: Bearer <gateway_token>
-x-enclaws-session-key: <current session>
-x-enclaws-tenant-id: <tenant>
+POST http://127.0.0.1:18888/v1/agent/chat/completions
+Content-Type: application/json
+sessionKey: agent:<uuid>|channel:<ch>|group:<g>|union:<u>|open:<o>
+turnId:     <optional turn id>
 ```
 
-### 7.2 Token 归因
+`agent:` 段是 `tenant_agents.id`（UUID 主键），不是可重命名的 slug。归因 `displayName` 由 EC 从 `users` 表按 `union_id` 反查，**不要**在 sessionKey 中传 `name:` 段。
 
-当前 EC 的 `/v1/chat/completions` 不从请求头提取 tenant，导致子进程调用的 LLM token 消耗未归因到原飞书会话。已提交 feature request（EnClaws#29）。
+### 7.2 环境变量（EC 注入 APP 子进程）
 
-EC 修复后 usage 自动归因，runner 代码不用改。
+- `ENCLAWS_GATEWAY_URL` — Gateway 基础 URL（必需）
+- `ENCLAWS_SESSION_KEY` — 会话归因串（必需），格式见上
+- `ENCLAWS_TURN_ID` — 轮次 ID（可选），不传由 EC 生成 UUID
 
-### 7.3 临时方案
+### 7.3 归因与用量
 
-在 EC 注入 `ENCLAWS_GATEWAY_TOKEN` 之前，`llm_gateway.py` 从 SQLite 数据库读取 token。EnClaws#29 合入后删除此 fallback。
+`session_key` 中的 `agent:` 段（UUID）用于按主键查 `tenant_agents`（带 `tenant_id` 过滤），确定模型配置；`union:` 段用于反查 tenant + displayName。调用全程写入 EC 的 `llm_interaction_traces` 表，不需要 APP 侧额外处理。
 
 ## 8. 草稿机制
 

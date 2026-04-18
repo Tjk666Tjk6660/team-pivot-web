@@ -38,7 +38,7 @@ import yaml
 # LLM Backend (via EC Gateway API)
 # ---------------------------------------------------------------------------
 
-from llm_gateway import LLMBackend, GatewayLLMBackend, resolve_gateway_connection
+from llm_gateway import LLMBackend, GatewayLLMBackend, resolve_gateway_url
 
 
 # ---------------------------------------------------------------------------
@@ -99,8 +99,8 @@ class PipelineRunner:
         if llm_backend:
             self.llm_backend = llm_backend
         else:
-            url, token = resolve_gateway_connection()
-            self.llm_backend = GatewayLLMBackend(url, token)
+            url = resolve_gateway_url()
+            self.llm_backend = GatewayLLMBackend(url)
         self.tenant_id = tenant_id or os.environ.get("ENCLAWS_TENANT_ID", "")
         self.user_id = user_id or os.environ.get("ENCLAWS_TENANT_USER_ID", "")
         self.app_name = app_name
