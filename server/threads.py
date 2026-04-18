@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from server.index_files import read_thread_index
 from server.posts import Post, read_post
 
 
@@ -13,6 +14,7 @@ class ThreadMeta:
     title: str
     author: str | None
     status: str | None
+    last_updated: str | None
     post_count: int
 
 
@@ -22,7 +24,11 @@ class ThreadDetail:
     posts: list[Post]
 
 
-def list_threads(discussions_root: Path, category: str | None = None) -> list[ThreadMeta]:
+def list_threads(
+    discussions_root: Path,
+    index_dir: Path | None = None,
+    category: str | None = None,
+) -> list[ThreadMeta]:
     root = Path(discussions_root)
     if not root.is_dir():
         return []
@@ -36,23 +42,29 @@ def list_threads(discussions_root: Path, category: str | None = None) -> list[Th
         for tdir in sorted(cat.iterdir()):
             if not tdir.is_dir():
                 continue
-            meta = _thread_meta(cat.name, tdir)
+            meta = _thread_meta(cat.name, tdir, index_dir)
             if meta is not None:
                 results.append(meta)
+    results.sort(key=lambda m: m.last_updated or "", reverse=True)
     return results
 
 
-def get_thread(discussions_root: Path, category: str, slug: str) -> ThreadDetail | None:
+def get_thread(
+    discussions_root: Path,
+    index_dir: Path | None,
+    category: str,
+    slug: str,
+) -> ThreadDetail | None:
     tdir = Path(discussions_root) / category / slug
     if not tdir.is_dir():
         return None
-    meta = _thread_meta(category, tdir)
+    meta = _thread_meta(category, tdir, index_dir)
     if meta is None:
         return None
     return ThreadDetail(meta=meta, posts=_list_posts(tdir))
 
 
-def _thread_meta(category: str, tdir: Path) -> ThreadMeta | None:
+def _thread_meta(category: str, tdir: Path, index_dir: Path | None) -> ThreadMeta | None:
     posts = _list_posts(tdir)
     if not posts:
         return None
@@ -65,12 +77,22 @@ def _thread_meta(category: str, tdir: Path) -> ThreadMeta | None:
         or _derive_title(proposal.filename)
     )
     author = proposal.frontmatter.get("author")
+
+    status: str | None = None
+    last_updated: str | None = None
+    if index_dir is not None:
+        idx = read_thread_index(index_dir, tdir.name)
+        if idx is not None:
+            status = idx.status
+            last_updated = idx.last_updated
+
     return ThreadMeta(
         category=category,
         slug=tdir.name,
         title=title,
         author=str(author) if author else None,
-        status=None,
+        status=status,
+        last_updated=last_updated,
         post_count=len(posts),
     )
 

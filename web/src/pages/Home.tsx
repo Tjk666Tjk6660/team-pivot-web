@@ -9,6 +9,8 @@ import {
   type WorkspaceStatus,
 } from "../api";
 import { UserBar } from "../components/UserBar";
+import { StatusBadge } from "../components/StatusBadge";
+import { relativeTime } from "../lib/time";
 
 export function Home({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [threads, setThreads] = useState<ThreadMeta[] | null>(null);
@@ -80,10 +82,14 @@ export function Home({ me, onLogout }: { me: Me; onLogout: () => void }) {
                 to={`/t/${encodeURIComponent(t.category)}/${encodeURIComponent(t.slug)}`}
                 style={{ textDecoration: "none", color: "inherit", display: "block" }}
               >
-                <div style={{ fontWeight: 600 }}>{t.title}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontWeight: 600 }}>{t.title}</span>
+                  <StatusBadge status={t.status} />
+                </div>
                 <div style={{ fontSize: 12, color: "#888", marginTop: 4 }}>
                   {t.category} · {t.author_display ?? t.author ?? "unknown"} ·{" "}
                   {t.post_count} posts
+                  {t.last_updated && ` · ${relativeTime(t.last_updated)}`}
                 </div>
               </Link>
             </li>

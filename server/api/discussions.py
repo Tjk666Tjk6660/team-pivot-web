@@ -28,13 +28,15 @@ def build_router(workspace: Workspace, sessions: SessionStore, users: UserRepo) 
     @router.get("/threads")
     def threads(category: str | None = None, sid: str | None = Cookie(default=None)):
         _require_auth(sid)
-        items = list_threads(workspace.discussions_dir, category=category)
+        items = list_threads(
+            workspace.discussions_dir, workspace.index_dir, category=category
+        )
         return {"items": [_meta(m, users) for m in items]}
 
     @router.get("/threads/{category}/{slug}")
     def thread_detail(category: str, slug: str, sid: str | None = Cookie(default=None)):
         _require_auth(sid)
-        detail = get_thread(workspace.discussions_dir, category, slug)
+        detail = get_thread(workspace.discussions_dir, workspace.index_dir, category, slug)
         if detail is None:
             raise HTTPException(status_code=404, detail="thread not found")
         return {
@@ -70,5 +72,6 @@ def _meta(m: ThreadMeta, users: UserRepo) -> dict:
         "author": m.author,
         "author_display": resolve_id(m.author, users),
         "status": m.status,
+        "last_updated": m.last_updated,
         "post_count": m.post_count,
     }

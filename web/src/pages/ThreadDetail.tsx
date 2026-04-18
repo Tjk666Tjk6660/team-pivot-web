@@ -3,6 +3,8 @@ import { Link, useParams } from "react-router-dom";
 import Markdown from "react-markdown";
 import { fetchThread, type Me, type Post, type ThreadDetail as ThreadDetailData } from "../api";
 import { UserBar } from "../components/UserBar";
+import { StatusBadge } from "../components/StatusBadge";
+import { relativeTime } from "../lib/time";
 
 export function ThreadDetail({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const { category, slug } = useParams<{ category: string; slug: string }>();
@@ -35,11 +37,24 @@ export function ThreadDetail({ me, onLogout }: { me: Me; onLogout: () => void })
       )}
       {data && (
         <>
-          <h1 style={{ marginTop: 24, marginBottom: 4 }}>{data.meta.title}</h1>
-          <div style={{ fontSize: 13, color: "#888" }}>
+          <div
+            style={{
+              marginTop: 24,
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              flexWrap: "wrap",
+            }}
+          >
+            <h1 style={{ margin: 0 }}>{data.meta.title}</h1>
+            <StatusBadge status={data.meta.status} />
+          </div>
+          <div style={{ fontSize: 13, color: "#888", marginTop: 4 }}>
             {data.meta.category} ·{" "}
             {data.meta.author_display ?? data.meta.author ?? "unknown"} ·{" "}
             {data.meta.post_count} posts
+            {data.meta.last_updated &&
+              ` · last activity ${relativeTime(data.meta.last_updated)}`}
           </div>
           <div style={{ marginTop: 32 }}>
             {data.posts.map((p) => (

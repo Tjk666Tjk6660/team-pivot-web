@@ -41,6 +41,7 @@ export type ThreadMeta = {
   author: string | null;
   author_display: string | null;
   status: string | null;
+  last_updated: string | null;
   post_count: number;
 };
 
