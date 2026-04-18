@@ -13,6 +13,7 @@ Requires:
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import time
 from datetime import datetime
@@ -26,6 +27,11 @@ from tests.ec_simulator.llm_backends.claude_cli import ClaudeCLIBackend
 REPO_URL = "https://github.com/hashSTACS-Global/test-discuss.git"
 APP_DIR = str(Path(__file__).parent.parent.parent)  # team-pivot/
 TEST_OUTPUT_BASE = Path(__file__).parent.parent / "test_output"
+
+pytestmark = pytest.mark.skipif(
+    shutil.which("claude") is None,
+    reason="real integration test requires `claude` CLI in PATH",
+)
 
 
 def _clone_repo(tmp_dir: Path) -> Path:
@@ -71,7 +77,7 @@ def data_space(tmp_path_factory, run_dir):
 class TestRealDiscussFlow:
     """Full flow test with real git repo and real Claude LLM."""
 
-    def test_01_new_thread(self, data_space: Path, run_dir: Path):
+    def test_01_new_thread(self, data_space: Path, run_dir: Path, make_proposal_draft):
         """Create a new discussion thread."""
         step_dir = run_dir / "01_discuss_new"
         runner = LocalPipelineRunner(
@@ -82,10 +88,9 @@ class TestRealDiscussFlow:
             record_dir=str(step_dir),
         )
 
-        result = runner.run("discuss-new", {
-            "category": "discussion",
-            "title": "test-restructure-proposal",
-            "content": (
+        draft_id = make_proposal_draft(
+            title="test-restructure-proposal",
+            content=(
                 "# 测试架构重构提案\n\n"
                 "## 背景\n"
                 "当前测试使用 mock 数据，无法验证 LLM 输出质量和真实 pipeline 行为。\n\n"
@@ -98,6 +103,10 @@ class TestRealDiscussFlow:
                 "- 数据可追溯：每次运行的完整 I/O 留档\n"
                 "- 回归保护：录制结果可作为后续 prerecorded fixture\n"
             ),
+        )
+        result = runner.run("discuss-new", {
+            "draft_id": draft_id,
+            "category": "discussion",
             "mention_users": "",
             "mention_comments": "",
         })
@@ -127,7 +136,7 @@ class TestRealDiscussFlow:
             encoding="utf-8",
         )
 
-    def test_02_reply_thread(self, data_space: Path, run_dir: Path):
+    def test_02_reply_thread(self, data_space: Path, run_dir: Path, make_reply_draft):
         """Reply to the thread created in test_01."""
         step_dir = run_dir / "02_discuss_reply"
         runner = LocalPipelineRunner(
@@ -138,10 +147,9 @@ class TestRealDiscussFlow:
             record_dir=str(step_dir),
         )
 
-        result = runner.run("discuss-reply", {
-            "category": "discussion",
-            "thread": "test-restructure-proposal",
-            "content": (
+        reply_draft = make_reply_draft(
+            thread="test-restructure-proposal",
+            content=(
                 "# 回复：赞同方案，补充几点\n\n"
                 "1. PrerecordedBackend 应该保留，用于 CI 快速验证\n"
                 "2. ClaudeCLIBackend 只在本地开发时使用，CI 跳过\n"
@@ -149,6 +157,9 @@ class TestRealDiscussFlow:
                 "另外 test_output/ 目录的录制结果也可以反哺 prerecorded fixture，\n"
                 "形成「录制 → 回放」的闭环。\n"
             ),
+        )
+        result = runner.run("discuss-reply", {
+            "draft_id": reply_draft,
             "mention_users": "huangshengli",
             "mention_comments": "",
         })

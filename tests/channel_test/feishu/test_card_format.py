@@ -13,7 +13,7 @@ class TestCardFormat:
             "user_map": {},
         }
         defaults.update(kwargs)
-        adapter = FeishuBotAdapter(access_token="t", chat_ids=["oc_1"])
+        adapter = FeishuBotAdapter(access_token="t")
         return adapter._build_card(**defaults)
 
     def test_card_has_header(self):
@@ -28,18 +28,17 @@ class TestCardFormat:
 
     def test_card_has_summary_div(self):
         card = self._build(summary="My summary text")
-        div = card["elements"][0]
-        assert div["tag"] == "div"
-        assert div["text"]["tag"] == "lark_md"
-        assert "My summary text" in div["text"]["content"]
+        el = card["body"]["elements"][0]
+        assert el["tag"] == "markdown"
+        assert "My summary text" in el["content"]
 
     def test_card_has_no_view_button(self):
         # View button removed — thread_url is a placeholder. Re-add once configured.
         card = self._build(thread_url="https://pivot.example.com/thread/a/b")
-        for element in card["elements"]:
+        for element in card["body"]["elements"]:
             assert element.get("tag") != "action", "View button should not be rendered"
 
     def test_card_includes_author(self):
         card = self._build(author="shengli")
-        content = card["elements"][0]["text"]["content"]
+        content = card["body"]["elements"][0]["content"]
         assert "**Author**: shengli" in content

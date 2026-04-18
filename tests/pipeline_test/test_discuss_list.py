@@ -8,18 +8,18 @@ class TestDiscussList:
         assert result.status == "completed"
         assert result.output["threads"] == []
 
-    def test_lists_threads_after_creation(self, runner):
+    def test_lists_threads_after_creation(self, runner, make_proposal_draft):
+        d1 = make_proposal_draft(title="alpha", content="# Alpha")
         runner.run("discuss-new", {
+            "draft_id": d1,
             "category": "dev",
-            "title": "alpha",
-            "content": "# Alpha",
             "mention_users": "",
             "mention_comments": "",
         })
+        d2 = make_proposal_draft(title="beta", content="# Beta")
         runner.run("discuss-new", {
+            "draft_id": d2,
             "category": "dev",
-            "title": "beta",
-            "content": "# Beta",
             "mention_users": "",
             "mention_comments": "",
         })

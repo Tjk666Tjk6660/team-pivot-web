@@ -2,9 +2,46 @@
 tools/, cli/, pipelines/, and tests/.
 """
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+
+# Make `tools.*` and `tests.*` importable in any collected test module.
+sys.path.insert(0, str(Path(__file__).parent))
+
+
+@pytest.fixture
+def user_workspace(tmp_path: Path, monkeypatch) -> Path:
+    """Isolated ENCLAWS_USER_WORKSPACE for the test — inherited by subprocesses."""
+    ws = tmp_path / "user_workspace"
+    ws.mkdir()
+    monkeypatch.setenv("ENCLAWS_USER_WORKSPACE", str(ws))
+    return ws
+
+
+@pytest.fixture
+def make_proposal_draft(user_workspace: Path):
+    """Factory: save a proposal draft, return its draft_id."""
+    from tools.drafts import save_draft
+
+    def _make(title: str = "t", content: str = "body") -> str:
+        return save_draft(type_="proposal", title=title, content=content).draft_id
+
+    return _make
+
+
+@pytest.fixture
+def make_reply_draft(user_workspace: Path):
+    """Factory: save a reply draft, return its draft_id."""
+    from tools.drafts import save_draft
+
+    def _make(thread: str, title: str = "r", content: str = "body") -> str:
+        return save_draft(
+            type_="reply", title=title, content=content, thread=thread,
+        ).draft_id
+
+    return _make
 
 
 @pytest.fixture

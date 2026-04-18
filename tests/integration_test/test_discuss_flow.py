@@ -23,12 +23,14 @@ def runner(tmp_git_repo: Path) -> LocalPipelineRunner:
 
 
 class TestFullDiscussFlow:
-    def test_new_reply_list_read(self, runner):
+    def test_new_reply_list_read(self, runner, make_proposal_draft, make_reply_draft):
         # 1. Create new thread
+        new_draft = make_proposal_draft(
+            title="e2e-flow", content="# E2E Proposal\n\nFull lifecycle test.",
+        )
         new_result = runner.run("discuss-new", {
+            "draft_id": new_draft,
             "category": "test",
-            "title": "e2e-flow",
-            "content": "# E2E Proposal\n\nFull lifecycle test.",
             "mention_users": "",
             "mention_comments": "",
         })
@@ -37,10 +39,11 @@ class TestFullDiscussFlow:
 
         # 2. Reply
         runner.user_id = "shengli"
+        reply_draft = make_reply_draft(
+            thread="e2e-flow", content="# Reply\n\nI agree with the proposal.",
+        )
         reply_result = runner.run("discuss-reply", {
-            "category": "test",
-            "thread": "e2e-flow",
-            "content": "# Reply\n\nI agree with the proposal.",
+            "draft_id": reply_draft,
             "mention_users": "ken",
             "mention_comments": "",
         })

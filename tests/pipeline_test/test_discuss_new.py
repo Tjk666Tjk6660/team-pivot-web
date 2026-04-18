@@ -5,11 +5,13 @@ from tools import index as index_mod
 
 
 class TestDiscussNew:
-    def test_creates_thread_and_index(self, runner):
+    def test_creates_thread_and_index(self, runner, make_proposal_draft):
+        draft_id = make_proposal_draft(
+            title="new-thread", content="# Proposal\n\nBody text.",
+        )
         result = runner.run("discuss-new", {
+            "draft_id": draft_id,
             "category": "test",
-            "title": "new-thread",
-            "content": "# Proposal\n\nBody text.",
             "mention_users": "",
             "mention_comments": "",
         })
@@ -27,11 +29,13 @@ class TestDiscussNew:
         assert loaded.discussions[0].status == "open"
         assert len(loaded.timeline) == 1
 
-    def test_llm_generates_summary(self, runner):
+    def test_llm_generates_summary(self, runner, make_proposal_draft):
+        draft_id = make_proposal_draft(
+            title="summary-thread", content="# Long proposal\n\nWith details...",
+        )
         result = runner.run("discuss-new", {
+            "draft_id": draft_id,
             "category": "test",
-            "title": "summary-thread",
-            "content": "# Long proposal\n\nWith details...",
             "mention_users": "",
             "mention_comments": "",
         })
@@ -40,18 +44,15 @@ class TestDiscussNew:
         summary = result.step_outputs["generate_summary"]["output"]["summary"]
         assert len(summary) > 0
 
-    def test_fails_without_content(self, runner):
+    def test_fails_without_draft_id(self, runner, user_workspace):
         result = runner.run("discuss-new", {
             "category": "test",
-            "title": "empty",
-            "content": "",
         })
         assert result.status == "error"
 
-    def test_fails_without_category(self, runner):
+    def test_fails_on_missing_draft(self, runner, user_workspace):
         result = runner.run("discuss-new", {
-            "category": "",
-            "title": "x",
-            "content": "body",
+            "draft_id": "draft-does-not-exist",
+            "category": "test",
         })
         assert result.status == "error"

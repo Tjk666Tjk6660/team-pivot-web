@@ -4,12 +4,14 @@ from pathlib import Path
 from tools import index as index_mod
 
 
-def _seed_thread(runner, category: str, thread: str):
+def _seed_thread(runner, make_proposal_draft, category: str, thread: str):
     """Create a thread via discuss-new so reply has something to reply to."""
+    draft_id = make_proposal_draft(
+        title=thread, content="# Seed proposal\n\nInitial content.",
+    )
     result = runner.run("discuss-new", {
+        "draft_id": draft_id,
         "category": category,
-        "title": thread,
-        "content": "# Seed proposal\n\nInitial content.",
         "mention_users": "",
         "mention_comments": "",
     })
@@ -17,13 +19,14 @@ def _seed_thread(runner, category: str, thread: str):
 
 
 class TestDiscussReply:
-    def test_appends_reply_to_existing_thread(self, runner):
-        _seed_thread(runner, "test", "reply-target")
+    def test_appends_reply_to_existing_thread(self, runner, make_proposal_draft, make_reply_draft):
+        _seed_thread(runner, make_proposal_draft, "test", "reply-target")
 
+        reply_draft = make_reply_draft(
+            thread="reply-target", content="# My Reply\n\nI agree.",
+        )
         result = runner.run("discuss-reply", {
-            "category": "test",
-            "thread": "reply-target",
-            "content": "# My Reply\n\nI agree.",
+            "draft_id": reply_draft,
             "mention_users": "",
             "mention_comments": "",
         })
@@ -35,11 +38,12 @@ class TestDiscussReply:
         replies = list((ws / "discussions/test/reply-target").glob("002_*.md"))
         assert len(replies) == 1
 
-    def test_fails_on_nonexistent_thread(self, runner):
+    def test_fails_on_nonexistent_thread(self, runner, make_reply_draft):
+        reply_draft = make_reply_draft(
+            thread="no-such-thread", content="# Reply",
+        )
         result = runner.run("discuss-reply", {
-            "category": "test",
-            "thread": "no-such-thread",
-            "content": "# Reply",
+            "draft_id": reply_draft,
             "mention_users": "",
             "mention_comments": "",
         })

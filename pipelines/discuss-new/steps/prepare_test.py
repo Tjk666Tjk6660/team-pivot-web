@@ -9,11 +9,12 @@ from pathlib import Path
 STEP = Path(__file__).parent / "prepare.py"
 
 
-def _base_env(tmp_path: Path) -> dict:
+def _base_env(tmp_path: Path, user_workspace: Path) -> dict:
     return {
         **os.environ,
         "ENCLAWS_TENANT_ID": "t",
         "ENCLAWS_TENANT_USER_ID": "u",
+        "ENCLAWS_USER_WORKSPACE": str(user_workspace),
         "PIVOT_DATA_SPACE_DIR": str(tmp_path),
         "PIVOT_APP_NAME": "pivot",
     }
@@ -33,16 +34,18 @@ def _run(input_obj: dict, env: dict) -> dict:
 
 
 class TestPrepareStep:
-    def test_passes_content_through(self, tmp_path: Path):
+    def test_passes_content_through(self, tmp_path: Path, user_workspace: Path, make_proposal_draft):
+        draft_id = make_proposal_draft(
+            title="test thread", content="# My Proposal\n\nThis is the body.",
+        )
         result = _run(
             {
+                "draft_id": draft_id,
                 "category": "enclaws",
-                "title": "test thread",
-                "content": "# My Proposal\n\nThis is the body.",
                 "mention_users": "ken",
                 "mention_comments": "",
             },
-            _base_env(tmp_path),
+            _base_env(tmp_path, user_workspace),
         )
         assert result["output"]["category"] == "enclaws"
         assert result["output"]["title"] == "test thread"
@@ -50,24 +53,34 @@ class TestPrepareStep:
         assert result["output"]["has_summary"] is False
         assert result["output"]["mention_users"] == "ken"
 
-    def test_fails_without_content(self, tmp_path: Path):
+    def test_fails_without_draft_id(self, tmp_path: Path, user_workspace: Path):
         proc = subprocess.run(
             [sys.executable, str(STEP)],
-            input=json.dumps({"input": {"category": "a", "title": "b"}, "steps": {}}),
+            input=json.dumps({"input": {"category": "a"}, "steps": {}}),
             capture_output=True,
             text=True,
-            env=_base_env(tmp_path),
+            env=_base_env(tmp_path, user_workspace),
         )
         assert proc.returncode != 0
-        assert "content" in proc.stderr.lower()
+        assert "draft_id" in proc.stderr.lower()
 
-    def test_fails_without_category(self, tmp_path: Path):
+    def test_fails_on_wrong_draft_type(self, tmp_path: Path, user_workspace: Path, make_reply_draft):
+        # A reply draft must not be usable by discuss-new.
+        draft_id = make_reply_draft(thread="some-thread", content="reply body")
         proc = subprocess.run(
             [sys.executable, str(STEP)],
-            input=json.dumps({"input": {"title": "b", "content": "x"}, "steps": {}}),
+            input=json.dumps({"input": {"draft_id": draft_id, "category": "a"}, "steps": {}}),
             capture_output=True,
             text=True,
-            env=_base_env(tmp_path),
+            env=_base_env(tmp_path, user_workspace),
         )
         assert proc.returncode != 0
-        assert "category" in proc.stderr.lower()
+        assert "proposal" in proc.stderr.lower()
+
+    def test_category_defaults_to_general(self, tmp_path: Path, user_workspace: Path, make_proposal_draft):
+        draft_id = make_proposal_draft(title="t", content="body")
+        result = _run(
+            {"draft_id": draft_id},
+            _base_env(tmp_path, user_workspace),
+        )
+        assert result["output"]["category"] == "general"

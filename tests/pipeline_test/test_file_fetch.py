@@ -3,12 +3,14 @@ from pathlib import Path
 
 
 class TestFileFetch:
-    def test_fetches_business_file_with_index(self, runner):
+    def test_fetches_business_file_with_index(self, runner, make_proposal_draft):
         # Seed a thread first
+        draft_id = make_proposal_draft(
+            title="fetch-target", content="# Proposal\n\nFetchable content.",
+        )
         runner.run("discuss-new", {
+            "draft_id": draft_id,
             "category": "test",
-            "title": "fetch-target",
-            "content": "# Proposal\n\nFetchable content.",
             "mention_users": "",
             "mention_comments": "",
         })

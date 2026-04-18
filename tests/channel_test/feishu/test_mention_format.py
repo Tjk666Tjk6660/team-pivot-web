@@ -41,13 +41,13 @@ class TestMentionFormat:
         assert prefix == ""
 
     def test_mention_prefix_before_author(self):
-        adapter = FeishuBotAdapter(access_token="t", chat_ids=["oc_1"])
+        adapter = FeishuBotAdapter(access_token="t")
         card = adapter._build_card(
             title="t", summary="s", thread_url="u", author="a",
             mention_names=["ken"],
             user_map={"ken": {"feishu_id": "ou_ken"}},
         )
-        content = card["elements"][0]["text"]["content"]
+        content = card["body"]["elements"][0]["content"]
         at_pos = content.find("<at")
         author_pos = content.find("**Author**")
         assert at_pos < author_pos

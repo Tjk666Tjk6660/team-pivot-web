@@ -28,11 +28,13 @@ class TestRunnerCodeStep:
         assert result.status == "completed"
         assert result.output["threads"] == []
 
-    def test_runs_discuss_new_creates_files(self, runner):
+    def test_runs_discuss_new_creates_files(self, runner, make_proposal_draft):
+        draft_id = make_proposal_draft(
+            title="runner-test", content="# Hello\n\nRunner test content.",
+        )
         result = runner.run("discuss-new", {
+            "draft_id": draft_id,
             "category": "test",
-            "title": "runner-test",
-            "content": "# Hello\n\nRunner test content.",
             "mention_users": "",
             "mention_comments": "",
         })
@@ -45,22 +47,22 @@ class TestRunnerCodeStep:
         idx = ws / "index/runner-test-discuss.index.yaml"
         assert idx.exists()
 
-    def test_error_on_missing_params(self, runner):
+    def test_error_on_missing_params(self, runner, user_workspace):
         result = runner.run("discuss-new", {
             "category": "",
-            "title": "",
-            "content": "",
         })
         assert result.status == "error"
-        assert "category" in result.error.lower() or "content" in result.error.lower()
+        assert "draft_id" in result.error.lower()
 
 
 class TestRunnerLLMStep:
-    def test_llm_step_uses_prerecorded_backend(self, runner):
+    def test_llm_step_uses_prerecorded_backend(self, runner, make_proposal_draft):
+        draft_id = make_proposal_draft(
+            title="llm-test", content="# Proposal that needs LLM summary",
+        )
         result = runner.run("discuss-new", {
+            "draft_id": draft_id,
             "category": "test",
-            "title": "llm-test",
-            "content": "# Proposal that needs LLM summary",
             "mention_users": "",
             "mention_comments": "",
         })
