@@ -33,3 +33,42 @@ export async function updateProfile(
 export async function logout(): Promise<void> {
   await fetch("/logout", { method: "POST", credentials: "include" });
 }
+
+export type ThreadMeta = {
+  category: string;
+  slug: string;
+  title: string;
+  author: string | null;
+  status: string | null;
+  post_count: number;
+};
+
+export async function fetchThreads(category?: string): Promise<ThreadMeta[]> {
+  const qs = category ? `?category=${encodeURIComponent(category)}` : "";
+  const r = await fetch(`/api/threads${qs}`, { credentials: "include" });
+  if (!r.ok) throw new Error(`/api/threads failed: ${r.status}`);
+  const body = (await r.json()) as { items: ThreadMeta[] };
+  return body.items;
+}
+
+export type WorkspaceStatus = {
+  ready: boolean;
+  path: string;
+  head: string | null;
+};
+
+export async function fetchWorkspaceStatus(): Promise<WorkspaceStatus> {
+  const r = await fetch("/api/workspace/status", { credentials: "include" });
+  if (!r.ok) throw new Error(`/api/workspace/status failed: ${r.status}`);
+  return (await r.json()) as WorkspaceStatus;
+}
+
+export async function refreshWorkspace(): Promise<WorkspaceStatus> {
+  const r = await fetch("/api/workspace/refresh", {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!r.ok) throw new Error(`/api/workspace/refresh failed: ${r.status}`);
+  const body = (await r.json()) as { ok: boolean; head: string | null };
+  return { ready: true, path: "", head: body.head };
+}
