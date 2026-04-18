@@ -65,6 +65,7 @@ def build_router(
     @router.post("")
     def create_draft(body: CreateDraftBody, sid: str | None = Cookie(default=None)):
         user = _current_user(sid)
+        log.debug("draft create user=%s type=%s", user.open_id, body.type)
         d = drafts.create(
             user_open_id=user.open_id,
             type_=body.type,
@@ -87,6 +88,7 @@ def build_router(
     ):
         user = _current_user(sid)
         _require_owner(drafts.get(draft_id), user)
+        log.debug("draft update id=%s user=%s", draft_id, user.open_id)
         d = drafts.update(
             draft_id,
             title=body.title,
@@ -108,6 +110,7 @@ def build_router(
     def publish_draft(draft_id: str, sid: str | None = Cookie(default=None)):
         user = _current_user(sid)
         d = _require_owner(drafts.get(draft_id), user)
+        log.info("draft publish start id=%s user=%s type=%s", draft_id, user.open_id, d.type)
         try:
             if d.type == "proposal":
                 if not d.title or not d.category:
@@ -137,7 +140,8 @@ def build_router(
         try:
             drafts.delete(draft_id)
         except Exception:
-            log.warning("draft delete failed after publish", extra={"draft_id": draft_id})
+            log.warning("draft delete_after_publish_failed id=%s", draft_id)
+        log.info("draft published id=%s", draft_id)
         return {"published": result, "draft_id": draft_id}
 
     return router

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import secrets
 
 from fastapi import APIRouter, Cookie, HTTPException
+
+log = logging.getLogger(__name__)
 from fastapi.responses import JSONResponse, RedirectResponse
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from pydantic import BaseModel, Field
@@ -62,6 +65,7 @@ def build_router(
 
     @router.get("/login")
     def login() -> RedirectResponse:
+        log.info("login initiated")
         return RedirectResponse(oauth.authorize_url(_issue_state()))
 
     @router.get("/auth/callback")
@@ -80,6 +84,7 @@ def build_router(
             avatar_url=info.avatar_url,
         )
         sid = sessions.create(info.open_id)
+        log.info("login success name=%s open_id=%s", info.name, info.open_id)
         resp = RedirectResponse(post_login_redirect, status_code=302)
         resp.set_cookie(
             SESSION_COOKIE, sid, httponly=True, samesite="lax", secure=False, path="/"
@@ -108,6 +113,9 @@ def build_router(
 
     @router.post("/logout")
     def logout(sid: str | None = Cookie(default=None)) -> JSONResponse:
+        s = sessions.get(sid)
+        if s is not None:
+            log.info("logout user=%s", s.user_open_id)
         sessions.delete(sid)
         resp = JSONResponse({"ok": True})
         resp.delete_cookie(SESSION_COOKIE, path="/")

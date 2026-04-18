@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import subprocess
 import threading
 from contextlib import contextmanager
@@ -9,6 +10,8 @@ from urllib.parse import urlparse, urlunparse
 
 from server.git_ops import clone, commit, head_short, pull, push
 from server.recovery import repair_partial_writes
+
+log = logging.getLogger(__name__)
 
 COMMITTER_NAME = "team-pivot-web"
 COMMITTER_EMAIL = "team-pivot-web@pivot.local"
@@ -42,9 +45,12 @@ class Workspace:
 
     def ensure_cloned(self) -> None:
         if self.is_cloned():
+            log.debug("workspace already cloned path=%s", self.path)
             return
+        log.info("workspace cloning %s -> %s", self._repo_url, self.path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         clone(self._auth_url(), str(self.path), branch=self._branch)
+        log.info("workspace ready path=%s head=%s", self.path, self.head())
 
     def refresh(self) -> None:
         pull(str(self.path))
@@ -61,6 +67,12 @@ class Workspace:
             pull(str(self.path))
             fixed = repair_partial_writes(self.discussions_dir, self.index_dir)
             dirty = _is_dirty(self.path)
+            if fixed > 0:
+                log.info("recovery fixed=%d partial write(s)", fixed)
+            elif dirty:
+                log.warning("recovery found dirty working tree (no un-indexed posts)")
+            else:
+                log.debug("recovery no-op")
             if fixed > 0 or dirty:
                 changed = commit(
                     str(self.path),
@@ -84,6 +96,7 @@ class Workspace:
         author_email: str,
     ) -> Iterator[None]:
         with self.write_lock:
+            log.debug("write_session begin message=%s author=%s", message, author_name)
             pull(str(self.path))
             yield
             changed = commit(
@@ -96,6 +109,12 @@ class Workspace:
             )
             if changed:
                 push(str(self.path))
+                log.info(
+                    "write_session committed+pushed message=%s author=%s head=%s",
+                    message, author_name, self.head(),
+                )
+            else:
+                log.debug("write_session no-op (nothing changed)")
 
     def _auth_url(self) -> str:
         if not self._token:

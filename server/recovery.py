@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,14 +13,18 @@ from server.index_files import (
 )
 from server.posts import mark_indexed, read_post, scan_un_indexed
 
+log = logging.getLogger(__name__)
+
 
 def repair_partial_writes(discussions_root: Path, index_dir: Path) -> int:
     fixed = 0
     for post_path in scan_un_indexed(discussions_root):
+        log.info("recovery repairing path=%s", post_path)
         try:
             _repair_post(post_path, discussions_root, index_dir)
             fixed += 1
         except Exception:
+            log.exception("recovery failed for path=%s", post_path)
             continue
     return fixed
 

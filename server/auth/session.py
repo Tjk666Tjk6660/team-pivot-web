@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import secrets
 import threading
 from dataclasses import dataclass
 from time import time
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -25,6 +28,7 @@ class SessionStore:
                 user_open_id=user_open_id,
                 expires_at=time() + self._ttl,
             )
+        log.debug("session created sid=%s... user=%s", sid[:8], user_open_id)
         return sid
 
     def get(self, sid: str | None) -> Session | None:

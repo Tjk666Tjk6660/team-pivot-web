@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from urllib.parse import urlencode
 
 import lark_oapi as lark
+
+log = logging.getLogger(__name__)
 from lark_oapi.api.authen.v1 import (
     CreateOidcAccessTokenRequest,
     CreateOidcAccessTokenRequestBody,
@@ -59,8 +62,10 @@ class FeishuOAuth:
             )
             .build()
         )
+        log.debug("oauth exchange_code start")
         resp = self._client.authen.v1.oidc_access_token.create(req)
         if not resp.success():
+            log.warning("oauth exchange_code failed code=%s msg=%s", resp.code, resp.msg)
             raise FeishuOAuthError(resp.code, resp.msg)
         data = resp.data
         return TokenResult(
@@ -78,8 +83,10 @@ class FeishuOAuth:
         )
         resp = self._client.authen.v1.user_info.get(req, opt)
         if not resp.success():
+            log.warning("oauth get_user_info failed code=%s msg=%s", resp.code, resp.msg)
             raise FeishuOAuthError(resp.code, resp.msg)
         data = resp.data
+        log.debug("oauth get_user_info open_id=%s name=%s", data.open_id, data.name)
         return UserInfo(
             open_id=data.open_id,
             union_id=getattr(data, "union_id", None),

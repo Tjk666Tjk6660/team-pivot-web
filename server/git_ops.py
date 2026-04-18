@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 import subprocess
 import time
+
+log = logging.getLogger(__name__)
 
 
 class GitError(Exception):
@@ -12,8 +15,10 @@ class GitError(Exception):
 
 
 def _run(args: list[str], cwd: str | None = None) -> subprocess.CompletedProcess:
+    start = time.monotonic()
+    log.debug("git %s cwd=%s", " ".join(args[1:]) if len(args) > 1 else "", cwd or ".")
     try:
-        return subprocess.run(
+        proc = subprocess.run(
             args,
             cwd=cwd,
             capture_output=True,
@@ -22,7 +27,12 @@ def _run(args: list[str], cwd: str | None = None) -> subprocess.CompletedProcess
             errors="replace",
             check=True,
         )
+        log.debug("git %s ok elapsed=%.0fms", args[1] if len(args) > 1 else "",
+                  (time.monotonic() - start) * 1000)
+        return proc
     except subprocess.CalledProcessError as e:
+        log.warning("git failed cmd=%s stderr=%s",
+                    " ".join(args), (e.stderr or "").strip()[:200])
         raise GitError(
             f"git command failed: {' '.join(args)}",
             command=" ".join(args),
@@ -84,6 +94,7 @@ def push(repo_dir: str, *, remote: str = "origin", branch: str = "HEAD", max_ret
         except GitError as e:
             last_error = e
             if any(k in e.stderr.lower() for k in ("rejected", "non-fast-forward", "conflict")):
+                log.warning("git push rejected, rebase+retry attempt=%d", attempt + 1)
                 try:
                     pull(repo_dir)
                 except GitError:

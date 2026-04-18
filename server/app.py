@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -11,12 +13,16 @@ from server.auth.session import SessionStore
 from server.config import load_config
 from server.db import Database
 from server.drafts import DraftRepo
+from server.logging_setup import configure_logging
 from server.users import UserRepo
 from server.workspace import Workspace, repo_dir_name
 
 
 def create_app() -> FastAPI:
     cfg = load_config()
+    configure_logging(cfg.log_level)
+    log = logging.getLogger("server.app")
+    log.info("starting team-pivot-web log_level=%s data_dir=%s", cfg.log_level, cfg.data_dir)
 
     db = Database(cfg.data_dir / "data.db")
     users = UserRepo(db)

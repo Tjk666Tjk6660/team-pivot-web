@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 from server.index_files import append_reply_to_index, create_thread_index
 from server.posts import mark_indexed, write_post_pending
@@ -33,6 +36,10 @@ def publish_proposal(
     slug = _make_unique_slug(cat_dir, title)
     thread_dir = cat_dir / slug
     filename = f"001_{user.pinyin}_proposal_{generate_unique_hash(thread_dir)}.md"
+    log.info(
+        "publish proposal user=%s category=%s slug=%s filename=%s",
+        user.pinyin, category, slug, filename,
+    )
     fm = {"type": "proposal", "author": user.pinyin, "created_at": now}
     final_body = _ensure_h1(body, title)
 
@@ -72,6 +79,10 @@ def publish_reply(
     now = _now_iso()
     seq = next_post_number(thread_dir)
     filename = f"{seq:03d}_{user.pinyin}_reply_{generate_unique_hash(thread_dir)}.md"
+    log.info(
+        "publish reply user=%s category=%s slug=%s filename=%s",
+        user.pinyin, category, slug, filename,
+    )
     fm = {"type": "reply", "author": user.pinyin, "created_at": now}
 
     with workspace.write_session(
