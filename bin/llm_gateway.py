@@ -139,7 +139,7 @@ class GatewayLLMBackend:
         self.tenant_id = os.environ.get("ENCLAWS_TENANT_ID", "")
 
     def call(self, prompt: str, step_name: str, schema_path: str | None = None) -> dict:
-        """Call the gateway's /v1/chat/completions endpoint.
+        """Call the gateway's /v1/agent/chat endpoint.
 
         Args:
             prompt: The rendered prompt for the LLM step.
@@ -150,7 +150,7 @@ class GatewayLLMBackend:
         Returns:
             {"output": {...}} dict with the LLM's parsed JSON response.
         """
-        endpoint = f"{self.url}/v1/chat/completions"
+        endpoint = f"{self.url}/v1/agent/chat"
 
         body = json.dumps({
             "model": "default",
