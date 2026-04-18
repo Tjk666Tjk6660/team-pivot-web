@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from server.api.drafts import build_router
 from server.auth.session import SessionStore
 from server.drafts import DraftRepo
+from server.notify import NoOpNotifier
 
 
 class _FakeWorkspace:
@@ -26,7 +27,7 @@ def client_and_sid(db, users):
     drafts = DraftRepo(db)
 
     app = FastAPI()
-    app.include_router(build_router(_FakeWorkspace(), sessions, users, drafts))
+    app.include_router(build_router(_FakeWorkspace(), sessions, users, drafts, NoOpNotifier()))
     client = TestClient(app)
     client.cookies.set("sid", sid)
     return client, sid, drafts
@@ -41,7 +42,7 @@ def test_requires_auth():
         d = Database(f"{tmp}/db.sqlite")
         sessions = SessionStore()
         app = FastAPI()
-        app.include_router(build_router(_FakeWorkspace(), sessions, UserRepo(d), DraftRepo(d)))
+        app.include_router(build_router(_FakeWorkspace(), sessions, UserRepo(d), DraftRepo(d), NoOpNotifier()))
         client = TestClient(app)
         assert client.get("/api/drafts").status_code == 401
         assert client.post("/api/drafts", json={"type": "proposal"}).status_code == 401

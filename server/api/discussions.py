@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from server.auth.session import SessionStore
 from server.mentions import resolve_id, resolve_text
+from server.notify import Notifier
 from server.publish import PublishError, publish_proposal, publish_reply
 from server.threads import ThreadMeta, get_thread, list_threads
 from server.users import User, UserRepo
@@ -21,7 +22,12 @@ class ReplyBody(BaseModel):
     body: str = Field(min_length=1, max_length=50000)
 
 
-def build_router(workspace: Workspace, sessions: SessionStore, users: UserRepo) -> APIRouter:
+def build_router(
+    workspace: Workspace,
+    sessions: SessionStore,
+    users: UserRepo,
+    notifier: Notifier,
+) -> APIRouter:
     router = APIRouter(prefix="/api")
 
     def _current_user(sid: str | None) -> User:
@@ -79,6 +85,7 @@ def build_router(workspace: Workspace, sessions: SessionStore, users: UserRepo) 
             return publish_proposal(
                 workspace, user,
                 category=body.category, title=body.title, body=body.body,
+                notifier=notifier,
             )
         except PublishError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -92,6 +99,7 @@ def build_router(workspace: Workspace, sessions: SessionStore, users: UserRepo) 
         try:
             return publish_reply(
                 workspace, user, category=category, slug=slug, body=body.body,
+                notifier=notifier,
             )
         except PublishError as e:
             raise HTTPException(

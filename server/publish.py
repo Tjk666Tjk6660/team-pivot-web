@@ -7,9 +7,11 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 from server.index_files import append_reply_to_index, create_thread_index
+from server.notify import Notifier
 from server.posts import mark_indexed, write_post_pending
 from server.threads import (
     generate_unique_hash,
+    get_thread,
     next_post_number,
     sanitize_slug,
 )
@@ -28,6 +30,7 @@ def publish_proposal(
     category: str,
     title: str,
     body: str,
+    notifier: Notifier | None = None,
 ) -> dict:
     if not user.pinyin:
         raise PublishError("profile setup required")
@@ -59,6 +62,11 @@ def publish_proposal(
             now_iso=now,
         )
         mark_indexed(post_path)
+    if notifier is not None:
+        notifier.notify_new_thread(
+            category=category, slug=slug, title=title,
+            author_name=user.name, body=body,
+        )
     return {"category": category, "slug": slug, "filename": filename}
 
 
@@ -69,6 +77,7 @@ def publish_reply(
     category: str,
     slug: str,
     body: str,
+    notifier: Notifier | None = None,
 ) -> dict:
     if not user.pinyin:
         raise PublishError("profile setup required")
@@ -101,7 +110,20 @@ def publish_reply(
             now_iso=now,
         )
         mark_indexed(post_path)
+    if notifier is not None:
+        thread_title = _lookup_thread_title(workspace, category, slug)
+        notifier.notify_new_reply(
+            category=category, slug=slug, thread_title=thread_title,
+            author_name=user.name, body=body,
+        )
     return {"filename": filename}
+
+
+def _lookup_thread_title(workspace: Workspace, category: str, slug: str) -> str:
+    detail = get_thread(workspace.discussions_dir, workspace.index_dir, category, slug)
+    if detail is not None and detail.meta.title:
+        return detail.meta.title
+    return slug
 
 
 def _now_iso() -> str:

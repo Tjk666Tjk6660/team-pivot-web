@@ -14,6 +14,7 @@ from server.config import load_config
 from server.db import Database
 from server.drafts import DraftRepo
 from server.logging_setup import configure_logging
+from server.notify import FeishuNotifier, NoOpNotifier, Notifier
 from server.users import UserRepo
 from server.workspace import Workspace, repo_dir_name
 
@@ -33,6 +34,19 @@ def create_app() -> FastAPI:
         redirect_uri=cfg.feishu_redirect_uri,
     )
     sessions = SessionStore()
+
+    notifier: Notifier
+    if cfg.notify_enabled:
+        notifier = FeishuNotifier(
+            app_id=cfg.feishu_app_id,
+            app_secret=cfg.feishu_app_secret,
+            web_base_url=cfg.web_dev_origin,
+            cache_dir=cfg.data_dir,
+        )
+        log.info("notifier enabled (feishu)")
+    else:
+        notifier = NoOpNotifier()
+        log.info("notifier disabled (no-op)")
 
     workspace = Workspace(
         path=cfg.data_dir / "git" / repo_dir_name(cfg.workspace_repo_url),
@@ -60,6 +74,6 @@ def create_app() -> FastAPI:
             post_login_redirect=cfg.web_dev_origin + "/",
         )
     )
-    app.include_router(build_discussions_router(workspace, sessions, users))
-    app.include_router(build_drafts_router(workspace, sessions, users, drafts))
+    app.include_router(build_discussions_router(workspace, sessions, users, notifier))
+    app.include_router(build_drafts_router(workspace, sessions, users, drafts, notifier))
     return app

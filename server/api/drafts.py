@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from server.auth.session import SessionStore
 from server.drafts import Draft, DraftRepo
+from server.notify import Notifier
 from server.publish import PublishError, publish_proposal, publish_reply
 from server.users import User, UserRepo
 from server.workspace import Workspace
@@ -35,6 +36,7 @@ def build_router(
     sessions: SessionStore,
     users: UserRepo,
     drafts: DraftRepo,
+    notifier: Notifier,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/drafts")
 
@@ -122,6 +124,7 @@ def build_router(
                 result = publish_proposal(
                     workspace, user,
                     category=d.category, title=d.title, body=d.body_md,
+                    notifier=notifier,
                 )
             else:
                 if not d.thread_key or "/" not in d.thread_key:
@@ -133,6 +136,7 @@ def build_router(
                 cat, slug = d.thread_key.split("/", 1)
                 result = publish_reply(
                     workspace, user, category=cat, slug=slug, body=d.body_md,
+                    notifier=notifier,
                 )
         except PublishError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e

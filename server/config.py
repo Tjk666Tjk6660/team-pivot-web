@@ -19,6 +19,7 @@ class Config:
     workspace_branch: str
     git_token: str | None
     log_level: str
+    notify_enabled: bool
 
 
 def load_config(env_file: str | Path | None = None) -> Config:
@@ -37,6 +38,7 @@ def load_config(env_file: str | Path | None = None) -> Config:
         workspace_branch=os.getenv("WORKSPACE_BRANCH", "main"),
         git_token=os.getenv("GIT_TOKEN") or None,
         log_level=os.getenv("LOG_LEVEL", "INFO"),
+        notify_enabled=os.getenv("NOTIFY_ENABLED", "true").lower() == "true",
     )
 
 
