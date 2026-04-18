@@ -39,6 +39,7 @@ export type ThreadMeta = {
   slug: string;
   title: string;
   author: string | null;
+  author_display: string | null;
   status: string | null;
   post_count: number;
 };
@@ -61,6 +62,28 @@ export async function fetchWorkspaceStatus(): Promise<WorkspaceStatus> {
   const r = await fetch("/api/workspace/status", { credentials: "include" });
   if (!r.ok) throw new Error(`/api/workspace/status failed: ${r.status}`);
   return (await r.json()) as WorkspaceStatus;
+}
+
+export type Post = {
+  filename: string;
+  frontmatter: Record<string, unknown>;
+  body: string;
+  author_display: string | null;
+};
+
+export type ThreadDetail = {
+  meta: ThreadMeta;
+  posts: Post[];
+};
+
+export async function fetchThread(category: string, slug: string): Promise<ThreadDetail> {
+  const r = await fetch(
+    `/api/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}`,
+    { credentials: "include" },
+  );
+  if (r.status === 404) throw new Error("thread not found");
+  if (!r.ok) throw new Error(`fetch thread failed: ${r.status}`);
+  return (await r.json()) as ThreadDetail;
 }
 
 export async function refreshWorkspace(): Promise<WorkspaceStatus> {

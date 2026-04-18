@@ -59,7 +59,11 @@ def _thread_meta(category: str, tdir: Path) -> ThreadMeta | None:
     proposal = next((p for p in posts if p.frontmatter.get("type") == "proposal"), None)
     if proposal is None:
         return None
-    title = str(proposal.frontmatter.get("title") or _derive_title(proposal.filename))
+    title = str(
+        proposal.frontmatter.get("title")
+        or _extract_h1(proposal.body)
+        or _derive_title(proposal.filename)
+    )
     author = proposal.frontmatter.get("author")
     return ThreadMeta(
         category=category,
@@ -83,6 +87,16 @@ def _list_posts(tdir: Path) -> list[Post]:
         except Exception:
             continue
     return posts
+
+
+def _extract_h1(body: str) -> str | None:
+    for line in body.splitlines():
+        s = line.strip()
+        if s.startswith("# "):
+            return s[2:].strip()
+        if s:
+            return None
+    return None
 
 
 def _derive_title(filename: str) -> str:

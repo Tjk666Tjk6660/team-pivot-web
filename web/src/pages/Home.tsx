@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   fetchThreads,
   fetchWorkspaceStatus,
@@ -7,6 +8,7 @@ import {
   type ThreadMeta,
   type WorkspaceStatus,
 } from "../api";
+import { UserBar } from "../components/UserBar";
 
 export function Home({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [threads, setThreads] = useState<ThreadMeta[] | null>(null);
@@ -43,34 +45,12 @@ export function Home({ me, onLogout }: { me: Me; onLogout: () => void }) {
 
   return (
     <div style={{ padding: 48, fontFamily: "system-ui, sans-serif" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        {me.avatar_url && (
-          <img
-            src={me.avatar_url}
-            alt=""
-            width={40}
-            height={40}
-            style={{ borderRadius: "50%" }}
-          />
-        )}
-        <div>
-          <div style={{ fontWeight: 600 }}>{me.name}</div>
-          <div style={{ fontSize: 12, color: "#666" }}>
-            {me.pinyin}
-            {me.github_username ? ` · @${me.github_username}` : ""}
-          </div>
-        </div>
-        <button onClick={onLogout} style={{ marginLeft: "auto" }}>
-          Sign out
-        </button>
-      </div>
+      <UserBar me={me} onLogout={onLogout} />
 
       <div style={{ marginTop: 32, display: "flex", alignItems: "baseline", gap: 12 }}>
         <h2 style={{ margin: 0 }}>Discussions</h2>
         {workspace?.head && (
-          <span style={{ fontSize: 12, color: "#888" }}>
-            HEAD {workspace.head}
-          </span>
+          <span style={{ fontSize: 12, color: "#888" }}>HEAD {workspace.head}</span>
         )}
         <button
           onClick={onRefresh}
@@ -94,19 +74,18 @@ export function Home({ me, onLogout }: { me: Me; onLogout: () => void }) {
           {threads.map((t) => (
             <li
               key={`${t.category}/${t.slug}`}
-              style={{
-                padding: "12px 0",
-                borderBottom: "1px solid #eee",
-                display: "flex",
-                gap: 12,
-              }}
+              style={{ padding: "12px 0", borderBottom: "1px solid #eee" }}
             >
-              <div style={{ flex: 1 }}>
+              <Link
+                to={`/t/${encodeURIComponent(t.category)}/${encodeURIComponent(t.slug)}`}
+                style={{ textDecoration: "none", color: "inherit", display: "block" }}
+              >
                 <div style={{ fontWeight: 600 }}>{t.title}</div>
                 <div style={{ fontSize: 12, color: "#888", marginTop: 4 }}>
-                  {t.category} · {t.author ?? "unknown"} · {t.post_count} posts
+                  {t.category} · {t.author_display ?? t.author ?? "unknown"} ·{" "}
+                  {t.post_count} posts
                 </div>
-              </div>
+              </Link>
             </li>
           ))}
         </ul>

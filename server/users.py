@@ -64,6 +64,15 @@ class UserRepo:
             ).fetchone()
         return _row_to_user(row) if row else None
 
+    def get_by_any_id(self, id_: str) -> User | None:
+        if not id_:
+            return None
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM users WHERE open_id=? OR union_id=?", (id_, id_)
+            ).fetchone()
+        return _row_to_user(row) if row else None
+
     def update_profile(
         self,
         open_id: str,

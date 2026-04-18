@@ -50,5 +50,5 @@ def create_app() -> FastAPI:
             post_login_redirect=cfg.web_dev_origin + "/",
         )
     )
-    app.include_router(build_api_router(workspace, sessions))
+    app.include_router(build_api_router(workspace, sessions, users))
     return app

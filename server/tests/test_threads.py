@@ -65,6 +65,30 @@ def test_list_threads_empty_root(tmp_path):
     assert list_threads(tmp_path / "nope") == []
 
 
+def test_title_prefers_frontmatter_then_h1_then_filename(tmp_path):
+    root = tmp_path / "discussions"
+    (root / "cat" / "t1").mkdir(parents=True)
+    (root / "cat" / "t1" / "001_slug_aaa.md").write_text(
+        "---\ntype: proposal\nauthor: x\ntitle: Frontmatter Wins\n---\n"
+        "# Body heading\nbody\n", encoding="utf-8",
+    )
+    (root / "cat" / "t2").mkdir(parents=True)
+    (root / "cat" / "t2" / "001_slug_bbb.md").write_text(
+        "---\ntype: proposal\nauthor: x\n---\n# H1 Wins\nbody\n",
+        encoding="utf-8",
+    )
+    (root / "cat" / "t3").mkdir(parents=True)
+    (root / "cat" / "t3" / "001_fallback-title_ccc.md").write_text(
+        "---\ntype: proposal\nauthor: x\n---\nno heading here\n",
+        encoding="utf-8",
+    )
+
+    by_slug = {t.slug: t for t in list_threads(root)}
+    assert by_slug["t1"].title == "Frontmatter Wins"
+    assert by_slug["t2"].title == "H1 Wins"
+    assert by_slug["t3"].title == "fallback title"
+
+
 def test_get_thread_returns_posts_sorted(discussions):
     detail = get_thread(discussions, "engineering", "auth-rewrite")
     assert detail is not None
