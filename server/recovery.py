@@ -40,7 +40,7 @@ def _repair_post(post_path: Path, discussions_root: Path, index_dir: Path) -> No
     fm = post.frontmatter
     ptype = str(fm.get("type", "reply"))
     author_id = str(fm.get("author", "unknown"))
-    now = str(fm.get("created_at") or _now_iso())
+    now = str(fm.get("created") or fm.get("created_at") or _now_iso())
 
     index_path = Path(index_dir) / f"{slug}-discuss.index.yaml"
     if not index_path.is_file():

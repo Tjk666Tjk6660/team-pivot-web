@@ -14,7 +14,7 @@ def _write_pending_post(discussions_root, category, slug, filename, ptype, autho
         frontmatter={
             "type": ptype,
             "author": author,
-            "created_at": "2026-04-19T10:00:00+08:00",
+            "created": "2026-04-19T10:00:00+08:00",
         },
         body="# Hi\n\nbody\n",
     )

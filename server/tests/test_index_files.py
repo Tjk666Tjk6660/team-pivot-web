@@ -81,6 +81,24 @@ def test_append_reply_updates_last_updated_and_timeline(tmp_path):
     assert len(data["discussions"][0]["files"]) == 2
 
 
+def test_append_reply_adds_from_ref_to_proposal(tmp_path):
+    idx = tmp_path / "index"
+    create_thread_index(
+        idx, category="eng", slug="auth", filename="001_ken_proposal_aa.md",
+        author_id="ken", now_iso="2026-04-19T10:00:00+08:00",
+    )
+    append_reply_to_index(
+        idx, category="eng", slug="auth", filename="002_dengke_reply_bb.md",
+        author_id="dengke", now_iso="2026-04-19T11:00:00+08:00",
+    )
+    import yaml
+    data = yaml.safe_load((idx / "auth-discuss.index.yaml").read_text())
+    reply = data["discussions"][0]["files"][1]
+    assert reply["refs"] == [
+        {"type": "from", "path": "discussions/eng/auth/001_ken_proposal_aa.md"}
+    ]
+
+
 def test_append_reply_missing_index_raises(tmp_path):
     import pytest
     with pytest.raises(FileNotFoundError):

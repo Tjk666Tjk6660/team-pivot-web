@@ -43,7 +43,7 @@ def publish_proposal(
         "publish proposal user=%s category=%s slug=%s filename=%s",
         user.pinyin, category, slug, filename,
     )
-    fm = {"type": "proposal", "author": user.pinyin, "created_at": now}
+    fm = {"type": "proposal", "author": user.pinyin, "created": now}
     final_body = _ensure_h1(body, title)
 
     with workspace.write_session(
@@ -92,7 +92,7 @@ def publish_reply(
         "publish reply user=%s category=%s slug=%s filename=%s",
         user.pinyin, category, slug, filename,
     )
-    fm = {"type": "reply", "author": user.pinyin, "created_at": now}
+    fm = {"type": "reply", "author": user.pinyin, "created": now}
 
     with workspace.write_session(
         message=f"chore: reply to {slug}",

@@ -7,6 +7,19 @@ from pathlib import Path
 import yaml
 
 
+def _build_reply_refs(index_data: dict, origin: str) -> list[dict]:
+    discussions = index_data.get("discussions") or []
+    if not (discussions and isinstance(discussions[0], dict)):
+        return []
+    files = discussions[0].get("files") or []
+    if not files:
+        return []
+    proposal_filename = files[0].get("path")
+    if not proposal_filename:
+        return []
+    return [{"type": "from", "path": f"{origin}{proposal_filename}"}]
+
+
 def _atomic_write_yaml(path: Path, data: dict) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(
@@ -95,17 +108,18 @@ def append_reply_to_index(
         raise FileNotFoundError(path)
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     origin = f"discussions/{category}/{slug}/"
+    refs = _build_reply_refs(data, origin)
     discussions = data.setdefault("discussions", [])
     if discussions and isinstance(discussions[0], dict):
         discussions[0].setdefault("files", []).append(
-            {"path": filename, "summary": "", "refs": []}
+            {"path": filename, "summary": "", "refs": refs}
         )
     else:
         discussions.append(
             {
                 "path": origin,
                 "status": "open",
-                "files": [{"path": filename, "summary": "", "refs": []}],
+                "files": [{"path": filename, "summary": "", "refs": refs}],
             }
         )
     data["last_updated"] = now_iso
