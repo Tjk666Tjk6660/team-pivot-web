@@ -205,6 +205,27 @@ export async function publishDraft(
   return await r.json();
 }
 
+export type InboxItem = {
+  meta: ThreadMeta;
+  unread_count: number;
+  last_post_filename: string | null;
+  last_post_author_display: string | null;
+};
+
+export async function fetchInbox(): Promise<InboxItem[]> {
+  const r = await fetch("/api/inbox", { credentials: "include" });
+  if (!r.ok) throw new Error(`/api/inbox failed: ${r.status}`);
+  const body = (await r.json()) as { items: InboxItem[] };
+  return body.items;
+}
+
+export async function markThreadRead(category: string, slug: string): Promise<void> {
+  await fetch(
+    `/api/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/read`,
+    { method: "POST", credentials: "include" },
+  );
+}
+
 export async function refreshWorkspace(): Promise<WorkspaceStatus> {
   const r = await fetch("/api/workspace/refresh", {
     method: "POST",

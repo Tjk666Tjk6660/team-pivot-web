@@ -27,6 +27,13 @@ CREATE TABLE IF NOT EXISTS drafts (
     updated_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_drafts_user ON drafts(user_open_id, updated_at DESC);
+CREATE TABLE IF NOT EXISTS read_state (
+    user_open_id TEXT NOT NULL,
+    thread_key TEXT NOT NULL,
+    last_read_post_filename TEXT NOT NULL,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (user_open_id, thread_key)
+);
 """
 
 

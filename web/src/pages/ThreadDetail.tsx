@@ -5,6 +5,7 @@ import {
   deleteDraft,
   fetchDrafts,
   fetchThread,
+  markThreadRead,
   publishDraft,
   type Me,
   type Post,
@@ -23,7 +24,10 @@ export function ThreadDetail({ me, onLogout }: { me: Me; onLogout: () => void })
   const load = () => {
     if (!category || !slug) return;
     fetchThread(category, slug)
-      .then(setData)
+      .then((d) => {
+        setData(d);
+        markThreadRead(category, slug).catch(() => {});
+      })
       .catch((e) => {
         setError(e instanceof Error ? e.message : String(e));
         setData(null);

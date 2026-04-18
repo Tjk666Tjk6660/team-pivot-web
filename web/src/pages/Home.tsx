@@ -3,10 +3,12 @@ import { Link } from "react-router-dom";
 import {
   deleteDraft,
   fetchDrafts,
+  fetchInbox,
   fetchThreads,
   fetchWorkspaceStatus,
   refreshWorkspace,
   type Draft,
+  type InboxItem,
   type Me,
   type ThreadMeta,
   type WorkspaceStatus,
@@ -19,17 +21,19 @@ export function Home({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [threads, setThreads] = useState<ThreadMeta[] | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceStatus | null>(null);
   const [drafts, setDrafts] = useState<Draft[] | null>(null);
+  const [inbox, setInbox] = useState<InboxItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = async () => {
     try {
-      const [t, w, d] = await Promise.all([
-        fetchThreads(), fetchWorkspaceStatus(), fetchDrafts(),
+      const [t, w, d, ib] = await Promise.all([
+        fetchThreads(), fetchWorkspaceStatus(), fetchDrafts(), fetchInbox(),
       ]);
       setThreads(t);
       setWorkspace(w);
       setDrafts(d);
+      setInbox(ib);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -63,6 +67,46 @@ export function Home({ me, onLogout }: { me: Me; onLogout: () => void }) {
   return (
     <div style={{ padding: 48, fontFamily: "system-ui, sans-serif" }}>
       <UserBar me={me} onLogout={onLogout} />
+
+      {inbox && inbox.length > 0 && (
+        <section style={{ marginTop: 32 }}>
+          <h2 style={{ margin: 0 }}>Inbox</h2>
+          <ul style={{ marginTop: 12, padding: 0, listStyle: "none" }}>
+            {inbox.map((it) => (
+              <li
+                key={`${it.meta.category}/${it.meta.slug}`}
+                style={{ padding: "10px 0", borderBottom: "1px solid #eee" }}
+              >
+                <Link
+                  to={`/t/${encodeURIComponent(it.meta.category)}/${encodeURIComponent(it.meta.slug)}`}
+                  style={{ textDecoration: "none", color: "inherit", display: "block" }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontWeight: 600 }}>{it.meta.title}</span>
+                    <span
+                      style={{
+                        fontSize: 11,
+                        padding: "2px 8px",
+                        borderRadius: 10,
+                        color: "white",
+                        background: "#e54a4a",
+                        fontWeight: 500,
+                      }}
+                    >
+                      {it.unread_count}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12, color: "#888", marginTop: 4 }}>
+                    {it.meta.category}
+                    {it.last_post_author_display && ` · 最新: ${it.last_post_author_display}`}
+                    {it.meta.last_updated && ` · ${relativeTime(it.meta.last_updated)}`}
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {drafts && drafts.length > 0 && (
         <section style={{ marginTop: 32 }}>
