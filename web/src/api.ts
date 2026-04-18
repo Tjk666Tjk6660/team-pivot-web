@@ -87,6 +87,41 @@ export async function fetchThread(category: string, slug: string): Promise<Threa
   return (await r.json()) as ThreadDetail;
 }
 
+export async function createThread(
+  body: { category: string; title: string; body: string },
+): Promise<{ category: string; slug: string; filename: string }> {
+  const r = await fetch("/api/threads", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const detail = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(detail.detail || `create failed: ${r.status}`);
+  }
+  return await r.json();
+}
+
+export async function postReply(
+  category: string, slug: string, body: string,
+): Promise<{ filename: string }> {
+  const r = await fetch(
+    `/api/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/posts`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body }),
+    },
+  );
+  if (!r.ok) {
+    const detail = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(detail.detail || `reply failed: ${r.status}`);
+  }
+  return await r.json();
+}
+
 export async function refreshWorkspace(): Promise<WorkspaceStatus> {
   const r = await fetch("/api/workspace/refresh", {
     method: "POST",

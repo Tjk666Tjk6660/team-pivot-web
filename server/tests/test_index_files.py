@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from server.index_files import read_thread_index
+from server.index_files import (
+    append_reply_to_index,
+    create_thread_index,
+    read_thread_index,
+)
 
 
 def _write_index(index_dir, slug, content):
@@ -42,6 +46,48 @@ def test_read_thread_index_malformed_yaml_returns_none(tmp_path):
     idx = tmp_path / "index"
     _write_index(idx, "t", "::: broken ::\n:\n--\n")
     assert read_thread_index(idx, "t") is None
+
+
+def test_create_thread_index_roundtrip(tmp_path):
+    idx = tmp_path / "index"
+    create_thread_index(
+        idx,
+        category="general",
+        slug="hello",
+        filename="001_dengke_proposal_abc123.md",
+        author_id="dengke",
+        now_iso="2026-04-19T10:00:00+08:00",
+    )
+    res = read_thread_index(idx, "hello")
+    assert res is not None and res.status == "open"
+    assert res.last_updated == "2026-04-19T10:00:00+08:00"
+
+
+def test_append_reply_updates_last_updated_and_timeline(tmp_path):
+    idx = tmp_path / "index"
+    create_thread_index(
+        idx, category="c", slug="t", filename="001_a.md",
+        author_id="dengke", now_iso="2026-04-19T10:00:00+08:00",
+    )
+    append_reply_to_index(
+        idx, category="c", slug="t", filename="002_r.md",
+        author_id="ken", now_iso="2026-04-19T11:00:00+08:00",
+    )
+    import yaml
+    data = yaml.safe_load((idx / "t-discuss.index.yaml").read_text())
+    assert data["last_updated"] == "2026-04-19T11:00:00+08:00"
+    assert len(data["timeline"]) == 2
+    assert data["timeline"][1]["event"] == "ken replied"
+    assert len(data["discussions"][0]["files"]) == 2
+
+
+def test_append_reply_missing_index_raises(tmp_path):
+    import pytest
+    with pytest.raises(FileNotFoundError):
+        append_reply_to_index(
+            tmp_path / "index", category="c", slug="nope", filename="x.md",
+            author_id="a", now_iso="t",
+        )
 
 
 def test_read_thread_index_uses_first_discussion(tmp_path):

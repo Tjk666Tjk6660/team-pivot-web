@@ -32,6 +32,7 @@ def create_app() -> FastAPI:
         token=cfg.git_token,
     )
     workspace.ensure_cloned()
+    workspace.recover()
 
     app = FastAPI(title="team-pivot-web")
     app.add_middleware(

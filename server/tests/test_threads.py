@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from server.threads import get_thread, list_threads
+from server.threads import (
+    generate_unique_hash,
+    get_thread,
+    list_threads,
+    next_post_number,
+    sanitize_slug,
+)
 
 
 def _write_post(path, *, type_: str, author: str, title: str = "", body: str = "x"):
@@ -109,6 +115,38 @@ def test_list_threads_without_index_has_none_status(tmp_path):
     threads = list_threads(root)
     assert threads[0].status is None
     assert threads[0].last_updated is None
+
+
+def test_sanitize_slug_replaces_unsafe_chars():
+    assert sanitize_slug("a/b:c*d?") == "a_b_c_d_"
+    assert sanitize_slug("  spaces  ") == "spaces"
+    assert sanitize_slug("中文 title：多行") == "中文 title：多行"
+    assert sanitize_slug("") == "untitled"
+    assert sanitize_slug("///") == "_"
+
+
+def test_next_post_number(tmp_path):
+    assert next_post_number(tmp_path / "nope") == 1
+    (tmp_path / "t").mkdir()
+    assert next_post_number(tmp_path / "t") == 1
+    for name in ("001_a.md", "002_b.md", "RESULT_z.md", "not_a_post.txt"):
+        (tmp_path / "t" / name).write_text("")
+    assert next_post_number(tmp_path / "t") == 3
+
+
+def test_generate_unique_hash_avoids_collision(tmp_path):
+    d = tmp_path / "t"
+    d.mkdir()
+    (d / "001_x_proposal_abc123.md").write_text("")
+    for _ in range(50):
+        h = generate_unique_hash(d)
+        assert h != "abc123"
+        assert len(h) == 6
+
+
+def test_generate_unique_hash_works_on_missing_dir(tmp_path):
+    h = generate_unique_hash(tmp_path / "nope")
+    assert len(h) == 6
 
 
 def test_title_prefers_frontmatter_then_h1_then_filename(tmp_path):

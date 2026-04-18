@@ -47,7 +47,15 @@ def pull(repo_dir: str) -> None:
         raise
 
 
-def commit(repo_dir: str, *, message: str, paths: list[str], author: str | None = None) -> bool:
+def commit(
+    repo_dir: str,
+    *,
+    message: str,
+    paths: list[str],
+    author: str | None = None,
+    committer_name: str | None = None,
+    committer_email: str | None = None,
+) -> bool:
     if paths:
         _run(["git", "add", *paths], cwd=repo_dir)
     else:
@@ -55,7 +63,12 @@ def commit(repo_dir: str, *, message: str, paths: list[str], author: str | None 
     check = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=repo_dir)
     if check.returncode == 0:
         return False
-    args = ["git", "commit", "-m", message]
+    args = ["git"]
+    if committer_name:
+        args += ["-c", f"user.name={committer_name}"]
+    if committer_email:
+        args += ["-c", f"user.email={committer_email}"]
+    args += ["commit", "-m", message]
     if author:
         args += ["--author", author]
     _run(args, cwd=repo_dir)

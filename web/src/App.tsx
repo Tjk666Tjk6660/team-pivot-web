@@ -5,6 +5,7 @@ import { Login } from "./pages/Login";
 import { Home } from "./pages/Home";
 import { ProfileSetup } from "./pages/ProfileSetup";
 import { ThreadDetail } from "./pages/ThreadDetail";
+import { NewThread } from "./pages/NewThread";
 
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
@@ -29,6 +30,7 @@ export function App() {
         path="/t/:category/:slug"
         element={<ThreadDetail me={me} onLogout={doLogout} />}
       />
+      <Route path="/new" element={<NewThread me={me} onLogout={doLogout} />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

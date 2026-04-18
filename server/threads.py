@@ -1,10 +1,49 @@
 from __future__ import annotations
 
+import re
+import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
 from server.index_files import read_thread_index
 from server.posts import Post, read_post
+
+_UNSAFE_CHARS = set('/\\:*?"<>|\t\n\r')
+_POST_NUMBER_RE = re.compile(r"^(\d{3})_")
+_HASH_SUFFIX_RE = re.compile(r"_([a-f0-9]{6})\.md$")
+
+
+def sanitize_slug(title: str) -> str:
+    out = "".join("_" if ch in _UNSAFE_CHARS else ch for ch in title.strip())
+    while "__" in out:
+        out = out.replace("__", "_")
+    return out or "untitled"
+
+
+def next_post_number(thread_dir: Path) -> int:
+    if not thread_dir.is_dir():
+        return 1
+    numbers: list[int] = []
+    for f in thread_dir.iterdir():
+        if f.is_file() and f.suffix == ".md":
+            m = _POST_NUMBER_RE.match(f.name)
+            if m:
+                numbers.append(int(m.group(1)))
+    return (max(numbers) if numbers else 0) + 1
+
+
+def generate_unique_hash(thread_dir: Path, max_attempts: int = 20) -> str:
+    existing: set[str] = set()
+    if thread_dir.is_dir():
+        for f in thread_dir.iterdir():
+            m = _HASH_SUFFIX_RE.search(f.name)
+            if m:
+                existing.add(m.group(1))
+    for _ in range(max_attempts):
+        h = secrets.token_hex(3)
+        if h not in existing:
+            return h
+    raise RuntimeError(f"could not generate unique hash after {max_attempts}")
 
 
 @dataclass(frozen=True)
@@ -105,9 +144,12 @@ def _list_posts(tdir: Path) -> list[Post]:
         if f.name.startswith("SUMMARY") or f.name.startswith("RESULT"):
             continue
         try:
-            posts.append(read_post(f))
+            p = read_post(f)
         except Exception:
             continue
+        if p.frontmatter.get("index_state") == "un-indexed":
+            continue
+        posts.append(p)
     return posts
 
 

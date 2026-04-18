@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from server.posts import read_post
+from server.posts import read_post, write_post
 
 
 def test_read_post_with_frontmatter(tmp_path):
@@ -34,3 +34,23 @@ def test_read_post_with_malformed_frontmatter(tmp_path):
     p.write_text("---\n::: invalid :::\n---\nbody\n", encoding="utf-8")
     post = read_post(p)
     assert post.frontmatter == {}
+
+
+def test_write_post_roundtrip(tmp_path):
+    p = tmp_path / "sub" / "001_x.md"
+    write_post(
+        p,
+        frontmatter={"type": "proposal", "author": "dengke"},
+        body="# Hello\n\nworld",
+    )
+    post = read_post(p)
+    assert post.frontmatter == {"type": "proposal", "author": "dengke"}
+    assert post.body.startswith("# Hello")
+
+
+def test_write_post_preserves_unicode(tmp_path):
+    p = tmp_path / "p.md"
+    write_post(p, frontmatter={"title": "测试"}, body="中文正文")
+    post = read_post(p)
+    assert post.frontmatter == {"title": "测试"}
+    assert "中文正文" in post.body

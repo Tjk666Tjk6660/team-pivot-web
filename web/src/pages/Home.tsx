@@ -54,10 +54,24 @@ export function Home({ me, onLogout }: { me: Me; onLogout: () => void }) {
         {workspace?.head && (
           <span style={{ fontSize: 12, color: "#888" }}>HEAD {workspace.head}</span>
         )}
+        <Link
+          to="/new"
+          style={{
+            marginLeft: "auto",
+            padding: "4px 10px",
+            background: "#3370ff",
+            color: "white",
+            borderRadius: 4,
+            textDecoration: "none",
+            fontSize: 13,
+          }}
+        >
+          + New
+        </Link>
         <button
           onClick={onRefresh}
           disabled={refreshing}
-          style={{ marginLeft: "auto", fontSize: 12 }}
+          style={{ fontSize: 12 }}
         >
           {refreshing ? "Pulling…" : "Refresh"}
         </button>

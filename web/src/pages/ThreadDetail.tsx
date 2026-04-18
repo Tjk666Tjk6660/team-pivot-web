@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import Markdown from "react-markdown";
-import { fetchThread, type Me, type Post, type ThreadDetail as ThreadDetailData } from "../api";
+import { fetchThread, postReply, type Me, type Post, type ThreadDetail as ThreadDetailData } from "../api";
 import { UserBar } from "../components/UserBar";
 import { StatusBadge } from "../components/StatusBadge";
 import { relativeTime } from "../lib/time";
@@ -11,7 +11,7 @@ export function ThreadDetail({ me, onLogout }: { me: Me; onLogout: () => void })
   const [data, setData] = useState<ThreadDetailData | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = () => {
     if (!category || !slug) return;
     fetchThread(category, slug)
       .then(setData)
@@ -19,7 +19,9 @@ export function ThreadDetail({ me, onLogout }: { me: Me; onLogout: () => void })
         setError(e instanceof Error ? e.message : String(e));
         setData(null);
       });
-  }, [category, slug]);
+  };
+
+  useEffect(load, [category, slug]);
 
   return (
     <div style={{ padding: 48, maxWidth: 820, fontFamily: "system-ui, sans-serif" }}>
@@ -61,9 +63,81 @@ export function ThreadDetail({ me, onLogout }: { me: Me; onLogout: () => void })
               <PostCard key={p.filename} post={p} />
             ))}
           </div>
+          {category && slug && (
+            <ReplyForm category={category} slug={slug} onPosted={load} />
+          )}
         </>
       )}
     </div>
+  );
+}
+
+function ReplyForm({
+  category, slug, onPosted,
+}: { category: string; slug: string; onPosted: () => void }) {
+  const [body, setBody] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      await postReply(category, slug, body);
+      setBody("");
+      onPosted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form
+      onSubmit={submit}
+      style={{
+        marginTop: 32,
+        borderTop: "2px solid #eee",
+        paddingTop: 24,
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+      }}
+    >
+      <div style={{ fontWeight: 600 }}>Reply</div>
+      <textarea
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        rows={6}
+        maxLength={50000}
+        placeholder="Write a reply in markdown…"
+        style={{
+          width: "100%",
+          padding: 8,
+          fontSize: 14,
+          fontFamily: "ui-monospace, SFMono-Regular, monospace",
+        }}
+      />
+      {error && <div style={{ color: "#c00" }}>{error}</div>}
+      <div>
+        <button
+          type="submit"
+          disabled={submitting || !body.trim()}
+          style={{
+            padding: "8px 16px",
+            background: "#3370ff",
+            color: "white",
+            border: "none",
+            borderRadius: 4,
+            cursor: "pointer",
+          }}
+        >
+          {submitting ? "Posting…" : "Post reply"}
+        </button>
+      </div>
+    </form>
   );
 }
 
