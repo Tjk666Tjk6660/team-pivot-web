@@ -122,6 +122,89 @@ export async function postReply(
   return await r.json();
 }
 
+export type Draft = {
+  id: string;
+  type: "proposal" | "reply";
+  title: string | null;
+  category: string | null;
+  body_md: string;
+  thread_key: string | null;
+  created_at: number;
+  updated_at: number;
+};
+
+export async function fetchDrafts(): Promise<Draft[]> {
+  const r = await fetch("/api/drafts", { credentials: "include" });
+  if (!r.ok) throw new Error(`/api/drafts failed: ${r.status}`);
+  const body = (await r.json()) as { items: Draft[] };
+  return body.items;
+}
+
+export async function fetchDraft(id: string): Promise<Draft> {
+  const r = await fetch(`/api/drafts/${id}`, { credentials: "include" });
+  if (!r.ok) throw new Error(`fetch draft failed: ${r.status}`);
+  return (await r.json()) as Draft;
+}
+
+export async function createDraft(body: {
+  type: "proposal" | "reply";
+  title?: string | null;
+  category?: string | null;
+  body_md?: string;
+  thread_key?: string | null;
+}): Promise<Draft> {
+  const r = await fetch("/api/drafts", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `create draft failed: ${r.status}`);
+  }
+  return (await r.json()) as Draft;
+}
+
+export async function updateDraft(
+  id: string,
+  body: { title?: string | null; category?: string | null; body_md?: string; thread_key?: string | null },
+): Promise<Draft> {
+  const r = await fetch(`/api/drafts/${id}`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `update draft failed: ${r.status}`);
+  }
+  return (await r.json()) as Draft;
+}
+
+export async function deleteDraft(id: string): Promise<void> {
+  const r = await fetch(`/api/drafts/${id}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!r.ok) throw new Error(`delete draft failed: ${r.status}`);
+}
+
+export async function publishDraft(
+  id: string,
+): Promise<{ published: { category?: string; slug?: string; filename: string }; draft_id: string }> {
+  const r = await fetch(`/api/drafts/${id}/publish`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `publish failed: ${r.status}`);
+  }
+  return await r.json();
+}
+
 export async function refreshWorkspace(): Promise<WorkspaceStatus> {
   const r = await fetch("/api/workspace/refresh", {
     method: "POST",

@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  deleteDraft,
+  fetchDrafts,
   fetchThreads,
   fetchWorkspaceStatus,
   refreshWorkspace,
+  type Draft,
   type Me,
   type ThreadMeta,
   type WorkspaceStatus,
@@ -15,23 +18,25 @@ import { relativeTime } from "../lib/time";
 export function Home({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [threads, setThreads] = useState<ThreadMeta[] | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceStatus | null>(null);
+  const [drafts, setDrafts] = useState<Draft[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = async () => {
     try {
-      const [t, w] = await Promise.all([fetchThreads(), fetchWorkspaceStatus()]);
+      const [t, w, d] = await Promise.all([
+        fetchThreads(), fetchWorkspaceStatus(), fetchDrafts(),
+      ]);
       setThreads(t);
       setWorkspace(w);
+      setDrafts(d);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
 
-  useEffect(() => {
-    load();
-  }, []);
+  useEffect(() => { load(); }, []);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -45,9 +50,68 @@ export function Home({ me, onLogout }: { me: Me; onLogout: () => void }) {
     }
   };
 
+  const removeDraft = async (id: string) => {
+    if (!confirm("Delete this draft?")) return;
+    try {
+      await deleteDraft(id);
+      setDrafts((ds) => (ds ?? []).filter((d) => d.id !== id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   return (
     <div style={{ padding: 48, fontFamily: "system-ui, sans-serif" }}>
       <UserBar me={me} onLogout={onLogout} />
+
+      {drafts && drafts.length > 0 && (
+        <section style={{ marginTop: 32 }}>
+          <h2 style={{ margin: 0 }}>Drafts</h2>
+          <ul style={{ marginTop: 12, padding: 0, listStyle: "none" }}>
+            {drafts.map((d) => (
+              <li
+                key={d.id}
+                style={{
+                  padding: "10px 0",
+                  borderBottom: "1px solid #eee",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                }}
+              >
+                <Link
+                  to={
+                    d.type === "proposal"
+                      ? `/new?draft=${d.id}`
+                      : d.thread_key
+                        ? `/t/${d.thread_key}`
+                        : "#"
+                  }
+                  style={{ textDecoration: "none", color: "inherit", flex: 1 }}
+                >
+                  <div style={{ fontWeight: 500 }}>
+                    {d.type === "proposal"
+                      ? (d.title?.trim() || "(untitled)")
+                      : `Reply: ${d.thread_key ?? ""}`}
+                  </div>
+                  <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>
+                    {d.type} · {relativeTime(new Date(d.updated_at * 1000).toISOString())}
+                  </div>
+                </Link>
+                <button
+                  onClick={() => removeDraft(d.id)}
+                  style={{
+                    fontSize: 12, color: "#c00", background: "none",
+                    border: "none", cursor: "pointer",
+                  }}
+                >
+                  Delete
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <div style={{ marginTop: 32, display: "flex", alignItems: "baseline", gap: 12 }}>
         <h2 style={{ margin: 0 }}>Discussions</h2>

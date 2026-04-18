@@ -15,6 +15,18 @@ CREATE TABLE IF NOT EXISTS users (
     github_username TEXT,
     created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS drafts (
+    id TEXT PRIMARY KEY,
+    user_open_id TEXT NOT NULL,
+    type TEXT NOT NULL CHECK(type IN ('proposal', 'reply')),
+    title TEXT,
+    category TEXT,
+    body_md TEXT NOT NULL DEFAULT '',
+    thread_key TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_drafts_user ON drafts(user_open_id, updated_at DESC);
 """
 
 

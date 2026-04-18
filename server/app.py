@@ -3,12 +3,14 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from server.api.discussions import build_router as build_api_router
+from server.api.discussions import build_router as build_discussions_router
+from server.api.drafts import build_router as build_drafts_router
 from server.auth.feishu_oauth import FeishuOAuth
 from server.auth.routes import build_router as build_auth_router
 from server.auth.session import SessionStore
 from server.config import load_config
 from server.db import Database
+from server.drafts import DraftRepo
 from server.users import UserRepo
 from server.workspace import Workspace, repo_dir_name
 
@@ -18,6 +20,7 @@ def create_app() -> FastAPI:
 
     db = Database(cfg.data_dir / "data.db")
     users = UserRepo(db)
+    drafts = DraftRepo(db)
     oauth = FeishuOAuth(
         app_id=cfg.feishu_app_id,
         app_secret=cfg.feishu_app_secret,
@@ -51,5 +54,6 @@ def create_app() -> FastAPI:
             post_login_redirect=cfg.web_dev_origin + "/",
         )
     )
-    app.include_router(build_api_router(workspace, sessions, users))
+    app.include_router(build_discussions_router(workspace, sessions, users))
+    app.include_router(build_drafts_router(workspace, sessions, users, drafts))
     return app
