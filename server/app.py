@@ -50,7 +50,10 @@ def create_app() -> FastAPI:
         app_secret=cfg.feishu_app_secret,
         redirect_uri=cfg.feishu_redirect_uri,
     )
-    sessions = SessionStore()
+    sessions = SessionStore(db)
+    purged = sessions.sweep_expired()
+    if purged > 0:
+        log.info("sessions swept on startup purged=%d", purged)
 
     notifier: Notifier
     if cfg.notify_enabled:

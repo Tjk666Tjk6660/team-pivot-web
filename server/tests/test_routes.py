@@ -33,9 +33,9 @@ class FakeOAuth:
 
 
 @pytest.fixture
-def client_and_oauth(users) -> tuple[TestClient, FakeOAuth]:
+def client_and_oauth(db, users) -> tuple[TestClient, FakeOAuth]:
     oauth = FakeOAuth()
-    sessions = SessionStore()
+    sessions = SessionStore(db)
     app = FastAPI()
     app.include_router(build_router(oauth, sessions, users, SECRET))
     return TestClient(app), oauth

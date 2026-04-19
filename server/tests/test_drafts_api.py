@@ -22,7 +22,7 @@ def client_and_sid(db, users):
     )
     users.update_profile("ou_1", pinyin="ken")
 
-    sessions = SessionStore()
+    sessions = SessionStore(db)
     sid = sessions.create("ou_1")
     drafts = DraftRepo(db)
 
@@ -43,7 +43,7 @@ def test_requires_auth():
     tmp = tempfile.mkdtemp()
     try:
         d = Database(f"{tmp}/db.sqlite")
-        sessions = SessionStore()
+        sessions = SessionStore(d)
         app = FastAPI()
         from server.contacts import ContactRepo
         app.include_router(build_router(

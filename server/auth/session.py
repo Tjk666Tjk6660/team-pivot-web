@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 import secrets
-import threading
 from dataclasses import dataclass
 from time import time
+
+from server.db import Database
 
 log = logging.getLogger(__name__)
 
@@ -16,17 +17,18 @@ class Session:
 
 
 class SessionStore:
-    def __init__(self, ttl_sec: int = 86400 * 7) -> None:
+    def __init__(self, db: Database, ttl_sec: int = 86400 * 7) -> None:
+        self._db = db
         self._ttl = ttl_sec
-        self._store: dict[str, Session] = {}
-        self._lock = threading.Lock()
 
     def create(self, user_open_id: str) -> str:
         sid = secrets.token_urlsafe(32)
-        with self._lock:
-            self._store[sid] = Session(
-                user_open_id=user_open_id,
-                expires_at=time() + self._ttl,
+        now = time()
+        with self._db.connect() as conn:
+            conn.execute(
+                "INSERT INTO sessions (id, user_open_id, expires_at, created_at)"
+                " VALUES (?,?,?,?)",
+                (sid, user_open_id, now + self._ttl, now),
             )
         log.debug("session created sid=%s... user=%s", sid[:8], user_open_id)
         return sid
@@ -34,17 +36,27 @@ class SessionStore:
     def get(self, sid: str | None) -> Session | None:
         if not sid:
             return None
-        with self._lock:
-            s = self._store.get(sid)
-            if s is None:
-                return None
-            if s.expires_at < time():
-                self._store.pop(sid, None)
-                return None
-            return s
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT user_open_id, expires_at FROM sessions WHERE id=?", (sid,)
+            ).fetchone()
+        if row is None:
+            return None
+        if row["expires_at"] < time():
+            self.delete(sid)
+            return None
+        return Session(
+            user_open_id=row["user_open_id"],
+            expires_at=row["expires_at"],
+        )
 
     def delete(self, sid: str | None) -> None:
         if not sid:
             return
-        with self._lock:
-            self._store.pop(sid, None)
+        with self._db.connect() as conn:
+            conn.execute("DELETE FROM sessions WHERE id=?", (sid,))
+
+    def sweep_expired(self) -> int:
+        with self._db.connect() as conn:
+            cur = conn.execute("DELETE FROM sessions WHERE expires_at < ?", (time(),))
+            return cur.rowcount
