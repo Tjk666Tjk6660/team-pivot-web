@@ -27,7 +27,10 @@ def client_and_sid(db, users):
     drafts = DraftRepo(db)
 
     app = FastAPI()
-    app.include_router(build_router(_FakeWorkspace(), sessions, users, drafts, NoOpNotifier()))
+    from server.contacts import ContactRepo
+    app.include_router(build_router(
+        _FakeWorkspace(), sessions, users, drafts, ContactRepo(db), NoOpNotifier(),
+    ))
     client = TestClient(app)
     client.cookies.set("sid", sid)
     return client, sid, drafts
@@ -42,7 +45,10 @@ def test_requires_auth():
         d = Database(f"{tmp}/db.sqlite")
         sessions = SessionStore()
         app = FastAPI()
-        app.include_router(build_router(_FakeWorkspace(), sessions, UserRepo(d), DraftRepo(d), NoOpNotifier()))
+        from server.contacts import ContactRepo
+        app.include_router(build_router(
+            _FakeWorkspace(), sessions, UserRepo(d), DraftRepo(d), ContactRepo(d), NoOpNotifier(),
+        ))
         client = TestClient(app)
         assert client.get("/api/drafts").status_code == 401
         assert client.post("/api/drafts", json={"type": "proposal"}).status_code == 401

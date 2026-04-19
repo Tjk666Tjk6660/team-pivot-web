@@ -122,6 +122,11 @@ export async function postReply(
   return await r.json();
 }
 
+export type MentionBlock = {
+  open_ids: string[];
+  comments: string;
+};
+
 export type Draft = {
   id: string;
   type: "proposal" | "reply";
@@ -129,9 +134,35 @@ export type Draft = {
   category: string | null;
   body_md: string;
   thread_key: string | null;
+  mentions: MentionBlock | null;
   created_at: number;
   updated_at: number;
 };
+
+export type Contact = {
+  open_id: string;
+  name: string;
+  en_name: string | null;
+  avatar_url: string;
+};
+
+export async function searchContacts(q: string): Promise<Contact[]> {
+  const r = await fetch(`/api/contacts?q=${encodeURIComponent(q)}&limit=20`, {
+    credentials: "include",
+  });
+  if (!r.ok) throw new Error(`/api/contacts failed: ${r.status}`);
+  const body = (await r.json()) as { items: Contact[] };
+  return body.items;
+}
+
+export async function syncContacts(): Promise<{ ok: true; synced: number; total: number }> {
+  const r = await fetch("/api/contacts/sync", {
+    method: "POST", credentials: "include",
+  });
+  const body = await r.json().catch(() => ({ detail: r.statusText }));
+  if (!r.ok) throw new Error(body.detail || `sync failed: ${r.status}`);
+  return body;
+}
 
 export async function fetchDrafts(): Promise<Draft[]> {
   const r = await fetch("/api/drafts", { credentials: "include" });

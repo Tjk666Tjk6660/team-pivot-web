@@ -7,6 +7,7 @@ import {
   fetchThreads,
   fetchWorkspaceStatus,
   refreshWorkspace,
+  syncContacts,
   type Draft,
   type InboxItem,
   type Me,
@@ -22,6 +23,10 @@ export function Home({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [workspace, setWorkspace] = useState<WorkspaceStatus | null>(null);
   const [drafts, setDrafts] = useState<Draft[] | null>(null);
   const [inbox, setInbox] = useState<InboxItem[] | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<
+    { text: string; kind: "info" | "success" | "error" } | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -54,6 +59,26 @@ export function Home({ me, onLogout }: { me: Me; onLogout: () => void }) {
     }
   };
 
+  const onSyncContacts = async () => {
+    setSyncing(true);
+    setSyncMsg({ text: "同步飞书通讯录中…", kind: "info" });
+    try {
+      const r = await syncContacts();
+      setSyncMsg({
+        text: `同步完成：共 ${r.total} 位联系人（本次刷新 ${r.synced} 位）`,
+        kind: "success",
+      });
+    } catch (e) {
+      setSyncMsg({
+        text: `同步失败：${e instanceof Error ? e.message : String(e)}`,
+        kind: "error",
+      });
+    } finally {
+      setSyncing(false);
+      window.setTimeout(() => setSyncMsg(null), 5000);
+    }
+  };
+
   const removeDraft = async (id: string) => {
     if (!confirm("Delete this draft?")) return;
     try {
@@ -67,6 +92,31 @@ export function Home({ me, onLogout }: { me: Me; onLogout: () => void }) {
   return (
     <div style={{ padding: 48, fontFamily: "system-ui, sans-serif" }}>
       <UserBar me={me} onLogout={onLogout} />
+
+      {syncMsg && (
+        <div
+          style={{
+            marginTop: 16,
+            padding: "10px 14px",
+            borderRadius: 4,
+            background:
+              syncMsg.kind === "error"
+                ? "#fce4e4"
+                : syncMsg.kind === "success"
+                  ? "#e3f6ea"
+                  : "#e7efff",
+            color:
+              syncMsg.kind === "error"
+                ? "#c00"
+                : syncMsg.kind === "success"
+                  ? "#0f7a3b"
+                  : "#1650a7",
+            fontSize: 13,
+          }}
+        >
+          {syncMsg.text}
+        </div>
+      )}
 
       {inbox && inbox.length > 0 && (
         <section style={{ marginTop: 32 }}>
@@ -182,6 +232,14 @@ export function Home({ me, onLogout }: { me: Me; onLogout: () => void }) {
           style={{ fontSize: 12 }}
         >
           {refreshing ? "Pulling…" : "Refresh"}
+        </button>
+        <button
+          onClick={onSyncContacts}
+          disabled={syncing}
+          style={{ fontSize: 12 }}
+          title="从飞书通讯录拉取最新联系人（供 @mention 使用）"
+        >
+          {syncing ? "同步中…" : "同步联系人"}
         </button>
       </div>
 

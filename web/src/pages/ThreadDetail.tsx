@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import Markdown from "react-markdown";
 import {
@@ -9,11 +9,13 @@ import {
   markThreadRead,
   publishDraft,
   type Me,
+  type MentionBlock,
   type Post,
   type ThreadDetail as ThreadDetailData,
 } from "../api";
 import { UserBar } from "../components/UserBar";
 import { StatusControl } from "../components/StatusControl";
+import { MentionField, emptyMention, isMentionValid } from "../components/MentionField";
 import { relativeTime } from "../lib/time";
 import { formatSaveStatus, useDraftAutosave } from "../hooks/useDraftAutosave";
 
@@ -119,6 +121,8 @@ function ReplyForm({
   const threadKey = `${category}/${slug}`;
   const [draftId, setDraftId] = useState<string | null>(null);
   const [body, setBody] = useState("");
+  const [mentions, setMentions] = useState<MentionBlock>(emptyMention());
+  const resolvedNames = useRef<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -129,6 +133,7 @@ function ReplyForm({
         if (existing) {
           setDraftId(existing.id);
           setBody(existing.body_md);
+          if (existing.mentions) setMentions(existing.mentions);
         }
       })
       .catch(() => {});
@@ -138,13 +143,21 @@ function ReplyForm({
     draftId,
     setDraftId,
     type: "reply",
-    payload: () => ({ body_md: body, thread_key: threadKey }),
+    payload: () => ({
+      body_md: body,
+      thread_key: threadKey,
+      mentions: mentions.open_ids.length > 0 || mentions.comments ? mentions : null,
+    }),
     enabled: body.trim().length > 0,
-    deps: [body],
+    deps: [body, mentions],
   });
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isMentionValid(mentions)) {
+      setError("圈人后必须填一句话");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -153,6 +166,7 @@ function ReplyForm({
       await publishDraft(id);
       setDraftId(null);
       setBody("");
+      setMentions(emptyMention());
       onPosted();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -201,6 +215,11 @@ function ReplyForm({
           width: "100%", padding: 8, fontSize: 14,
           fontFamily: "ui-monospace, SFMono-Regular, monospace",
         }}
+      />
+      <MentionField
+        value={mentions}
+        onChange={setMentions}
+        resolvedNames={resolvedNames.current}
       />
       {error && <div style={{ color: "#c00" }}>{error}</div>}
       <div style={{ display: "flex", gap: 12 }}>

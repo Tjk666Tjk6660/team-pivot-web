@@ -6,6 +6,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+from server.contacts import ContactRepo
 from server.index_files import append_reply_to_index, create_thread_index
 from server.notify import Notifier
 from server.posts import mark_indexed, write_post_pending
@@ -30,6 +31,9 @@ def publish_proposal(
     category: str,
     title: str,
     body: str,
+    mention_open_ids: list[str] | None = None,
+    mention_comments: str | None = None,
+    contacts: ContactRepo | None = None,
     notifier: Notifier | None = None,
 ) -> dict:
     if not user.pinyin:
@@ -45,6 +49,7 @@ def publish_proposal(
     )
     fm = {"type": "proposal", "author": user.pinyin, "created": now}
     final_body = _ensure_h1(body, title)
+    mention_block = _resolve_mentions(mention_open_ids, mention_comments, contacts)
 
     with workspace.write_session(
         message=f"feat: new discussion - {title}",
@@ -60,12 +65,15 @@ def publish_proposal(
             filename=filename,
             author_id=user.pinyin,
             now_iso=now,
+            mention=mention_block,
         )
         mark_indexed(post_path)
     if notifier is not None:
         notifier.notify_new_thread(
             category=category, slug=slug, title=title,
             author_name=user.name, body=body,
+            mention_open_ids=mention_open_ids or None,
+            mention_comments=mention_comments,
         )
     return {"category": category, "slug": slug, "filename": filename}
 
@@ -77,6 +85,9 @@ def publish_reply(
     category: str,
     slug: str,
     body: str,
+    mention_open_ids: list[str] | None = None,
+    mention_comments: str | None = None,
+    contacts: ContactRepo | None = None,
     notifier: Notifier | None = None,
 ) -> dict:
     if not user.pinyin:
@@ -93,6 +104,7 @@ def publish_reply(
         user.pinyin, category, slug, filename,
     )
     fm = {"type": "reply", "author": user.pinyin, "created": now}
+    mention_block = _resolve_mentions(mention_open_ids, mention_comments, contacts)
 
     with workspace.write_session(
         message=f"chore: reply to {slug}",
@@ -108,6 +120,7 @@ def publish_reply(
             filename=filename,
             author_id=user.pinyin,
             now_iso=now,
+            mention=mention_block,
         )
         mark_indexed(post_path)
     if notifier is not None:
@@ -115,8 +128,28 @@ def publish_reply(
         notifier.notify_new_reply(
             category=category, slug=slug, thread_title=thread_title,
             author_name=user.name, body=body,
+            mention_open_ids=mention_open_ids or None,
+            mention_comments=mention_comments,
         )
     return {"filename": filename}
+
+
+def _resolve_mentions(
+    open_ids: list[str] | None,
+    comments: str | None,
+    contacts: ContactRepo | None,
+) -> dict | None:
+    if not open_ids:
+        return None
+    users: list[dict] = []
+    resolved = contacts.get_many(open_ids) if contacts else {}
+    for oid in open_ids:
+        c = resolved.get(oid)
+        users.append({"user": c.name if c else oid, "open_id": oid})
+    block: dict = {"users": users}
+    if comments:
+        block["comments"] = comments
+    return block
 
 
 def _lookup_thread_title(workspace: Workspace, category: str, slug: str) -> str:

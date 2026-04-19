@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+import sqlite3
+from dataclasses import dataclass
+from time import time
+
+from server.db import Database
+
+
+@dataclass(frozen=True)
+class Contact:
+    open_id: str
+    union_id: str | None
+    name: str
+    en_name: str | None
+    avatar_url: str
+    synced_at: float
+
+
+class ContactRepo:
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def get(self, open_id: str) -> Contact | None:
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM contacts WHERE open_id=?", (open_id,)
+            ).fetchone()
+        return _row(row) if row else None
+
+    def get_many(self, open_ids: list[str]) -> dict[str, Contact]:
+        if not open_ids:
+            return {}
+        placeholders = ",".join("?" for _ in open_ids)
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM contacts WHERE open_id IN ({placeholders})",
+                open_ids,
+            ).fetchall()
+        return {r["open_id"]: _row(r) for r in rows}
+
+    def search(self, q: str, limit: int = 20) -> list[Contact]:
+        q = q.strip()
+        with self._db.connect() as conn:
+            if not q:
+                rows = conn.execute(
+                    "SELECT * FROM contacts ORDER BY name LIMIT ?", (limit,)
+                ).fetchall()
+            else:
+                like = f"%{q}%"
+                rows = conn.execute(
+                    "SELECT * FROM contacts"
+                    " WHERE name LIKE ? OR en_name LIKE ? OR open_id LIKE ?"
+                    " ORDER BY name LIMIT ?",
+                    (like, like, like, limit),
+                ).fetchall()
+        return [_row(r) for r in rows]
+
+    def upsert_many(self, items: list[dict]) -> int:
+        if not items:
+            return 0
+        now = time()
+        with self._db.connect() as conn:
+            for item in items:
+                conn.execute(
+                    "INSERT INTO contacts"
+                    " (open_id, union_id, name, en_name, avatar_url, synced_at)"
+                    " VALUES (?,?,?,?,?,?)"
+                    " ON CONFLICT(open_id) DO UPDATE SET"
+                    " union_id=excluded.union_id,"
+                    " name=excluded.name,"
+                    " en_name=excluded.en_name,"
+                    " avatar_url=excluded.avatar_url,"
+                    " synced_at=excluded.synced_at",
+                    (
+                        item["open_id"],
+                        item.get("union_id"),
+                        item["name"],
+                        item.get("en_name"),
+                        item.get("avatar_url") or "",
+                        now,
+                    ),
+                )
+        return len(items)
+
+    def count(self) -> int:
+        with self._db.connect() as conn:
+            row = conn.execute("SELECT COUNT(*) as c FROM contacts").fetchone()
+        return int(row["c"])
+
+
+def _row(row: sqlite3.Row) -> Contact:
+    return Contact(
+        open_id=row["open_id"],
+        union_id=row["union_id"],
+        name=row["name"],
+        en_name=row["en_name"],
+        avatar_url=row["avatar_url"],
+        synced_at=row["synced_at"],
+    )

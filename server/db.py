@@ -34,7 +34,22 @@ CREATE TABLE IF NOT EXISTS read_state (
     updated_at REAL NOT NULL,
     PRIMARY KEY (user_open_id, thread_key)
 );
+CREATE TABLE IF NOT EXISTS contacts (
+    open_id TEXT PRIMARY KEY,
+    union_id TEXT,
+    name TEXT NOT NULL,
+    en_name TEXT,
+    avatar_url TEXT NOT NULL DEFAULT '',
+    synced_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name);
 """
+
+
+def _migrate(conn) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(drafts)")}
+    if "mentions_json" not in cols:
+        conn.execute("ALTER TABLE drafts ADD COLUMN mentions_json TEXT")
 
 
 class Database:
@@ -43,6 +58,7 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            _migrate(conn)
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

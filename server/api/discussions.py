@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from datetime import datetime, timezone
 
 from server.auth.session import SessionStore
+from server.contacts import ContactRepo
 from server.index_files import change_thread_status
 from server.mentions import resolve_id, resolve_text
 from server.notify import Notifier
@@ -21,14 +22,21 @@ from server.users import User, UserRepo
 from server.workspace import Workspace
 
 
+class MentionBlock(BaseModel):
+    open_ids: list[str] = Field(default_factory=list, max_length=50)
+    comments: str = Field(min_length=1, max_length=500)
+
+
 class NewThreadBody(BaseModel):
     category: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,40}$")
     title: str = Field(min_length=1, max_length=200)
     body: str = Field(min_length=1, max_length=50000)
+    mentions: MentionBlock | None = None
 
 
 class ReplyBody(BaseModel):
     body: str = Field(min_length=1, max_length=50000)
+    mentions: MentionBlock | None = None
 
 
 class StatusChangeBody(BaseModel):
@@ -40,6 +48,7 @@ def build_router(
     workspace: Workspace,
     sessions: SessionStore,
     users: UserRepo,
+    contacts: ContactRepo,
     notifier: Notifier,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
@@ -96,9 +105,13 @@ def build_router(
     def new_thread(body: NewThreadBody, sid: str | None = Cookie(default=None)):
         user = _current_user(sid)
         try:
+            m = body.mentions
             return publish_proposal(
                 workspace, user,
                 category=body.category, title=body.title, body=body.body,
+                mention_open_ids=(m.open_ids if m else None),
+                mention_comments=(m.comments if m else None),
+                contacts=contacts,
                 notifier=notifier,
             )
         except PublishError as e:
@@ -111,8 +124,12 @@ def build_router(
     ):
         user = _current_user(sid)
         try:
+            m = body.mentions
             return publish_reply(
                 workspace, user, category=category, slug=slug, body=body.body,
+                mention_open_ids=(m.open_ids if m else None),
+                mention_comments=(m.comments if m else None),
+                contacts=contacts,
                 notifier=notifier,
             )
         except PublishError as e:

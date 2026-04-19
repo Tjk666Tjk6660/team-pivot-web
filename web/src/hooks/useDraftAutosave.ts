@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { createDraft, updateDraft, type Draft } from "../api";
+import { createDraft, updateDraft, type Draft, type MentionBlock } from "../api";
 
 export type SaveStatus = "idle" | "saving" | "saved" | "error";
 
@@ -7,7 +7,13 @@ export function useDraftAutosave(params: {
   draftId: string | null;
   setDraftId: (id: string) => void;
   type: "proposal" | "reply";
-  payload: () => { title?: string | null; category?: string | null; body_md: string; thread_key?: string | null };
+  payload: () => {
+    title?: string | null;
+    category?: string | null;
+    body_md: string;
+    thread_key?: string | null;
+    mentions?: MentionBlock | null;
+  };
   enabled: boolean;
   debounceMs?: number;
   deps: unknown[];

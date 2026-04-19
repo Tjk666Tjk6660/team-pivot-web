@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { deleteDraft, fetchDraft, publishDraft, type Me } from "../api";
+import { deleteDraft, fetchDraft, publishDraft, type Me, type MentionBlock } from "../api";
 import { UserBar } from "../components/UserBar";
+import { MentionField, emptyMention, isMentionValid } from "../components/MentionField";
 import { formatSaveStatus, useDraftAutosave } from "../hooks/useDraftAutosave";
 
 export function NewThread({ me, onLogout }: { me: Me; onLogout: () => void }) {
@@ -13,6 +14,8 @@ export function NewThread({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [category, setCategory] = useState("general");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const [mentions, setMentions] = useState<MentionBlock>(emptyMention());
+  const resolvedNames = useRef<Record<string, string>>({});
   const [loading, setLoading] = useState(initialDraftId !== null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -25,6 +28,7 @@ export function NewThread({ me, onLogout }: { me: Me; onLogout: () => void }) {
         setCategory(d.category ?? "general");
         setTitle(d.title ?? "");
         setBody(d.body_md);
+        if (d.mentions) setMentions(d.mentions);
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
@@ -45,13 +49,18 @@ export function NewThread({ me, onLogout }: { me: Me; onLogout: () => void }) {
       title: title.trim() || null,
       category: category.trim() || null,
       body_md: body,
+      mentions: mentions.open_ids.length > 0 || mentions.comments ? mentions : null,
     }),
     enabled: !loading && hasContent,
-    deps: [category, title, body, loading],
+    deps: [category, title, body, loading, mentions],
   });
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isMentionValid(mentions)) {
+      setError("圈人后必须填一句话");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -136,6 +145,11 @@ export function NewThread({ me, onLogout }: { me: Me; onLogout: () => void }) {
             }}
           />
         </label>
+        <MentionField
+          value={mentions}
+          onChange={setMentions}
+          resolvedNames={resolvedNames.current}
+        />
         {error && <div style={{ color: "#c00" }}>{error}</div>}
         <div style={{ display: "flex", gap: 12 }}>
           <button

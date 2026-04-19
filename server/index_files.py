@@ -100,6 +100,7 @@ def create_thread_index(
     filename: str,
     author_id: str,
     now_iso: str,
+    mention: dict | None = None,
 ) -> Path:
     index_dir = Path(index_dir)
     index_dir.mkdir(parents=True, exist_ok=True)
@@ -117,11 +118,10 @@ def create_thread_index(
             }
         ],
         "timeline": [
-            {
-                "time": now_iso,
-                "event": f"{author_id} created thread",
-                "file": f"{origin}{filename}",
-            }
+            _timeline_entry(
+                now_iso, f"{author_id} created thread",
+                f"{origin}{filename}", mention,
+            )
         ],
     }
     _atomic_write_yaml(path, data)
@@ -136,6 +136,7 @@ def append_reply_to_index(
     filename: str,
     author_id: str,
     now_iso: str,
+    mention: dict | None = None,
 ) -> Path:
     path = Path(index_dir) / f"{slug}-discuss.index.yaml"
     if not path.is_file():
@@ -158,11 +159,14 @@ def append_reply_to_index(
         )
     data["last_updated"] = now_iso
     data.setdefault("timeline", []).append(
-        {
-            "time": now_iso,
-            "event": f"{author_id} replied",
-            "file": f"{origin}{filename}",
-        }
+        _timeline_entry(now_iso, f"{author_id} replied", f"{origin}{filename}", mention)
     )
     _atomic_write_yaml(path, data)
     return path
+
+
+def _timeline_entry(time_iso: str, event: str, file: str, mention: dict | None) -> dict:
+    entry: dict = {"time": time_iso, "event": event, "file": file}
+    if mention and (mention.get("users") or mention.get("comments")):
+        entry["mention"] = mention
+    return entry
