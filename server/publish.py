@@ -7,9 +7,13 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 from server.contacts import ContactRepo
-from server.index_files import append_reply_to_index, create_thread_index
+from server.index_files import (
+    append_reply_to_index,
+    append_standalone_mention,
+    create_thread_index,
+)
 from server.notify import Notifier
-from server.posts import mark_indexed, write_post_pending
+from server.posts import mark_indexed, read_post, write_post_pending
 from server.threads import (
     generate_unique_hash,
     get_thread,
@@ -132,6 +136,64 @@ def publish_reply(
             mention_comments=mention_comments,
         )
     return {"filename": filename}
+
+
+def add_standalone_mention(
+    workspace: Workspace,
+    user: User,
+    *,
+    category: str,
+    slug: str,
+    target_filename: str,
+    mention_open_ids: list[str],
+    mention_comments: str,
+    contacts: ContactRepo | None = None,
+    notifier: Notifier | None = None,
+) -> dict:
+    if not user.pinyin:
+        raise PublishError("profile setup required")
+    if not mention_open_ids:
+        raise PublishError("no users to mention")
+    if not (mention_comments or "").strip():
+        raise PublishError("comments required")
+    thread_dir = workspace.discussions_dir / category / slug
+    target_path = thread_dir / target_filename
+    if not target_path.is_file():
+        raise PublishError("target post not found")
+
+    now = _now_iso()
+    mention_block = _resolve_mentions(mention_open_ids, mention_comments, contacts)
+    assert mention_block is not None
+
+    with workspace.write_session(
+        message=f"chore: mention on {slug}",
+        author_name=user.name,
+        author_email=f"{user.pinyin}@pivot.local",
+    ):
+        append_standalone_mention(
+            workspace.index_dir,
+            category=category,
+            slug=slug,
+            target_filename=target_filename,
+            author_id=user.pinyin,
+            mention=mention_block,
+            now_iso=now,
+        )
+    if notifier is not None:
+        thread_title = _lookup_thread_title(workspace, category, slug)
+        try:
+            excerpt = read_post(target_path).body
+        except Exception:
+            excerpt = ""
+        notifier.notify_standalone_mention(
+            category=category, slug=slug, thread_title=thread_title,
+            target_filename=target_filename,
+            author_name=user.name,
+            mention_open_ids=mention_open_ids,
+            mention_comments=mention_comments,
+            post_excerpt=excerpt,
+        )
+    return {"ok": True}
 
 
 def _resolve_mentions(

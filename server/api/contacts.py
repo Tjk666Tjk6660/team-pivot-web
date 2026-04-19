@@ -53,9 +53,16 @@ def build_router(
     @router.post("/contacts/sync")
     def sync_contacts(sid: str | None = Cookie(default=None)):
         user = _require_auth(sid)
+        s = sessions.get(sid)
+        token = s.user_access_token if s else None
+        if not token:
+            raise HTTPException(
+                status_code=400,
+                detail="当前会话没有飞书 user_access_token，请重新登录后再试",
+            )
         log.info("manual contact sync triggered by user=%s", user.open_id)
         try:
-            n = syncer.sync()
+            n = syncer.sync(token)
         except Exception as e:
             log.warning("manual contact sync failed", exc_info=True)
             raise HTTPException(status_code=502, detail=f"同步失败：{e}") from e

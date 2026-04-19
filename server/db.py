@@ -57,6 +57,9 @@ def _migrate(conn) -> None:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(drafts)")}
     if "mentions_json" not in cols:
         conn.execute("ALTER TABLE drafts ADD COLUMN mentions_json TEXT")
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+    if "user_access_token" not in cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN user_access_token TEXT")
 
 
 class Database:

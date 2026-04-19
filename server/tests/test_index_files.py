@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from server.index_files import (
     append_reply_to_index,
+    append_standalone_mention,
     change_thread_status,
     create_thread_index,
     read_thread_index,
@@ -80,6 +81,28 @@ def test_append_reply_updates_last_updated_and_timeline(tmp_path):
     assert len(data["timeline"]) == 2
     assert data["timeline"][1]["event"] == "ken replied"
     assert len(data["discussions"][0]["files"]) == 2
+
+
+def test_append_standalone_mention(tmp_path):
+    idx = tmp_path / "index"
+    create_thread_index(
+        idx, category="c", slug="t", filename="001_a.md",
+        author_id="ken", now_iso="2026-04-19T10:00:00+08:00",
+    )
+    append_standalone_mention(
+        idx, category="c", slug="t",
+        target_filename="001_a.md",
+        author_id="dengke",
+        mention={"users": [{"user": "Ken", "open_id": "ou_1"}], "comments": "看一下"},
+        now_iso="2026-04-19T12:00:00+08:00",
+    )
+    import yaml
+    data = yaml.safe_load((idx / "t-discuss.index.yaml").read_text())
+    assert data["last_updated"] == "2026-04-19T12:00:00+08:00"
+    last = data["timeline"][-1]
+    assert last["event"] == "dengke mentioned"
+    assert last["file"].endswith("001_a.md")
+    assert last["mention"]["comments"] == "看一下"
 
 
 def test_change_status_updates_and_appends_timeline(tmp_path):

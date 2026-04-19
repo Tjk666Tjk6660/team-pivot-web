@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from server.auth.feishu_oauth import FeishuOAuth, FeishuOAuthError
 from server.auth.session import SessionStore
+from server.contacts import ContactRepo
 from server.users import User, UserRepo
 
 SESSION_COOKIE = "sid"
@@ -38,6 +39,7 @@ def build_router(
     oauth: FeishuOAuth,
     sessions: SessionStore,
     users: UserRepo,
+    contacts: ContactRepo,
     session_secret: str,
     post_login_redirect: str = "/",
 ) -> APIRouter:
@@ -83,7 +85,14 @@ def build_router(
             name=info.name,
             avatar_url=info.avatar_url,
         )
-        sid = sessions.create(info.open_id)
+        contacts.upsert_many([{
+            "open_id": info.open_id,
+            "union_id": info.union_id,
+            "name": info.name,
+            "en_name": None,
+            "avatar_url": info.avatar_url or "",
+        }])
+        sid = sessions.create(info.open_id, user_access_token=token.access_token)
         log.info("login success name=%s open_id=%s", info.name, info.open_id)
         resp = RedirectResponse(post_login_redirect, status_code=302)
         resp.set_cookie(

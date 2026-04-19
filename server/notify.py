@@ -52,11 +52,25 @@ class Notifier(Protocol):
         reason: str | None,
     ) -> None: ...
 
+    def notify_standalone_mention(
+        self,
+        *,
+        category: str,
+        slug: str,
+        thread_title: str,
+        target_filename: str,
+        author_name: str,
+        mention_open_ids: list[str],
+        mention_comments: str,
+        post_excerpt: str,
+    ) -> None: ...
+
 
 class NoOpNotifier:
     def notify_new_thread(self, **_: object) -> None: pass
     def notify_new_reply(self, **_: object) -> None: pass
     def notify_status_change(self, **_: object) -> None: pass
+    def notify_standalone_mention(self, **_: object) -> None: pass
 
 
 class FeishuNotifier:
@@ -130,6 +144,29 @@ class FeishuNotifier:
                 thread_url=url,
             )
             self._dm_many(mention_open_ids, dm, event=f"new_reply slug={slug}")
+
+    def notify_standalone_mention(
+        self, *, category, slug, thread_title, target_filename,
+        author_name, mention_open_ids, mention_comments, post_excerpt,
+    ) -> None:
+        url = self._thread_url(category, slug)
+        card = build_standalone_mention_card(
+            thread_title=thread_title,
+            author_name=author_name,
+            mention_open_ids=mention_open_ids,
+            mention_comments=mention_comments,
+            post_excerpt=post_excerpt,
+            thread_url=url,
+        )
+        self._broadcast(card, event=f"mention slug={slug} file={target_filename}")
+        dm = build_mention_dm_card(
+            author_name=author_name,
+            thread_title=thread_title,
+            kind="提及",
+            comments=mention_comments,
+            thread_url=url,
+        )
+        self._dm_many(mention_open_ids, dm, event=f"mention slug={slug}")
 
     def notify_status_change(
         self, *, category, slug, thread_title, from_state, to_state, author_name, reason,
@@ -285,6 +322,31 @@ def build_status_change_card(
         header=f"状态变更：{thread_title}",
         template="purple",
         markdown="\n\n".join(md_parts),
+        button_text="查看讨论",
+        thread_url=thread_url,
+    )
+
+
+def build_standalone_mention_card(
+    *,
+    thread_title: str,
+    author_name: str,
+    mention_open_ids: list[str],
+    mention_comments: str,
+    post_excerpt: str,
+    thread_url: str,
+) -> dict:
+    parts: list[str] = []
+    if mention_open_ids:
+        parts.append(" ".join(f'<at user_id="{oid}"></at>' for oid in mention_open_ids))
+    parts.append(f"**{author_name}** 提及（主题：**{thread_title}**）")
+    parts.append(f"**说明**：{mention_comments}")
+    if post_excerpt:
+        parts.append(f"**相关内容**：{_truncate(post_excerpt, 150)}")
+    return _card_shell(
+        header=f"提及：{thread_title}",
+        template="orange",
+        markdown="\n\n".join(parts),
         button_text="查看讨论",
         thread_url=thread_url,
     )

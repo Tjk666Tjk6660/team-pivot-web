@@ -10,7 +10,12 @@ from server.contacts import ContactRepo
 from server.index_files import change_thread_status
 from server.mentions import resolve_id, resolve_text
 from server.notify import Notifier
-from server.publish import PublishError, publish_proposal, publish_reply
+from server.publish import (
+    PublishError,
+    add_standalone_mention,
+    publish_proposal,
+    publish_reply,
+)
 from server.status_machine import (
     REASON_MIN_LEN,
     VALID_STATES,
@@ -42,6 +47,11 @@ class ReplyBody(BaseModel):
 class StatusChangeBody(BaseModel):
     to: str = Field(min_length=1, max_length=20)
     reason: str | None = Field(default=None, max_length=500)
+
+
+class StandaloneMentionBody(BaseModel):
+    target_filename: str = Field(min_length=1, max_length=200)
+    mentions: MentionBlock
 
 
 def build_router(
@@ -136,6 +146,27 @@ def build_router(
             raise HTTPException(
                 status_code=404 if "not found" in str(e) else 400, detail=str(e)
             ) from e
+
+    @router.post("/threads/{category}/{slug}/mentions")
+    def add_mention(
+        category: str, slug: str, body: StandaloneMentionBody,
+        sid: str | None = Cookie(default=None),
+    ):
+        user = _current_user(sid)
+        try:
+            return add_standalone_mention(
+                workspace, user,
+                category=category, slug=slug,
+                target_filename=body.target_filename,
+                mention_open_ids=body.mentions.open_ids,
+                mention_comments=body.mentions.comments,
+                contacts=contacts,
+                notifier=notifier,
+            )
+        except PublishError as e:
+            detail = str(e)
+            code = 404 if "not found" in detail else 400
+            raise HTTPException(status_code=code, detail=detail) from e
 
     @router.post("/threads/{category}/{slug}/status")
     def change_status(

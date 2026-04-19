@@ -14,6 +14,7 @@ log = logging.getLogger(__name__)
 class Session:
     user_open_id: str
     expires_at: float
+    user_access_token: str | None = None
 
 
 class SessionStore:
@@ -21,14 +22,20 @@ class SessionStore:
         self._db = db
         self._ttl = ttl_sec
 
-    def create(self, user_open_id: str) -> str:
+    def create(
+        self,
+        user_open_id: str,
+        *,
+        user_access_token: str | None = None,
+    ) -> str:
         sid = secrets.token_urlsafe(32)
         now = time()
         with self._db.connect() as conn:
             conn.execute(
-                "INSERT INTO sessions (id, user_open_id, expires_at, created_at)"
-                " VALUES (?,?,?,?)",
-                (sid, user_open_id, now + self._ttl, now),
+                "INSERT INTO sessions"
+                " (id, user_open_id, expires_at, created_at, user_access_token)"
+                " VALUES (?,?,?,?,?)",
+                (sid, user_open_id, now + self._ttl, now, user_access_token),
             )
         log.debug("session created sid=%s... user=%s", sid[:8], user_open_id)
         return sid
@@ -38,7 +45,9 @@ class SessionStore:
             return None
         with self._db.connect() as conn:
             row = conn.execute(
-                "SELECT user_open_id, expires_at FROM sessions WHERE id=?", (sid,)
+                "SELECT user_open_id, expires_at, user_access_token"
+                " FROM sessions WHERE id=?",
+                (sid,),
             ).fetchone()
         if row is None:
             return None
@@ -48,6 +57,7 @@ class SessionStore:
         return Session(
             user_open_id=row["user_open_id"],
             expires_at=row["expires_at"],
+            user_access_token=row["user_access_token"],
         )
 
     def delete(self, sid: str | None) -> None:

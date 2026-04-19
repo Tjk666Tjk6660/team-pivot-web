@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import threading
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,7 +42,7 @@ def create_app() -> FastAPI:
         app_secret=cfg.feishu_app_secret,
         cache_dir=cfg.data_dir,
     )
-    syncer = FeishuContactSyncer(token_getter=tokens.get, contacts=contacts)
+    syncer = FeishuContactSyncer(contacts=contacts, tenant_token_getter=tokens.get)
 
     oauth = FeishuOAuth(
         app_id=cfg.feishu_app_id,
@@ -72,15 +71,6 @@ def create_app() -> FastAPI:
     workspace.ensure_cloned()
     workspace.recover()
 
-    def _bg_sync_contacts() -> None:
-        try:
-            n = syncer.sync()
-            log.info("initial contact sync done count=%d", n)
-        except Exception:
-            log.warning("initial contact sync failed (manual sync button still available)", exc_info=True)
-
-    threading.Thread(target=_bg_sync_contacts, daemon=True).start()
-
     app = FastAPI(title="team-pivot-web")
     app.add_middleware(
         CORSMiddleware,
@@ -94,6 +84,7 @@ def create_app() -> FastAPI:
             oauth,
             sessions,
             users,
+            contacts,
             cfg.session_secret,
             post_login_redirect=cfg.web_dev_origin + "/",
         )

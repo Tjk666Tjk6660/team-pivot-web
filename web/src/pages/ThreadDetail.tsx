@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import Markdown from "react-markdown";
 import {
+  addMention,
   changeThreadStatus,
   deleteDraft,
   fetchDrafts,
@@ -81,7 +82,8 @@ export function ThreadDetail({ me, onLogout }: { me: Me; onLogout: () => void })
           </div>
           <div style={{ marginTop: 32 }}>
             {data.posts.map((p) => (
-              <PostCard key={p.filename} post={p} />
+              <PostCard key={p.filename} post={p}
+                category={category!} slug={slug!} />
             ))}
           </div>
           {category && slug && (
@@ -93,10 +95,43 @@ export function ThreadDetail({ me, onLogout }: { me: Me; onLogout: () => void })
   );
 }
 
-function PostCard({ post }: { post: Post }) {
+function PostCard({
+  post, category, slug,
+}: { post: Post; category: string; slug: string }) {
   const author =
     post.author_display ?? (post.frontmatter.author as string) ?? "unknown";
   const type = (post.frontmatter.type as string) ?? "";
+  const [expanded, setExpanded] = useState(false);
+  const [mentions, setMentions] = useState<MentionBlock>(emptyMention());
+  const resolvedNames = useRef<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  const submit = async () => {
+    if (mentions.open_ids.length === 0) {
+      setError("至少选一个人");
+      return;
+    }
+    if (!isMentionValid(mentions)) {
+      setError("必须填一句话");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      await addMention(category, slug, post.filename, mentions);
+      setSuccess(true);
+      setExpanded(false);
+      setMentions(emptyMention());
+      window.setTimeout(() => setSuccess(false), 3000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <article
       style={{
@@ -111,6 +146,47 @@ function PostCard({ post }: { post: Post }) {
       <div style={{ lineHeight: 1.6 }}>
         <Markdown>{post.body}</Markdown>
       </div>
+      <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
+        <button
+          onClick={() => setExpanded((e) => !e)}
+          style={{
+            fontSize: 12, padding: "2px 8px", border: "1px solid #ddd",
+            background: "white", borderRadius: 3, cursor: "pointer",
+          }}
+        >
+          {expanded ? "收起" : "+ 提及"}
+        </button>
+        {success && <span style={{ fontSize: 12, color: "#0f7a3b" }}>已发送</span>}
+      </div>
+      {expanded && (
+        <div style={{ marginTop: 12 }}>
+          <MentionField
+            value={mentions}
+            onChange={setMentions}
+            resolvedNames={resolvedNames.current}
+          />
+          {error && <div style={{ color: "#c00", marginTop: 8, fontSize: 13 }}>{error}</div>}
+          <div style={{ marginTop: 12, display: "flex", gap: 12 }}>
+            <button
+              onClick={submit}
+              disabled={submitting}
+              style={{
+                padding: "6px 14px", background: "#3370ff", color: "white",
+                border: "none", borderRadius: 4, cursor: "pointer", fontSize: 13,
+              }}
+            >
+              {submitting ? "提交中…" : "提及"}
+            </button>
+            <button
+              onClick={() => { setExpanded(false); setMentions(emptyMention()); }}
+              disabled={submitting}
+              style={{ padding: "6px 14px", fontSize: 13 }}
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      )}
     </article>
   );
 }

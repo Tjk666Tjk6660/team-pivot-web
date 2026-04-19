@@ -250,6 +250,28 @@ export async function fetchInbox(): Promise<InboxItem[]> {
   return body.items;
 }
 
+export async function addMention(
+  category: string,
+  slug: string,
+  target_filename: string,
+  mentions: MentionBlock,
+): Promise<{ ok: true }> {
+  const r = await fetch(
+    `/api/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/mentions`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target_filename, mentions }),
+    },
+  );
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `mention failed: ${r.status}`);
+  }
+  return await r.json();
+}
+
 export async function changeThreadStatus(
   category: string, slug: string, to: string, reason?: string,
 ): Promise<{ ok: true; from: string; to: string }> {

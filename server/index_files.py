@@ -7,6 +7,32 @@ from pathlib import Path
 import yaml
 
 
+def append_standalone_mention(
+    index_dir: Path,
+    *,
+    category: str,
+    slug: str,
+    target_filename: str,
+    author_id: str,
+    mention: dict,
+    now_iso: str,
+) -> Path:
+    path = Path(index_dir) / f"{slug}-discuss.index.yaml"
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    origin = f"discussions/{category}/{slug}/"
+    data["last_updated"] = now_iso
+    data.setdefault("timeline", []).append({
+        "time": now_iso,
+        "event": f"{author_id} mentioned",
+        "file": f"{origin}{target_filename}",
+        "mention": mention,
+    })
+    _atomic_write_yaml(path, data)
+    return path
+
+
 def change_thread_status(
     index_dir: Path,
     *,

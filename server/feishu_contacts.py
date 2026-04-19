@@ -22,25 +22,27 @@ class FeishuContactSyncer:
     def __init__(
         self,
         *,
-        token_getter: Callable[[], str],
         contacts: ContactRepo,
+        tenant_token_getter: Callable[[], str],
     ) -> None:
-        self._get_token = token_getter
         self._contacts = contacts
+        self._get_tenant_token = tenant_token_getter
 
-    def sync(self) -> int:
-        token = self._get_token()
-        dept_ids, user_ids = self._fetch_scopes(token)
-        log.info("feishu scopes departments=%d users=%d", len(dept_ids), len(user_ids))
-        if not dept_ids and not user_ids:
+    def sync(self, user_token: str) -> int:
+        tenant_token = self._get_tenant_token()
+        dept_ids, user_ids_from_scope = self._fetch_scopes(tenant_token)
+        log.info(
+            "feishu scopes departments=%d users=%d",
+            len(dept_ids), len(user_ids_from_scope),
+        )
+        if not dept_ids and not user_ids_from_scope:
             log.warning(
-                "feishu scope empty; check that the app has contact read permission"
-                " and its visibility range is set to members"
+                "feishu scope empty; check that the app has contact permissions"
+                " and its visibility range includes real members"
             )
             return 0
 
-        users_by_oid: dict[str, dict] = {}
-
+        all_user_ids: set[str] = set(user_ids_from_scope)
         seen_depts: set[str] = set()
         queue: list[str] = list(dept_ids)
         while queue:
@@ -48,18 +50,17 @@ class FeishuContactSyncer:
             if d in seen_depts:
                 continue
             seen_depts.add(d)
-            for u in self._list_users_in_dept(token, d):
+            for u in self._list_users_in_dept(tenant_token, d):
                 oid = u.get("open_id")
-                if oid and oid not in users_by_oid:
-                    users_by_oid[oid] = u
-            for child in self._list_children(token, d):
+                if oid:
+                    all_user_ids.add(oid)
+            for child in self._list_children(tenant_token, d):
                 if child not in seen_depts:
                     queue.append(child)
 
-        for uid in user_ids:
-            if uid in users_by_oid:
-                continue
-            u = self._get_user(token, uid)
+        users_by_oid: dict[str, dict] = {}
+        for uid in all_user_ids:
+            u = self._get_user(user_token, uid)
             if u and u.get("open_id"):
                 users_by_oid[u["open_id"]] = u
 
@@ -74,8 +75,10 @@ class FeishuContactSyncer:
             for u in users_by_oid.values()
         ]
         self._contacts.upsert_many(batch)
-        log.info("contact sync done users=%d (departments walked=%d)",
-                 len(users_by_oid), len(seen_depts))
+        log.info(
+            "contact sync done users=%d (discovered_ids=%d, departments=%d)",
+            len(users_by_oid), len(all_user_ids), len(seen_depts),
+        )
         return len(users_by_oid)
 
     def _fetch_scopes(self, token: str) -> tuple[list[str], list[str]]:
