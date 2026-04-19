@@ -74,6 +74,33 @@ def test_callback_creates_user_and_sets_cookie(client_and_oauth, users):
     assert u is not None and u.name == "Ken" and u.needs_setup is True
 
 
+def test_callback_uses_samesite_none_for_secure_cookie(db, users):
+    from server.contacts import ContactRepo
+
+    oauth = FakeOAuth()
+    sessions = SessionStore(db)
+    app = FastAPI()
+    app.include_router(
+        build_router(
+            oauth,
+            sessions,
+            users,
+            ContactRepo(db),
+            SECRET,
+            secure_cookie=True,
+        )
+    )
+    client = TestClient(app)
+
+    login = client.get("/login", follow_redirects=False)
+    state = login.headers["location"].split("state=", 1)[1]
+    cb = client.get(f"/auth/callback?code=abc&state={state}", follow_redirects=False)
+
+    set_cookie = cb.headers["set-cookie"].lower()
+    assert "secure" in set_cookie
+    assert "samesite=none" in set_cookie
+
+
 def test_me_returns_401_without_session(client_and_oauth):
     client, _ = client_and_oauth
     assert client.get("/me").status_code == 401

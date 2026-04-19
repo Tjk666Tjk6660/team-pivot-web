@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --primary: 221 83% 53%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 210 40% 96%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 221 83% 53%;
+    --radius: 0.5rem;
+  }
+
+  * { @apply border-border; }
+  body { @apply bg-background text-foreground; }
+}
+
+.prose-pivot {
+  @apply text-sm leading-relaxed;
+}
+.prose-pivot p { @apply my-2; }
+.prose-pivot h1 { @apply text-lg font-semibold mt-4 mb-2; }
+.prose-pivot h2 { @apply text-base font-semibold mt-3 mb-2; }
+.prose-pivot h3 { @apply text-sm font-semibold mt-3 mb-1; }
+.prose-pivot ul { @apply list-disc pl-5 my-2; }
+.prose-pivot ol { @apply list-decimal pl-5 my-2; }
+.prose-pivot code { @apply bg-muted px-1 py-0.5 rounded text-xs; }
+.prose-pivot pre { @apply bg-muted p-3 rounded my-2 overflow-x-auto; }
+.prose-pivot pre code { @apply bg-transparent p-0; }
+.prose-pivot blockquote { @apply border-l-4 border-muted pl-3 my-2 text-muted-foreground; }
+.prose-pivot a { @apply text-primary underline underline-offset-2; }
+.prose-pivot table { @apply my-3 w-full border-collapse text-sm; }
+.prose-pivot th { @apply border border-border bg-muted px-3 py-1.5 text-left font-semibold; }
+.prose-pivot td { @apply border border-border px-3 py-1.5; }
+.prose-pivot tr:nth-child(even) td { @apply bg-muted/30; }
+.prose-pivot input[type="checkbox"] { @apply mr-1.5 align-middle; }

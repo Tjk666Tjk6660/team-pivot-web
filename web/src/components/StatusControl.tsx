@@ -1,5 +1,11 @@
-import { useState } from "react";
-import { StatusBadge } from "./StatusBadge";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import { StatusBadge } from "@/components/StatusBadge";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 
 type Transition = { to: string; label: string; needsReason: boolean };
 
@@ -24,169 +30,119 @@ export function StatusControl({
   status: string | null;
   onChange: (to: string, reason?: string) => Promise<void>;
 }) {
-  const [open, setOpen] = useState(false);
-  const [pendingTo, setPendingTo] = useState<Transition | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [pending, setPending] = useState<Transition | null>(null);
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   const current = status ?? "open";
   const options = TRANSITIONS[current] ?? [];
 
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setMenuOpen(false); };
+    document.addEventListener("mousedown", handler);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
   const applyDirect = async (t: Transition) => {
     setSubmitting(true);
-    setError(null);
     try {
       await onChange(t.to);
-      setOpen(false);
+      setMenuOpen(false);
+      toast.success("状态已更新");
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setSubmitting(false);
     }
   };
 
   const applyWithReason = async () => {
-    if (!pendingTo) return;
+    if (!pending) return;
     if (reason.trim().length < REASON_MIN) {
-      setError(`原因至少 ${REASON_MIN} 字`);
+      toast.error(`原因至少 ${REASON_MIN} 字`);
       return;
     }
     setSubmitting(true);
-    setError(null);
     try {
-      await onChange(pendingTo.to, reason.trim());
-      setPendingTo(null);
-      setReason("");
-      setOpen(false);
+      await onChange(pending.to, reason.trim());
+      setPending(null); setReason(""); setMenuOpen(false);
+      toast.success("状态已更新");
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <div style={{ position: "relative", display: "inline-block" }}>
+    <div className="relative inline-block" ref={menuRef}>
       <button
-        onClick={() => setOpen((o) => !o)}
+        type="button"
+        onClick={() => options.length > 0 && setMenuOpen((o) => !o)}
         disabled={options.length === 0}
-        style={{
-          border: "none",
-          background: "transparent",
-          cursor: options.length === 0 ? "default" : "pointer",
-          padding: 0,
-        }}
+        className={options.length > 0 ? "cursor-pointer" : "cursor-default"}
         title={options.length === 0 ? undefined : "更改状态"}
       >
         <StatusBadge status={status} />
       </button>
-
-      {open && options.length > 0 && !pendingTo && (
-        <div
-          style={{
-            position: "absolute",
-            top: "100%",
-            left: 0,
-            marginTop: 4,
-            background: "white",
-            border: "1px solid #ddd",
-            borderRadius: 6,
-            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-            zIndex: 10,
-            minWidth: 180,
-          }}
-        >
+      {menuOpen && options.length > 0 && (
+        <div className="absolute left-0 top-full z-30 mt-1 min-w-44 rounded-md border bg-white dark:bg-zinc-900 shadow-md">
           {options.map((t) => (
             <button
               key={t.to}
-              onClick={() => (t.needsReason ? setPendingTo(t) : applyDirect(t))}
+              type="button"
+              onClick={() => (t.needsReason ? setPending(t) : applyDirect(t))}
               disabled={submitting}
-              style={{
-                display: "block",
-                width: "100%",
-                padding: "8px 12px",
-                border: "none",
-                background: "transparent",
-                textAlign: "left",
-                cursor: "pointer",
-                fontSize: 13,
-              }}
+              className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50"
             >
               {t.label}
             </button>
           ))}
-          {error && <div style={{ color: "#c00", padding: "4px 12px", fontSize: 12 }}>{error}</div>}
         </div>
       )}
-
-      {pendingTo && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.3)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 100,
-          }}
-          onClick={() => !submitting && setPendingTo(null)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: "white",
-              padding: 24,
-              borderRadius: 8,
-              width: 420,
-              maxWidth: "90vw",
-            }}
-          >
-            <h3 style={{ margin: "0 0 12px" }}>{pendingTo.label}</h3>
-            <p style={{ fontSize: 13, color: "#666", marginTop: 0 }}>
-              请说明重新打开的原因（至少 {REASON_MIN} 字）
-            </p>
-            <textarea
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              rows={4}
-              autoFocus
-              style={{
-                width: "100%",
-                padding: 8,
-                fontSize: 14,
-                fontFamily: "inherit",
-                boxSizing: "border-box",
-              }}
-            />
-            {error && <div style={{ color: "#c00", marginTop: 8, fontSize: 13 }}>{error}</div>}
-            <div style={{ marginTop: 16, display: "flex", gap: 12, justifyContent: "flex-end" }}>
-              <button
-                onClick={() => setPendingTo(null)}
-                disabled={submitting}
-                style={{ padding: "8px 16px" }}
-              >
-                取消
-              </button>
-              <button
-                onClick={applyWithReason}
-                disabled={submitting || reason.trim().length < REASON_MIN}
-                style={{
-                  padding: "8px 16px",
-                  background: "#3370ff",
-                  color: "white",
-                  border: "none",
-                  borderRadius: 4,
-                  cursor: "pointer",
-                }}
-              >
-                {submitting ? "提交中…" : "确认"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Dialog open={!!pending} onOpenChange={(o) => !o && setPending(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{pending?.label}</DialogTitle>
+            <DialogDescription>
+              请说明原因（至少 {REASON_MIN} 字）
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={4}
+            autoFocus
+          />
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setPending(null)}
+              disabled={submitting}
+            >
+              取消
+            </Button>
+            <Button
+              onClick={applyWithReason}
+              disabled={submitting || reason.trim().length < REASON_MIN}
+            >
+              {submitting ? "提交中…" : "确认"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

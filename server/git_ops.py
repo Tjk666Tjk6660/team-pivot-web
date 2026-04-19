@@ -54,6 +54,17 @@ def pull(repo_dir: str) -> None:
     except GitError as e:
         if any(k in e.stderr.lower() for k in ("could not resolve", "network", "timeout")):
             return
+        if "unstaged changes" in e.stderr.lower() or "cannot pull with rebase" in e.stderr.lower():
+            log.warning("pull blocked by local dirty state; committing and retrying")
+            _run(["git", "add", "-A"], cwd=repo_dir)
+            _run(["git", "commit", "-m", "chore: auto-commit dirty state before pull",
+                  "--author", "team-pivot-web <team-pivot-web@pivot.local>"], cwd=repo_dir)
+            try:
+                _run(["git", "push", "origin", "HEAD"], cwd=repo_dir)
+            except GitError:
+                log.warning("auto-commit push failed; proceeding with pull anyway")
+            _run(["git", "pull", "--rebase", "origin"], cwd=repo_dir)
+            return
         raise
 
 

@@ -7,6 +7,8 @@ from server.posts import read_post
 from server.read_state import ReadStateRepo
 from server.threads import ThreadMeta, list_threads
 
+_CONTENT_TYPES = {"proposal", "reply"}
+
 
 @dataclass(frozen=True)
 class InboxItem:
@@ -50,12 +52,36 @@ def compute_inbox(
     return items
 
 
+def compute_unread_counts(
+    discussions_root: Path,
+    index_dir: Path,
+    user_open_id: str,
+    read_states: ReadStateRepo,
+) -> dict[str, int]:
+    """Returns {category/slug: unread_count} for threads with unread proposal/reply posts."""
+    state = read_states.all_for_user(user_open_id)
+    result: dict[str, int] = {}
+    for meta in list_threads(discussions_root, index_dir):
+        tdir = discussions_root / meta.category / meta.slug
+        filenames = _post_filenames(tdir)
+        key = f"{meta.category}/{meta.slug}"
+        last_read = state.get(key)
+        if last_read is None:
+            count = len(filenames)
+        else:
+            count = sum(1 for f in filenames if f > last_read)
+        if count > 0:
+            result[key] = count
+    return result
+
+
 def latest_post_filename(thread_dir: Path) -> str | None:
     fs = _post_filenames(thread_dir)
     return fs[-1] if fs else None
 
 
 def _post_filenames(tdir: Path) -> list[str]:
+    """Returns sorted filenames of indexed proposal/reply posts."""
     if not tdir.is_dir():
         return []
     out: list[str] = []
@@ -69,6 +95,8 @@ def _post_filenames(tdir: Path) -> list[str]:
         except Exception:
             continue
         if p.frontmatter.get("index_state") == "un-indexed":
+            continue
+        if p.frontmatter.get("type") not in _CONTENT_TYPES:
             continue
         out.append(f.name)
     return out

@@ -9,6 +9,7 @@ dependencies = [
     "lark-oapi>=1.4",
     "itsdangerous>=2.2",
     "python-dotenv>=1.0",
+    "httpx>=0.27",
 ]
 
 [dependency-groups]

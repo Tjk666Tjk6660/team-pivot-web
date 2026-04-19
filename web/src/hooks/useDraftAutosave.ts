@@ -13,6 +13,8 @@ export function useDraftAutosave(params: {
     body_md: string;
     thread_key?: string | null;
     mentions?: MentionBlock | null;
+    reply_to?: string | null;
+    references?: string[];
   };
   enabled: boolean;
   debounceMs?: number;
@@ -24,18 +26,26 @@ export function useDraftAutosave(params: {
   const timer = useRef<number | null>(null);
   const inFlight = useRef<Promise<string | null> | null>(null);
 
+  // Use a ref so that delayed timers always read the latest draftId. Without this,
+  // a timer scheduled when draftId=null can fire after a parent has set draftId=X
+  // and create a duplicate draft (its captured `save` still saw draftId=null).
+  const draftIdRef = useRef(draftId);
+  useEffect(() => { draftIdRef.current = draftId; }, [draftId]);
+
   const save = async (): Promise<string | null> => {
     setStatus("saving");
     setError(null);
     try {
       const p = payload();
-      if (draftId === null) {
+      const currentId = draftIdRef.current;
+      if (currentId === null) {
         const d = await createDraft({ type, ...p });
+        draftIdRef.current = d.id;
         setDraftId(d.id);
         setStatus("saved");
         return d.id;
       }
-      const d = await updateDraft(draftId, p);
+      const d = await updateDraft(currentId, p);
       setStatus("saved");
       return d.id;
     } catch (e) {

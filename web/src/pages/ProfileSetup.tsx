@@ -1,5 +1,9 @@
 import { useState } from "react";
-import { updateProfile, type Me } from "../api";
+import { updateProfile, type Me } from "@/api";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 export function ProfileSetup({ me, onDone }: { me: Me; onDone: (m: Me) => void }) {
   const [pinyin, setPinyin] = useState("");
@@ -25,50 +29,45 @@ export function ProfileSetup({ me, onDone }: { me: Me; onDone: (m: Me) => void }
   };
 
   return (
-    <div style={{ padding: 48, maxWidth: 480, fontFamily: "system-ui, sans-serif" }}>
-      <h1>Welcome, {me.name}</h1>
-      <p style={{ color: "#666" }}>
-        One-time setup. This info is used as your git author name and branch prefix.
-      </p>
-      <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <label>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>Pinyin name *</div>
-          <input
-            value={pinyin}
-            onChange={(e) => setPinyin(e.target.value)}
-            required
-            placeholder="e.g. dengke or keller.koh"
-            style={{ width: "100%", padding: 8, fontSize: 14 }}
-          />
-          <div style={{ fontSize: 12, color: "#888", marginTop: 4 }}>
-            Lowercase letters, digits, <code>. _ -</code> only. Must start with a letter.
-          </div>
-        </label>
-        <label>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>GitHub username (optional)</div>
-          <input
-            value={github}
-            onChange={(e) => setGithub(e.target.value)}
-            placeholder="your-github-handle"
-            style={{ width: "100%", padding: 8, fontSize: 14 }}
-          />
-        </label>
-        {error && <div style={{ color: "#c00" }}>{error}</div>}
-        <button
-          type="submit"
-          disabled={submitting || !pinyin.trim()}
-          style={{
-            padding: "10px 20px",
-            background: "#3370ff",
-            color: "white",
-            border: "none",
-            borderRadius: 6,
-            cursor: "pointer",
-          }}
-        >
-          {submitting ? "Saving…" : "Continue"}
-        </button>
-      </form>
+    <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4">
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle>欢迎，{me.name}</CardTitle>
+          <CardDescription>
+            一次性设置。用作 git author 和分支名。
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={submit} className="flex flex-col gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="pinyin">拼音名（必填）</Label>
+              <Input
+                id="pinyin"
+                value={pinyin}
+                onChange={(e) => setPinyin(e.target.value)}
+                placeholder="dengke / keller.koh"
+                required
+              />
+              <p className="text-xs text-muted-foreground">
+                小写字母、数字和 <code>. _ -</code>，以字母开头。
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="github">GitHub 用户名（可选）</Label>
+              <Input
+                id="github"
+                value={github}
+                onChange={(e) => setGithub(e.target.value)}
+                placeholder="your-github-handle"
+              />
+            </div>
+            {error && <p className="text-sm text-destructive">{error}</p>}
+            <Button type="submit" disabled={submitting || !pinyin.trim()}>
+              {submitting ? "保存中…" : "Continue"}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   );
 }

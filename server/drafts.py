@@ -20,6 +20,8 @@ class Draft:
     body_md: str
     thread_key: str | None
     mentions_json: str | None
+    reply_to: str | None
+    references_json: str
     created_at: float
     updated_at: float
 
@@ -38,6 +40,8 @@ class DraftRepo:
         body_md: str = "",
         thread_key: str | None = None,
         mentions_json: str | None = None,
+        reply_to: str | None = None,
+        references_json: str = "[]",
     ) -> Draft:
         if type_ not in VALID_TYPES:
             raise ValueError(f"invalid draft type: {type_}")
@@ -47,7 +51,8 @@ class DraftRepo:
             conn.execute(
                 "INSERT INTO drafts"
                 " (id, user_open_id, type, title, category, body_md, thread_key,"
-                "  mentions_json, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "  mentions_json, reply_to, references_json, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     draft_id,
                     user_open_id,
@@ -57,6 +62,8 @@ class DraftRepo:
                     body_md,
                     thread_key,
                     mentions_json,
+                    reply_to,
+                    references_json,
                     now,
                     now,
                 ),
@@ -89,6 +96,8 @@ class DraftRepo:
         body_md: str | None = None,
         thread_key: str | None = None,
         mentions_json: str | None = None,
+        reply_to: str | None = None,
+        references_json: str | None = None,
     ) -> Draft | None:
         fields: list[str] = []
         values: list[object] = []
@@ -98,6 +107,8 @@ class DraftRepo:
             ("body_md", body_md),
             ("thread_key", thread_key),
             ("mentions_json", mentions_json),
+            ("reply_to", reply_to),
+            ("references_json", references_json),
         ):
             if val is not None:
                 fields.append(f"{name}=?")
@@ -130,6 +141,8 @@ def _row(row: sqlite3.Row) -> Draft:
         body_md=row["body_md"],
         thread_key=row["thread_key"],
         mentions_json=row["mentions_json"] if "mentions_json" in cols else None,
+        reply_to=row["reply_to"] if "reply_to" in cols else None,
+        references_json=(row["references_json"] if "references_json" in cols else None) or "[]",
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

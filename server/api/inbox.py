@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import logging
+from typing import Callable
 
-from fastapi import APIRouter, Cookie, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
-from server.auth.session import SessionStore
 from server.inbox import compute_inbox, latest_post_filename
 from server.mentions import resolve_id
 from server.read_state import ReadStateRepo
@@ -16,25 +16,14 @@ log = logging.getLogger(__name__)
 
 def build_router(
     workspace: Workspace,
-    sessions: SessionStore,
     users: UserRepo,
     read_states: ReadStateRepo,
+    current_user: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
 
-    def _current_user(sid: str | None) -> User:
-        s = sessions.get(sid)
-        if s is None:
-            raise HTTPException(status_code=401, detail="not logged in")
-        u = users.get(s.user_open_id)
-        if u is None:
-            sessions.delete(sid)
-            raise HTTPException(status_code=401, detail="user not found")
-        return u
-
     @router.get("/inbox")
-    def inbox(sid: str | None = Cookie(default=None)):
-        user = _current_user(sid)
+    def inbox(user: User = Depends(current_user)):
         items = compute_inbox(
             workspace.discussions_dir,
             workspace.index_dir,
@@ -64,9 +53,9 @@ def build_router(
 
     @router.post("/threads/{category}/{slug}/read")
     def mark_read(
-        category: str, slug: str, sid: str | None = Cookie(default=None),
+        category: str, slug: str,
+        user: User = Depends(current_user),
     ):
-        user = _current_user(sid)
         tdir = workspace.discussions_dir / category / slug
         if not tdir.is_dir():
             raise HTTPException(status_code=404, detail="thread not found")

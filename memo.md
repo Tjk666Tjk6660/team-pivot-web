@@ -4,274 +4,272 @@
 
 ## 1. 项目目标
 
-把原 `team-pivot`（飞书 IM bot + EC pipeline APP）改造为**独立 Web 应用**，交互形态类似邮件客户端，数据仓库继续用 Git（`teamDocs` 模式），只通过**飞书 OAuth2 鉴权**登录，不开放自主注册。
+把原 `team-pivot`（飞书 IM bot）改造为**独立 Web 应用**，交互形态类似邮件客户端，数据仓库继续用 Git（`teamDocs` 模式），只通过**飞书 OAuth2 鉴权**登录，不开放自主注册。EC bot 保留做"通知推送 + 快速发帖"的轻交互，和 Web 并行互补。
 
-## 2. 为什么不继续做 EC skill
+## 2. 技术栈
 
-- EC 是 IM bot 运行时，pipeline + 卡片回复范式承载不了富 UI
-- 邮件客户端式交互（双栏阅读 / 键盘 / 拖拽）必须是真正的 Web 前端
-- 飞书可以通过机器人菜单 / 群卡片按钮跳转 Web H5，鉴权用飞书 JSAPI 免登，无需 EC 中转
-- EC bot 保留做"通知推送 + 快速发帖"的轻交互，和 Web 并行互补
+| 层 | 选型 |
+|---|---|
+| 前端 | React 18 + Vite + TypeScript + React Router 7 + react-markdown + remark-gfm |
+| UI | shadcn/ui + Tailwind CSS |
+| 后端 | Python 3.12 + FastAPI + Uvicorn（sync handlers in threadpool） |
+| 包管理 | **uv** |
+| Git | 纯 subprocess 封装（`server/git_ops.py`，不用 GitPython） |
+| SQLite | 标准库 `sqlite3`（per-user 状态：users/drafts/read_state） |
+| Session | SQLite 持久化 + 签名 cookie（itsdangerous） |
+| 飞书 | `lark-oapi`（OAuth）；`httpx` 直调（IM 通知） |
+| 日志 | 标准库 `logging`，`LOG_LEVEL` env 切换，`var/log/pivot.log` |
 
-## 3. 技术栈（实际采用）
+**Git 是内容权威源**。SQLite 只存 per-user 私有状态（drafts/read_state/users），不做内容索引。
 
-| 层 | 选型 | 状态 |
-|---|---|---|
-| 前端 | React 18 + Vite + TypeScript + React Router 7 + react-markdown | ✅ 已搭 |
-| shadcn/ui + Tailwind | 未用（当前 inline 样式，MVP 够用） | ⏳ 未做 |
-| TanStack Query | 未引入（`useState + fetch` 足够 MVP） | ⏳ 未做 |
-| 后端 | Python 3.12 + FastAPI + Uvicorn（sync handlers in threadpool） | ✅ |
-| 包管理 | **uv**（非 poetry / requirements.txt） | ✅ |
-| Git | 纯 subprocess 封装（不用 GitPython） | ✅ |
-| SQLite | 标准库 `sqlite3`（非 aiosqlite，sync handlers 够用） | ✅ |
-| Session | 内存 dict + 签名 cookie（itsdangerous） | ✅ |
-| 飞书 SDK | `lark-oapi`（OAuth）；`httpx` 直调（IM 通知） | ✅ |
-| 日志 | 标准库 `logging`，`LOG_LEVEL` env 切换 | ✅ |
-| 部署 | Ubuntu 24 LTS + systemd + Caddy | ⏳ 未做 |
-
-## 4. 目录结构（实际）
+## 3. 目录结构
 
 ```
 team-pivot-web/
-├── old/                              # 原 APP 代码归档（参考用，不动）
-├── server/                           # FastAPI 后端
-│   ├── app.py                        # create_app() 工厂 + 依赖装配
-│   ├── config.py                     # 从 .env 读配置
-│   ├── logging_setup.py              # 日志配置
-│   ├── db.py                         # SQLite 连接 + schema 初始化
+├── server/
+│   ├── app.py                  # create_app() 工厂
+│   ├── config.py               # .env 读配置
+│   ├── db.py                   # SQLite schema 初始化
 │   ├── auth/
-│   │   ├── feishu_oauth.py           # lark-oapi 封装 code → token → user_info
-│   │   ├── session.py                # 内存 SessionStore（sid → open_id）
-│   │   └── routes.py                 # /login /auth/callback /me /logout /me/profile
+│   │   ├── feishu_oauth.py     # lark-oapi: code → token → user_info
+│   │   ├── session.py          # SessionStore（SQLite 持久化）
+│   │   └── routes.py           # /login /auth/callback /me /logout /me/profile
 │   ├── api/
-│   │   ├── discussions.py            # GET/POST threads、thread detail
-│   │   ├── drafts.py                 # CRUD + /publish
-│   │   └── inbox.py                  # GET /inbox + POST .../read
-│   ├── users.py                      # UserRepo（SQLite）
-│   ├── drafts.py                     # DraftRepo
-│   ├── read_state.py                 # ReadStateRepo
-│   ├── workspace.py                  # Workspace：clone/pull/write_session/recover
-│   ├── git_ops.py                    # subprocess 封装（clone/pull/commit/push）
-│   ├── posts.py                      # markdown+frontmatter 读写 + 两阶段 pending
-│   ├── threads.py                    # 目录扫描 → ThreadMeta/ThreadDetail
-│   ├── index_files.py                # index/<slug>-discuss.index.yaml 读写
-│   ├── inbox.py                      # compute_inbox（未读计算）
-│   ├── mentions.py                   # open_id → 用户名解析
-│   ├── publish.py                    # publish_proposal/publish_reply（写路径共享入口）
-│   ├── recovery.py                   # 启动时扫 un-indexed 修复
-│   ├── notify.py                     # FeishuNotifier / NoOpNotifier 卡片通知
-│   └── tests/                        # pytest，101 个 passing
-└── web/                              # React 前端
-    ├── src/
-    │   ├── main.tsx / App.tsx        # BrowserRouter + 根组件
-    │   ├── api.ts                    # 所有 fetch 封装
-    │   ├── hooks/useDraftAutosave.ts # 2s debounce 自动存草稿
-    │   ├── lib/time.ts               # relativeTime
-    │   ├── components/
-    │   │   ├── UserBar.tsx           # 头像 + 名 + 登出
-    │   │   └── StatusBadge.tsx       # 5 色状态徽章
-    │   └── pages/
-    │       ├── Login.tsx             # Sign in with Feishu
-    │       ├── ProfileSetup.tsx      # 首登 pinyin 收集
-    │       ├── Home.tsx              # Inbox + Drafts + Discussions 三栏
-    │       ├── NewThread.tsx         # 发讨论表单（autosave）
-    │       └── ThreadDetail.tsx      # posts 列表 + Reply 表单（autosave）
-    └── vite.config.ts                # /login /auth /me /logout /api 代理到 :8000
+│   │   ├── discussions.py      # GET/POST threads, thread detail, status transitions
+│   │   ├── drafts.py           # CRUD + /publish（带 reply_to + references）
+│   │   ├── inbox.py            # GET /inbox + POST .../read
+│   │   ├── contacts.py         # GET /contacts, POST /contacts/sync (cookie-only)
+│   │   ├── ai.py               # AI 助手：/api/ai/{settings,files,threads/*/conversation,/chat}
+│   │   └── tokens.py           # PAT 管理：/api/tokens（cookie-only，无需管理员密码）
+│   ├── ai/
+│   │   ├── client.py           # OpenRouter SSE 流式
+│   │   ├── context.py          # build_context_from_files(reply_target, references)
+│   │   └── prompts.py          # 系统提示词（[[GENERATE_REPLY_DRAFT]] 强约束）
+│   ├── ai_conversations.py     # 每用户×thread 对话持久化
+│   ├── api_tokens.py           # PAT repo（pvt_<urlsafe44>，DB 只存 sha256）
+│   ├── settings.py             # SQLite key-value（AI key/model/截断参数）
+│   ├── auth/
+│   │   ├── deps.py             # make_current_user (cookie 或 Bearer) + cookie_only + require_profile
+│   │   ├── admin.py            # ADMIN_PASSWORD="000123" + require_admin (X-Admin-Password 头)
+│   ├── workspace.py            # Workspace: clone/pull/write_session/recover
+│   ├── git_ops.py              # subprocess 封装（clone/pull/commit/push）
+│   ├── posts.py                # markdown+frontmatter 读写 + 两阶段 pending
+│   ├── threads.py              # 目录扫描 → ThreadMeta/ThreadDetail
+│   ├── index_files.py          # index/<slug>-discuss.index.yaml 读写
+│   ├── publish.py              # publish_proposal/publish_reply（写路径共享入口）
+│   ├── recovery.py             # 启动时扫 un-indexed 文件修复
+│   ├── notify.py               # FeishuNotifier / NoOpNotifier 卡片通知
+│   ├── inbox.py                # compute_inbox（未读计算）
+│   ├── mentions.py             # open_id → 用户名解析
+│   ├── status_machine.py       # ALLOWED_TRANSITIONS 状态机
+│   ├── contacts.py / feishu_contacts.py / feishu_token.py
+│   └── tests/                  # pytest，覆盖主要模块
+└── web/src/
+    ├── main.tsx / App.tsx      # BrowserRouter + 根路由
+    ├── api.ts                  # 所有 fetch 封装
+    ├── hooks/useDraftAutosave.ts  # 2s debounce 自动存草稿
+    ├── lib/time.ts / utils.ts
+    ├── components/
+    │   ├── Layout.tsx          # 通用 header（NewThread/ProfileSetup 用）
+    │   ├── ThreadListPane.tsx  # 左栏：thread 列表 + 未读红点 + 草稿列表
+    │   ├── StatusControl.tsx   # 状态选择下拉（含外部点击关闭）
+    │   ├── MentionField.tsx    # @mention 输入（含联系人高亮）
+    │   ├── StatusBadge.tsx     # 5 色状态徽章
+    │   └── UserBar.tsx         # 头像 + 名 + 登出
+    ├── components/
+    │   ├── AIPane.tsx          # 右栏 AI 助手（回复对象 + 引用文件 + "生成回复草稿"按钮）
+    │   └── FileTreeBrowser.tsx # 文件树选择器（reply_target=单选 / reference=多选 max 4）
+    └── pages/
+        ├── Login.tsx
+        ├── ProfileSetup.tsx    # 首登 pinyin 收集
+        ├── Dashboard.tsx       # 主布局（左栏列表 + 右栏 Outlet），有**独立 header**；含 UserMenu 下拉
+        ├── NewThread.tsx       # 发讨论表单（autosave）
+        ├── SettingsPage.tsx    # /settings：个人设置，无密码，只有 PAT 管理
+        ├── AdminPage.tsx       # /admin：管理员密码门 + AI 配置 + 联系人同步
+        └── ThreadDetailPane.tsx  # 右栏：posts 列表 + 内联 ReplyForm + AIPane
 
-.env                                  # 本地配置（git 忽略）
-.env.example                          # 模板
-var/                                  # 运行时数据（git 忽略）
-  data.db                             # SQLite
-  git/test-team-pivot/                # 数据仓库工作副本
-  log/pivot.log                       # tee 日志（手动开启）
-  .feishu-token-<app_id>.json         # 飞书 tenant token 缓存
+var/
+  data.db                       # SQLite
+  git/test-team-pivot/          # 数据仓库工作副本
+  log/pivot.log                 # tee 日志（手动开启）
 ```
 
-**生产目录（目标，未部署）**：`/opt/team-pivot-web/` 代码、`/var/lib/team-pivot-web/` 数据、`/etc/systemd/system/team-pivot-web.service`、`/etc/caddy/Caddyfile`。
+**⚠️ 陷阱：`Dashboard.tsx` 有自己的独立 header，不使用 `Layout.tsx`。** 改顶栏按钮时两处都要改。
 
-## 5. 从 old/ 实际 port 了什么
+**⚠️ 陷阱：前端改动不生效** 先查 `find web/src -name "*.js" -not -path "*/node_modules/*"`——Vite 优先解析 `.js`，曾有过时 `.js` 文件遮蔽 `.tsx` 的问题。
 
-| 文件 | 去向 | 改动 |
-|---|---|---|
-| `old/tools/git_ops.py` | `server/git_ops.py` | 加 committer_name/email 参数；加日志 |
-| `old/tools/threads.py` | `server/threads.py` | 改名结构，去掉 EC 环境依赖，加 status/last_updated |
-| `old/tools/atomicity.py` | `server/posts.py` + `server/recovery.py` | write_post_pending / mark_indexed / scan_un_indexed 三件套 |
-| `old/tools/index.py` | `server/index_files.py` | 只用到 read/create/append，没 port 状态机 ALLOWED_TRANSITIONS |
-| `old/tools/notify/feishu_bot.py` + `feishu_token.py` | `server/notify.py` | 合并，用 httpx 直调替代 requests + 自管 token cache |
-
-**没 port**：`pipelines/`、`bin/`、`SKILL.md`、EC 卡片交互、LLM gateway、`old/tools/drafts.py`（改 SQLite 了）、`card_formatter.py`（重新写了极简模板）。
-
-## 6. 鉴权与会话（实现状态）
+## 4. 鉴权与会话
 
 | 功能 | 状态 |
 |---|---|
 | 外部浏览器 OAuth 流程（`/login` → 飞书 → `/auth/callback`） | ✅ |
 | 首登 pinyin + github_username 收集 | ✅ |
-| 签名 cookie + 内存 session | ✅ |
+| SQLite 持久化 session（重启不丢登录） | ✅ |
+| **PAT（Personal Access Token）—— `Authorization: Bearer pvt_…`** | ✅（供 VS Code 插件等外部客户端） |
+| **管理员密码门（X-Admin-Password，MVP 硬编码 `000123`）** | ✅（保护 `/api/ai/settings` 和 `/api/tokens`） |
 | **JSAPI 免登（飞书 WebView 内嵌路径）** | ❌ 未实现 |
-| 飞书 email 收集到 users 表 | ❌ 未做（现在 git author 用 `<pinyin>@pivot.local` 合成邮箱） |
+| 飞书真实 email 收集（commit author 现在用 `<pinyin>@pivot.local`） | ❌ 未做 |
 
-飞书后台必须配置：App ID/Secret、回调白名单 `http://localhost:8000/auth/callback`、`contact:user.base:readonly` 权限、机器人能力 + IM 权限（若开通知）。
+**鉴权层级**（统一在 `auth/deps.py`）：
+- `current_user` — 普通业务接口，cookie 或 Bearer 都行
+- `current_user_cookie_only` — 仅 cookie（`/api/tokens`、`/api/contacts/sync`、AI 设置）
+- `+ require_admin` — 加管理员密码（**AI 设置、`/api/contacts/sync`**）
+- 失败统一返回 `401 {"detail":"invalid_token"}`（PAT 失效）或 `401 {"detail":"admin_required"}`
 
-## 7. 数据模型（实际）
+**权限分配原则（已调整）：**
+- `/api/tokens`（PAT 增删查）：cookie-only，**不需要**管理员密码——每个用户都要自己生成 PAT 才能用 VS Code 客户端
+- `/api/contacts/sync`：cookie-only **+ 管理员密码**——操作重，只需管理员偶尔执行
+- `/api/ai/settings`：管理员密码（不变）
+
+所有 `api/*.py` 路由统一用 `Depends(current_user)`，不再每个文件手写 `_current_user(sid)`。
+
+飞书后台须配置：App ID/Secret、回调白名单、`contact:user.base:readonly` 权限、机器人能力 + IM 权限。
+
+## 5. 数据模型
 
 ```sql
--- 已实现
 users(open_id PK, union_id, name, avatar_url, pinyin, github_username, created_at)
-drafts(id PK, user_open_id, type, title, category, body_md, thread_key, created_at, updated_at)
+drafts(id PK, user_open_id, type, title, category, body_md, thread_key,
+       mentions_json, reply_to, references_json, created_at, updated_at)
 read_state(user_open_id, thread_key, last_read_post_filename, updated_at, PK(user, thread_key))
-
--- 砍掉（决策讨论见对话记录）
-threads_index ❌   posts_index ❌
--- 决策：threads 规模几十到几百，直读文件系统够用；
--- SQLite 只存"用户私有状态"（users/drafts/read_state），
--- 内容本体全在 git。
+sessions(id PK, user_open_id, expires_at, created_at, user_access_token)
+contacts(open_id PK, union_id, name, en_name, avatar_url, synced_at)
+settings(key PK, value, updated_at)                                      -- AI 配置
+ai_conversations(user_open_id, thread_key, messages_json, reply_target,
+                 reference_files_json, updated_at, PK(user, thread_key))
+api_tokens(token_hash PK, user_open_id, name, created_at, last_used_at, expires_at)
 ```
 
-**Git 仍是权威源**。SQLite 只做 per-user 状态缓存，不做内容索引。
-
-Session 放内存 `SessionStore`（重启丢失），不存 DB。用户登录后 sid cookie 存服务端 map。
-
-## 8. Git 写流程
-
-实际用 `threading.Lock`（不是 asyncio.Lock——FastAPI sync handler 跑在线程池）。流程：
+## 6. Git 写流程
 
 ```python
 with workspace.write_session(message, author_name, author_email):
     # pull --rebase                  ← 获取远端最新
     # caller 写文件
     # git commit --author="pinyin <pinyin@pivot.local>"
-    #   -c user.name=team-pivot-web -c user.email=team-pivot-web@pivot.local
     # git push（失败 → rebase + 重试 3 次）
 ```
 
 **两阶段原子写**（抗崩溃）：
-1. `write_post_pending`：帖子写入时 frontmatter 标 `index_state: un-indexed`
+1. `write_post_pending`：frontmatter 标 `index_state: un-indexed`
 2. 更新 index yaml（原子 tmp+rename）
 3. `mark_indexed`：翻标志到 `indexed`
 
-三步全在 write_session 里，git 看到的是最终态 + 一次 commit。
+**启动恢复 `workspace.recover()`**（顺序重要，别改）：
+1. `repair_partial_writes`：扫 `un-indexed` 文件，补 index + 翻标志
+2. 工作树脏 → commit + push（**必须先清本地再 pull**）
+3. `pull --rebase origin`（最后执行）
 
-**启动恢复 `workspace.recover()`**：
-- 扫所有 `index_state: un-indexed` 的文件
-- 按 filename 类型（proposal/reply）补 index 条目 + 翻标志
-- 如果工作树脏，commit "chore: recover..."
+`git_ops.pull()` 兜底：若 pull 遇 "unstaged changes"，自动 `add -A + commit + push` 再重试。
 
-List 接口过滤 un-indexed 文件，避免过渡态给用户看到。
+## 7. 前端交互规则（重要，别回退）
 
-## 9. MVP 完成情况（vs memo 第一版 §9）
+### ThreadDetailPane
 
-| 条目 | 状态 | commit |
-|---|---|---|
-| 1. 飞书 OAuth 外部 + 首登 pinyin | ✅ | `feat: feishu OAuth login loop` / `feat: SQLite users table + first-login pinyin setup` |
-| 2. Inbox（未读聚合，按讨论分组） | ✅ | `feat: inbox with per-user unread tracking` |
-| 3. 讨论列表 + 详情（时间线） | ✅ | `feat: read-only discussions API` / `feat: thread detail page + title/author resolution` |
-| 4. 发讨论 + 回复（走 git commit/push） | ✅ | `feat: write path for new discussions + replies, with two-phase crash recovery` |
-| 5. 飞书卡片通知 | ✅ | `feat: feishu card notifications on publish` |
-| **额外**：草稿 CRUD（autosave） | ✅ | `feat: drafts CRUD with autosave + atomic publish` |
-| **额外**：日志体系 | ✅ | `feat: logging infrastructure with LOG_LEVEL env toggle` |
-| **额外**：status 徽章 + last_updated 排序 | ✅ | `feat: thread status + last-updated from index YAML files` |
+- **正文折叠**：每条 post 默认截断到 208px，`scrollHeight > clientHeight` 时显示展开/收起
+- **Reply 按钮**：在每条 post 标题栏；点击后 ReplyForm **内联插入在该 post 正下方**；再次点击收起但内容保留；底部"写回复"按钮的表单显示在所有 post 之后
+- **草稿状态**：`replyBody`/`replyMentions` 提升到 `ThreadDetailPane`；切换 thread 时从服务器预加载草稿（`fetchDrafts()`）；有草稿时回复按钮显示橙色 `●`；草稿存服务端 SQLite（`/api/drafts`），刷新不丢
+- **弹出框背景**：`StatusControl` 和 `MentionField` 下拉一律用 `bg-white dark:bg-zinc-900`，**不用 `bg-popover`**（CSS 变量未定义会透明）
+- **已选中项高亮**：下拉列表中当前选中项 `bg-blue-50 dark:bg-blue-950 text-blue-700` + `✓` 标记
 
-memo 明确"暂缓"的条目仍未做：附件上传、summarize/result 管理、多 tenant、权限分级、搜索。
+### 未读计数规则
 
-## 10. 和设计文档的差异（未完成/有意为之）
+- 只有 `type: proposal` 和 `type: reply` 计入未读；comment/mention/状态变更不计
+- `append_standalone_mention` 不更新 `last_updated`，不影响 thread 排列顺序
+- 未读数附在 `/api/threads` 响应的 `unread_count` 字段，不需单独调 `/api/inbox`
 
-对照 `/Users/ken/Codes/teamDocs/CLAUDE.md` 的 §3/§4：
+### Post frontmatter 约定
 
-| 设计条目 | 当前 | 备注 |
-|---|---|---|
-| 5 个状态名 (open/concluded/produced/closed/pending) | ✅ | UI 徽章正常显示 |
-| **状态转移动作**（`open ↔ concluded`、`reopen`、`closed/pending`） | ❌ | 当前只能读 status，不能改 |
-| `reopen` 动作 + timeline 记原因 | ❌ | — |
-| `RESULT` 文件（结论） | ❌ | 设计有，memo 暂缓 |
-| Post frontmatter `summary`（AI 摘要） | ❌ | 需要 LLM，暂缓 |
-| INDEX `files[].summary` | ⚠️ 空串 | 预留字段，等 LLM |
-| INDEX `files[].refs` | ⚠️ proposal 空；reply 已加 `from` | 跨讨论的 `refer` / `blocked_by` 未做 |
-| INDEX timeline `mention` 字段 | ❌ | 需配合 @mention 特性 |
-| Post frontmatter `created` | ✅ | 已和设计文档对齐（曾经错叫 `created_at`） |
+- AI 摘要字段名：`auto-summary`，写在 YAML frontmatter，不写进 body
+- 旧 `summary` 键和 body 内嵌 `---summary---` 块在 `posts.py` 中向后兼容并自动迁移
 
-## 11. 下一步计划（按优先级）
+### AI 助手（AIPane）
 
-### 业务闭环
+- **默认关闭**；点 post 上 "AI 回复" 或底部 "AI 写回复" 才打开
+- 顶部两个槽：**回复对象（必选 1 个）** + **引用其他文件（最多 4 个）**
+  - 点 post 的 "AI 回复" → 自动填该 post 为回复对象
+  - 点底部 "AI 写回复" → 默认填最后一个 post
+  - 没有回复对象时输入框/发送按钮全部禁用，强制选择
+- **聊天默认不会生成草稿**——AI 受 prompt 严格约束（见 `ai/prompts.py`），只输出普通文本，提示用户点按钮
+- 点击 "生成回复草稿" 按钮 → 注入 `[[GENERATE_REPLY_DRAFT]]` 前缀消息 → AI 必须返回 `<draft>` 包裹的完整正文 → 自动填入右侧 ReplyForm（已有内容会弹 confirm 询问覆盖）
+- 对话 + 文件选择都持久化到 `ai_conversations`，切 thread/刷新不丢
+- 发布 reply 时 `reply_to` → INDEX `refs` 加 `from`，`references` → 加 `refer`
 
-1. **状态转移动作**（设计 §3.2）——让用户在 Web 点"标记为已解决 / 暂搁 / 重新打开 / 关闭"，实现 ALLOWED_TRANSITIONS，timeline 记录"从 X 状态转移到 Y，原因：..."，reopen 要求写原因
-2. **@mention 系统**——撰写时 `@张三` 解析为 `<at user_id="ou_xxx">`，写进 INDEX timeline 的 `mention` 字段；飞书卡片通知把被 @ 的人 ping 出来（需要 users 表扩展，或调飞书 `/contact/v3/users/batch_get` 预热 user map）
+### 已修复的关键 Bug（别再踩）
 
-### UX 打磨
+**Bug A：草稿重复创建（发布后幽灵草稿残留）**
+- 根因：`useDraftAutosave` 2s debounce 的闭包里捕获了创建时的 `draftId=null`。父组件 `createDraft` 返回后设了 `replyDraftId=A`，但 timer 里的 `save()` 仍用旧 `null`，又创建了草稿 B。发布删 A，B 就残留。
+- 修复：在 hook 内加 `draftIdRef = useRef(draftId)`，每次 render 同步 ref，`save()` 读 ref 而非闭包值。同时 `onUseDraftAsReply` 改为**先调 API persist、再更新 React 状态**，避免 ReplyForm 挂载时 autosave 以 `null` id 触发。
 
-3. **shadcn/ui + Tailwind**——当前 inline 样式粗糙，替换为正规设计系统
-4. **键盘快捷键**（j/k 翻列表、r 回复等邮件客户端式交互）
-5. **GFM markdown**（表格、任务列表）——给 react-markdown 加 `remark-gfm`
+**Bug B：切 thread 后 AI 对话历史被清空**
+- 根因：`AIPane` 的 `useEffect[threadKey]` 先把 `messages` 置 `[]` 然后异步 fetch 历史。同一 render 周期，`useEffect[pendingReplyTarget]` 同步触发，调 `persist(messages=[], ...)` 把 DB 的真实历史覆盖成空数组，等 fetch 返回时数据已不在。
+- 修复：在 `pendingReplyTarget` effect 里加 `if (loading) return` 守卫，并把 `loading` 加入 deps。只有 fetch 完成后才写 pendingReplyTarget。
 
-### 上线
+## 8. 功能完成情况
 
-6. **systemd + Caddy 部署模板**（memo §4 已规划）
-7. **真正的飞书邮箱**——登录时 `UserRepo.upsert_from_feishu` 保存 email，commit author 用真邮箱替换 `<pinyin>@pivot.local`
-8. **SQLite 备份**（litestream 或 cron+rsync）—— 草稿 / read_state 持久化
+**已完成：**
+飞书 OAuth + 首登 / 讨论列表 + 详情 / 发讨论 + 回复 / 飞书卡片通知 / 草稿 autosave / 状态徽章 + 排序 / 状态转移（含 reopen 原因）/ @mention 系统（撰写 + 飞书 DM 通知）/ Session 持久化 / shadcn/ui + Tailwind / Thread 列表内嵌未读红点 / GFM markdown（表格、任务列表）/ Post 折叠 + 内联回复 + 草稿指示 / **AI 助手（OpenRouter SSE，回复对象+引用文件，按钮触发草稿生成，对话持久化）** / **PAT + 管理员密码门 + 设置页**
 
-### 新能力（依赖 LLM）
+**暂缓（有意为之）：**
+附件上传 / RESULT 文件 / AI 摘要写入（post `auto-summary`、INDEX `files[].summary`）/ 多 tenant / 权限分级（PAT 当前 = 全权限）/ 搜索 / 键盘快捷键 / JSAPI 免登 / systemd+Caddy 部署
 
-9. **AI 摘要**（post `summary`、INDEX `files[].summary`）
-10. **RESULT 文件生成**（讨论达成结论时自动总结 → `concluded`）
-11. **JSAPI 免登**（飞书机器人菜单内嵌 WebView）
+## 9. 当前状态 + 下一步
 
-**建议顺序**：1 → 2 → 6 → 3。1+2 闭合业务，6 让团队其他人能用，3 再打磨视觉。9/10 等 LLM 策略定了再做。
+**详见 [`vision.md`](./vision.md)。** 那份文档讲"Pivot 要做什么、为什么、还差什么"，包括：
+- §6：当前实现状态盘点（✅ / ⚠️ / ❌ 三档）
+- §7：路线图（Phase A-G，按优先级）
+- §10：新 AI 起手式
 
-## 12. 约束与边界（别越线）
+memo.md 只讲"现状怎么搭的"（操作细节、踩过的坑），vision.md 讲"要去哪儿"（目标、缺口、计划）。两份互补，**改方向相关内容只动 vision.md，避免两份不同步**。
 
-- **不要启动服务器部署**——本地跑 MVP 为主，上线由用户自己做
+**运维相关（不在 vision.md 范围）：**
+- systemd + Caddy 部署
+- 飞书真实 email（替换 commit author 的 `<pinyin>@pivot.local`）
+- SQLite 备份（litestream 或 cron+rsync）
+
+## 11. 约束与边界
+
+- **不要启动服务器部署**——本地跑 MVP，上线由用户自己操作
 - **不要主动 push 或改版本号**，等用户指示
 - **不要动 `old/` 里的文件**——参考资料；要复用就拷贝到 server/ 再改
-- **写代码前先问方向**（之前擅自 error-handling 被回滚过）
+- **写代码前先问方向**
 - **不加无关注释**；只写非显然的 why
 - **关键路径要有单测**（git commit/push、OAuth、session、recovery、publish）
-- **commit 风格** `feat:` / `fix:` / `chore:` 前缀，简洁一句话；**不主动 amend**
-- **飞书应用权限 / 群机器人添加** 是用户的事，代码不尝试自动化
+- **commit 风格**：`feat:` / `fix:` / `chore:` 前缀，简洁一句话；不主动 amend
 
-## 13. 相关资源
+## 12. 相关资源
 
 - 本 repo：`/Users/ken/Codes/team-pivot-web`（remote: `hashSTACS-Global/team-pivot-web`）
-- 数据仓库：`https://github.com/kellerman-koh/test-team-pivot.git`（workspace，自动 clone 到 `var/git/test-team-pivot/`）
-- 原 APP：`/Users/ken/Codes/team-pivot`（参考，不动）
-- 同仓数据副本：`/Users/ken/Codes/teamDocs`（手工 clone，和 team-pivot 共享）
-- EC 代码：`/Users/ken/Codes/EnClaws`（只参考）
-- 飞书 OAuth：https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/authentication-management/access-token/web-app-access-token
-- 飞书 IM（通知用）：https://open.feishu.cn/document/server-docs/im-v1/message/create
-- `lark-oapi` Python SDK：https://github.com/larksuite/oapi-sdk-python
+- 数据仓库：`https://github.com/kellerman-koh/test-team-pivot.git`（自动 clone 到 `var/git/test-team-pivot/`）
 - 数据仓库设计文档：`/Users/ken/Codes/teamDocs/CLAUDE.md`（§3 状态机、§4 数据结构）
+- 原 APP 参考：`/Users/ken/Codes/team-pivot`（只读）
 
-## 14. 本地快速开发
+## 13. 本地快速开发
 
 ```bash
 # 一次性
 cd team-pivot-web
 cp .env.example .env         # 填 FEISHU_APP_ID / SECRET / SESSION_SECRET / GIT_TOKEN
-uv sync                      # 装 Python 依赖
-cd web && npm install        # 装前端依赖
+uv sync
+cd web && npm install
 
 # 每次开发（两个终端）
-# 终端 1：后端
-uv run uvicorn --factory server.app:create_app --reload --port 8000 2>&1 \
-  | tee -a var/log/pivot.log
-
-# 终端 2：前端
+uv run uvicorn --factory server.app:create_app --reload --port 8000 2>&1 | tee -a var/log/pivot.log
 cd web && npm run dev
 
-# 浏览器打开
+# 浏览器
 http://localhost:5173
 
 # 测试
-uv run pytest -q              # 101 passing
+uv run pytest -q
 ```
 
-调试日志切 DEBUG：`.env` 改 `LOG_LEVEL=DEBUG` 重启。
+调试日志：`.env` 改 `LOG_LEVEL=DEBUG` 重启。
 
-## 15. 对新 session 的起手式
+## 14. 新 session 起手式
 
-```
-1. 读这份 memo（§9 知道已完成、§10 知道差距、§11 知道下一步）
-2. 如果要改代码：先看 server/ 和 web/src/ 的现有结构，对应模块已有实现
-3. 跑 uv run pytest 验证你的 baseline 是绿色
-4. 按 §11 的优先级和当前对话上下文决定做哪一步
-5. 写代码前确认方向（§12 第 4 条）
-```
+1. **先读 [`vision.md`](./vision.md)**——明白 Pivot 终极目标、当前缺口、下一步 Phase
+2. **再读这份 memo**——掌握现状的实现细节、目录结构、约束、踩过的坑（§8 看已完成的功能盘点）
+3. 改代码前看对应模块现有实现
+4. 跑 `uv run pytest -q` 验证 baseline 是绿色
+5. 写代码前确认方向（§11 第 3 条）

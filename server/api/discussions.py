@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Cookie, HTTPException
+from typing import Callable
+
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from datetime import datetime, timezone
 
-from server.auth.session import SessionStore
+from server.auth.deps import require_profile
 from server.contacts import ContactRepo
-from server.index_files import change_thread_status
+from server.inbox import compute_unread_counts
+from server.index_files import change_thread_status, get_mentions_by_file
 from server.mentions import resolve_id, resolve_text
 from server.notify import Notifier
 from server.publish import (
@@ -16,6 +19,7 @@ from server.publish import (
     publish_proposal,
     publish_reply,
 )
+from server.read_state import ReadStateRepo
 from server.status_machine import (
     REASON_MIN_LEN,
     VALID_STATES,
@@ -42,6 +46,8 @@ class NewThreadBody(BaseModel):
 class ReplyBody(BaseModel):
     body: str = Field(min_length=1, max_length=50000)
     mentions: MentionBlock | None = None
+    reply_to: str | None = Field(default=None, max_length=200)
+    references: list[str] = Field(default_factory=list, max_length=10)
 
 
 class StatusChangeBody(BaseModel):
@@ -56,28 +62,16 @@ class StandaloneMentionBody(BaseModel):
 
 def build_router(
     workspace: Workspace,
-    sessions: SessionStore,
     users: UserRepo,
     contacts: ContactRepo,
     notifier: Notifier,
+    read_states: ReadStateRepo,
+    current_user: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
 
-    def _current_user(sid: str | None) -> User:
-        s = sessions.get(sid)
-        if s is None:
-            raise HTTPException(status_code=401, detail="not logged in")
-        u = users.get(s.user_open_id)
-        if u is None:
-            sessions.delete(sid)
-            raise HTTPException(status_code=401, detail="user not found")
-        if not u.pinyin:
-            raise HTTPException(status_code=400, detail="profile setup required")
-        return u
-
     @router.get("/workspace/status")
-    def status(sid: str | None = Cookie(default=None)):
-        _current_user(sid)
+    def status(_: User = Depends(current_user)):
         return {
             "ready": workspace.is_cloned(),
             "path": str(workspace.path),
@@ -85,35 +79,47 @@ def build_router(
         }
 
     @router.get("/threads")
-    def threads(category: str | None = None, sid: str | None = Cookie(default=None)):
-        _current_user(sid)
+    def threads(
+        category: str | None = None,
+        user: User = Depends(current_user),
+    ):
         items = list_threads(
             workspace.discussions_dir, workspace.index_dir, category=category
         )
-        return {"items": [_meta(m, users) for m in items]}
+        unread = compute_unread_counts(
+            workspace.discussions_dir, workspace.index_dir, user.open_id, read_states
+        )
+        return {"items": [_meta(m, users, unread.get(f"{m.category}/{m.slug}", 0)) for m in items]}
 
     @router.get("/threads/{category}/{slug}")
-    def thread_detail(category: str, slug: str, sid: str | None = Cookie(default=None)):
-        _current_user(sid)
+    def thread_detail(
+        category: str, slug: str,
+        _: User = Depends(current_user),
+    ):
         detail = get_thread(workspace.discussions_dir, workspace.index_dir, category, slug)
         if detail is None:
             raise HTTPException(status_code=404, detail="thread not found")
+        mentions_map = get_mentions_by_file(workspace.index_dir, slug)
         return {
-            "meta": _meta(detail.meta, users),
+            "meta": _meta(detail.meta, users, unread_count=0),
             "posts": [
                 {
                     "filename": p.filename,
                     "frontmatter": p.frontmatter,
                     "body": resolve_text(p.body, users),
                     "author_display": resolve_id(p.frontmatter.get("author"), users),
+                    "mentions": [
+                        {**m, "author_display": resolve_id(m.get("author_id"), users)}
+                        for m in mentions_map.get(p.filename, [])
+                    ],
                 }
                 for p in detail.posts
             ],
         }
 
     @router.post("/threads")
-    def new_thread(body: NewThreadBody, sid: str | None = Cookie(default=None)):
-        user = _current_user(sid)
+    def new_thread(body: NewThreadBody, user: User = Depends(current_user)):
+        require_profile(user)
         try:
             m = body.mentions
             return publish_proposal(
@@ -130,9 +136,9 @@ def build_router(
     @router.post("/threads/{category}/{slug}/posts")
     def new_reply(
         category: str, slug: str, body: ReplyBody,
-        sid: str | None = Cookie(default=None),
+        user: User = Depends(current_user),
     ):
-        user = _current_user(sid)
+        require_profile(user)
         try:
             m = body.mentions
             return publish_reply(
@@ -141,6 +147,8 @@ def build_router(
                 mention_comments=(m.comments if m else None),
                 contacts=contacts,
                 notifier=notifier,
+                reply_to=body.reply_to,
+                references=body.references,
             )
         except PublishError as e:
             raise HTTPException(
@@ -150,9 +158,9 @@ def build_router(
     @router.post("/threads/{category}/{slug}/mentions")
     def add_mention(
         category: str, slug: str, body: StandaloneMentionBody,
-        sid: str | None = Cookie(default=None),
+        user: User = Depends(current_user),
     ):
-        user = _current_user(sid)
+        require_profile(user)
         try:
             return add_standalone_mention(
                 workspace, user,
@@ -171,9 +179,9 @@ def build_router(
     @router.post("/threads/{category}/{slug}/status")
     def change_status(
         category: str, slug: str, body: StatusChangeBody,
-        sid: str | None = Cookie(default=None),
+        user: User = Depends(current_user),
     ):
-        user = _current_user(sid)
+        require_profile(user)
         if body.to not in VALID_STATES:
             raise HTTPException(status_code=400, detail=f"invalid status: {body.to}")
         detail = get_thread(workspace.discussions_dir, workspace.index_dir, category, slug)
@@ -214,8 +222,7 @@ def build_router(
         return {"ok": True, "from": from_state, "to": body.to}
 
     @router.post("/workspace/refresh")
-    def refresh(sid: str | None = Cookie(default=None)):
-        _current_user(sid)
+    def refresh(_: User = Depends(current_user)):
         try:
             workspace.refresh()
         except Exception as e:
@@ -225,7 +232,7 @@ def build_router(
     return router
 
 
-def _meta(m: ThreadMeta, users: UserRepo) -> dict:
+def _meta(m: ThreadMeta, users: UserRepo, unread_count: int = 0) -> dict:
     return {
         "category": m.category,
         "slug": m.slug,
@@ -235,4 +242,5 @@ def _meta(m: ThreadMeta, users: UserRepo) -> dict:
         "status": m.status,
         "last_updated": m.last_updated,
         "post_count": m.post_count,
+        "unread_count": unread_count,
     }

@@ -98,7 +98,8 @@ def test_append_standalone_mention(tmp_path):
     )
     import yaml
     data = yaml.safe_load((idx / "t-discuss.index.yaml").read_text())
-    assert data["last_updated"] == "2026-04-19T12:00:00+08:00"
+    # mention 不更新 last_updated，排序顺序不受影响
+    assert data["last_updated"] == "2026-04-19T10:00:00+08:00"
     last = data["timeline"][-1]
     assert last["event"] == "dengke mentioned"
     assert last["file"].endswith("001_a.md")

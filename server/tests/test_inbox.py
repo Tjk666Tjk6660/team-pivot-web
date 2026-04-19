@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from server.inbox import compute_inbox, latest_post_filename
+from server.inbox import compute_inbox, compute_unread_counts, latest_post_filename
 from server.read_state import ReadStateRepo
 
 
@@ -78,8 +78,8 @@ def test_inbox_reports_last_post_author(repo, read_states):
 def test_latest_post_filename(tmp_path):
     d = tmp_path / "t"
     d.mkdir()
-    (d / "001_a.md").write_text("---\nindex_state: indexed\n---\nx\n")
-    (d / "002_b.md").write_text("---\nindex_state: indexed\n---\nx\n")
+    (d / "001_a.md").write_text("---\ntype: proposal\nindex_state: indexed\n---\nx\n")
+    (d / "002_b.md").write_text("---\ntype: reply\nindex_state: indexed\n---\nx\n")
     assert latest_post_filename(d) == "002_b.md"
     assert latest_post_filename(tmp_path / "nope") is None
 
@@ -87,6 +87,27 @@ def test_latest_post_filename(tmp_path):
 def test_latest_skips_un_indexed(tmp_path):
     d = tmp_path / "t"
     d.mkdir()
-    (d / "001_a.md").write_text("---\nindex_state: indexed\n---\nx\n")
-    (d / "002_b.md").write_text("---\nindex_state: un-indexed\n---\nx\n")
+    (d / "001_a.md").write_text("---\ntype: proposal\nindex_state: indexed\n---\nx\n")
+    (d / "002_b.md").write_text("---\ntype: reply\nindex_state: un-indexed\n---\nx\n")
     assert latest_post_filename(d) == "001_a.md"
+
+
+def test_compute_unread_counts(repo, read_states):
+    root, idx = repo
+    counts = compute_unread_counts(root, idx, "ou_new", read_states)
+    assert counts == {"c/t1": 3, "c/t2": 1}
+
+
+def test_compute_unread_counts_partial_read(repo, read_states):
+    root, idx = repo
+    read_states.set("ou_1", "c/t1", "001_a_proposal_aa.md")
+    counts = compute_unread_counts(root, idx, "ou_1", read_states)
+    assert counts == {"c/t1": 2, "c/t2": 1}
+
+
+def test_compute_unread_counts_all_read(repo, read_states):
+    root, idx = repo
+    read_states.set("ou_1", "c/t1", "003_a_reply_cc.md")
+    read_states.set("ou_1", "c/t2", "001_b_proposal_dd.md")
+    counts = compute_unread_counts(root, idx, "ou_1", read_states)
+    assert counts == {}

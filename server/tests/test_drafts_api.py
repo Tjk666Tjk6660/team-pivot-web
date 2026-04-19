@@ -5,6 +5,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server.api.drafts import build_router
+from server.api_tokens import ApiTokenRepo
+from server.auth.deps import make_current_user
 from server.auth.session import SessionStore
 from server.drafts import DraftRepo
 from server.notify import NoOpNotifier
@@ -28,8 +30,9 @@ def client_and_sid(db, users):
 
     app = FastAPI()
     from server.contacts import ContactRepo
+    cu = make_current_user(sessions, users, ApiTokenRepo(db))
     app.include_router(build_router(
-        _FakeWorkspace(), sessions, users, drafts, ContactRepo(db), NoOpNotifier(),
+        _FakeWorkspace(), drafts, ContactRepo(db), NoOpNotifier(), cu,
     ))
     client = TestClient(app)
     client.cookies.set("sid", sid)
@@ -39,15 +42,17 @@ def client_and_sid(db, users):
 def test_requires_auth():
     from server.users import UserRepo
     from server.db import Database
-    import tempfile, os
+    import tempfile
     tmp = tempfile.mkdtemp()
     try:
         d = Database(f"{tmp}/db.sqlite")
         sessions = SessionStore(d)
+        ur = UserRepo(d)
         app = FastAPI()
         from server.contacts import ContactRepo
+        cu = make_current_user(sessions, ur, ApiTokenRepo(d))
         app.include_router(build_router(
-            _FakeWorkspace(), sessions, UserRepo(d), DraftRepo(d), ContactRepo(d), NoOpNotifier(),
+            _FakeWorkspace(), DraftRepo(d), ContactRepo(d), NoOpNotifier(), cu,
         ))
         client = TestClient(app)
         assert client.get("/api/drafts").status_code == 401

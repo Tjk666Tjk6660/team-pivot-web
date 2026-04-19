@@ -9,6 +9,8 @@ from typing import Any
 import yaml
 
 _FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n(.*)$", re.DOTALL)
+# Matches an extra ---...--- block at the very start of the body (inline metadata annotations)
+_EXTRA_FM_RE = re.compile(r"^\s*---\n(.*?)\n---\n", re.DOTALL)
 
 
 @dataclass(frozen=True)
@@ -73,4 +75,20 @@ def read_post(path: Path) -> Post:
             fm = {}
     except yaml.YAMLError:
         fm = {}
+    # Normalize legacy 'summary' key to 'auto-summary'
+    if "summary" in fm and "auto-summary" not in fm:
+        fm["auto-summary"] = fm.pop("summary")
+    # Strip any leading ---...--- annotation block in the body and merge its fields
+    em = _EXTRA_FM_RE.match(body)
+    if em:
+        try:
+            extra = yaml.safe_load(em.group(1)) or {}
+            if isinstance(extra, dict):
+                # Normalize legacy 'summary' key to 'auto-summary'
+                if "summary" in extra and "auto-summary" not in extra:
+                    extra["auto-summary"] = extra.pop("summary")
+                fm = {**extra, **fm}  # frontmatter fields win on conflict
+        except yaml.YAMLError:
+            pass
+        body = body[em.end():]
     return Post(filename=Path(path).name, frontmatter=fm, body=body)

@@ -1,21 +1,22 @@
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+
 export function Login() {
   return (
-    <div style={{ padding: 48, fontFamily: "system-ui, sans-serif" }}>
-      <h1>team-pivot-web</h1>
-      <p>Sign in with Feishu to continue.</p>
-      <a
-        href="/login"
-        style={{
-          display: "inline-block",
-          padding: "10px 20px",
-          background: "#3370ff",
-          color: "white",
-          borderRadius: 6,
-          textDecoration: "none",
-        }}
-      >
-        Sign in with Feishu
-      </a>
+    <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4">
+      <Card className="w-full max-w-sm">
+        <CardHeader>
+          <CardTitle>team-pivot</CardTitle>
+          <CardDescription>
+            邮件客户端式的团队讨论工具。用飞书账号登录继续。
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button asChild className="w-full">
+            <a href="/login">用飞书登录</a>
+          </Button>
+        </CardContent>
+      </Card>
     </div>
   );
 }

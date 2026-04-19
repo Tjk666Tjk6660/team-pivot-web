@@ -22,7 +22,6 @@ def append_standalone_mention(
         raise FileNotFoundError(path)
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     origin = f"discussions/{category}/{slug}/"
-    data["last_updated"] = now_iso
     data.setdefault("timeline", []).append({
         "time": now_iso,
         "event": f"{author_id} mentioned",
@@ -67,17 +66,39 @@ def _status_event(author_id: str, from_state: str, to_state: str, reason: str | 
     return f"{author_id} 状态变更 {from_state} -> {to_state}"
 
 
-def _build_reply_refs(index_data: dict, origin: str) -> list[dict]:
-    discussions = index_data.get("discussions") or []
-    if not (discussions and isinstance(discussions[0], dict)):
-        return []
-    files = discussions[0].get("files") or []
-    if not files:
-        return []
-    proposal_filename = files[0].get("path")
-    if not proposal_filename:
-        return []
-    return [{"type": "from", "path": f"{origin}{proposal_filename}"}]
+def _build_reply_refs(
+    index_data: dict,
+    origin: str,
+    reply_to: str | None = None,
+    references: list[str] | None = None,
+) -> list[dict]:
+    """
+    Build refs[] for a reply file in the INDEX.
+    - reply_to: filename within the same thread (relative). Becomes type=from.
+                Falls back to first file in thread if not provided (legacy behavior).
+    - references: cross-thread file paths in form "<category>/<slug>/<filename>".
+                  Each becomes type=refer with path "discussions/<category>/<slug>/<filename>".
+    """
+    refs: list[dict] = []
+
+    target = reply_to
+    if not target:
+        discussions = index_data.get("discussions") or []
+        if discussions and isinstance(discussions[0], dict):
+            files = discussions[0].get("files") or []
+            if files:
+                target = files[0].get("path")
+    if target:
+        refs.append({"type": "from", "path": f"{origin}{target}"})
+
+    for ref in references or []:
+        ref = ref.strip()
+        if not ref:
+            continue
+        ref_path = ref if ref.startswith("discussions/") else f"discussions/{ref}"
+        refs.append({"type": "refer", "path": ref_path})
+
+    return refs
 
 
 def _atomic_write_yaml(path: Path, data: dict) -> None:
@@ -93,6 +114,30 @@ def _atomic_write_yaml(path: Path, data: dict) -> None:
 class ThreadIndex:
     status: str | None
     last_updated: str | None
+
+
+def get_mentions_by_file(index_dir: Path, slug: str) -> dict[str, list[dict]]:
+    """Return {filename: [mention_entry, ...]} extracted from timeline entries."""
+    path = Path(index_dir) / f"{slug}-discuss.index.yaml"
+    if not path.is_file():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return {}
+    result: dict[str, list[dict]] = {}
+    for entry in data.get("timeline", []):
+        if "mention" not in entry or "file" not in entry:
+            continue
+        fname = entry["file"].rsplit("/", 1)[-1]
+        author_id = entry.get("event", "").split(" ")[0]
+        result.setdefault(fname, []).append({
+            "time": entry.get("time"),
+            "author_id": author_id,
+            "users": entry["mention"].get("users", []),
+            "comments": entry["mention"].get("comments"),
+        })
+    return result
 
 
 def read_thread_index(index_dir: Path, slug: str) -> ThreadIndex | None:
@@ -163,13 +208,15 @@ def append_reply_to_index(
     author_id: str,
     now_iso: str,
     mention: dict | None = None,
+    reply_to: str | None = None,
+    references: list[str] | None = None,
 ) -> Path:
     path = Path(index_dir) / f"{slug}-discuss.index.yaml"
     if not path.is_file():
         raise FileNotFoundError(path)
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     origin = f"discussions/{category}/{slug}/"
-    refs = _build_reply_refs(data, origin)
+    refs = _build_reply_refs(data, origin, reply_to=reply_to, references=references)
     discussions = data.setdefault("discussions", [])
     if discussions and isinstance(discussions[0], dict):
         discussions[0].setdefault("files", []).append(

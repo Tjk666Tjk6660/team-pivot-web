@@ -1,40 +1,33 @@
 from __future__ import annotations
 
 import logging
+from typing import Callable
 
-from fastapi import APIRouter, Cookie, HTTPException
+from fastapi import APIRouter, Cookie, Depends, HTTPException
 
+from server.auth.admin import require_admin
 from server.auth.session import SessionStore
 from server.contacts import ContactRepo
 from server.feishu_contacts import FeishuContactSyncer
-from server.users import User, UserRepo
+from server.users import User
 
 log = logging.getLogger(__name__)
 
 
 def build_router(
     sessions: SessionStore,
-    users: UserRepo,
     contacts: ContactRepo,
     syncer: FeishuContactSyncer,
+    current_user: Callable,
+    current_user_cookie_only: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
 
-    def _require_auth(sid: str | None) -> User:
-        s = sessions.get(sid)
-        if s is None:
-            raise HTTPException(status_code=401, detail="not logged in")
-        u = users.get(s.user_open_id)
-        if u is None:
-            sessions.delete(sid)
-            raise HTTPException(status_code=401, detail="user not found")
-        return u
-
     @router.get("/contacts")
     def list_contacts(
-        q: str = "", limit: int = 20, sid: str | None = Cookie(default=None),
+        q: str = "", limit: int = 20,
+        _: User = Depends(current_user),
     ):
-        _require_auth(sid)
         limit = max(1, min(100, limit))
         items = contacts.search(q, limit=limit)
         return {
@@ -50,9 +43,13 @@ def build_router(
             "total": contacts.count(),
         }
 
-    @router.post("/contacts/sync")
-    def sync_contacts(sid: str | None = Cookie(default=None)):
-        user = _require_auth(sid)
+    @router.post("/contacts/sync", dependencies=[Depends(require_admin)])
+    def sync_contacts(
+        sid: str | None = Cookie(default=None),
+        user: User = Depends(current_user_cookie_only),
+    ):
+        # Cookie-only because we need the Feishu user_access_token attached
+        # to the browser session — PATs don't carry one.
         s = sessions.get(sid)
         token = s.user_access_token if s else None
         if not token:

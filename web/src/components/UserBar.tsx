@@ -1,27 +1,22 @@
-import type { Me } from "../api";
+import type { Me } from "@/api";
+import { Button } from "@/components/ui/button";
 
 export function UserBar({ me, onLogout }: { me: Me; onLogout: () => void }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+    <div className="flex items-center gap-3">
       {me.avatar_url && (
-        <img
-          src={me.avatar_url}
-          alt=""
-          width={40}
-          height={40}
-          style={{ borderRadius: "50%" }}
-        />
+        <img src={me.avatar_url} alt="" className="h-10 w-10 rounded-full" />
       )}
       <div>
-        <div style={{ fontWeight: 600 }}>{me.name}</div>
-        <div style={{ fontSize: 12, color: "#666" }}>
+        <div className="font-medium">{me.name}</div>
+        <div className="text-xs text-muted-foreground">
           {me.pinyin}
           {me.github_username ? ` · @${me.github_username}` : ""}
         </div>
       </div>
-      <button onClick={onLogout} style={{ marginLeft: "auto" }}>
+      <Button variant="ghost" size="sm" onClick={onLogout} className="ml-auto">
         Sign out
-      </button>
+      </Button>
     </div>
   );
 }

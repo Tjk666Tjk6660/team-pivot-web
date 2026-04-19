@@ -43,6 +43,7 @@ export type ThreadMeta = {
   status: string | null;
   last_updated: string | null;
   post_count: number;
+  unread_count: number;
 };
 
 export async function fetchThreads(category?: string): Promise<ThreadMeta[]> {
@@ -65,11 +66,20 @@ export async function fetchWorkspaceStatus(): Promise<WorkspaceStatus> {
   return (await r.json()) as WorkspaceStatus;
 }
 
+export type MentionEntry = {
+  time: string | null;
+  author_id: string | null;
+  author_display: string | null;
+  users: { user: string; open_id: string }[];
+  comments: string | null;
+};
+
 export type Post = {
   filename: string;
   frontmatter: Record<string, unknown>;
   body: string;
   author_display: string | null;
+  mentions: MentionEntry[];
 };
 
 export type ThreadDetail = {
@@ -105,6 +115,7 @@ export async function createThread(
 
 export async function postReply(
   category: string, slug: string, body: string,
+  opts?: { reply_to?: string | null; references?: string[] },
 ): Promise<{ filename: string }> {
   const r = await fetch(
     `/api/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/posts`,
@@ -112,7 +123,11 @@ export async function postReply(
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ body }),
+      body: JSON.stringify({
+        body,
+        reply_to: opts?.reply_to ?? null,
+        references: opts?.references ?? [],
+      }),
     },
   );
   if (!r.ok) {
@@ -135,6 +150,8 @@ export type Draft = {
   body_md: string;
   thread_key: string | null;
   mentions: MentionBlock | null;
+  reply_to: string | null;
+  references: string[];
   created_at: number;
   updated_at: number;
 };
@@ -156,9 +173,7 @@ export async function searchContacts(q: string): Promise<Contact[]> {
 }
 
 export async function syncContacts(): Promise<{ ok: true; synced: number; total: number }> {
-  const r = await fetch("/api/contacts/sync", {
-    method: "POST", credentials: "include",
-  });
+  const r = await adminFetch("/api/contacts/sync", { method: "POST" });
   const body = await r.json().catch(() => ({ detail: r.statusText }));
   if (!r.ok) throw new Error(body.detail || `sync failed: ${r.status}`);
   return body;
@@ -183,6 +198,8 @@ export async function createDraft(body: {
   category?: string | null;
   body_md?: string;
   thread_key?: string | null;
+  reply_to?: string | null;
+  references?: string[];
 }): Promise<Draft> {
   const r = await fetch("/api/drafts", {
     method: "POST",
@@ -199,7 +216,14 @@ export async function createDraft(body: {
 
 export async function updateDraft(
   id: string,
-  body: { title?: string | null; category?: string | null; body_md?: string; thread_key?: string | null },
+  body: {
+    title?: string | null;
+    category?: string | null;
+    body_md?: string;
+    thread_key?: string | null;
+    reply_to?: string | null;
+    references?: string[];
+  },
 ): Promise<Draft> {
   const r = await fetch(`/api/drafts/${id}`, {
     method: "PATCH",
@@ -234,20 +258,6 @@ export async function publishDraft(
     throw new Error(d.detail || `publish failed: ${r.status}`);
   }
   return await r.json();
-}
-
-export type InboxItem = {
-  meta: ThreadMeta;
-  unread_count: number;
-  last_post_filename: string | null;
-  last_post_author_display: string | null;
-};
-
-export async function fetchInbox(): Promise<InboxItem[]> {
-  const r = await fetch("/api/inbox", { credentials: "include" });
-  if (!r.ok) throw new Error(`/api/inbox failed: ${r.status}`);
-  const body = (await r.json()) as { items: InboxItem[] };
-  return body.items;
 }
 
 export async function addMention(
@@ -298,6 +308,202 @@ export async function markThreadRead(category: string, slug: string): Promise<vo
   );
 }
 
+// ── AI ──────────────────────────────────────────────────────────────────────
+
+export type AISettings = {
+  model: string;
+  has_key: boolean;
+  max_context_tokens: number;
+  min_rounds: number;
+  max_rounds: number;
+};
+
+// Admin password is held in sessionStorage (cleared on browser close)
+const ADMIN_PW_KEY = "admin_password";
+export const ADMIN_PW_HEADER = "X-Admin-Password";
+
+export function getAdminPassword(): string | null {
+  return sessionStorage.getItem(ADMIN_PW_KEY);
+}
+
+export function setAdminPassword(pw: string): void {
+  sessionStorage.setItem(ADMIN_PW_KEY, pw);
+}
+
+export function clearAdminPassword(): void {
+  sessionStorage.removeItem(ADMIN_PW_KEY);
+}
+
+function adminHeaders(): Record<string, string> {
+  const pw = getAdminPassword();
+  return pw ? { [ADMIN_PW_HEADER]: pw } : {};
+}
+
+export class AdminRequiredError extends Error {
+  constructor() { super("admin_required"); this.name = "AdminRequiredError"; }
+}
+
+async function adminFetch(url: string, init?: RequestInit): Promise<Response> {
+  const r = await fetch(url, {
+    ...init,
+    credentials: "include",
+    headers: { ...(init?.headers || {}), ...adminHeaders() },
+  });
+  if (r.status === 401) {
+    const body = await r.clone().json().catch(() => ({}));
+    if (body.detail === "admin_required") {
+      clearAdminPassword();
+      throw new AdminRequiredError();
+    }
+  }
+  return r;
+}
+
+export async function fetchAISettings(): Promise<AISettings> {
+  const r = await adminFetch("/api/ai/settings");
+  if (!r.ok) throw new Error(`/api/ai/settings failed: ${r.status}`);
+  return (await r.json()) as AISettings;
+}
+
+export async function updateAISettings(body: {
+  api_key?: string;
+  model?: string;
+  max_context_tokens?: number;
+  min_rounds?: number;
+  max_rounds?: number;
+}): Promise<void> {
+  const r = await adminFetch("/api/ai/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `update ai settings failed: ${r.status}`);
+  }
+}
+
+export type ChatMessage = { role: "user" | "assistant"; content: string };
+
+export type AIConversation = {
+  messages: ChatMessage[];
+  reply_target: string | null;
+  reference_files: string[];
+};
+
+export async function fetchAIConversation(
+  category: string,
+  slug: string,
+): Promise<AIConversation> {
+  const r = await fetch(
+    `/api/ai/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/conversation`,
+    { credentials: "include" },
+  );
+  if (!r.ok) throw new Error(`fetch conversation failed: ${r.status}`);
+  return (await r.json()) as AIConversation;
+}
+
+export async function saveAIConversation(
+  category: string,
+  slug: string,
+  messages: ChatMessage[],
+  reply_target: string | null,
+  reference_files: string[],
+): Promise<void> {
+  const r = await fetch(
+    `/api/ai/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/conversation`,
+    {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages, reply_target, reference_files }),
+    },
+  );
+  if (!r.ok) throw new Error(`save conversation failed: ${r.status}`);
+}
+
+export async function clearAIConversation(
+  category: string,
+  slug: string,
+): Promise<void> {
+  await fetch(
+    `/api/ai/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/conversation`,
+    { method: "DELETE", credentials: "include" },
+  );
+}
+
+export type AIFileEntry = {
+  path: string;
+  filename: string;
+  type: string;
+  author: string;
+  created: string;
+};
+
+export type AIThreadFiles = {
+  category: string;
+  slug: string;
+  title: string;
+  files: AIFileEntry[];
+};
+
+export async function fetchAIFiles(): Promise<AIThreadFiles[]> {
+  const r = await fetch("/api/ai/files", { credentials: "include" });
+  if (!r.ok) throw new Error(`/api/ai/files failed: ${r.status}`);
+  const body = (await r.json()) as { items: AIThreadFiles[] };
+  return body.items;
+}
+
+/**
+ * Streams AI chat deltas. Yields string chunks. Throws on error.
+ * Usage: for await (const chunk of streamAIChat(...)) { ... }
+ */
+export async function* streamAIChat(
+  category: string,
+  slug: string,
+  messages: ChatMessage[],
+  reply_target: string | null,
+  reference_files: string[],
+): AsyncGenerator<string> {
+  const resp = await fetch(
+    `/api/ai/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/chat`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages, reply_target, reference_files }),
+    },
+  );
+  if (!resp.ok) {
+    const d = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(d.detail || `AI chat failed: ${resp.status}`);
+  }
+  const reader = resp.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6);
+      if (data === "[DONE]") return;
+      try {
+        const msg = JSON.parse(data) as { delta?: string; error?: string };
+        if (msg.error) throw new Error(msg.error);
+        if (msg.delta) yield msg.delta;
+      } catch (e) {
+        if (e instanceof Error && e.message !== "") throw e;
+      }
+    }
+  }
+}
+
+// ── Workspace ────────────────────────────────────────────────────────────────
+
 export async function refreshWorkspace(): Promise<WorkspaceStatus> {
   const r = await fetch("/api/workspace/refresh", {
     method: "POST",
@@ -306,4 +512,45 @@ export async function refreshWorkspace(): Promise<WorkspaceStatus> {
   if (!r.ok) throw new Error(`/api/workspace/refresh failed: ${r.status}`);
   const body = (await r.json()) as { ok: boolean; head: string | null };
   return { ready: true, path: "", head: body.head };
+}
+
+// ── API Tokens (Personal Access Tokens) ─────────────────────────────────────
+
+export type ApiTokenSummary = {
+  id: string;
+  name: string;
+  created_at: number;
+  last_used_at: number | null;
+  expires_at: number;
+};
+
+export type ApiTokenCreated = ApiTokenSummary & { token: string };
+
+export async function fetchApiTokens(): Promise<ApiTokenSummary[]> {
+  const r = await fetch("/api/tokens", { credentials: "include" });
+  if (!r.ok) throw new Error(`/api/tokens failed: ${r.status}`);
+  const body = (await r.json()) as { items: ApiTokenSummary[] };
+  return body.items;
+}
+
+export async function createApiToken(
+  name: string,
+  ttl_days = 90,
+): Promise<ApiTokenCreated> {
+  const r = await fetch("/api/tokens", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, ttl_days }),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `create token failed: ${r.status}`);
+  }
+  return (await r.json()) as ApiTokenCreated;
+}
+
+export async function deleteApiToken(id: string): Promise<void> {
+  const r = await fetch(`/api/tokens/${id}`, { method: "DELETE", credentials: "include" });
+  if (!r.ok) throw new Error(`delete token failed: ${r.status}`);
 }

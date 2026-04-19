@@ -64,7 +64,6 @@ class Workspace:
         if not self.is_cloned():
             return 0
         with self.write_lock:
-            pull(str(self.path))
             fixed = repair_partial_writes(self.discussions_dir, self.index_dir)
             dirty = _is_dirty(self.path)
             if fixed > 0:
@@ -85,6 +84,7 @@ class Workspace:
                 )
                 if changed:
                     push(str(self.path))
+            pull(str(self.path))
             return fixed
 
     @contextmanager

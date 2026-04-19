@@ -42,9 +42,11 @@ def build_router(
     contacts: ContactRepo,
     session_secret: str,
     post_login_redirect: str = "/",
+    secure_cookie: bool = False,
 ) -> APIRouter:
     router = APIRouter()
     signer = URLSafeTimedSerializer(session_secret, salt="feishu-oauth-state")
+    cookie_samesite = "none" if secure_cookie else "lax"
 
     def _issue_state() -> str:
         return signer.dumps(secrets.token_urlsafe(16))
@@ -96,7 +98,12 @@ def build_router(
         log.info("login success name=%s open_id=%s", info.name, info.open_id)
         resp = RedirectResponse(post_login_redirect, status_code=302)
         resp.set_cookie(
-            SESSION_COOKIE, sid, httponly=True, samesite="lax", secure=False, path="/"
+            SESSION_COOKIE,
+            sid,
+            httponly=True,
+            samesite=cookie_samesite,
+            secure=secure_cookie,
+            path="/",
         )
         return resp
 

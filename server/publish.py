@@ -93,6 +93,8 @@ def publish_reply(
     mention_comments: str | None = None,
     contacts: ContactRepo | None = None,
     notifier: Notifier | None = None,
+    reply_to: str | None = None,
+    references: list[str] | None = None,
 ) -> dict:
     if not user.pinyin:
         raise PublishError("profile setup required")
@@ -125,6 +127,8 @@ def publish_reply(
             author_id=user.pinyin,
             now_iso=now,
             mention=mention_block,
+            reply_to=reply_to,
+            references=references,
         )
         mark_indexed(post_path)
     if notifier is not None:
