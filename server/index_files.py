@@ -7,6 +7,40 @@ from pathlib import Path
 import yaml
 
 
+def change_thread_status(
+    index_dir: Path,
+    *,
+    category: str,
+    slug: str,
+    from_state: str,
+    to_state: str,
+    author_id: str,
+    reason: str | None,
+    now_iso: str,
+) -> None:
+    path = Path(index_dir) / f"{slug}-discuss.index.yaml"
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    discussions = data.get("discussions") or []
+    if not (discussions and isinstance(discussions[0], dict)):
+        raise ValueError("index has no discussion entry")
+    current = discussions[0].get("status")
+    if current != from_state:
+        raise ValueError(f"status mismatch: expected {from_state}, found {current}")
+    discussions[0]["status"] = to_state
+    data["last_updated"] = now_iso
+    event = _status_event(author_id, from_state, to_state, reason)
+    data.setdefault("timeline", []).append({"time": now_iso, "event": event})
+    _atomic_write_yaml(path, data)
+
+
+def _status_event(author_id: str, from_state: str, to_state: str, reason: str | None) -> str:
+    if to_state == "open" and from_state in ("concluded", "closed"):
+        return f"{author_id} 从 {from_state} 状态重新打开，原因：{reason}"
+    return f"{author_id} 状态变更 {from_state} -> {to_state}"
+
+
 def _build_reply_refs(index_data: dict, origin: str) -> list[dict]:
     discussions = index_data.get("discussions") or []
     if not (discussions and isinstance(discussions[0], dict)):

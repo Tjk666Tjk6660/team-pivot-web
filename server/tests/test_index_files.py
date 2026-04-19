@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from server.index_files import (
     append_reply_to_index,
+    change_thread_status,
     create_thread_index,
     read_thread_index,
 )
@@ -79,6 +80,67 @@ def test_append_reply_updates_last_updated_and_timeline(tmp_path):
     assert len(data["timeline"]) == 2
     assert data["timeline"][1]["event"] == "ken replied"
     assert len(data["discussions"][0]["files"]) == 2
+
+
+def test_change_status_updates_and_appends_timeline(tmp_path):
+    idx = tmp_path / "index"
+    create_thread_index(
+        idx, category="c", slug="t", filename="001_a.md",
+        author_id="ken", now_iso="2026-04-19T10:00:00+08:00",
+    )
+    change_thread_status(
+        idx, category="c", slug="t",
+        from_state="open", to_state="concluded",
+        author_id="ken", reason=None,
+        now_iso="2026-04-19T12:00:00+08:00",
+    )
+    import yaml
+    data = yaml.safe_load((idx / "t-discuss.index.yaml").read_text())
+    assert data["discussions"][0]["status"] == "concluded"
+    assert data["last_updated"] == "2026-04-19T12:00:00+08:00"
+    assert data["timeline"][-1]["event"] == "ken 状态变更 open -> concluded"
+
+
+def test_change_status_reopen_records_reason(tmp_path):
+    idx = tmp_path / "index"
+    create_thread_index(
+        idx, category="c", slug="t", filename="001_a.md",
+        author_id="ken", now_iso="2026-04-19T10:00:00+08:00",
+    )
+    (idx / "t-discuss.index.yaml").write_text(
+        (idx / "t-discuss.index.yaml").read_text().replace(
+            "status: open", "status: concluded"
+        ),
+        encoding="utf-8",
+    )
+    change_thread_status(
+        idx, category="c", slug="t",
+        from_state="concluded", to_state="open",
+        author_id="dengke", reason="发现新数据",
+        now_iso="2026-04-19T13:00:00+08:00",
+    )
+    import yaml
+    data = yaml.safe_load((idx / "t-discuss.index.yaml").read_text())
+    assert data["discussions"][0]["status"] == "open"
+    last = data["timeline"][-1]
+    assert "从 concluded 状态重新打开" in last["event"]
+    assert "发现新数据" in last["event"]
+
+
+def test_change_status_rejects_stale_from_state(tmp_path):
+    idx = tmp_path / "index"
+    create_thread_index(
+        idx, category="c", slug="t", filename="001_a.md",
+        author_id="ken", now_iso="2026-04-19T10:00:00+08:00",
+    )
+    import pytest
+    with pytest.raises(ValueError):
+        change_thread_status(
+            idx, category="c", slug="t",
+            from_state="closed", to_state="open",
+            author_id="ken", reason="x",
+            now_iso="2026-04-19T11:00:00+08:00",
+        )
 
 
 def test_append_reply_adds_from_ref_to_proposal(tmp_path):

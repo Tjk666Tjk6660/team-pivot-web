@@ -219,6 +219,25 @@ export async function fetchInbox(): Promise<InboxItem[]> {
   return body.items;
 }
 
+export async function changeThreadStatus(
+  category: string, slug: string, to: string, reason?: string,
+): Promise<{ ok: true; from: string; to: string }> {
+  const r = await fetch(
+    `/api/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/status`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to, reason }),
+    },
+  );
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `status change failed: ${r.status}`);
+  }
+  return await r.json();
+}
+
 export async function markThreadRead(category: string, slug: string): Promise<void> {
   await fetch(
     `/api/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/read`,

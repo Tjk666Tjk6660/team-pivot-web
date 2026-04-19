@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import Markdown from "react-markdown";
 import {
+  changeThreadStatus,
   deleteDraft,
   fetchDrafts,
   fetchThread,
@@ -12,7 +13,7 @@ import {
   type ThreadDetail as ThreadDetailData,
 } from "../api";
 import { UserBar } from "../components/UserBar";
-import { StatusBadge } from "../components/StatusBadge";
+import { StatusControl } from "../components/StatusControl";
 import { relativeTime } from "../lib/time";
 import { formatSaveStatus, useDraftAutosave } from "../hooks/useDraftAutosave";
 
@@ -60,7 +61,14 @@ export function ThreadDetail({ me, onLogout }: { me: Me; onLogout: () => void })
             }}
           >
             <h1 style={{ margin: 0 }}>{data.meta.title}</h1>
-            <StatusBadge status={data.meta.status} />
+            <StatusControl
+              status={data.meta.status}
+              onChange={async (to, reason) => {
+                if (!category || !slug) return;
+                await changeThreadStatus(category, slug, to, reason);
+                load();
+              }}
+            />
           </div>
           <div style={{ fontSize: 13, color: "#888", marginTop: 4 }}>
             {data.meta.category} ·{" "}

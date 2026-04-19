@@ -3,10 +3,19 @@ from __future__ import annotations
 from fastapi import APIRouter, Cookie, HTTPException
 from pydantic import BaseModel, Field
 
+from datetime import datetime, timezone
+
 from server.auth.session import SessionStore
+from server.index_files import change_thread_status
 from server.mentions import resolve_id, resolve_text
 from server.notify import Notifier
 from server.publish import PublishError, publish_proposal, publish_reply
+from server.status_machine import (
+    REASON_MIN_LEN,
+    VALID_STATES,
+    can_transition,
+    requires_reason,
+)
 from server.threads import ThreadMeta, get_thread, list_threads
 from server.users import User, UserRepo
 from server.workspace import Workspace
@@ -20,6 +29,11 @@ class NewThreadBody(BaseModel):
 
 class ReplyBody(BaseModel):
     body: str = Field(min_length=1, max_length=50000)
+
+
+class StatusChangeBody(BaseModel):
+    to: str = Field(min_length=1, max_length=20)
+    reason: str | None = Field(default=None, max_length=500)
 
 
 def build_router(
@@ -105,6 +119,51 @@ def build_router(
             raise HTTPException(
                 status_code=404 if "not found" in str(e) else 400, detail=str(e)
             ) from e
+
+    @router.post("/threads/{category}/{slug}/status")
+    def change_status(
+        category: str, slug: str, body: StatusChangeBody,
+        sid: str | None = Cookie(default=None),
+    ):
+        user = _current_user(sid)
+        if body.to not in VALID_STATES:
+            raise HTTPException(status_code=400, detail=f"invalid status: {body.to}")
+        detail = get_thread(workspace.discussions_dir, workspace.index_dir, category, slug)
+        if detail is None:
+            raise HTTPException(status_code=404, detail="thread not found")
+        from_state = detail.meta.status or "open"
+        if not can_transition(from_state, body.to):
+            raise HTTPException(
+                status_code=400,
+                detail=f"transition {from_state} -> {body.to} not allowed",
+            )
+        reason = (body.reason or "").strip() or None
+        if requires_reason(from_state, body.to):
+            if not reason or len(reason) < REASON_MIN_LEN:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"reopen requires a reason of at least {REASON_MIN_LEN} characters",
+                )
+        now = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+        with workspace.write_session(
+            message=f"chore: status {slug} {from_state}->{body.to}",
+            author_name=user.name,
+            author_email=f"{user.pinyin}@pivot.local",
+        ):
+            change_thread_status(
+                workspace.index_dir,
+                category=category, slug=slug,
+                from_state=from_state, to_state=body.to,
+                author_id=user.pinyin or "",
+                reason=reason,
+                now_iso=now,
+            )
+        notifier.notify_status_change(
+            category=category, slug=slug, thread_title=detail.meta.title,
+            from_state=from_state, to_state=body.to,
+            author_name=user.name, reason=reason,
+        )
+        return {"ok": True, "from": from_state, "to": body.to}
 
     @router.post("/workspace/refresh")
     def refresh(sid: str | None = Cookie(default=None)):

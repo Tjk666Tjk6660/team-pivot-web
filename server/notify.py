@@ -40,6 +40,18 @@ class Notifier(Protocol):
         body: str,
     ) -> None: ...
 
+    def notify_status_change(
+        self,
+        *,
+        category: str,
+        slug: str,
+        thread_title: str,
+        from_state: str,
+        to_state: str,
+        author_name: str,
+        reason: str | None,
+    ) -> None: ...
+
 
 class NoOpNotifier:
     def notify_new_thread(self, **_: object) -> None:
@@ -47,6 +59,9 @@ class NoOpNotifier:
 
     def notify_new_reply(self, **_: object) -> None:
         log.debug("notify disabled: new_reply suppressed")
+
+    def notify_status_change(self, **_: object) -> None:
+        log.debug("notify disabled: status_change suppressed")
 
 
 class FeishuNotifier:
@@ -87,6 +102,27 @@ class FeishuNotifier:
             thread_url=self._thread_url(category, slug),
         )
         self._broadcast(card, event=f"new_reply slug={slug}")
+
+    def notify_status_change(
+        self,
+        *,
+        category: str,
+        slug: str,
+        thread_title: str,
+        from_state: str,
+        to_state: str,
+        author_name: str,
+        reason: str | None,
+    ) -> None:
+        card = build_status_change_card(
+            thread_title=thread_title,
+            author_name=author_name,
+            from_state=from_state,
+            to_state=to_state,
+            reason=reason,
+            thread_url=self._thread_url(category, slug),
+        )
+        self._broadcast(card, event=f"status_change slug={slug} {from_state}->{to_state}")
 
     def _thread_url(self, category: str, slug: str) -> str:
         from urllib.parse import quote
@@ -238,6 +274,54 @@ def build_reply_card(
         button_text="查看讨论",
         thread_url=thread_url,
     )
+
+
+_STATUS_LABEL = {
+    "open": "讨论中",
+    "concluded": "已达成结论",
+    "produced": "已转为项目",
+    "closed": "已关闭",
+    "pending": "暂时搁置",
+}
+
+
+def build_status_change_card(
+    *,
+    thread_title: str,
+    author_name: str,
+    from_state: str,
+    to_state: str,
+    reason: str | None,
+    thread_url: str,
+) -> dict:
+    from_label = _STATUS_LABEL.get(from_state, from_state)
+    to_label = _STATUS_LABEL.get(to_state, to_state)
+    md_parts = [
+        f"**操作**：{author_name}",
+        f"**状态**：{from_label} → {to_label}",
+    ]
+    if reason:
+        md_parts.append(f"**原因**：{reason}")
+    md = "\n\n".join(md_parts)
+    return {
+        "schema": "2.0",
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": f"状态变更：{thread_title}"},
+            "template": "purple",
+        },
+        "body": {
+            "elements": [
+                {"tag": "markdown", "content": md},
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "查看讨论"},
+                    "type": "primary",
+                    "multi_url": {"url": thread_url, "pc_url": "", "android_url": "", "ios_url": ""},
+                },
+            ],
+        },
+    }
 
 
 def _build_card(
