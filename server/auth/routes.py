@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import logging
 import secrets
+from urllib.parse import unquote, urlencode
 
-from fastapi import APIRouter, Cookie, HTTPException
+from fastapi import APIRouter, Cookie, HTTPException, Request
 
 log = logging.getLogger(__name__)
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -48,14 +49,32 @@ def build_router(
     signer = URLSafeTimedSerializer(session_secret, salt="feishu-oauth-state")
     cookie_samesite = "none" if secure_cookie else "lax"
 
-    def _issue_state() -> str:
-        return signer.dumps(secrets.token_urlsafe(16))
+    def _normalize_next(next_value: str | None) -> str:
+        if not next_value:
+            return post_login_redirect
+        next_value = unquote(next_value)
+        if not next_value.startswith("/") or next_value.startswith("//"):
+            return post_login_redirect
+        return next_value
 
-    def _verify_state(state: str) -> None:
+    def _issue_state(next_value: str | None = None) -> str:
+        return signer.dumps({
+            "nonce": secrets.token_urlsafe(16),
+            "next": _normalize_next(next_value),
+        })
+
+    def _verify_state(state: str) -> str:
         try:
-            signer.loads(state, max_age=STATE_MAX_AGE_SEC)
+            payload = signer.loads(state, max_age=STATE_MAX_AGE_SEC)
         except BadSignature as e:
             raise HTTPException(status_code=400, detail="invalid state") from e
+        if isinstance(payload, dict):
+            return _normalize_next(payload.get("next"))
+        return post_login_redirect
+
+    def _is_feishu_client(request: Request) -> bool:
+        ua = (request.headers.get("user-agent") or "").lower()
+        return "lark" in ua or "feishu" in ua
 
     def _current_user(sid: str | None) -> User:
         s = sessions.get(sid)
@@ -67,14 +86,30 @@ def build_router(
             raise HTTPException(status_code=401, detail="user not found")
         return u
 
+    @router.get("/auth/entry")
+    def auth_entry(
+        request: Request,
+        next: str | None = None,
+        sid: str | None = Cookie(default=None),
+    ) -> RedirectResponse:
+        next_url = _normalize_next(next)
+        if sessions.get(sid) is not None:
+            return RedirectResponse(next_url, status_code=302)
+        if _is_feishu_client(request):
+            log.info("auth entry feishu next=%s", next_url)
+            return RedirectResponse(oauth.preauth_url(_issue_state(next_url)))
+        query = urlencode({"next": next_url})
+        return RedirectResponse(f"/login?{query}", status_code=302)
+
     @router.get("/login")
-    def login() -> RedirectResponse:
-        log.info("login initiated")
-        return RedirectResponse(oauth.authorize_url(_issue_state()))
+    def login(next: str | None = None) -> RedirectResponse:
+        next_url = _normalize_next(next)
+        log.info("login initiated next=%s", next_url)
+        return RedirectResponse(oauth.authorize_url(_issue_state(next_url)))
 
     @router.get("/auth/callback")
     def callback(code: str, state: str) -> RedirectResponse:
-        _verify_state(state)
+        next_url = _verify_state(state)
         try:
             token = oauth.exchange_code(code)
             info = oauth.get_user_info(token.access_token)
@@ -95,7 +130,7 @@ def build_router(
         )
         sid = sessions.create(info.open_id, user_access_token=token.access_token)
         log.info("login success name=%s open_id=%s", info.name, info.open_id)
-        resp = RedirectResponse(post_login_redirect, status_code=302)
+        resp = RedirectResponse(next_url, status_code=302)
         resp.set_cookie(
             SESSION_COOKIE,
             sid,

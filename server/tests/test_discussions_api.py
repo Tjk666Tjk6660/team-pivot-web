@@ -10,6 +10,7 @@ from server.api_tokens import ApiTokenRepo
 from server.auth.deps import make_current_user
 from server.auth.session import SessionStore
 from server.contacts import ContactRepo
+from server.favorites import FavoriteRepo
 from server.notify import NoOpNotifier
 from server.read_state import ReadStateRepo
 
@@ -62,6 +63,7 @@ def test_threads_route_uses_contact_fallback_for_author_display(db, users, tmp_p
             contacts,
             NoOpNotifier(),
             ReadStateRepo(db),
+            FavoriteRepo(db),
             current_user,
         )
     )
@@ -93,6 +95,7 @@ def test_create_thread_accepts_chinese_category(db, users, tmp_path):
             contacts,
             NoOpNotifier(),
             ReadStateRepo(db),
+            FavoriteRepo(db),
             current_user,
         )
     )
@@ -107,3 +110,122 @@ def test_create_thread_accepts_chinese_category(db, users, tmp_path):
     body = r.json()
     assert body["category"] == "技术讨论"
     assert (discussions / "技术讨论").is_dir()
+
+
+def test_threads_route_marks_favorites_for_current_user(db, users, tmp_path):
+    discussions = tmp_path / "discussions"
+    index_dir = tmp_path / "index"
+    _write_post(
+        discussions / "general" / "hello" / "001_contact_proposal_abc123.md",
+        type_="proposal",
+        author="ou_1",
+        title="Hello",
+    )
+
+    contacts = ContactRepo(db)
+    users.upsert_from_feishu(open_id="ou_1", union_id=None, name="Ken", avatar_url="")
+    sessions = SessionStore(db)
+    sid = sessions.create("ou_1")
+    favorites = FavoriteRepo(db)
+    favorites.set("ou_1", "general/hello")
+    current_user = make_current_user(sessions, users, ApiTokenRepo(db))
+
+    app = FastAPI()
+    app.include_router(
+        build_router(
+            _WorkspaceStub(discussions, index_dir),
+            users,
+            contacts,
+            NoOpNotifier(),
+            ReadStateRepo(db),
+            favorites,
+            current_user,
+        )
+    )
+    client = TestClient(app)
+    client.cookies.set("sid", sid)
+
+    r = client.get("/api/threads")
+    assert r.status_code == 200, r.text
+    assert r.json()["items"][0]["favorite"] is True
+
+
+def test_toggle_thread_favorite(db, users, tmp_path):
+    discussions = tmp_path / "discussions"
+    index_dir = tmp_path / "index"
+    _write_post(
+        discussions / "general" / "hello" / "001_contact_proposal_abc123.md",
+        type_="proposal",
+        author="ou_1",
+        title="Hello",
+    )
+
+    contacts = ContactRepo(db)
+    users.upsert_from_feishu(open_id="ou_1", union_id=None, name="Ken", avatar_url="")
+    sessions = SessionStore(db)
+    sid = sessions.create("ou_1")
+    favorites = FavoriteRepo(db)
+    current_user = make_current_user(sessions, users, ApiTokenRepo(db))
+
+    app = FastAPI()
+    app.include_router(
+        build_router(
+            _WorkspaceStub(discussions, index_dir),
+            users,
+            contacts,
+            NoOpNotifier(),
+            ReadStateRepo(db),
+            favorites,
+            current_user,
+        )
+    )
+    client = TestClient(app)
+    client.cookies.set("sid", sid)
+
+    on = client.post("/api/threads/general/hello/favorite", json={"favorite": True})
+    assert on.status_code == 200, on.text
+    assert on.json()["favorite"] is True
+    assert favorites.has("ou_1", "general/hello") is True
+
+    off = client.post("/api/threads/general/hello/favorite", json={"favorite": False})
+    assert off.status_code == 200, off.text
+    assert off.json()["favorite"] is False
+    assert favorites.has("ou_1", "general/hello") is False
+
+
+def test_thread_detail_includes_favorite_flag(db, users, tmp_path):
+    discussions = tmp_path / "discussions"
+    index_dir = tmp_path / "index"
+    _write_post(
+        discussions / "general" / "hello" / "001_contact_proposal_abc123.md",
+        type_="proposal",
+        author="ou_1",
+        title="Hello",
+    )
+
+    contacts = ContactRepo(db)
+    users.upsert_from_feishu(open_id="ou_1", union_id=None, name="Ken", avatar_url="")
+    sessions = SessionStore(db)
+    sid = sessions.create("ou_1")
+    favorites = FavoriteRepo(db)
+    favorites.set("ou_1", "general/hello")
+    current_user = make_current_user(sessions, users, ApiTokenRepo(db))
+
+    app = FastAPI()
+    app.include_router(
+        build_router(
+            _WorkspaceStub(discussions, index_dir),
+            users,
+            contacts,
+            NoOpNotifier(),
+            ReadStateRepo(db),
+            favorites,
+            current_user,
+        )
+    )
+    client = TestClient(app)
+    client.cookies.set("sid", sid)
+
+    r = client.get("/api/threads/general/hello")
+    assert r.status_code == 200, r.text
+    assert r.json()["meta"]["favorite"] is True

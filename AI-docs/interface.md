@@ -24,9 +24,20 @@
 
 ## Auth
 
+### GET /auth/entry
+- 作用：统一登录入口；如果已有会话则直接跳转目标页面，否则根据环境选择飞书端内免登或普通 OAuth
+- 鉴权：无
+- 查询参数：
+  - `next?`：登录完成后的站内跳转路径，例如 `/t/产品/讨论`
+- 备注：
+  - 飞书客户端内打开时，会先跳转到飞书登录预授权码入口
+  - 普通浏览器中会回退到 `/login`
+
 ### GET /login
 - 作用：发起飞书 OAuth 登录
 - 鉴权：无
+- 查询参数：
+  - `next?`：登录完成后的站内跳转路径
 - 使用：浏览器跳转到该地址
 
 ### GET /auth/callback
@@ -106,6 +117,16 @@
 - 请求体：
   - `to`
   - `reason?`
+
+### POST /api/threads/{category}/{slug}/favorite
+- 作用：设置或取消当前用户对某个 thread 的个人收藏状态
+- 鉴权：Cookie 或 Bearer PAT
+- 请求体：
+  - `favorite`: `true | false`
+- 返回：
+  - `ok`
+  - `thread_key`
+  - `favorite`
 
 ## Drafts
 

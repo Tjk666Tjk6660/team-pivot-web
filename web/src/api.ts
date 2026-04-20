@@ -44,6 +44,7 @@ export type ThreadMeta = {
   last_updated: string | null;
   post_count: number;
   unread_count: number;
+  favorite: boolean;
 };
 
 export async function fetchThreads(category?: string): Promise<ThreadMeta[]> {
@@ -353,6 +354,27 @@ export async function changeThreadStatus(
   if (!r.ok) {
     const d = await r.json().catch(() => ({ detail: r.statusText }));
     throw new Error(d.detail || `status change failed: ${r.status}`);
+  }
+  return await r.json();
+}
+
+export async function setThreadFavorite(
+  category: string,
+  slug: string,
+  favorite: boolean,
+): Promise<{ ok: true; thread_key: string; favorite: boolean }> {
+  const r = await fetch(
+    `/api/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/favorite`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ favorite }),
+    },
+  );
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `favorite failed: ${r.status}`);
   }
   return await r.json();
 }

@@ -19,7 +19,7 @@ export function HomeWelcomePane() {
 
   if (data === undefined) {
     return (
-      <div className="mx-auto max-w-6xl px-8 py-8">
+      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
         <Card>
           <CardContent className="p-6 text-sm text-muted-foreground">Loading…</CardContent>
         </Card>
@@ -29,7 +29,7 @@ export function HomeWelcomePane() {
 
   if (data === null) {
     return (
-      <div className="mx-auto max-w-6xl px-8 py-8">
+      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
         <Card>
           <CardContent className="p-6 text-sm text-muted-foreground">
             首页信息暂时不可用。你可以直接从左侧选择讨论，或点击顶部 `新讨论` 开始工作。
@@ -42,17 +42,17 @@ export function HomeWelcomePane() {
   const latest = data.latest_release;
 
   return (
-    <div className="mx-auto max-w-6xl px-8 py-8">
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(320px,0.9fr)]">
+    <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(320px,0.9fr)]">
         <div className="space-y-6">
           <section className="overflow-hidden rounded-3xl border bg-gradient-to-br from-slate-50 via-white to-emerald-50 shadow-sm">
-            <div className="space-y-6 px-8 py-10">
+            <div className="space-y-6 px-5 py-7 sm:px-8 sm:py-10">
               <div className="flex flex-wrap items-center gap-3">
                 <Badge variant="green">Pivot {data.app.version}</Badge>
                 {data.app.head && <Badge variant="outline">HEAD {data.app.head}</Badge>}
               </div>
               <div className="space-y-3">
-                <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
+                <h1 className="text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">
                   {data.welcome.title}
                 </h1>
                 <p className="max-w-3xl text-sm leading-7 text-slate-600">
@@ -60,13 +60,13 @@ export function HomeWelcomePane() {
                 </p>
               </div>
               <div className="flex flex-wrap gap-3">
-                <Button asChild size="lg">
+                <Button asChild size="lg" className="w-full sm:w-auto">
                   <Link to="/new">
                     <Rocket className="h-4 w-4" />
                     发起新讨论
                   </Link>
                 </Button>
-                <Button asChild variant="outline" size="lg">
+                <Button asChild variant="outline" size="lg" className="w-full sm:w-auto">
                   <Link to="/admin">
                     <ShieldCheck className="h-4 w-4" />
                     管理员设置

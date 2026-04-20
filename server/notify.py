@@ -182,8 +182,10 @@ class FeishuNotifier:
         self._broadcast(card, event=f"status_change slug={slug} {from_state}->{to_state}")
 
     def _thread_url(self, category: str, slug: str) -> str:
-        from urllib.parse import quote
-        return f"{self._web_base_url}/t/{quote(category)}/{quote(slug)}"
+        from urllib.parse import urlencode
+
+        next_path = f"/t/{category}/{slug}"
+        return f"{self._web_base_url}/auth/entry?{urlencode({'next': next_path})}"
 
     def _broadcast(self, card: dict, *, event: str) -> None:
         try:

@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 from server.auth.deps import require_profile
 from server.contacts import ContactRepo
+from server.favorites import FavoriteRepo
 from server.inbox import compute_unread_counts
 from server.index_files import change_thread_status, get_mentions_by_file
 from server.mentions import resolve_id, resolve_text
@@ -64,12 +65,17 @@ class StandaloneMentionBody(BaseModel):
     mentions: MentionBlock
 
 
+class FavoriteToggleBody(BaseModel):
+    favorite: bool
+
+
 def build_router(
     workspace: Workspace,
     users: UserRepo,
     contacts: ContactRepo,
     notifier: Notifier,
     read_states: ReadStateRepo,
+    favorites: FavoriteRepo,
     current_user: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
@@ -85,9 +91,16 @@ def build_router(
         unread = compute_unread_counts(
             workspace.discussions_dir, workspace.index_dir, user.open_id, read_states
         )
+        favorite_keys = favorites.all_for_user(user.open_id)
         return {
             "items": [
-                _meta(m, users, contacts, unread.get(f"{m.category}/{m.slug}", 0))
+                _meta(
+                    m,
+                    users,
+                    contacts,
+                    unread.get(f"{m.category}/{m.slug}", 0),
+                    favorite=(f"{m.category}/{m.slug}" in favorite_keys),
+                )
                 for m in items
             ]
         }
@@ -95,14 +108,21 @@ def build_router(
     @router.get("/threads/{category}/{slug}")
     def thread_detail(
         category: str, slug: str,
-        _: User = Depends(current_user),
+        user: User = Depends(current_user),
     ):
         detail = get_thread(workspace.discussions_dir, workspace.index_dir, category, slug)
         if detail is None:
             raise HTTPException(status_code=404, detail="thread not found")
         mentions_map = get_mentions_by_file(workspace.index_dir, slug)
+        thread_key = f"{category}/{slug}"
         return {
-            "meta": _meta(detail.meta, users, contacts, unread_count=0),
+            "meta": _meta(
+                detail.meta,
+                users,
+                contacts,
+                unread_count=0,
+                favorite=favorites.has(user.open_id, thread_key),
+            ),
             "posts": [
                 {
                     "filename": p.filename,
@@ -222,6 +242,23 @@ def build_router(
         )
         return {"ok": True, "from": from_state, "to": body.to}
 
+    @router.post("/threads/{category}/{slug}/favorite")
+    def toggle_favorite(
+        category: str,
+        slug: str,
+        body: FavoriteToggleBody,
+        user: User = Depends(current_user),
+    ):
+        detail = get_thread(workspace.discussions_dir, workspace.index_dir, category, slug)
+        if detail is None:
+            raise HTTPException(status_code=404, detail="thread not found")
+        thread_key = f"{category}/{slug}"
+        if body.favorite:
+            favorites.set(user.open_id, thread_key)
+        else:
+            favorites.delete(user.open_id, thread_key)
+        return {"ok": True, "thread_key": thread_key, "favorite": body.favorite}
+
     return router
 
 
@@ -230,6 +267,7 @@ def _meta(
     users: UserRepo,
     contacts: ContactRepo,
     unread_count: int = 0,
+    favorite: bool = False,
 ) -> dict:
     return {
         "category": m.category,
@@ -241,4 +279,5 @@ def _meta(
         "last_updated": m.last_updated,
         "post_count": m.post_count,
         "unread_count": unread_count,
+        "favorite": favorite,
     }

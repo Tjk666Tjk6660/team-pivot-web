@@ -33,7 +33,7 @@ team-pivot-web/
 │   ├── auth/
 │   │   ├── feishu_oauth.py     # lark-oapi: code → token → user_info
 │   │   ├── session.py          # SessionStore（SQLite 持久化）
-│   │   └── routes.py           # /login /auth/callback /me /logout /me/profile
+│   │   └── routes.py           # /auth/entry /login /auth/callback /me /logout /me/profile
 │   ├── api/
 │   │   ├── discussions.py      # GET/POST threads, thread detail, status transitions
 │   │   ├── drafts.py           # CRUD + /publish（带 reply_to + references）
@@ -106,7 +106,7 @@ var/
 | SQLite 持久化 session（重启不丢登录） | ✅ |
 | **PAT（Personal Access Token）—— `Authorization: Bearer pvt_…`** | ✅（供 VS Code 插件等外部客户端） |
 | **管理员密码门（X-Admin-Password，MVP 硬编码 `000123`）** | ✅（保护 `/api/ai/settings`、`/api/admin/workspace-config`、`/api/contacts/sync`） |
-| **JSAPI 免登（飞书 WebView 内嵌路径）** | ❌ 未实现 |
+| **飞书客户端内统一登录入口（`/auth/entry`，端内走登录预授权码）** | ✅ |
 | 飞书真实 email 收集（commit author 现在用 `<pinyin>@pivot.local`） | ❌ 未做 |
 
 **鉴权层级**（统一在 `auth/deps.py`）：
@@ -124,6 +124,11 @@ var/
 
 所有 `api/*.py` 路由统一用 `Depends(current_user)`，不再每个文件手写 `_current_user(sid)`。
 
+补充：
+- 飞书 IM / 工作台里的站内跳转链接，不再直接发 `/t/{category}/{slug}`，而是发 `/auth/entry?next=...`
+- `/auth/entry` 会先判断现有 `sid`；未登录时，飞书客户端内走登录预授权码入口，外部浏览器回退到普通 `/login`
+- `/auth/callback` 现在会从签名 `state` 中恢复 `next`，登录完成后回跳原 thread，而不是固定回首页
+
 飞书后台须配置：App ID/Secret、回调白名单、`contact:user.base:readonly` 权限、机器人能力 + IM 权限。
 
 ## 5. 数据模型
@@ -133,6 +138,7 @@ users(open_id PK, union_id, name, avatar_url, pinyin, github_username, created_a
 drafts(id PK, user_open_id, type, title, category, body_md, thread_key,
        mentions_json, reply_to, references_json, created_at, updated_at)
 read_state(user_open_id, thread_key, last_read_post_filename, updated_at, PK(user, thread_key))
+favorites(user_open_id, thread_key, created_at, PK(user, thread_key))
 sessions(id PK, user_open_id, expires_at, created_at, user_access_token)
 contacts(open_id PK, union_id, name, en_name, avatar_url, synced_at)
 settings(key PK, value, updated_at)                                      -- AI 配置 + workspace 配置
@@ -145,6 +151,7 @@ api_tokens(token_hash PK, user_open_id, name, created_at, last_used_at, expires_
 - `contacts` 是飞书通讯录镜像，`users` 是真正登录过 Pivot 的平台用户，两者都以飞书 `open_id` 为主键语义。
 - 用户首次扫码登录时，会写入 `users`，同时回写 `contacts` 做“激活合并”；登录回写不会覆盖通讯录同步得到的 `en_name`。
 - 名称解析现在采用 `users -> contacts -> 原始值` 的回退链，避免未激活联系人在界面上退化成裸 `open_id`。
+- `favorites` 是 per-user 私有状态，保存用户收藏的 thread_key；收藏不会影响 Git 内容仓库，只存在 SQLite。
 
 ## 6. Git 写流程
 

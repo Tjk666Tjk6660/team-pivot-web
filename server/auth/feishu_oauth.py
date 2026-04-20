@@ -14,6 +14,7 @@ from lark_oapi.api.authen.v1 import (
 )
 
 AUTHORIZE_URL = "https://open.feishu.cn/open-apis/authen/v1/authorize"
+PREAUTH_URL = "https://open.feishu.cn/open-apis/authen/v1/index"
 
 DEFAULT_SCOPES = " ".join([
     "contact:contact.base:readonly",
@@ -58,6 +59,14 @@ class FeishuOAuth:
             "scope": DEFAULT_SCOPES,
         }
         return f"{AUTHORIZE_URL}?{urlencode(params)}"
+
+    def preauth_url(self, state: str) -> str:
+        params = {
+            "app_id": self._app_id,
+            "redirect_uri": self._redirect_uri,
+            "state": state,
+        }
+        return f"{PREAUTH_URL}?{urlencode(params)}"
 
     def exchange_code(self, code: str) -> TokenResult:
         req = (

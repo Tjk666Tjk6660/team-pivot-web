@@ -19,6 +19,9 @@ class FakeOAuth:
     def authorize_url(self, state: str) -> str:
         return f"https://example.com/authorize?state={state}"
 
+    def preauth_url(self, state: str) -> str:
+        return f"https://example.com/preauth?state={state}"
+
     def exchange_code(self, code: str) -> TokenResult:
         self.exchange_calls.append(code)
         return TokenResult(access_token="uat_" + code, refresh_token=None, expires_in=3600)
@@ -73,6 +76,16 @@ def test_callback_creates_user_and_sets_cookie(client_and_oauth, users):
     assert oauth.exchange_calls == ["abc"]
     u = users.get("ou_1")
     assert u is not None and u.name == "Ken" and u.needs_setup is True
+
+
+def test_callback_redirects_to_next_path(client_and_oauth):
+    client, _, _ = client_and_oauth
+    login = client.get("/login?next=/t/%E4%BA%A7%E5%93%81/%E8%AE%A8%E8%AE%BA", follow_redirects=False)
+    state = login.headers["location"].split("state=", 1)[1]
+
+    cb = client.get(f"/auth/callback?code=abc&state={state}", follow_redirects=False)
+    assert cb.status_code == 302
+    assert cb.headers["location"] == "/t/%E4%BA%A7%E5%93%81/%E8%AE%A8%E8%AE%BA"
 
 
 def test_callback_uses_samesite_none_for_secure_cookie(db, users):
@@ -166,3 +179,32 @@ def test_callback_preserves_contact_en_name_on_activation(client_and_oauth):
     assert c is not None
     assert c.en_name == "Ken Deng"
     assert c.avatar_url == "http://a/1.png"
+
+
+def test_auth_entry_redirects_logged_in_user_to_target(client_and_oauth):
+    client, _, _ = client_and_oauth
+    _login(client)
+
+    r = client.get("/auth/entry?next=/t/general/hello", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["location"] == "/t/general/hello"
+
+
+def test_auth_entry_redirects_feishu_client_to_preauth(client_and_oauth):
+    client, _, _ = client_and_oauth
+
+    r = client.get(
+        "/auth/entry?next=/t/general/hello",
+        headers={"user-agent": "Mozilla/5.0 Lark/7.0"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 307
+    assert r.headers["location"].startswith("https://example.com/preauth?state=")
+
+
+def test_auth_entry_redirects_browser_to_login(client_and_oauth):
+    client, _, _ = client_and_oauth
+
+    r = client.get("/auth/entry?next=/t/general/hello", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["location"] == "/login?next=%2Ft%2Fgeneral%2Fhello"

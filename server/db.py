@@ -34,6 +34,14 @@ CREATE TABLE IF NOT EXISTS read_state (
     updated_at REAL NOT NULL,
     PRIMARY KEY (user_open_id, thread_key)
 );
+CREATE TABLE IF NOT EXISTS favorites (
+    user_open_id TEXT NOT NULL,
+    thread_key TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    PRIMARY KEY (user_open_id, thread_key)
+);
+CREATE INDEX IF NOT EXISTS idx_favorites_user_created
+ON favorites(user_open_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS contacts (
     open_id TEXT PRIMARY KEY,
     union_id TEXT,

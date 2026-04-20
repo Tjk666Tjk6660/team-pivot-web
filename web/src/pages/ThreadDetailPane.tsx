@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AtSign, Bot } from "lucide-react";
+import { AtSign, Bot, ChevronLeft, Star } from "lucide-react";
 import {
   addMention,
   changeThreadStatus,
@@ -13,6 +13,7 @@ import {
   fetchThread,
   markThreadRead,
   publishDraft,
+  setThreadFavorite,
   updateDraft,
   type MentionBlock,
   type MentionEntry,
@@ -52,6 +53,7 @@ export function ThreadDetailPane() {
   const [replyDraftId, setReplyDraftId] = useState<string | null>(null);
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [replyReferences, setReplyReferences] = useState<string[]>([]);
+  const [favoriteSaving, setFavoriteSaving] = useState(false);
 
   const hasDraft = replyBody.trim().length > 0;
 
@@ -209,16 +211,26 @@ export function ThreadDetailPane() {
   };
 
   const threadKey = `${category}/${slug}`;
+  const favorite = data.meta.favorite;
 
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="flex h-full flex-col overflow-hidden xl:flex-row">
       {/* Posts column */}
-      <div className={`overflow-y-auto ${aiOpen ? "flex-1 min-w-0" : "w-full"}`}>
-        <div className="mx-auto max-w-3xl px-8 py-6">
+      <div className={`min-h-0 overflow-y-auto ${aiOpen ? "flex-1 min-w-0" : "w-full"}`}>
+        <div className="mx-auto max-w-3xl px-4 py-5 sm:px-6 lg:px-8 lg:py-6">
+
+          <div className="mb-4 lg:hidden">
+            <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-xs">
+              <Link to="/">
+                <ChevronLeft className="h-4 w-4" />
+                返回讨论列表
+              </Link>
+            </Button>
+          </div>
 
           {/* Thread header */}
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-semibold">{data.meta.title}</h1>
+            <h1 className="text-xl font-semibold sm:text-2xl">{data.meta.title}</h1>
             <StatusControl
               status={data.meta.status}
               onChange={async (to, reason) => {
@@ -228,6 +240,33 @@ export function ThreadDetailPane() {
                 reloadLists();
               }}
             />
+            <Button
+              variant={favorite ? "secondary" : "ghost"}
+              size="sm"
+              className="h-8 px-2 text-xs"
+              disabled={favoriteSaving}
+              onClick={async () => {
+                if (!category || !slug) return;
+                setFavoriteSaving(true);
+                try {
+                  const next = !favorite;
+                  await setThreadFavorite(category, slug, next);
+                  setData((current) => current ? {
+                    ...current,
+                    meta: { ...current.meta, favorite: next },
+                  } : current);
+                  await reloadLists();
+                } catch (e) {
+                  toast.error(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setFavoriteSaving(false);
+                }
+              }}
+              title={favorite ? "取消收藏" : "收藏"}
+            >
+              <Star className={`h-4 w-4 ${favorite ? "fill-current text-amber-500" : ""}`} />
+              {favorite ? "已收藏" : "收藏"}
+            </Button>
             <Button
               variant={aiOpen ? "secondary" : "ghost"}
               size="sm"
@@ -289,7 +328,7 @@ export function ThreadDetailPane() {
 
       {/* AI pane */}
       {aiOpen && (
-        <div className="w-96 shrink-0 overflow-hidden">
+        <div className="min-h-0 w-full overflow-hidden border-t xl:w-96 xl:shrink-0 xl:border-l xl:border-t-0">
           <AIPane
             category={category!}
             slug={slug!}
@@ -372,15 +411,15 @@ function PostCard({
 
   return (
     <Card className="border-l-4 border-l-muted">
-      <div className="p-5">
-        <div className="mb-2 flex items-start justify-between gap-2">
+      <div className="p-4 sm:p-5">
+        <div className="mb-2 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="text-xs text-muted-foreground leading-relaxed">
             <span className="font-mono">{post.filename}</span>
             {type && <span> · {type}</span>}
             <span> · {author}</span>
             {created && <span> · {relativeTime(created)}</span>}
           </div>
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="flex shrink-0 flex-wrap items-center gap-1 sm:justify-end">
             <Button
               variant="ghost"
               size="sm"
@@ -398,7 +437,7 @@ function PostCard({
                 <AtSign className="mr-1 h-3.5 w-3.5" /> 提及
               </Button>
               {mentionOpen && (
-                <div className="absolute right-0 top-full z-50 mt-1 w-80 rounded-lg border bg-white p-4 shadow-lg dark:bg-zinc-900">
+                <div className="absolute right-0 top-full z-50 mt-1 w-[min(20rem,calc(100vw-2rem))] rounded-lg border bg-white p-4 shadow-lg dark:bg-zinc-900">
                   <p className="mb-3 text-xs font-semibold text-muted-foreground">提及某人</p>
                   <MentionField
                     value={mentionValue}
@@ -540,8 +579,8 @@ function ReplyForm({
 
   return (
     <Card>
-      <form onSubmit={submit} className="space-y-3 p-5">
-        <div className="flex items-baseline justify-between">
+      <form onSubmit={submit} className="space-y-3 p-4 sm:p-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div className="flex items-baseline gap-3">
             <h3 className="font-semibold">回复</h3>
             <span className={`text-xs ${status === "error" ? "text-destructive" : "text-muted-foreground"}`}>
@@ -565,7 +604,7 @@ function ReplyForm({
           value={mentions} onChange={setMentions}
           resolvedNames={resolvedNames.current}
         />
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           <Button type="submit" disabled={submitting || !body.trim()}>
             {submitting ? "发布中…" : "发布回复"}
           </Button>

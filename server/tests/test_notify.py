@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from server.notify import NoOpNotifier, build_reply_card, build_thread_card
+from server.notify import FeishuNotifier, NoOpNotifier, build_reply_card, build_thread_card
 
 
 def test_thread_card_shape():
@@ -50,4 +50,13 @@ def test_noop_notifier_silent():
     )
     n.notify_new_reply(
         category="c", slug="s", thread_title="t", author_name="a", body="b",
+    )
+
+
+def test_feishu_notifier_uses_auth_entry_thread_url():
+    notifier = FeishuNotifier(tokens=None, web_base_url="https://pivot.enclaws.ai")  # type: ignore[arg-type]
+    url = notifier._thread_url("产品", "讨论")
+    assert (
+        url
+        == "https://pivot.enclaws.ai/auth/entry?next=%2Ft%2F%E4%BA%A7%E5%93%81%2F%E8%AE%A8%E8%AE%BA"
     )
