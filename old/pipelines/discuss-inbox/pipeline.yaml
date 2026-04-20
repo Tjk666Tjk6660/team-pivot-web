@@ -1,9 +1,0 @@
-name: discuss-inbox
-description: "列出未读消息"
-triggers: ["未读", "inbox"]
-input: {}
-steps:
-  - name: check_inbox
-    type: code
-    command: "python3 steps/check_inbox.py"
-output: check_inbox

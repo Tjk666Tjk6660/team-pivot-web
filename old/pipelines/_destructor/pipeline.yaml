@@ -1,4 +1,0 @@
-name: _destructor
-description: "Post-pipeline cleanup (placeholder — add steps as needed)"
-
-steps: []
