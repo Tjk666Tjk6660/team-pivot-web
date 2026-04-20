@@ -45,7 +45,32 @@ def clone(url: str, target: str, branch: str | None = None) -> None:
     if branch:
         args += ["--branch", branch]
     args += [url, target]
-    _run(args)
+    try:
+        _run(args)
+        return
+    except GitError as e:
+        if not branch or f"Remote branch {branch} not found" not in e.stderr:
+            raise
+        log.warning(
+            "git clone branch missing branch=%s; retrying plain clone to support empty/default-branch repos",
+            branch,
+        )
+
+    _run(["git", "clone", url, target])
+    if branch:
+        align_unborn_head(target, branch)
+
+
+def align_unborn_head(repo_dir: str, branch: str) -> None:
+    head_check = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD"],
+        cwd=repo_dir,
+        capture_output=True,
+        text=True,
+    )
+    if head_check.returncode == 0:
+        return
+    _run(["git", "symbolic-ref", "HEAD", f"refs/heads/{branch}"], cwd=repo_dir)
 
 
 def set_remote_url(repo_dir: str, remote: str, url: str) -> None:
@@ -56,6 +81,8 @@ def pull(repo_dir: str) -> None:
     try:
         _run(["git", "pull", "--rebase", "origin"], cwd=repo_dir)
     except GitError as e:
+        if "no such ref was fetched" in e.stderr.lower():
+            return
         if any(k in e.stderr.lower() for k in ("could not resolve", "network", "timeout")):
             return
         if "unstaged changes" in e.stderr.lower() or "cannot pull with rebase" in e.stderr.lower():
@@ -120,6 +147,11 @@ def push(repo_dir: str, *, remote: str = "origin", branch: str = "HEAD", max_ret
     raise last_error
 
 
-def head_short(repo_dir: str) -> str:
-    proc = _run(["git", "rev-parse", "--short", "HEAD"], cwd=repo_dir)
+def head_short(repo_dir: str) -> str | None:
+    try:
+        proc = _run(["git", "rev-parse", "--short", "HEAD"], cwd=repo_dir)
+    except GitError as e:
+        if "Needed a single revision" in e.stderr:
+            return None
+        raise
     return proc.stdout.strip()

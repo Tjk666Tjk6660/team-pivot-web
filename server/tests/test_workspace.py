@@ -138,3 +138,29 @@ def test_ensure_cloned_updates_existing_origin_url(tmp_path):
         capture_output=True, text=True, check=True,
     ).stdout.strip()
     assert fetch_url == "https://oauth2:ghp_new@github.com/a/b.git"
+
+
+def test_ensure_cloned_supports_empty_remote_without_main_branch(tmp_path):
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True)
+
+    local = tmp_path / "local"
+    ws = Workspace(path=local, repo_url=str(remote), branch="main")
+    ws.ensure_cloned()
+
+    branch = subprocess.run(
+        ["git", "-C", str(local), "symbolic-ref", "--short", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert branch == "main"
+
+    with ws.write_session(
+        message="feat: seed empty repo", author_name="Ken", author_email="ken@pivot.local",
+    ):
+        (ws.path / "README.md").write_text("hello\n")
+
+    remote_heads = subprocess.run(
+        ["git", "-C", str(remote), "show-ref", "--heads"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    assert "refs/heads/main" in remote_heads
