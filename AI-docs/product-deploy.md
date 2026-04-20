@@ -180,7 +180,35 @@ AI 不应擅自做：
 
 - 正式域名，例如：`pivot.example.com`
 
-## 4.3 `.env` 所需变量
+## 4.3 网络访问确认
+
+在安装依赖和拉取源码之前，部署工程师或 AI 必须先确认当前服务器是否能直接访问外网，尤其是：
+
+- GitHub
+- PyPI
+- npm registry
+- Let’s Encrypt
+
+推荐先明确问一句：
+
+- “当前这台服务器是否需要配置代理才能访问 GitHub / PyPI / npm？”
+
+规则：
+
+- 如果服务器位于中国境外，且访问 GitHub / PyPI / npm 正常，则不要额外配置代理
+- 如果服务器位于中国境内，或实际测试发现 GitHub / PyPI / npm 无法稳定访问，则先配置代理，再继续部署
+
+AI 不应默认所有生产服务器都需要代理，也不应默认所有服务器都不需要代理。这一步应先和部署工程师确认。
+
+如果确认需要代理，不要把代理的具体地址、端口或凭据写进本手册。应直接读取目标服务器自身已经准备好的系统配置，然后在部署过程中显式加载，例如：
+
+```bash
+source /etc/profile
+```
+
+对于本项目，只有在“服务器确实需要代理”时，才应该加这一步。
+
+## 4.4 `.env` 所需变量
 
 当前代码里必须存在的 `.env` 项：
 
@@ -212,6 +240,10 @@ NOTIFY_ENABLED=true
 
 - `FEISHU_REDIRECT_URI` 必须是外部可访问的正式域名回调地址
 - `WEB_DEV_ORIGIN` 虽然名字里有 `DEV`，但线上也必须填正式域名
+  - 当前代码会用它生成飞书通知里的网页链接
+  - 当前代码会用它作为 CORS `allow_origins`
+  - 当前代码会用它作为登录完成后的默认回跳首页
+  - 因此线上绝不能写成 `http://localhost:5173`
 - `DATA_DIR` 推荐显式写成 `/opt/team-pivot-web/var`
 
 ---
@@ -254,6 +286,17 @@ NOTIFY_ENABLED=true
 ssh -i /path/to/key.pem ubuntu@<server-ip>
 ```
 
+## 6.1.1 如有需要，先加载代理
+
+如果在 `4.3 网络访问确认` 中已经确认这台服务器需要代理，则在继续安装依赖、拉代码、执行 `uv` / `pip` / `npm` 之前先执行：
+
+```bash
+source /etc/profile
+env | grep -iE '^(http|https|all)_proxy=|^no_proxy='
+```
+
+如果这里没有看到预期的代理变量，不要继续部署，应先让人工修正代理配置。
+
 如果 PEM 权限过宽：
 
 ```bash
@@ -267,6 +310,7 @@ chmod 600 /path/to/key.pem
 在 Ubuntu 24 上，当前实践可用的命令：
 
 ```bash
+source /etc/profile   # 仅当服务器需要代理时执行
 sudo apt update
 sudo apt install -y caddy git curl nodejs npm
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -284,6 +328,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ### 推荐方案：服务器直接 clone
 
 ```bash
+source /etc/profile   # 仅当服务器需要代理时执行
 sudo mkdir -p /opt
 sudo chown -R $USER:$USER /opt
 cd /opt
@@ -332,12 +377,14 @@ NOTIFY_ENABLED=true
 
 - 新部署**不要**把 workspace / AI 配置继续写进 `.env`
 - 这些配置已经迁到数据库，必须在应用启动后通过管理界面初始化
+- `WEB_DEV_ORIGIN` 在线上必须写成正式站点根地址，例如 `https://pivot.enclaws.com`
 
 ---
 
 ## 6.5 安装后端依赖
 
 ```bash
+source /etc/profile   # 仅当服务器需要代理时执行
 cd /opt/team-pivot-web
 ~/.local/bin/uv sync
 ```
@@ -347,6 +394,7 @@ cd /opt/team-pivot-web
 ## 6.6 构建前端
 
 ```bash
+source /etc/profile   # 仅当服务器需要代理时执行
 cd /opt/team-pivot-web/web
 npm install
 npm run build
