@@ -118,7 +118,7 @@
 - Workspace 远程仓库的：
   - write token
   - readonly token
-- OpenRouter API Key（如果启用 AI）
+- AI API Key（如果启用 AI）
 
 ### 首次产品内登录
 
@@ -207,6 +207,40 @@ source /etc/profile
 ```
 
 对于本项目，只有在“服务器确实需要代理”时，才应该加这一步。
+
+### 重要：区分“部署期代理”和“运行期代理”
+
+对 `team-pivot-web` 而言，代理需求分成两类：
+
+1. **部署期**
+   用于安装和构建时访问外网，例如：
+   - `apt`
+   - `git clone`
+   - `uv sync`
+   - `pip install`
+   - `npm install`
+
+2. **运行期**
+   用于应用运行过程中访问 GitHub 文件仓库，例如：
+   - 启动时 workspace 初始化
+   - 管理员保存 workspace 配置后触发的 clone / reload
+   - `/api/workspace/refresh`
+   - 发帖、回复、状态切换后触发的 Git pull / push
+
+仅仅在 SSH shell 里执行一次 `source /etc/profile`，只会影响当前 shell，会解决部署期问题；**不能保证 systemd 启动的 `team-pivot-web` 运行期也能访问 GitHub**。
+
+如果这台服务器需要代理，并且产品运行期间也要访问 GitHub，那么代理变量还必须进入服务环境。推荐做法：
+
+- 让 `team-pivot-web.service` 通过 `EnvironmentFile=/opt/team-pivot-web/.env` 继承代理变量
+- 在 `/opt/team-pivot-web/.env` 中加入代理相关环境变量
+- 然后重启 `team-pivot-web`
+
+也就是说：
+
+- **部署期代理**：通过 `source /etc/profile` 解决
+- **运行期代理**：通过 `.env` / `systemd` 服务环境解决
+
+如果只做前者，不做后者，部署可能成功，但后续 workspace 的 Git clone / pull / push 仍可能失败。
 
 ## 4.4 `.env` 所需变量
 
@@ -597,7 +631,8 @@ curl -I https://<your-domain>
 
 当前支持的关键配置：
 
-- OpenRouter API Key
+- API Base URL（默认 OpenRouter，也可替换为 DashScope 等兼容端点）
+- AI API Key
 - Model
 - 最大上下文 token
 - 最小轮数
@@ -605,6 +640,7 @@ curl -I https://<your-domain>
 
 这些值保存到 SQLite `settings`，对应 key 包括：
 
+- `ai.base_url`
 - `ai.openrouter_api_key`
 - `ai.model`
 - `ai.max_context_tokens`
@@ -613,7 +649,8 @@ curl -I https://<your-domain>
 
 ### 推荐最小初始化
 
-- 先填 OpenRouter API Key
+- 先填 API Base URL（如果不是 OpenRouter）
+- 再填 AI API Key
 - 先选一个稳定模型
 - 其他参数保持默认
 
@@ -783,7 +820,7 @@ AI 到这里应该停下并通知人工：
 
 原因：
 
-- 没在 `/admin` 里保存 OpenRouter API Key
+- 没在 `/admin` 里保存 AI API Key
 
 解决：
 

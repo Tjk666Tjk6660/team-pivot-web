@@ -327,6 +327,7 @@ function WorkspaceConfigSection({ onAdminLost }: { onAdminLost: () => void }) {
 // ── AI settings ──────────────────────────────────────────────────────────────
 
 function AISettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
+  const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [hasKey, setHasKey] = useState(false);
@@ -339,6 +340,7 @@ function AISettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
   useEffect(() => {
     fetchAISettings()
       .then((s) => {
+        setBaseUrl(s.base_url);
         setModel(s.model);
         setHasKey(s.has_key);
         setMaxContextTokens(s.max_context_tokens);
@@ -364,6 +366,7 @@ function AISettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
     setSaving(true);
     try {
       const body: Parameters<typeof updateAISettings>[0] = {
+        base_url: baseUrl.trim() || "https://openrouter.ai/api/v1",
         model: model.trim() || undefined,
         max_context_tokens: maxContextTokens,
         min_rounds: minRounds,
@@ -394,7 +397,7 @@ function AISettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
             AI 助手配置
           </CardTitle>
           <CardDescription>
-            管理 OpenRouter 凭据、默认模型以及对话历史截断参数。
+            管理 OpenAI-compatible API 地址、凭据、默认模型以及对话历史截断参数。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -404,8 +407,21 @@ function AISettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
           <>
             <div className="grid gap-5 xl:grid-cols-2">
               <div className="space-y-2">
+                <Label htmlFor="ai-base-url">API Base URL</Label>
+                <Input
+                  id="ai-base-url"
+                  placeholder="https://openrouter.ai/api/v1"
+                  value={baseUrl}
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  兼容 OpenAI Chat Completions 的服务地址，例如 OpenRouter 或 DashScope。
+                </p>
+              </div>
+
+              <div className="space-y-2">
                 <Label htmlFor="ai-key">
-                  OpenRouter API Key
+                  AI API Key
                   {hasKey && <span className="ml-2 text-xs text-green-600">（已配置）</span>}
                 </Label>
                 <Input
@@ -416,11 +432,7 @@ function AISettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
                   onChange={(e) => setApiKey(e.target.value)}
                 />
                 <p className="text-xs text-muted-foreground">
-                  在{" "}
-                  <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" className="underline">
-                    openrouter.ai/keys
-                  </a>{" "}
-                  获取
+                  留空表示保持现有 Key 不变。
                 </p>
               </div>
 

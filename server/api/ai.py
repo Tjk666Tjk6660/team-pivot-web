@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from server.ai.client import AIError, DEFAULT_MODEL, stream_chat
+from server.ai.client import AIError, DEFAULT_BASE_URL, DEFAULT_MODEL, stream_chat
 from server.ai.context import (
     ContextTooLongError,
     build_context_from_files,
@@ -27,6 +27,7 @@ from server.workspace import Workspace
 log = logging.getLogger("server.api.ai")
 
 _KEY_API_KEY = "ai.openrouter_api_key"
+_KEY_BASE_URL = "ai.base_url"
 _KEY_MODEL = "ai.model"
 _KEY_MAX_CONTEXT_TOKENS = "ai.max_context_tokens"
 _KEY_MIN_ROUNDS = "ai.min_rounds"
@@ -58,6 +59,7 @@ class ChatRequest(BaseModel):
 
 class AISettingsUpdate(BaseModel):
     api_key: str | None = Field(default=None, max_length=200)
+    base_url: str | None = Field(default=None, max_length=300)
     model: str | None = Field(default=None, max_length=100)
     max_context_tokens: int | None = Field(default=None, ge=1000, le=200000)
     min_rounds: int | None = Field(default=None, ge=1, le=50)
@@ -80,11 +82,12 @@ def build_router(
     router = APIRouter()
 
     # ── Settings ──────────────────────────────────────────────────────────────
-    # Admin-gated AND cookie-only — PATs cannot read/write the OpenRouter key.
+    # Admin-gated AND cookie-only — PATs cannot read/write the AI API key.
 
     @router.get("/api/ai/settings", dependencies=[Depends(require_admin)])
     def get_ai_settings(_: User = Depends(current_user_cookie_only)):
         return {
+            "base_url": settings.get(_KEY_BASE_URL) or DEFAULT_BASE_URL,
             "model": settings.get(_KEY_MODEL) or DEFAULT_MODEL,
             "has_key": bool(settings.get(_KEY_API_KEY)),
             "max_context_tokens": _get_int(settings, _KEY_MAX_CONTEXT_TOKENS, _DEFAULT_MAX_CONTEXT_TOKENS),
@@ -99,6 +102,9 @@ def build_router(
     ):
         if body.api_key is not None:
             settings.set(_KEY_API_KEY, body.api_key)
+        if body.base_url is not None:
+            normalized = body.base_url.strip().rstrip("/") if body.base_url.strip() else DEFAULT_BASE_URL
+            settings.set(_KEY_BASE_URL, normalized)
         if body.model is not None:
             settings.set(_KEY_MODEL, body.model)
         if body.max_context_tokens is not None:
@@ -193,8 +199,9 @@ def build_router(
     ):
         api_key = settings.get(_KEY_API_KEY)
         if not api_key:
-            raise HTTPException(400, "未配置 OpenRouter API Key，请在【设置】中配置")
+            raise HTTPException(400, "未配置 AI API Key，请在【设置】中配置")
 
+        base_url = settings.get(_KEY_BASE_URL) or DEFAULT_BASE_URL
         model = settings.get(_KEY_MODEL) or DEFAULT_MODEL
         max_context_tokens = _get_int(settings, _KEY_MAX_CONTEXT_TOKENS, _DEFAULT_MAX_CONTEXT_TOKENS)
         min_rounds = _get_int(settings, _KEY_MIN_ROUNDS, _DEFAULT_MIN_ROUNDS)
@@ -225,7 +232,7 @@ def build_router(
 
         async def generate():
             try:
-                async for delta in stream_chat(llm_messages, model, api_key):
+                async for delta in stream_chat(llm_messages, model, api_key, base_url):
                     yield f"data: {json.dumps({'delta': delta})}\n\n"
             except AIError as e:
                 log.warning("ai chat error: %s", e)

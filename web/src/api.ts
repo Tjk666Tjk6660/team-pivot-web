@@ -389,6 +389,7 @@ export async function markThreadRead(category: string, slug: string): Promise<vo
 // ── AI ──────────────────────────────────────────────────────────────────────
 
 export type AISettings = {
+  base_url: string;
   model: string;
   has_key: boolean;
   max_context_tokens: number;
@@ -445,6 +446,7 @@ export async function fetchAISettings(): Promise<AISettings> {
 
 export async function updateAISettings(body: {
   api_key?: string;
+  base_url?: string;
   model?: string;
   max_context_tokens?: number;
   min_rounds?: number;

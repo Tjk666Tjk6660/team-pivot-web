@@ -264,6 +264,7 @@
 - 作用：读取 AI 配置
 - 鉴权：Cookie 会话 + 管理员口令
 - 返回：
+  - `base_url`
   - `model`
   - `has_key`
   - `max_context_tokens`
@@ -275,6 +276,7 @@
 - 鉴权：Cookie 会话 + 管理员口令
 - 请求体：
   - `api_key?`
+  - `base_url?`
   - `model?`
   - `max_context_tokens?`
   - `min_rounds?`

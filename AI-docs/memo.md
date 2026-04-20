@@ -44,7 +44,7 @@ team-pivot-web/
 │   │   ├── workspace.py        # /api/workspace/{status,refresh,mirror} + /api/admin/workspace-config
 │   │   └── app_home.py         # /api/app/home（版本号 + HOME.md + CHANGELOG.md 聚合）
 │   ├── ai/
-│   │   ├── client.py           # OpenRouter SSE 流式
+│   │   ├── client.py           # OpenAI-compatible SSE 流式（默认 OpenRouter，可配 base_url）
 │   │   ├── context.py          # build_context_from_files(reply_target, references)
 │   │   └── prompts.py          # 系统提示词（[[GENERATE_REPLY_DRAFT]] 强约束）
 │   ├── ai_conversations.py     # 每用户×thread 对话持久化
@@ -255,7 +255,7 @@ with workspace.write_session(message, author_name, author_email):
 ## 8. 功能完成情况
 
 **已完成：**
-飞书 OAuth + 首登 / `/auth/entry` 统一登录入口 / 讨论列表 + 详情 / 发讨论 + 回复 / 飞书卡片通知 / 草稿 autosave / 状态徽章 + 排序 / 状态转移（含 reopen 原因）/ @mention 系统（撰写 + 飞书 DM 通知）/ Session 持久化 / shadcn/ui + Tailwind / GFM markdown（表格、任务列表）/ Post 折叠 + 内联回复 + 草稿指示 / **AI 助手（OpenRouter SSE，回复对象+引用文件，按钮触发草稿生成，对话持久化）** / **PAT + 管理员密码门 + 设置页** / **workspace 配置迁移到 DB + `/api/workspace/mirror`** / **欢迎首页（`HOME.md` + `CHANGELOG.md` + 版本号聚合）** / **左栏分类树导航** / **per-user 收藏**
+飞书 OAuth + 首登 / `/auth/entry` 统一登录入口 / 讨论列表 + 详情 / 发讨论 + 回复 / 飞书卡片通知 / 草稿 autosave / 状态徽章 + 排序 / 状态转移（含 reopen 原因）/ @mention 系统（撰写 + 飞书 DM 通知）/ Session 持久化 / shadcn/ui + Tailwind / GFM markdown（表格、任务列表）/ Post 折叠 + 内联回复 + 草稿指示 / **AI 助手（OpenAI-compatible SSE，默认 OpenRouter，支持管理员配置 `base_url`、回复对象+引用文件，按钮触发草稿生成，对话持久化）** / **PAT + 管理员密码门 + 设置页** / **workspace 配置迁移到 DB + `/api/workspace/mirror`** / **欢迎首页（`HOME.md` + `CHANGELOG.md` + 版本号聚合）** / **左栏分类树导航** / **per-user 收藏**
 
 **暂缓（有意为之）：**
 附件上传 / RESULT 文件 / AI 摘要写入（post `auto-summary`、INDEX `files[].summary`）/ 多 tenant / 权限分级（PAT 当前 = 全权限）/ 搜索 / 键盘快捷键
