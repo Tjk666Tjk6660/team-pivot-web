@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AtSign, Bot, ChevronLeft, Star } from "lucide-react";
+import { AtSign, Bot, ChevronLeft, GripVertical, Star } from "lucide-react";
 import {
   addMention,
   changeThreadStatus,
@@ -39,11 +39,12 @@ export function ThreadDetailPane() {
   const { reloadLists } = useDashboard();
   const [data, setData] = useState<ThreadDetailData | null | undefined>(undefined);
 
-  // AI pane — closed by default. Once opened in a thread we keep it MOUNTED (just
-  // hidden with CSS on close) so an in-flight AI stream keeps updating in the
-  // background instead of being torn down when the user taps close on mobile.
+  // AI pane visibility remains local to the current thread view. The actual
+  // streaming state now lives above this component in Dashboard, so switching
+  // threads no longer destroys the active AI output.
   const [aiOpen, setAiOpen] = useState(false);
   const [aiMounted, setAiMounted] = useState(false);
+  const [aiPaneWidth, setAiPaneWidth] = useState(420);
   // Filename within current thread that the AI draft should reply under in UI ordering
   const [aiReplyAnchor, setAiReplyAnchor] = useState<string | null>(null);
   // Pending reply target (full path "cat/slug/file") to push to AIPane on open
@@ -57,6 +58,7 @@ export function ThreadDetailPane() {
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [replyReferences, setReplyReferences] = useState<string[]>([]);
   const [favoriteSaving, setFavoriteSaving] = useState(false);
+  const detailLayoutRef = useRef<HTMLDivElement>(null);
 
   const hasDraft = replyBody.trim().length > 0;
 
@@ -220,8 +222,34 @@ export function ThreadDetailPane() {
   const threadKey = `${category}/${slug}`;
   const favorite = data.meta.favorite;
 
+  const startAIPaneResize = (event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const layout = detailLayoutRef.current;
+    if (!layout) return;
+    const rect = layout.getBoundingClientRect();
+    const minWidth = 320;
+    const maxWidth = Math.min(760, rect.width - 320);
+
+    const onMove = (moveEvent: MouseEvent) => {
+      const next = Math.min(Math.max(rect.right - moveEvent.clientX, minWidth), maxWidth);
+      setAiPaneWidth(next);
+    };
+
+    const onUp = () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
   return (
-    <div className="flex h-full flex-col overflow-hidden xl:flex-row">
+    <div ref={detailLayoutRef} className="flex h-full min-h-0 flex-col overflow-hidden md:flex-row">
       {/* Posts column */}
       <div className={`min-h-0 overflow-y-auto ${aiOpen ? "flex-1 min-w-0" : "w-full"}`}>
         <div className="mx-auto max-w-3xl px-4 py-5 sm:px-6 lg:px-8 lg:py-6">
@@ -337,25 +365,40 @@ export function ThreadDetailPane() {
       </div>
 
       {/* AI pane — kept mounted once opened so background streaming survives close */}
-      {aiMounted && (
-        <div
-          className={
-            aiOpen
-              ? "min-h-0 w-full overflow-hidden border-t xl:w-96 xl:shrink-0 xl:border-l xl:border-t-0"
-              : "hidden"
-          }
-        >
-          <AIPane
-            category={category!}
-            slug={slug!}
-            threadKey={threadKey}
-            pendingReplyTarget={aiPendingReplyTarget}
-            onPendingReplyTargetConsumed={() => setAiPendingReplyTarget(null)}
-            onClose={() => setAiOpen(false)}
-            onUseDraftAsReply={onUseDraftAsReply}
-            hasReplyDraft={hasDraft}
-          />
-        </div>
+    {aiMounted && (
+      <>
+        {aiOpen && (
+          <div
+            className="group hidden w-2 shrink-0 cursor-col-resize items-stretch justify-center border-l bg-muted/20 transition-colors hover:bg-muted/35 md:flex"
+            onMouseDown={startAIPaneResize}
+            title="拖拽调整 AI 对话框宽度"
+          >
+            <div className="pointer-events-none flex items-center text-muted-foreground/80 group-hover:text-foreground">
+              <GripVertical className="h-3.5 w-3.5" />
+            </div>
+          </div>
+        )}
+          <div
+            className={
+              aiOpen
+                ? "flex min-h-0 w-full flex-col overflow-hidden border-t md:shrink-0 md:self-stretch md:border-l md:border-t-0"
+                : "hidden"
+            }
+            style={aiOpen ? { width: aiPaneWidth } : undefined}
+          >
+            <AIPane
+              category={category!}
+              slug={slug!}
+              threadKey={threadKey}
+              threadTitle={data.meta.title}
+              pendingReplyTarget={aiPendingReplyTarget}
+              onPendingReplyTargetConsumed={() => setAiPendingReplyTarget(null)}
+              onClose={() => setAiOpen(false)}
+              onUseDraftAsReply={onUseDraftAsReply}
+              hasReplyDraft={hasDraft}
+            />
+          </div>
+        </>
       )}
     </div>
   );

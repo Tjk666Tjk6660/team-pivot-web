@@ -570,6 +570,7 @@ export async function* streamAIChat(
   messages: ChatMessage[],
   reply_target: string | null,
   reference_files: string[],
+  signal?: AbortSignal,
 ): AsyncGenerator<string> {
   const resp = await fetch(
     `/api/ai/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/chat`,
@@ -578,11 +579,26 @@ export async function* streamAIChat(
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages, reply_target, reference_files }),
+      signal,
     },
   );
   if (!resp.ok) {
     const d = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(d.detail || `AI chat failed: ${resp.status}`);
+    const detail = Array.isArray(d.detail)
+      ? d.detail
+        .map((item: unknown) => {
+          if (typeof item === "string") return item;
+          if (item && typeof item === "object") {
+            const record = item as { loc?: unknown; msg?: unknown };
+            const loc = Array.isArray(record.loc) ? record.loc.join(".") : "";
+            const msg = typeof record.msg === "string" ? record.msg : JSON.stringify(item);
+            return loc ? `${loc}: ${msg}` : msg;
+          }
+          return String(item);
+        })
+        .join("; ")
+      : d.detail;
+    throw new Error(detail || `AI chat failed: ${resp.status}`);
   }
   const reader = resp.body!.getReader();
   const decoder = new TextDecoder();

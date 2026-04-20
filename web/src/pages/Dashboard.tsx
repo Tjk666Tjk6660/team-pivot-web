@@ -1,13 +1,27 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useOutletContext } from "react-router-dom";
-import { ChevronDown, LogOut, Plus, RefreshCw, ShieldCheck, User } from "lucide-react";
+import {
+  ChevronDown,
+  GripVertical,
+  LogOut,
+  PanelLeftOpen,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  User,
+} from "lucide-react";
 import { Toaster, toast } from "sonner";
 import {
+  clearAIConversation,
   deleteDraft,
+  fetchAIConversation,
   fetchDrafts,
   fetchThreads,
   fetchWorkspaceStatus,
   refreshWorkspace,
+  saveAIConversation,
+  streamAIChat,
+  type ChatMessage,
   type Draft,
   type Me,
   type ThreadMeta,
@@ -17,7 +31,78 @@ import { Button } from "@/components/ui/button";
 import { ThreadListPane } from "@/components/ThreadListPane";
 import { cn } from "@/lib/utils";
 
-type DashboardContext = { reloadLists: () => Promise<void> };
+type AIMsg = ChatMessage & { id: number };
+
+type AIThreadState = {
+  loaded: boolean;
+  loading: boolean;
+  messages: AIMsg[];
+  replyTarget: string | null;
+  referenceFiles: string[];
+  input: string;
+  streaming: boolean;
+  nextId: number;
+};
+
+type ActiveAIStream = {
+  threadKey: string;
+  category: string;
+  slug: string;
+  title: string;
+} | null;
+
+type DashboardContext = {
+  reloadLists: () => Promise<void>;
+  ai: {
+    activeStream: ActiveAIStream;
+    getThreadState: (threadKey: string) => AIThreadState;
+    ensureThreadLoaded: (category: string, slug: string, threadKey: string) => Promise<void>;
+    setInput: (threadKey: string, value: string) => void;
+    setReplyTarget: (
+      category: string,
+      slug: string,
+      threadKey: string,
+      value: string | null,
+    ) => void;
+    setReferenceFiles: (
+      category: string,
+      slug: string,
+      threadKey: string,
+      files: string[],
+    ) => void;
+    clearThreadConversation: (category: string, slug: string, threadKey: string) => Promise<void>;
+    sendMessage: (args: {
+      category: string;
+      slug: string;
+      threadKey: string;
+      threadTitle: string;
+      rawText: string;
+      hasReplyDraft: boolean;
+      onUseDraftAsReply: (content: string, replyTo: string, references: string[]) => Promise<boolean>;
+    }) => Promise<void>;
+  };
+};
+
+function emptyAIThreadState(): AIThreadState {
+  return {
+    loaded: false,
+    loading: false,
+    messages: [],
+    replyTarget: null,
+    referenceFiles: [],
+    input: "",
+    streaming: false,
+    nextId: 1,
+  };
+}
+
+const DRAFT_RE = /<draft>([\s\S]*?)<\/draft>/i;
+
+function extractDraft(text: string): { draft: string; rest: string } | null {
+  const m = text.match(DRAFT_RE);
+  if (!m) return null;
+  return { draft: m[1].trim(), rest: text.replace(DRAFT_RE, "").trim() };
+}
 
 export function useDashboard() {
   return useOutletContext<DashboardContext>();
@@ -29,7 +114,22 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [drafts, setDrafts] = useState<Draft[] | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceStatus | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(360);
+  const [aiThreads, setAiThreads] = useState<Record<string, AIThreadState>>({});
+  const [activeAIStream, setActiveAIStream] = useState<ActiveAIStream>(null);
   const isThreadView = location.pathname.startsWith("/t/");
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const aiThreadsRef = useRef<Record<string, AIThreadState>>({});
+  const activeAIStreamRef = useRef<ActiveAIStream>(null);
+
+  useEffect(() => {
+    aiThreadsRef.current = aiThreads;
+  }, [aiThreads]);
+
+  useEffect(() => {
+    activeAIStreamRef.current = activeAIStream;
+  }, [activeAIStream]);
 
   const load = async () => {
     try {
@@ -39,6 +139,261 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       setThreads(t); setWorkspace(w); setDrafts(d);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const getThreadState = (threadKey: string): AIThreadState =>
+    aiThreads[threadKey] ?? emptyAIThreadState();
+
+  const persistThreadConversation = (
+    category: string,
+    slug: string,
+    threadKey: string,
+    snapshot?: AIThreadState,
+  ) => {
+    const thread = snapshot ?? aiThreadsRef.current[threadKey] ?? emptyAIThreadState();
+    saveAIConversation(
+      category,
+      slug,
+      thread.messages.map(({ role, content }) => ({ role, content })),
+      thread.replyTarget,
+      thread.referenceFiles,
+    ).catch(() => {});
+  };
+
+  const ensureThreadLoaded = async (category: string, slug: string, threadKey: string) => {
+    const current = aiThreadsRef.current[threadKey];
+    if (current?.loaded || current?.loading) return;
+
+    setAiThreads((prev) => ({
+      ...prev,
+      [threadKey]: {
+        ...(prev[threadKey] ?? emptyAIThreadState()),
+        loading: true,
+      },
+    }));
+
+    try {
+      const conv = await fetchAIConversation(category, slug);
+      setAiThreads((prev) => {
+        const existing = prev[threadKey] ?? emptyAIThreadState();
+        const mapped: AIMsg[] = conv.messages.map((m, idx) => ({ ...m, id: idx + 1 }));
+        return {
+          ...prev,
+          [threadKey]: {
+            ...existing,
+            loaded: true,
+            loading: false,
+            messages: mapped,
+            replyTarget: conv.reply_target,
+            referenceFiles: conv.reference_files,
+            nextId: mapped.length + 1,
+          },
+        };
+      });
+    } catch {
+      setAiThreads((prev) => ({
+        ...prev,
+        [threadKey]: {
+          ...(prev[threadKey] ?? emptyAIThreadState()),
+          loaded: true,
+          loading: false,
+        },
+      }));
+    }
+  };
+
+  const setInput = (threadKey: string, value: string) => {
+    setAiThreads((prev) => ({
+      ...prev,
+      [threadKey]: {
+        ...(prev[threadKey] ?? emptyAIThreadState()),
+        input: value,
+      },
+    }));
+  };
+
+  const setReplyTarget = (
+    category: string,
+    slug: string,
+    threadKey: string,
+    value: string | null,
+  ) => {
+    setAiThreads((prev) => {
+      const existing = prev[threadKey] ?? emptyAIThreadState();
+      const nextState: AIThreadState = {
+        ...existing,
+        replyTarget: value,
+        referenceFiles: existing.referenceFiles.filter((ref) => ref !== value),
+      };
+      queueMicrotask(() => persistThreadConversation(category, slug, threadKey, nextState));
+      return { ...prev, [threadKey]: nextState };
+    });
+  };
+
+  const setReferenceFiles = (
+    category: string,
+    slug: string,
+    threadKey: string,
+    files: string[],
+  ) => {
+    setAiThreads((prev) => {
+      const existing = prev[threadKey] ?? emptyAIThreadState();
+      const nextState: AIThreadState = {
+        ...existing,
+        referenceFiles: files,
+      };
+      queueMicrotask(() => persistThreadConversation(category, slug, threadKey, nextState));
+      return { ...prev, [threadKey]: nextState };
+    });
+  };
+
+  const clearThreadConversation = async (category: string, slug: string, threadKey: string) => {
+    setAiThreads((prev) => ({
+      ...prev,
+      [threadKey]: {
+        ...(prev[threadKey] ?? emptyAIThreadState()),
+        loaded: true,
+        loading: false,
+        messages: [],
+        input: "",
+        streaming: false,
+        nextId: 1,
+      },
+    }));
+    if (activeAIStreamRef.current?.threadKey === threadKey) {
+      setActiveAIStream(null);
+    }
+    await clearAIConversation(category, slug).catch(() => {});
+  };
+
+  const sendMessage = async ({
+    category,
+    slug,
+    threadKey,
+    threadTitle,
+    rawText,
+    hasReplyDraft,
+    onUseDraftAsReply,
+  }: {
+    category: string;
+    slug: string;
+    threadKey: string;
+    threadTitle: string;
+    rawText: string;
+    hasReplyDraft: boolean;
+    onUseDraftAsReply: (content: string, replyTo: string, references: string[]) => Promise<boolean>;
+  }) => {
+    const trimmed = rawText.trim();
+    if (!trimmed) return;
+
+    const active = activeAIStreamRef.current;
+    if (active && active.threadKey !== threadKey) {
+      toast.error(`《${active.title}》正在占用 AI 输出，请等待完成`);
+      return;
+    }
+
+    const current = aiThreadsRef.current[threadKey] ?? emptyAIThreadState();
+    if (current.streaming) return;
+    if (!current.replyTarget) {
+      toast.error("请先选择「回复对象」文件");
+      return;
+    }
+
+    const currentReplyTarget = current.replyTarget;
+    const currentReferenceFiles = current.referenceFiles;
+    const userMsg: AIMsg = { id: current.nextId, role: "user", content: trimmed };
+    const assistantId = current.nextId + 1;
+    const withUser: AIMsg[] = [...current.messages, userMsg];
+    const pendingMessages: AIMsg[] = [
+      ...withUser,
+      { id: assistantId, role: "assistant", content: "" },
+    ];
+
+    setAiThreads((prev) => ({
+      ...prev,
+      [threadKey]: {
+        ...(prev[threadKey] ?? current),
+        loaded: true,
+        loading: false,
+        messages: pendingMessages,
+        input: "",
+        streaming: true,
+        nextId: current.nextId + 2,
+      },
+    }));
+
+    setActiveAIStream({ threadKey, category, slug, title: threadTitle });
+    const historyForApi: ChatMessage[] = withUser.map(({ role, content }) => ({ role, content }));
+
+    try {
+      let accumulated = "";
+      for await (const chunk of streamAIChat(category, slug, historyForApi, currentReplyTarget, currentReferenceFiles)) {
+        accumulated += chunk;
+        setAiThreads((prev) => {
+          const existing = prev[threadKey] ?? emptyAIThreadState();
+          return {
+            ...prev,
+            [threadKey]: {
+              ...existing,
+              messages: existing.messages.map((m) =>
+                m.id === assistantId ? { ...m, content: accumulated } : m,
+              ),
+            },
+          };
+        });
+      }
+
+      const extracted = extractDraft(accumulated);
+      let finalContent = accumulated;
+      if (extracted) {
+        let proceed = true;
+        if (hasReplyDraft) {
+          proceed = window.confirm("你已修改 Reply 框内容，是否用 AI 新草稿覆盖？");
+        }
+        if (proceed) {
+          const ok = await onUseDraftAsReply(extracted.draft, currentReplyTarget, currentReferenceFiles);
+          finalContent = extracted.rest
+            ? `${extracted.rest}\n\n_${ok ? "✅" : "⚠️"} ${ok ? "草稿已填入回复框" : "填入草稿失败"}_`
+            : `_${ok ? "✅ 草稿已填入回复框" : "⚠️ 填入草稿失败"}_`;
+        } else {
+          finalContent = extracted.rest
+            ? `${extracted.rest}\n\n_⚠️ 已放弃覆盖（保留你在回复框中的内容）_`
+            : "_⚠️ 已放弃覆盖（保留你在回复框中的内容）_";
+        }
+      }
+
+      let finalSnapshot: AIThreadState | null = null;
+      setAiThreads((prev) => {
+        const existing = prev[threadKey] ?? emptyAIThreadState();
+        const nextState: AIThreadState = {
+          ...existing,
+          messages: withUser.concat([{ id: assistantId, role: "assistant", content: finalContent }]),
+          streaming: false,
+        };
+        finalSnapshot = nextState;
+        return { ...prev, [threadKey]: nextState };
+      });
+      if (finalSnapshot) {
+        persistThreadConversation(category, slug, threadKey, finalSnapshot);
+      }
+    } catch (e) {
+      const errText = e instanceof Error ? e.message : String(e);
+      setAiThreads((prev) => {
+        const existing = prev[threadKey] ?? emptyAIThreadState();
+        return {
+          ...prev,
+          [threadKey]: {
+            ...existing,
+            messages: existing.messages.map((m) =>
+              m.id === assistantId ? { ...m, content: `_错误：${errText}_` } : m,
+            ),
+            streaming: false,
+          },
+        };
+      });
+    } finally {
+      setActiveAIStream((prev) => (prev?.threadKey === threadKey ? null : prev));
     }
   };
 
@@ -67,6 +422,33 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     }
   };
 
+  const startSidebarResize = (event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const layout = layoutRef.current;
+    if (!layout) return;
+    const rect = layout.getBoundingClientRect();
+    const minWidth = 260;
+    const maxWidth = Math.min(560, rect.width - 360);
+
+    const onMove = (moveEvent: MouseEvent) => {
+      const next = Math.min(Math.max(moveEvent.clientX - rect.left, minWidth), maxWidth);
+      setSidebarWidth(next);
+      if (!sidebarOpen) setSidebarOpen(true);
+    };
+
+    const onUp = () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
   return (
     <div className="flex h-screen flex-col bg-background">
       <Toaster position="top-center" richColors />
@@ -92,26 +474,67 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
         </div>
       </header>
 
-      <div className="flex flex-1 flex-col overflow-hidden lg:flex-row">
+      <div ref={layoutRef} className="flex flex-1 flex-col overflow-hidden md:flex-row">
         <aside
           className={cn(
-            "min-h-0 overflow-y-auto border-b lg:w-96 lg:shrink-0 lg:border-b-0 lg:border-r",
-            isThreadView ? "hidden lg:block" : "block",
+            "min-h-0 overflow-y-auto border-b md:shrink-0 md:border-b-0 md:border-r",
+            isThreadView ? "hidden md:block" : "block",
+            !sidebarOpen && "md:overflow-hidden md:border-r-0",
           )}
+          style={{ width: sidebarOpen ? sidebarWidth : undefined }}
         >
-          <ThreadListPane
-            drafts={drafts}
-            threads={threads}
-            onRemoveDraft={removeDraft}
-          />
+          {sidebarOpen && (
+            <ThreadListPane
+              drafts={drafts}
+              threads={threads}
+              onRemoveDraft={removeDraft}
+            />
+          )}
         </aside>
+        {sidebarOpen && (
+          <div
+            className="group relative hidden w-2 shrink-0 cursor-col-resize items-stretch justify-center border-r bg-muted/20 transition-colors hover:bg-muted/35 md:flex"
+            onMouseDown={startSidebarResize}
+            title="拖拽调整导航栏宽度"
+          >
+            <div className="pointer-events-none flex items-center text-muted-foreground/80 group-hover:text-foreground">
+              <GripVertical className="h-3.5 w-3.5" />
+            </div>
+          </div>
+        )}
         <main
           className={cn(
-            "min-h-0 flex-1 overflow-y-auto",
-            !isThreadView && "hidden lg:block",
+            "relative min-h-0 flex-1 overflow-y-auto",
+            !isThreadView && "hidden md:block",
           )}
         >
-          <Outlet context={{ reloadLists: load } satisfies DashboardContext} />
+          <div className="pointer-events-none absolute left-3 top-3 z-20 hidden md:block">
+            <Button
+              variant="outline"
+              size="sm"
+              className="pointer-events-auto inline-flex h-8 gap-1.5 rounded-full bg-background/95 px-3 shadow-sm backdrop-blur"
+              onClick={() => setSidebarOpen((open) => !open)}
+              title={sidebarOpen ? "隐藏导航栏" : "展开导航栏"}
+            >
+              <PanelLeftOpen className="h-4 w-4" />
+              {sidebarOpen ? "隐藏导航" : "展开导航"}
+            </Button>
+          </div>
+          <Outlet
+            context={{
+              reloadLists: load,
+              ai: {
+                activeStream: activeAIStream,
+                getThreadState,
+                ensureThreadLoaded,
+                setInput,
+                setReplyTarget,
+                setReferenceFiles,
+                clearThreadConversation,
+                sendMessage,
+              },
+            } satisfies DashboardContext}
+          />
         </main>
       </div>
     </div>
