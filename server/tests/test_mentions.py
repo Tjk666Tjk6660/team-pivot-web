@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from server.contacts import ContactRepo
 from server.mentions import resolve_id, resolve_text
 
 
@@ -51,3 +52,21 @@ def test_resolve_text_handles_union_id_in_body(users):
 
 def test_resolve_text_no_match_unchanged(users):
     assert resolve_text("plain text, no mentions", users) == "plain text, no mentions"
+
+
+def test_resolve_id_falls_back_to_contacts(db, users):
+    contacts = ContactRepo(db)
+    contacts.upsert_many([
+        {"open_id": "ou_contact000000000000", "union_id": "on_contact000000000000", "name": "联系人A"},
+    ])
+    assert resolve_id("ou_contact000000000000", users, contacts) == "联系人A"
+    assert resolve_id("on_contact000000000000", users, contacts) == "联系人A"
+
+
+def test_resolve_text_falls_back_to_contacts(db, users):
+    contacts = ContactRepo(db)
+    contacts.upsert_many([
+        {"open_id": "ou_contact000000000000", "name": "联系人A"},
+    ])
+    out = resolve_text("ping ou_contact000000000000 please", users, contacts)
+    assert out == "ping @联系人A please"

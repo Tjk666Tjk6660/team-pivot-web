@@ -114,13 +114,13 @@ def test_bearer_cannot_create_token(app_and_sid):
     assert r.status_code == 401
 
 
-def test_admin_password_required_for_tokens_route(app_and_sid):
+def test_tokens_route_requires_cookie_but_not_admin_password(app_and_sid):
     app, sid, _ = app_and_sid
     client = TestClient(app)
     client.cookies.set("sid", sid)
     r = client.post("/api/tokens", json={"name": "n"})  # no admin header
-    assert r.status_code == 401
-    assert r.json()["detail"] == "admin_required"
+    assert r.status_code == 200
+    assert r.json()["name"] == "n"
 
 
 def test_cookie_session_still_works(app_and_sid):

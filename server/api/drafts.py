@@ -27,7 +27,12 @@ class DraftMentions(BaseModel):
 class CreateDraftBody(BaseModel):
     type: Literal["proposal", "reply"]
     title: str | None = Field(default=None, max_length=200)
-    category: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{1,40}$")
+    category: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=20,
+        pattern=r'^[^/\\:*?"<>|\t\n\r]{1,20}$',
+    )
     body_md: str = Field(default="", max_length=50000)
     thread_key: str | None = Field(default=None, max_length=200)
     mentions: DraftMentions | None = None
@@ -37,7 +42,12 @@ class CreateDraftBody(BaseModel):
 
 class UpdateDraftBody(BaseModel):
     title: str | None = Field(default=None, max_length=200)
-    category: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{1,40}$")
+    category: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=20,
+        pattern=r'^[^/\\:*?"<>|\t\n\r]{1,20}$',
+    )
     body_md: str | None = Field(default=None, max_length=50000)
     thread_key: str | None = Field(default=None, max_length=200)
     mentions: DraftMentions | None = None

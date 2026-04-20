@@ -15,9 +15,6 @@ class Config:
     session_secret: str
     web_dev_origin: str
     data_dir: Path
-    workspace_repo_url: str
-    workspace_branch: str
-    git_token: str | None
     log_level: str
     notify_enabled: bool
 
@@ -34,9 +31,6 @@ def load_config(env_file: str | Path | None = None) -> Config:
         session_secret=_require("SESSION_SECRET"),
         web_dev_origin=os.getenv("WEB_DEV_ORIGIN", "http://localhost:5173"),
         data_dir=Path(os.getenv("DATA_DIR", project_root / "var")),
-        workspace_repo_url=_require("WORKSPACE_REPO_URL"),
-        workspace_branch=os.getenv("WORKSPACE_BRANCH", "main"),
-        git_token=os.getenv("GIT_TOKEN") or None,
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         notify_enabled=os.getenv("NOTIFY_ENABLED", "true").lower() == "true",
     )

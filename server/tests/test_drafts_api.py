@@ -103,6 +103,19 @@ def test_create_validates_category_pattern(client_and_sid):
     assert r.status_code == 422
 
 
+def test_create_accepts_chinese_category(client_and_sid):
+    client, _, _ = client_and_sid
+    r = client.post("/api/drafts", json={"type": "proposal", "category": "技术讨论"})
+    assert r.status_code == 200, r.text
+    assert r.json()["category"] == "技术讨论"
+
+
+def test_create_rejects_category_too_long(client_and_sid):
+    client, _, _ = client_and_sid
+    r = client.post("/api/drafts", json={"type": "proposal", "category": "这是一二三四五六七八九十一二三四五六七八九十"})
+    assert r.status_code == 422
+
+
 def test_publish_requires_fields(client_and_sid):
     client, _, _ = client_and_sid
     r = client.post(

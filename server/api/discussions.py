@@ -37,7 +37,11 @@ class MentionBlock(BaseModel):
 
 
 class NewThreadBody(BaseModel):
-    category: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,40}$")
+    category: str = Field(
+        min_length=1,
+        max_length=20,
+        pattern=r'^[^/\\:*?"<>|\t\n\r]{1,20}$',
+    )
     title: str = Field(min_length=1, max_length=200)
     body: str = Field(min_length=1, max_length=50000)
     mentions: MentionBlock | None = None
@@ -70,14 +74,6 @@ def build_router(
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
 
-    @router.get("/workspace/status")
-    def status(_: User = Depends(current_user)):
-        return {
-            "ready": workspace.is_cloned(),
-            "path": str(workspace.path),
-            "head": workspace.head(),
-        }
-
     @router.get("/threads")
     def threads(
         category: str | None = None,
@@ -89,7 +85,12 @@ def build_router(
         unread = compute_unread_counts(
             workspace.discussions_dir, workspace.index_dir, user.open_id, read_states
         )
-        return {"items": [_meta(m, users, unread.get(f"{m.category}/{m.slug}", 0)) for m in items]}
+        return {
+            "items": [
+                _meta(m, users, contacts, unread.get(f"{m.category}/{m.slug}", 0))
+                for m in items
+            ]
+        }
 
     @router.get("/threads/{category}/{slug}")
     def thread_detail(
@@ -101,15 +102,15 @@ def build_router(
             raise HTTPException(status_code=404, detail="thread not found")
         mentions_map = get_mentions_by_file(workspace.index_dir, slug)
         return {
-            "meta": _meta(detail.meta, users, unread_count=0),
+            "meta": _meta(detail.meta, users, contacts, unread_count=0),
             "posts": [
                 {
                     "filename": p.filename,
                     "frontmatter": p.frontmatter,
-                    "body": resolve_text(p.body, users),
-                    "author_display": resolve_id(p.frontmatter.get("author"), users),
+                    "body": resolve_text(p.body, users, contacts),
+                    "author_display": resolve_id(p.frontmatter.get("author"), users, contacts),
                     "mentions": [
-                        {**m, "author_display": resolve_id(m.get("author_id"), users)}
+                        {**m, "author_display": resolve_id(m.get("author_id"), users, contacts)}
                         for m in mentions_map.get(p.filename, [])
                     ],
                 }
@@ -221,24 +222,21 @@ def build_router(
         )
         return {"ok": True, "from": from_state, "to": body.to}
 
-    @router.post("/workspace/refresh")
-    def refresh(_: User = Depends(current_user)):
-        try:
-            workspace.refresh()
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=str(e)) from e
-        return {"ok": True, "head": workspace.head()}
-
     return router
 
 
-def _meta(m: ThreadMeta, users: UserRepo, unread_count: int = 0) -> dict:
+def _meta(
+    m: ThreadMeta,
+    users: UserRepo,
+    contacts: ContactRepo,
+    unread_count: int = 0,
+) -> dict:
     return {
         "category": m.category,
         "slug": m.slug,
         "title": m.title,
         "author": m.author,
-        "author_display": resolve_id(m.author, users),
+        "author_display": resolve_id(m.author, users, contacts),
         "status": m.status,
         "last_updated": m.last_updated,
         "post_count": m.post_count,

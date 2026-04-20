@@ -40,18 +40,21 @@ team-pivot-web/
 │   │   ├── inbox.py            # GET /inbox + POST .../read
 │   │   ├── contacts.py         # GET /contacts, POST /contacts/sync (cookie-only)
 │   │   ├── ai.py               # AI 助手：/api/ai/{settings,files,threads/*/conversation,/chat}
-│   │   └── tokens.py           # PAT 管理：/api/tokens（cookie-only，无需管理员密码）
+│   │   ├── tokens.py           # PAT 管理：/api/tokens（cookie-only）
+│   │   └── workspace.py        # /api/workspace/{status,refresh,mirror} + /api/admin/workspace-config
 │   ├── ai/
 │   │   ├── client.py           # OpenRouter SSE 流式
 │   │   ├── context.py          # build_context_from_files(reply_target, references)
 │   │   └── prompts.py          # 系统提示词（[[GENERATE_REPLY_DRAFT]] 强约束）
 │   ├── ai_conversations.py     # 每用户×thread 对话持久化
 │   ├── api_tokens.py           # PAT repo（pvt_<urlsafe44>，DB 只存 sha256）
-│   ├── settings.py             # SQLite key-value（AI key/model/截断参数）
+│   ├── settings.py             # SQLite key-value（AI 配置 + workspace 配置）
 │   ├── auth/
 │   │   ├── deps.py             # make_current_user (cookie 或 Bearer) + cookie_only + require_profile
 │   │   ├── admin.py            # ADMIN_PASSWORD="000123" + require_admin (X-Admin-Password 头)
 │   ├── workspace.py            # Workspace: clone/pull/write_session/recover
+│   ├── workspace_config.py     # workspace settings keys + 校验
+│   ├── workspace_runtime.py    # 从 SQLite settings 读取配置并初始化/重载 Workspace
 │   ├── git_ops.py              # subprocess 封装（clone/pull/commit/push）
 │   ├── posts.py                # markdown+frontmatter 读写 + 两阶段 pending
 │   ├── threads.py              # 目录扫描 → ThreadMeta/ThreadDetail
@@ -85,7 +88,7 @@ team-pivot-web/
         ├── Dashboard.tsx       # 主布局（左栏列表 + 右栏 Outlet），有**独立 header**；含 UserMenu 下拉
         ├── NewThread.tsx       # 发讨论表单（autosave）
         ├── SettingsPage.tsx    # /settings：个人设置，无密码，只有 PAT 管理
-        ├── AdminPage.tsx       # /admin：管理员密码门 + AI 配置 + 联系人同步
+        ├── AdminPage.tsx       # /admin：管理员密码门 + 数据仓库配置 + AI 配置 + 联系人同步
         └── ThreadDetailPane.tsx  # 右栏：posts 列表 + 内联 ReplyForm + AIPane
 
 var/
@@ -93,10 +96,6 @@ var/
   git/test-team-pivot/          # 数据仓库工作副本
   log/pivot.log                 # tee 日志（手动开启）
 ```
-
-**⚠️ 陷阱：`Dashboard.tsx` 有自己的独立 header，不使用 `Layout.tsx`。** 改顶栏按钮时两处都要改。
-
-**⚠️ 陷阱：前端改动不生效** 先查 `find web/src -name "*.js" -not -path "*/node_modules/*"`——Vite 优先解析 `.js`，曾有过时 `.js` 文件遮蔽 `.tsx` 的问题。
 
 ## 4. 鉴权与会话
 
@@ -106,20 +105,22 @@ var/
 | 首登 pinyin + github_username 收集 | ✅ |
 | SQLite 持久化 session（重启不丢登录） | ✅ |
 | **PAT（Personal Access Token）—— `Authorization: Bearer pvt_…`** | ✅（供 VS Code 插件等外部客户端） |
-| **管理员密码门（X-Admin-Password，MVP 硬编码 `000123`）** | ✅（保护 `/api/ai/settings` 和 `/api/tokens`） |
+| **管理员密码门（X-Admin-Password，MVP 硬编码 `000123`）** | ✅（保护 `/api/ai/settings`、`/api/admin/workspace-config`、`/api/contacts/sync`） |
 | **JSAPI 免登（飞书 WebView 内嵌路径）** | ❌ 未实现 |
 | 飞书真实 email 收集（commit author 现在用 `<pinyin>@pivot.local`） | ❌ 未做 |
 
 **鉴权层级**（统一在 `auth/deps.py`）：
 - `current_user` — 普通业务接口，cookie 或 Bearer 都行
-- `current_user_cookie_only` — 仅 cookie（`/api/tokens`、`/api/contacts/sync`、AI 设置）
-- `+ require_admin` — 加管理员密码（**AI 设置、`/api/contacts/sync`**）
+- `current_user_cookie_only` — 仅 cookie（`/api/tokens`、`/api/contacts/sync`、AI 设置、workspace 管理设置）
+- `+ require_admin` — 加管理员密码（**AI 设置、`/api/contacts/sync`、`/api/admin/workspace-config`**）
 - 失败统一返回 `401 {"detail":"invalid_token"}`（PAT 失效）或 `401 {"detail":"admin_required"}`
 
 **权限分配原则（已调整）：**
-- `/api/tokens`（PAT 增删查）：cookie-only，**不需要**管理员密码——每个用户都要自己生成 PAT 才能用 VS Code 客户端
+- `/api/tokens`（PAT 增删查）：cookie-only，不需要管理员密码
 - `/api/contacts/sync`：cookie-only **+ 管理员密码**——操作重，只需管理员偶尔执行
 - `/api/ai/settings`：管理员密码（不变）
+- `/api/admin/workspace-config`：cookie-only **+ 管理员密码**——维护数据仓库 URL / visibility / write_token / readonly_token
+- `/api/workspace/mirror`：普通业务鉴权（cookie 或 Bearer）——给 VS Code 插件返回 mirror bootstrap 信息
 
 所有 `api/*.py` 路由统一用 `Depends(current_user)`，不再每个文件手写 `_current_user(sid)`。
 
@@ -134,13 +135,42 @@ drafts(id PK, user_open_id, type, title, category, body_md, thread_key,
 read_state(user_open_id, thread_key, last_read_post_filename, updated_at, PK(user, thread_key))
 sessions(id PK, user_open_id, expires_at, created_at, user_access_token)
 contacts(open_id PK, union_id, name, en_name, avatar_url, synced_at)
-settings(key PK, value, updated_at)                                      -- AI 配置
+settings(key PK, value, updated_at)                                      -- AI 配置 + workspace 配置
 ai_conversations(user_open_id, thread_key, messages_json, reply_target,
                  reference_files_json, updated_at, PK(user, thread_key))
 api_tokens(token_hash PK, user_open_id, name, created_at, last_used_at, expires_at)
 ```
 
+补充说明：
+- `contacts` 是飞书通讯录镜像，`users` 是真正登录过 Pivot 的平台用户，两者都以飞书 `open_id` 为主键语义。
+- 用户首次扫码登录时，会写入 `users`，同时回写 `contacts` 做“激活合并”；登录回写不会覆盖通讯录同步得到的 `en_name`。
+- 名称解析现在采用 `users -> contacts -> 原始值` 的回退链，避免未激活联系人在界面上退化成裸 `open_id`。
+
 ## 6. Git 写流程
+
+### Workspace 配置来源（2026-04 之后）
+
+工作区相关配置已**不再从 `.env` 读取**，而是统一存 SQLite `settings`：
+
+- `workspace.repo_url`
+- `workspace.visibility`
+- `workspace.write_token`
+- `workspace.readonly_token`
+
+含义：
+- `repo_url` / `visibility`：服务器与 VS Code 客户端共用的同一个数据仓库事实源
+- `write_token`：服务器 `pull / push / publish` 用
+- `readonly_token`：VS Code 插件 clone / pull 本地 mirror 用（私有仓库必填）
+
+branch 固定为 `main`，不提供单独配置项。
+
+应用启动顺序是：
+1. 先读基础 `.env`（飞书、session、日志等部署级配置）
+2. 初始化 SQLite / `SettingsRepo`
+3. 从 `settings` 读取 workspace 配置
+4. 用 `workspace_runtime.py` 初始化真实 `Workspace`
+
+如果管理员尚未完成 workspace 配置，应用仍可启动，但所有依赖 Git 工作区的接口会返回 `503 workspace_not_configured`。
 
 ```python
 with workspace.write_session(message, author_name, author_email):
@@ -162,7 +192,7 @@ with workspace.write_session(message, author_name, author_email):
 
 `git_ops.pull()` 兜底：若 pull 遇 "unstaged changes"，自动 `add -A + commit + push` 再重试。
 
-## 7. 前端交互规则（重要，别回退）
+## 7. 前端交互规则
 
 ### ThreadDetailPane
 
@@ -195,20 +225,10 @@ with workspace.write_session(message, author_name, author_email):
 - 对话 + 文件选择都持久化到 `ai_conversations`，切 thread/刷新不丢
 - 发布 reply 时 `reply_to` → INDEX `refs` 加 `from`，`references` → 加 `refer`
 
-### 已修复的关键 Bug（别再踩）
-
-**Bug A：草稿重复创建（发布后幽灵草稿残留）**
-- 根因：`useDraftAutosave` 2s debounce 的闭包里捕获了创建时的 `draftId=null`。父组件 `createDraft` 返回后设了 `replyDraftId=A`，但 timer 里的 `save()` 仍用旧 `null`，又创建了草稿 B。发布删 A，B 就残留。
-- 修复：在 hook 内加 `draftIdRef = useRef(draftId)`，每次 render 同步 ref，`save()` 读 ref 而非闭包值。同时 `onUseDraftAsReply` 改为**先调 API persist、再更新 React 状态**，避免 ReplyForm 挂载时 autosave 以 `null` id 触发。
-
-**Bug B：切 thread 后 AI 对话历史被清空**
-- 根因：`AIPane` 的 `useEffect[threadKey]` 先把 `messages` 置 `[]` 然后异步 fetch 历史。同一 render 周期，`useEffect[pendingReplyTarget]` 同步触发，调 `persist(messages=[], ...)` 把 DB 的真实历史覆盖成空数组，等 fetch 返回时数据已不在。
-- 修复：在 `pendingReplyTarget` effect 里加 `if (loading) return` 守卫，并把 `loading` 加入 deps。只有 fetch 完成后才写 pendingReplyTarget。
-
 ## 8. 功能完成情况
 
 **已完成：**
-飞书 OAuth + 首登 / 讨论列表 + 详情 / 发讨论 + 回复 / 飞书卡片通知 / 草稿 autosave / 状态徽章 + 排序 / 状态转移（含 reopen 原因）/ @mention 系统（撰写 + 飞书 DM 通知）/ Session 持久化 / shadcn/ui + Tailwind / Thread 列表内嵌未读红点 / GFM markdown（表格、任务列表）/ Post 折叠 + 内联回复 + 草稿指示 / **AI 助手（OpenRouter SSE，回复对象+引用文件，按钮触发草稿生成，对话持久化）** / **PAT + 管理员密码门 + 设置页**
+飞书 OAuth + 首登 / 讨论列表 + 详情 / 发讨论 + 回复 / 飞书卡片通知 / 草稿 autosave / 状态徽章 + 排序 / 状态转移（含 reopen 原因）/ @mention 系统（撰写 + 飞书 DM 通知）/ Session 持久化 / shadcn/ui + Tailwind / Thread 列表内嵌未读红点 / GFM markdown（表格、任务列表）/ Post 折叠 + 内联回复 + 草稿指示 / **AI 助手（OpenRouter SSE，回复对象+引用文件，按钮触发草稿生成，对话持久化）** / **PAT + 管理员密码门 + 设置页** / **workspace 配置迁移到 DB + `/api/workspace/mirror`**
 
 **暂缓（有意为之）：**
 附件上传 / RESULT 文件 / AI 摘要写入（post `auto-summary`、INDEX `files[].summary`）/ 多 tenant / 权限分级（PAT 当前 = 全权限）/ 搜索 / 键盘快捷键 / JSAPI 免登 / systemd+Caddy 部署
@@ -220,12 +240,9 @@ with workspace.write_session(message, author_name, author_email):
 - §7：路线图（Phase A-G，按优先级）
 - §10：新 AI 起手式
 
-memo.md 只讲"现状怎么搭的"（操作细节、踩过的坑），vision.md 讲"要去哪儿"（目标、缺口、计划）。两份互补，**改方向相关内容只动 vision.md，避免两份不同步**。
+memo.md 只讲"现状怎么搭的"（模块边界、关键实现、当前约束），vision.md 讲"要去哪儿"（目标、缺口、计划）。两份互补，**改方向相关内容只动 vision.md，避免两份不同步**。
 
-**运维相关（不在 vision.md 范围）：**
-- systemd + Caddy 部署
-- 飞书真实 email（替换 commit author 的 `<pinyin>@pivot.local`）
-- SQLite 备份（litestream 或 cron+rsync）
+部署与线上运维问题统一记录在 [`deploy.md`](./deploy.md)，不要再写进 memo。
 
 ## 11. 约束与边界
 
@@ -240,7 +257,7 @@ memo.md 只讲"现状怎么搭的"（操作细节、踩过的坑），vision.md 
 ## 12. 相关资源
 
 - 本 repo：`/Users/ken/Codes/team-pivot-web`（remote: `hashSTACS-Global/team-pivot-web`）
-- 数据仓库：`https://github.com/kellerman-koh/test-team-pivot.git`（自动 clone 到 `var/git/test-team-pivot/`）
+- 数据仓库：由管理员在 `/admin` 的「数据仓库配置」里维护；服务器工作副本自动 clone 到 `var/git/<repo-name>/`
 - 数据仓库设计文档：`/Users/ken/Codes/teamDocs/CLAUDE.md`（§3 状态机、§4 数据结构）
 - 原 APP 参考：`/Users/ken/Codes/team-pivot`（只读）
 
@@ -249,7 +266,7 @@ memo.md 只讲"现状怎么搭的"（操作细节、踩过的坑），vision.md 
 ```bash
 # 一次性
 cd team-pivot-web
-cp .env.example .env         # 填 FEISHU_APP_ID / SECRET / SESSION_SECRET / GIT_TOKEN
+cp .env.example .env         # 填 FEISHU_APP_ID / SECRET / SESSION_SECRET
 uv sync
 cd web && npm install
 
@@ -269,7 +286,7 @@ uv run pytest -q
 ## 14. 新 session 起手式
 
 1. **先读 [`vision.md`](./vision.md)**——明白 Pivot 终极目标、当前缺口、下一步 Phase
-2. **再读这份 memo**——掌握现状的实现细节、目录结构、约束、踩过的坑（§8 看已完成的功能盘点）
+2. **再读这份 memo**——掌握现状的实现细节、目录结构、关键配置与当前约束（§8 看已完成的功能盘点）
 3. 改代码前看对应模块现有实现
 4. 跑 `uv run pytest -q` 验证 baseline 是绿色
 5. 写代码前确认方向（§11 第 3 条）

@@ -114,10 +114,11 @@ export function NewThread({ me, onLogout }: { me: Me; onLogout: () => void }) {
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
                 required
-                pattern="^[a-zA-Z0-9_-]{1,40}$"
+                maxLength={20}
+                pattern={'^[^/\\\\:*?"<>|\\t\\n\\r]{1,20}$'}
               />
               <p className="text-xs text-muted-foreground">
-                ASCII 字母/数字/<code>- _</code>，最长 40 字符。
+                支持中文，最长 20 个字符；不能包含 <code>/ \\ : * ? " &lt; &gt; |</code> 或换行。
               </p>
             </div>
             <div className="grid gap-2">

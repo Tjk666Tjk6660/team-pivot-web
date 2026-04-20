@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Iterator
 from urllib.parse import urlparse, urlunparse
 
-from server.git_ops import clone, commit, head_short, pull, push
+from server.git_ops import clone, commit, head_short, pull, push, set_remote_url
 from server.recovery import repair_partial_writes
 
 log = logging.getLogger(__name__)
@@ -45,6 +45,7 @@ class Workspace:
 
     def ensure_cloned(self) -> None:
         if self.is_cloned():
+            set_remote_url(str(self.path), "origin", self._auth_url())
             log.debug("workspace already cloned path=%s", self.path)
             return
         log.info("workspace cloning %s -> %s", self._repo_url, self.path)

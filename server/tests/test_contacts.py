@@ -61,3 +61,33 @@ def test_get_many(contacts):
     ])
     got = contacts.get_many(["ou_1", "ou_2", "ou_3"])
     assert set(got.keys()) == {"ou_1", "ou_2"}
+
+
+def test_get_by_any_id(contacts):
+    contacts.upsert_many([
+        {"open_id": "ou_1", "union_id": "on_1", "name": "Alice"},
+    ])
+    assert contacts.get_by_any_id("ou_1") is not None
+    assert contacts.get_by_any_id("on_1") is not None
+    assert contacts.get_by_any_id("missing") is None
+
+
+def test_upsert_from_login_preserves_en_name(contacts):
+    contacts.upsert_many([
+        {
+            "open_id": "ou_1",
+            "union_id": "on_1",
+            "name": "张三",
+            "en_name": "Zhang San",
+            "avatar_url": "old.png",
+        }
+    ])
+    c = contacts.upsert_from_login(
+        open_id="ou_1",
+        union_id="on_1",
+        name="张三（已激活）",
+        avatar_url="new.png",
+    )
+    assert c.name == "张三（已激活）"
+    assert c.en_name == "Zhang San"
+    assert c.avatar_url == "new.png"

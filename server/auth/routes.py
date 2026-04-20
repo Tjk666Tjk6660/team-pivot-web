@@ -87,13 +87,12 @@ def build_router(
             name=info.name,
             avatar_url=info.avatar_url,
         )
-        contacts.upsert_many([{
-            "open_id": info.open_id,
-            "union_id": info.union_id,
-            "name": info.name,
-            "en_name": None,
-            "avatar_url": info.avatar_url or "",
-        }])
+        contacts.upsert_from_login(
+            open_id=info.open_id,
+            union_id=info.union_id,
+            name=info.name,
+            avatar_url=info.avatar_url or "",
+        )
         sid = sessions.create(info.open_id, user_access_token=token.access_token)
         log.info("login success name=%s open_id=%s", info.name, info.open_id)
         resp = RedirectResponse(post_login_redirect, status_code=302)

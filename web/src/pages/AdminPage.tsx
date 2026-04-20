@@ -1,18 +1,25 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Lock, Users } from "lucide-react";
+import { ArrowLeft, Bot, FolderGit2, Lock, ShieldCheck, Users } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import {
   AdminRequiredError,
   clearAdminPassword,
   fetchAISettings,
-  getAdminPassword,
+  fetchWorkspaceAdminConfig,
   setAdminPassword,
   syncContacts,
   updateAISettings,
+  updateWorkspaceAdminConfig,
 } from "@/api";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -25,28 +32,95 @@ const SUGGESTED_MODELS = [
 ];
 
 export function AdminPage() {
-  const [unlocked, setUnlocked] = useState<boolean>(!!getAdminPassword());
+  const [unlocked, setUnlocked] = useState(false);
+
+  useEffect(() => {
+    clearAdminPassword();
+    setUnlocked(false);
+  }, []);
 
   return (
     <div className="min-h-screen bg-background">
       <Toaster position="top-center" richColors />
-      <header className="border-b px-6 py-3">
-        <div className="mx-auto flex max-w-3xl items-center gap-3">
+      <header className="border-b bg-background/95 px-6 py-4 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center gap-4">
           <Button asChild variant="ghost" size="sm">
             <Link to="/"><ArrowLeft className="h-4 w-4" /> 返回</Link>
           </Button>
-          <h1 className="text-lg font-semibold">管理员设置</h1>
+          <div className="min-w-0">
+            <h1 className="text-lg font-semibold">管理员设置</h1>
+            <p className="text-sm text-muted-foreground">
+              管理数据仓库、AI 助手和联系人同步。桌面端按工作流分区展示。
+            </p>
+          </div>
+          <div className="ml-auto hidden items-center gap-2 lg:flex">
+            <InfoChip icon={<FolderGit2 className="h-3.5 w-3.5" />} label="Repo + Token" />
+            <InfoChip icon={<Bot className="h-3.5 w-3.5" />} label="AI Model + Key" />
+            <InfoChip icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Admin Session" />
+          </div>
         </div>
       </header>
 
       {!unlocked ? (
         <AdminGate onUnlock={() => setUnlocked(true)} />
       ) : (
-        <main className="mx-auto max-w-3xl space-y-8 px-6 py-8">
-          <AISettingsSection onAdminLost={() => setUnlocked(false)} />
-          <SyncContactsSection onAdminLost={() => setUnlocked(false)} />
+        <main className="mx-auto max-w-7xl px-6 py-8">
+          <AdminIntro />
+          <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
+            <div className="space-y-6">
+              <WorkspaceConfigSection onAdminLost={() => setUnlocked(false)} />
+              <SyncContactsSection onAdminLost={() => setUnlocked(false)} />
+            </div>
+            <div className="space-y-6">
+              <AISettingsSection onAdminLost={() => setUnlocked(false)} />
+            </div>
+          </div>
         </main>
       )}
+    </div>
+  );
+}
+
+function InfoChip({ icon, label }: { icon: React.ReactNode; label: string }) {
+  return (
+    <div className="flex items-center gap-2 rounded-full border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
+      {icon}
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function AdminIntro() {
+  return (
+    <Card className="border-slate-200 bg-gradient-to-br from-slate-50 via-white to-slate-100 shadow-sm">
+      <CardContent className="grid gap-4 p-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(280px,0.6fr)] lg:items-start">
+        <div>
+          <div className="mb-2 flex items-center gap-2 text-sm font-medium text-slate-700">
+            <ShieldCheck className="h-4 w-4" />
+            管理面板
+          </div>
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-900">
+            宽屏下按职责分栏管理，不再把关键配置挤在窄列里。
+          </h2>
+          <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
+            左侧处理数据仓库与同步动作，右侧集中管理 AI 助手参数。数据仓库配置保存后会同时影响服务器工作区与 VS Code 客户端 mirror。
+          </p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+          <QuickFact title="主分支固定" value="main" />
+          <QuickFact title="客户端镜像" value="readonly token" />
+          <QuickFact title="管理员权限" value="进入本页需重新输入" />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function QuickFact({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white/80 p-4">
+      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{title}</div>
+      <div className="mt-1 text-sm font-semibold text-slate-900">{value}</div>
     </div>
   );
 }
@@ -64,29 +138,189 @@ function AdminGate({ onUnlock }: { onUnlock: () => void }) {
   };
 
   return (
-    <main className="mx-auto max-w-md px-6 py-12">
-      <Card className="p-6">
-        <div className="mb-4 flex items-center gap-2">
-          <Lock className="h-5 w-5 text-amber-500" />
-          <h2 className="text-base font-semibold">需要管理员密码</h2>
+    <main className="mx-auto max-w-5xl px-6 py-12">
+      <Card className="overflow-hidden border-slate-200 shadow-sm">
+        <div className="grid lg:grid-cols-[minmax(0,1.1fr)_420px]">
+          <div className="border-b bg-gradient-to-br from-slate-50 via-white to-slate-100 p-8 lg:border-b-0 lg:border-r">
+            <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-700">
+              <Lock className="h-4 w-4 text-amber-600" />
+              需要管理员密码
+            </div>
+            <h2 className="text-2xl font-semibold tracking-tight text-slate-900">
+              解锁管理面板
+            </h2>
+            <p className="mt-3 max-w-xl text-sm leading-6 text-slate-600">
+              此页面包含数据仓库连接信息、AI 配置以及联系人同步动作。每次进入本页都需要重新输入管理员密码。
+            </p>
+          </div>
+          <div className="p-8">
+            <form onSubmit={submit} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="admin-password">管理员密码</Label>
+                <Input
+                  id="admin-password"
+                  type="password"
+                  placeholder="输入管理员密码"
+                  value={pw}
+                  onChange={(e) => setPw(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              <Button type="submit" className="w-full" disabled={!pw}>
+                进入管理员设置
+              </Button>
+            </form>
+          </div>
         </div>
-        <p className="mb-4 text-sm text-muted-foreground">
-          管理员设置（AI 配置、联系人同步）由管理员密码保护。密码仅在本浏览器会话中保留，关闭浏览器后清除。
-        </p>
-        <form onSubmit={submit} className="space-y-3">
-          <Input
-            type="password"
-            placeholder="管理员密码"
-            value={pw}
-            onChange={(e) => setPw(e.target.value)}
-            autoFocus
-          />
-          <Button type="submit" className="w-full" disabled={!pw}>
-            进入管理员设置
-          </Button>
-        </form>
       </Card>
     </main>
+  );
+}
+
+function WorkspaceConfigSection({ onAdminLost }: { onAdminLost: () => void }) {
+  const [repoUrl, setRepoUrl] = useState("");
+  const [visibility, setVisibility] = useState<"public" | "private">("private");
+  const [writeToken, setWriteToken] = useState("");
+  const [readonlyToken, setReadonlyToken] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetchWorkspaceAdminConfig()
+      .then((cfg) => {
+        setRepoUrl(cfg.repo_url);
+        if (cfg.visibility === "public" || cfg.visibility === "private") {
+          setVisibility(cfg.visibility);
+        }
+        setWriteToken(cfg.write_token);
+        setReadonlyToken(cfg.readonly_token);
+      })
+      .catch((e) => {
+        if (e instanceof AdminRequiredError) {
+          toast.error("管理员密码已失效，请重新输入");
+          onAdminLost();
+        } else {
+          toast.error(e.message);
+        }
+      })
+      .finally(() => setLoading(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const save = async () => {
+    if (!repoUrl.trim()) return toast.error("Repo URL 必填");
+    if (!writeToken.trim()) return toast.error("服务器写入 Token 必填");
+    if (visibility === "private" && !readonlyToken.trim()) {
+      return toast.error("私有仓库必须填写客户端只读 Token");
+    }
+    setSaving(true);
+    try {
+      await updateWorkspaceAdminConfig({
+        repo_url: repoUrl.trim(),
+        visibility,
+        write_token: writeToken.trim(),
+        readonly_token: visibility === "private" ? readonlyToken.trim() : "",
+      });
+      toast.success("数据仓库配置已保存");
+    } catch (e) {
+      if (e instanceof AdminRequiredError) {
+        onAdminLost();
+      } else {
+        toast.error(e instanceof Error ? e.message : String(e));
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section>
+      <Card className="shadow-sm">
+        <CardHeader className="pb-4">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <FolderGit2 className="h-4 w-4" />
+            数据仓库配置
+          </CardTitle>
+          <CardDescription>
+            同一套仓库配置会同时服务服务器工作区和 VS Code 客户端 mirror。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+        {loading ? (
+          <p className="text-sm text-muted-foreground">加载中…</p>
+        ) : (
+          <>
+            <div className="grid gap-5 lg:grid-cols-2">
+              <div className="space-y-2 lg:col-span-2">
+                <Label htmlFor="repo-url">Repo URL</Label>
+                <Input
+                  id="repo-url"
+                  placeholder="https://github.com/org/repo.git"
+                  value={repoUrl}
+                  onChange={(e) => setRepoUrl(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  branch 固定为 <code>main</code>，服务器与客户端共用同一个仓库地址。
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="repo-visibility">仓库可见性</Label>
+                <select
+                  id="repo-visibility"
+                  value={visibility}
+                  onChange={(e) => setVisibility(e.target.value as "public" | "private")}
+                  className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm dark:bg-zinc-900"
+                >
+                  <option value="private">private</option>
+                  <option value="public">public</option>
+                </select>
+              </div>
+
+              <div className="rounded-xl border bg-muted/25 p-4 text-sm text-muted-foreground">
+                <div className="font-medium text-foreground">使用说明</div>
+                <p className="mt-2 leading-6">
+                  `write token` 给服务器 pull / push 用；`readonly token` 只给 VS Code 客户端 clone / pull 用。
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="write-token">服务器写入 Token</Label>
+                <Input
+                  id="write-token"
+                  type="password"
+                  placeholder="服务器 pull / push 使用"
+                  value={writeToken}
+                  onChange={(e) => setWriteToken(e.target.value)}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="readonly-token">
+                  客户端只读 Token
+                  {visibility === "public" && (
+                    <span className="ml-2 text-xs text-muted-foreground">（public 仓库可留空）</span>
+                  )}
+                </Label>
+                <Input
+                  id="readonly-token"
+                  type="password"
+                  placeholder="VS Code 插件 clone / pull 使用"
+                  value={readonlyToken}
+                  onChange={(e) => setReadonlyToken(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end border-t pt-4">
+              <Button onClick={save} disabled={saving}>
+                {saving ? "保存中…" : "保存"}
+              </Button>
+            </div>
+          </>
+        )}
+        </CardContent>
+      </Card>
+    </section>
   );
 }
 
@@ -153,62 +387,73 @@ function AISettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
 
   return (
     <section>
-      <h2 className="mb-3 text-sm font-semibold">AI 助手配置</h2>
-      <Card className="space-y-5 p-6">
+      <Card className="shadow-sm">
+        <CardHeader className="pb-4">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Bot className="h-4 w-4" />
+            AI 助手配置
+          </CardTitle>
+          <CardDescription>
+            管理 OpenRouter 凭据、默认模型以及对话历史截断参数。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
         {loading ? (
           <p className="text-sm text-muted-foreground">加载中…</p>
         ) : (
           <>
-            <div className="space-y-2">
-              <Label htmlFor="ai-key">
-                OpenRouter API Key
-                {hasKey && <span className="ml-2 text-xs text-green-600">（已配置）</span>}
-              </Label>
-              <Input
-                id="ai-key"
-                type="password"
-                placeholder={hasKey ? "留空保持不变" : "sk-or-…"}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">
-                在{" "}
-                <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" className="underline">
-                  openrouter.ai/keys
-                </a>{" "}
-                获取
-              </p>
-            </div>
+            <div className="grid gap-5 xl:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="ai-key">
+                  OpenRouter API Key
+                  {hasKey && <span className="ml-2 text-xs text-green-600">（已配置）</span>}
+                </Label>
+                <Input
+                  id="ai-key"
+                  type="password"
+                  placeholder={hasKey ? "留空保持不变" : "sk-or-…"}
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  在{" "}
+                  <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" className="underline">
+                    openrouter.ai/keys
+                  </a>{" "}
+                  获取
+                </p>
+              </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="ai-model">模型</Label>
-              <Input
-                id="ai-model"
-                placeholder="anthropic/claude-sonnet-4-5"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-              />
-              <div className="flex flex-wrap gap-1.5">
-                {SUGGESTED_MODELS.map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => setModel(m)}
-                    className={`rounded px-2 py-0.5 text-xs transition-colors ${
-                      model === m
-                        ? "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
-                        : "bg-muted text-muted-foreground hover:bg-zinc-200 dark:hover:bg-zinc-700"
-                    }`}
-                  >
-                    {m}
-                  </button>
-                ))}
+              <div className="space-y-2">
+                <Label htmlFor="ai-model">模型</Label>
+                <Input
+                  id="ai-model"
+                  placeholder="anthropic/claude-sonnet-4-5"
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                />
+                <div className="flex flex-wrap gap-1.5">
+                  {SUGGESTED_MODELS.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setModel(m)}
+                      className={`rounded px-2 py-0.5 text-xs transition-colors ${
+                        model === m
+                          ? "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
+                          : "bg-muted text-muted-foreground hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                      }`}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
-            <div className="space-y-3 rounded-lg border p-4">
+            <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
               <p className="text-xs font-semibold text-muted-foreground">对话历史截断参数</p>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid gap-3 md:grid-cols-3">
                 <div className="space-y-1">
                   <Label htmlFor="ai-max-tokens" className="text-xs">最大上下文 Token</Label>
                   <Input
@@ -246,13 +491,14 @@ function AISettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
               </div>
             </div>
 
-            <div className="flex justify-end">
+            <div className="flex justify-end border-t pt-4">
               <Button onClick={save} disabled={saving}>
                 {saving ? "保存中…" : "保存"}
               </Button>
             </div>
           </>
         )}
+        </CardContent>
       </Card>
     </section>
   );
@@ -281,15 +527,25 @@ function SyncContactsSection({ onAdminLost }: { onAdminLost: () => void }) {
 
   return (
     <section>
-      <h2 className="mb-3 text-sm font-semibold">联系人同步</h2>
-      <Card className="p-6">
-        <p className="mb-4 text-xs text-muted-foreground">
-          从飞书通讯录拉取最新联系人列表，供 @提及 功能使用。此操作会访问飞书 API，仅管理员需要定期执行。
-        </p>
-        <Button size="sm" onClick={onSync} disabled={syncing}>
-          <Users className={`mr-1.5 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-          {syncing ? "同步中…" : "立即同步联系人"}
-        </Button>
+      <Card className="shadow-sm">
+        <CardHeader className="pb-4">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Users className="h-4 w-4" />
+            联系人同步
+          </CardTitle>
+          <CardDescription>
+            从飞书通讯录拉取联系人，供 @ 提及功能使用。该操作只需要偶尔执行。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+            同步会访问飞书 API，并刷新本地联系人缓存。推荐在新增成员、改名或组织架构调整后执行。
+          </p>
+          <Button size="sm" onClick={onSync} disabled={syncing} className="shrink-0">
+            <Users className={`mr-1.5 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+            {syncing ? "同步中…" : "立即同步联系人"}
+          </Button>
+        </CardContent>
       </Card>
     </section>
   );

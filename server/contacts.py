@@ -28,6 +28,16 @@ class ContactRepo:
             ).fetchone()
         return _row(row) if row else None
 
+    def get_by_any_id(self, id_: str) -> Contact | None:
+        if not id_:
+            return None
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM contacts WHERE open_id=? OR union_id=?",
+                (id_, id_),
+            ).fetchone()
+        return _row(row) if row else None
+
     def get_many(self, open_ids: list[str]) -> dict[str, Contact]:
         if not open_ids:
             return {}
@@ -82,6 +92,37 @@ class ContactRepo:
                     ),
                 )
         return len(items)
+
+    def upsert_from_login(
+        self,
+        *,
+        open_id: str,
+        union_id: str | None,
+        name: str,
+        avatar_url: str,
+    ) -> Contact:
+        now = time()
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT en_name FROM contacts WHERE open_id=?",
+                (open_id,),
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    "INSERT INTO contacts (open_id, union_id, name, en_name, avatar_url, synced_at)"
+                    " VALUES (?,?,?,?,?,?)",
+                    (open_id, union_id, name, None, avatar_url or "", now),
+                )
+            else:
+                conn.execute(
+                    "UPDATE contacts"
+                    " SET union_id=?, name=?, avatar_url=?, synced_at=?"
+                    " WHERE open_id=?",
+                    (union_id, name, avatar_url or "", now, open_id),
+                )
+        got = self.get(open_id)
+        assert got is not None
+        return got
 
     def count(self) -> int:
         with self._db.connect() as conn:

@@ -48,6 +48,10 @@ def clone(url: str, target: str, branch: str | None = None) -> None:
     _run(args)
 
 
+def set_remote_url(repo_dir: str, remote: str, url: str) -> None:
+    _run(["git", "remote", "set-url", remote, url], cwd=repo_dir)
+
+
 def pull(repo_dir: str) -> None:
     try:
         _run(["git", "pull", "--rebase", "origin"], cwd=repo_dir)

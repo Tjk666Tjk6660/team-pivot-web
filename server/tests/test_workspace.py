@@ -122,3 +122,19 @@ def test_write_session_serializes_concurrent_writers(git_workspace):
     ).stdout.strip()
     assert int(count) == 6  # 1 seed + 5 concurrent
     assert sorted(results) == [0, 1, 2, 3, 4]
+
+
+def test_ensure_cloned_updates_existing_origin_url(tmp_path):
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(remote)], check=True)
+    local = tmp_path / "local"
+    subprocess.run(["git", "clone", str(remote), str(local)], check=True)
+
+    ws = Workspace(path=local, repo_url="https://github.com/a/b.git", token="ghp_new")
+    ws.ensure_cloned()
+
+    fetch_url = subprocess.run(
+        ["git", "-C", str(local), "remote", "get-url", "origin"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert fetch_url == "https://oauth2:ghp_new@github.com/a/b.git"

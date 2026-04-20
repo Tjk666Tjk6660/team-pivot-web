@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 def build_router(
     workspace: Workspace,
     users: UserRepo,
+    contacts,
     read_states: ReadStateRepo,
     current_user: Callable,
 ) -> APIRouter:
@@ -38,14 +39,14 @@ def build_router(
                         "slug": it.meta.slug,
                         "title": it.meta.title,
                         "author": it.meta.author,
-                        "author_display": resolve_id(it.meta.author, users),
+                        "author_display": resolve_id(it.meta.author, users, contacts),
                         "status": it.meta.status,
                         "last_updated": it.meta.last_updated,
                         "post_count": it.meta.post_count,
                     },
                     "unread_count": it.unread_count,
                     "last_post_filename": it.last_post_filename,
-                    "last_post_author_display": resolve_id(it.last_post_author, users),
+                    "last_post_author_display": resolve_id(it.last_post_author, users, contacts),
                 }
                 for it in items
             ]

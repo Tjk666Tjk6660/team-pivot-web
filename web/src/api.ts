@@ -60,10 +60,66 @@ export type WorkspaceStatus = {
   head: string | null;
 };
 
+export type ReleaseSummary = {
+  version: string;
+  date: string;
+  title: string;
+  body_md: string;
+};
+
+export type AppHomePayload = {
+  app: {
+    name: string;
+    version: string;
+    head: string | null;
+  };
+  welcome: {
+    title: string;
+    body_md: string;
+  };
+  latest_release: ReleaseSummary | null;
+  recent_releases: ReleaseSummary[];
+};
+
+export type WorkspaceAdminConfig = {
+  repo_url: string;
+  visibility: "public" | "private" | "";
+  write_token: string;
+  readonly_token: string;
+  branch: "main";
+};
+
+export type WorkspaceMirrorConfig = {
+  repo_url: string;
+  visibility: "public" | "private";
+  branch: "main";
+  repo_name: string;
+  provider: string;
+  readonly: true;
+  git_username: string | null;
+  git_token: string | null;
+  head: string | null;
+};
+
 export async function fetchWorkspaceStatus(): Promise<WorkspaceStatus> {
   const r = await fetch("/api/workspace/status", { credentials: "include" });
   if (!r.ok) throw new Error(`/api/workspace/status failed: ${r.status}`);
   return (await r.json()) as WorkspaceStatus;
+}
+
+export async function fetchWorkspaceMirror(): Promise<WorkspaceMirrorConfig> {
+  const r = await fetch("/api/workspace/mirror", { credentials: "include" });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `/api/workspace/mirror failed: ${r.status}`);
+  }
+  return (await r.json()) as WorkspaceMirrorConfig;
+}
+
+export async function fetchAppHome(): Promise<AppHomePayload> {
+  const r = await fetch("/api/app/home", { credentials: "include" });
+  if (!r.ok) throw new Error(`/api/app/home failed: ${r.status}`);
+  return (await r.json()) as AppHomePayload;
 }
 
 export type MentionEntry = {
@@ -380,6 +436,32 @@ export async function updateAISettings(body: {
   if (!r.ok) {
     const d = await r.json().catch(() => ({ detail: r.statusText }));
     throw new Error(d.detail || `update ai settings failed: ${r.status}`);
+  }
+}
+
+export async function fetchWorkspaceAdminConfig(): Promise<WorkspaceAdminConfig> {
+  const r = await adminFetch("/api/admin/workspace-config");
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `/api/admin/workspace-config failed: ${r.status}`);
+  }
+  return (await r.json()) as WorkspaceAdminConfig;
+}
+
+export async function updateWorkspaceAdminConfig(body: {
+  repo_url: string;
+  visibility: "public" | "private";
+  write_token: string;
+  readonly_token: string;
+}): Promise<void> {
+  const r = await adminFetch("/api/admin/workspace-config", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `update workspace config failed: ${r.status}`);
   }
 }
 

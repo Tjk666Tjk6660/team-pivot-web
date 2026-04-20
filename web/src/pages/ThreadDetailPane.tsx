@@ -28,6 +28,7 @@ import { AIPane } from "@/components/AIPane";
 import { formatSaveStatus, useDraftAutosave } from "@/hooks/useDraftAutosave";
 import { relativeTime } from "@/lib/time";
 import { useDashboard } from "@/pages/Dashboard";
+import { HomeWelcomePane } from "@/pages/HomeWelcomePane";
 
 // Sentinel: reply form after all posts
 const REPLY_LAST = "__last__";
@@ -580,12 +581,5 @@ function ReplyForm({
 }
 
 export function ThreadDetailEmpty() {
-  return (
-    <div className="flex h-full items-center justify-center px-8 text-center">
-      <div className="space-y-2 text-muted-foreground">
-        <div className="text-base">选择左侧讨论查看详情</div>
-        <div className="text-sm">或点击顶部 <strong>新讨论</strong> 发起一个</div>
-      </div>
-    </div>
-  );
+  return <HomeWelcomePane />;
 }
