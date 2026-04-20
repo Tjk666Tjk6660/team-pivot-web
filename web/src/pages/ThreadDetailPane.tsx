@@ -39,8 +39,11 @@ export function ThreadDetailPane() {
   const { reloadLists } = useDashboard();
   const [data, setData] = useState<ThreadDetailData | null | undefined>(undefined);
 
-  // AI pane — closed by default
+  // AI pane — closed by default. Once opened in a thread we keep it MOUNTED (just
+  // hidden with CSS on close) so an in-flight AI stream keeps updating in the
+  // background instead of being torn down when the user taps close on mobile.
   const [aiOpen, setAiOpen] = useState(false);
+  const [aiMounted, setAiMounted] = useState(false);
   // Filename within current thread that the AI draft should reply under in UI ordering
   const [aiReplyAnchor, setAiReplyAnchor] = useState<string | null>(null);
   // Pending reply target (full path "cat/slug/file") to push to AIPane on open
@@ -81,6 +84,8 @@ export function ThreadDetailPane() {
     setReplyTo(null);
     setReplyReferences([]);
     setAiReplyAnchor(null);
+    setAiOpen(false);
+    setAiMounted(false);
     if (!category || !slug) return;
     const threadKey = `${category}/${slug}`;
     fetchDrafts()
@@ -103,6 +108,7 @@ export function ThreadDetailPane() {
     const filePath = `${category}/${slug}/${post.filename}`;
     setAiReplyAnchor(post.filename);
     setAiPendingReplyTarget(filePath);
+    setAiMounted(true);
     setAiOpen(true);
     if (hasDraft) setReplyAfter((prev) => prev ?? REPLY_LAST);
   };
@@ -114,6 +120,7 @@ export function ThreadDetailPane() {
       const last = data.posts[data.posts.length - 1];
       setAiPendingReplyTarget(`${category}/${slug}/${last.filename}`);
     }
+    setAiMounted(true);
     setAiOpen(true);
     if (hasDraft) setReplyAfter((prev) => prev ?? REPLY_LAST);
   };
@@ -271,7 +278,10 @@ export function ThreadDetailPane() {
               variant={aiOpen ? "secondary" : "ghost"}
               size="sm"
               className="ml-auto h-7 px-2 text-xs"
-              onClick={() => setAiOpen((o) => !o)}
+              onClick={() => {
+                if (!aiOpen) setAiMounted(true);
+                setAiOpen((o) => !o);
+              }}
               title="AI 助手"
             >
               <Bot className="mr-1 h-3.5 w-3.5" />
@@ -326,9 +336,15 @@ export function ThreadDetailPane() {
         </div>
       </div>
 
-      {/* AI pane */}
-      {aiOpen && (
-        <div className="min-h-0 w-full overflow-hidden border-t xl:w-96 xl:shrink-0 xl:border-l xl:border-t-0">
+      {/* AI pane — kept mounted once opened so background streaming survives close */}
+      {aiMounted && (
+        <div
+          className={
+            aiOpen
+              ? "min-h-0 w-full overflow-hidden border-t xl:w-96 xl:shrink-0 xl:border-l xl:border-t-0"
+              : "hidden"
+          }
+        >
           <AIPane
             category={category!}
             slug={slug!}
@@ -437,7 +453,7 @@ function PostCard({
                 <AtSign className="mr-1 h-3.5 w-3.5" /> 提及
               </Button>
               {mentionOpen && (
-                <div className="absolute right-0 top-full z-50 mt-1 w-[min(20rem,calc(100vw-2rem))] rounded-lg border bg-white p-4 shadow-lg dark:bg-zinc-900">
+                <div className="fixed inset-x-4 top-20 z-50 rounded-lg border bg-white p-4 shadow-lg dark:bg-zinc-900 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-1 sm:w-[min(20rem,calc(100vw-2rem))]">
                   <p className="mb-3 text-xs font-semibold text-muted-foreground">提及某人</p>
                   <MentionField
                     value={mentionValue}
