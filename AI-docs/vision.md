@@ -185,9 +185,10 @@ index_state: indexed | un-indexed   # 两阶段原子写标记
 
 > 详细实现见 `memo.md`。这里只盘大块，方便对照路线图。
 
-### ✅ 已完成（discuss 模块基本闭环）
+### ✅ 已完成（discuss 模块已形成可用 beta）
 
-- 飞书 OAuth 登录 + 首登 pinyin 收集
+- 飞书 OAuth 登录 + 首登 pinyin / GitHub 用户名收集
+- 统一认证入口 `/auth/entry`：飞书 IM / 工作台跳转先过认证入口，再回跳原 thread
 - 5 状态机 + 转移（含 reopen 原因记录）
 - INDEX 文件读写 + `from` / `refer` 关系
 - 两阶段原子写 + 启动恢复
@@ -195,12 +196,17 @@ index_state: indexed | un-indexed   # 两阶段原子写标记
 - 草稿 autosave + 内联回复
 - AI 助手（OpenRouter 流式），针对回复对象 + 引用文件生成回复草稿，对话持久化
 - PAT（VS Code 等外部客户端）
-- 管理员密码门（AI 配置 / 联系人同步）
+- 管理员密码门（AI 配置 / 联系人同步 / workspace 配置）
+- workspace 配置迁移到 SQLite settings + `/api/workspace/mirror`
+- 首页欢迎页（版本号 / HOME.md / CHANGELOG.md 聚合）
+- 左侧导航升级：`收藏 / 草稿 / 讨论` 三个一级分组，讨论下再按 category 展开 thread
+- 收藏：per-user 星标收藏，单独分组展示
 
 ### ⚠️ 部分完成
 
 - **AI 摘要**：post `auto-summary` 字段已定义、INDEX `files[].summary` 字段已预留，AI 写入未实现
 - **AI 助手定位**：当前 AIPane 只是"线程内回复助手"，远未达到"员工搭档 AI"的定位
+- **飞书端内登录体验**：统一入口和回跳链路已做，但是否真正做到移动端完全无感，还取决于飞书开放平台配置与端内行为
 - **异常恢复**：两阶段标记 + 启动巡视有，定时巡视未做
 
 ### ❌ 未实现（关键缺口）
@@ -209,9 +215,9 @@ index_state: indexed | un-indexed   # 两阶段原子写标记
 |---|---|---|
 | AI 自动生成 RESULT | Clarify 收口 | RESULT 当前需人工写，闭环断裂 |
 | AI 摘要写入 | 全流程 | INDEX 摘要靠人，下游 AI 无法高效读取 |
-| **monitor 模块**（巡视 / 提醒 / 推动） | Reflect | 缺这个 Pivot 就只是被动工具，不是"组织引擎" |
 | **project 模块**（需求 / 项目文件） | Organize | GTD 第 3 步入口，全链路下游全部缺失 |
 | **task 模块**（拆分 / 分配 / 进度 / 阻塞） | Organize + Engage | 团队真正干活的承载体 |
+| **monitor 模块**（巡视 / 提醒 / 推动） | Reflect | 缺这个 Pivot 就只是被动工具，不是"组织引擎" |
 | 任务调度（"下一步该做什么"推送） | Engage | 释放员工认知负担的核心机制 |
 | **knowledge 模块**（验收 / 复盘 / 经验） | Review / Evolve | 组织记忆和进化能力 |
 | 子讨论回挂任务 | 多入口 | 任务卡住时的疏导机制 |
@@ -228,29 +234,30 @@ index_state: indexed | un-indexed   # 两阶段原子写标记
 - **A1. AI 摘要**：post 写入时自动生成 `auto-summary`，INDEX `files[].summary` 同步写入
 - **A2. AI 生成 RESULT**：基于讨论全部 post 自动起草 RESULT 文件，人工确认门 1 后保存
 
-### Phase B：组织引擎 AI 第一次现身（2-3 周）
+### Phase B：project 模块（3-4 周）
 
-- **B1. monitor-scan**：定时巡视所有 INDEX，识别模式
+- B1. 从 RESULT → 需求文档：AI 起草 + 人工确认门 2
+- B2. `projects/` 目录结构 + project INDEX
+- B3. `discuss → project` 的 `produced` 状态自动联动
+
+### Phase C：task 模块（3-4 周）
+
+- C1. 任务拆分：AI 从需求文档拆 + 人工确认门 3
+- C2. 任务分配建议：AI 推荐 owner + 人工确认
+- C3. 任务进度记录、阻塞标记、依赖（`blocked_by`）
+- C4. 任务的 subdiscussion 回挂机制
+
+### Phase D：组织引擎 AI 第一次现身（2-3 周）
+
+- D1. monitor-scan：定时巡视所有 INDEX，识别模式
   - 长期 open 未更新
   - mention 后未回复
   - concluded 未 promote 为项目
-- **B2. 主动通知**：复用现有飞书卡片，AI 推送提醒
-- **B3. 异常恢复定时巡视**：扫 un-indexed 文件自动修复
+  - 任务逾期 / 阻塞升级 / 项目延期预警（project/task 上线后）
+- D2. 主动通知：复用现有飞书卡片，AI 推送提醒
+- D3. 异常恢复定时巡视：扫 un-indexed 文件自动修复
 
-> **里程碑意义**：这一阶段团队第一次"感受到"AI 在主动推自己——心理冲击最大，最能验证 AI 原生方向。
-
-### Phase C：project 模块（3-4 周）
-
-- C1. 从 RESULT → 需求文档：AI 起草 + 人工确认门 2
-- C2. `projects/` 目录结构 + project INDEX
-- C3. `discuss → project` 的 `produced` 状态自动联动
-
-### Phase D：task 模块（3-4 周）
-
-- D1. 任务拆分：AI 从需求文档拆 + 人工确认门 3
-- D2. 任务分配建议：AI 推荐 owner + 人工确认
-- D3. 任务进度记录、阻塞标记、依赖（`blocked_by`）
-- D4. 任务的 subdiscussion 回挂机制
+> **里程碑意义**：project / task 数据流建完后，这一阶段团队才会第一次真正感受到 AI 在主动推组织，而不是只做 thread 提醒。
 
 ### Phase E：员工搭档 AI 升级（持续）
 

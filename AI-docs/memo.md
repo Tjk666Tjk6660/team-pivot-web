@@ -41,13 +41,15 @@ team-pivot-web/
 │   │   ├── contacts.py         # GET /contacts, POST /contacts/sync (cookie-only)
 │   │   ├── ai.py               # AI 助手：/api/ai/{settings,files,threads/*/conversation,/chat}
 │   │   ├── tokens.py           # PAT 管理：/api/tokens（cookie-only）
-│   │   └── workspace.py        # /api/workspace/{status,refresh,mirror} + /api/admin/workspace-config
+│   │   ├── workspace.py        # /api/workspace/{status,refresh,mirror} + /api/admin/workspace-config
+│   │   └── app_home.py         # /api/app/home（版本号 + HOME.md + CHANGELOG.md 聚合）
 │   ├── ai/
 │   │   ├── client.py           # OpenRouter SSE 流式
 │   │   ├── context.py          # build_context_from_files(reply_target, references)
 │   │   └── prompts.py          # 系统提示词（[[GENERATE_REPLY_DRAFT]] 强约束）
 │   ├── ai_conversations.py     # 每用户×thread 对话持久化
 │   ├── api_tokens.py           # PAT repo（pvt_<urlsafe44>，DB 只存 sha256）
+│   ├── favorites.py            # per-user 收藏状态
 │   ├── settings.py             # SQLite key-value（AI 配置 + workspace 配置）
 │   ├── auth/
 │   │   ├── deps.py             # make_current_user (cookie 或 Bearer) + cookie_only + require_profile
@@ -74,7 +76,7 @@ team-pivot-web/
     ├── lib/time.ts / utils.ts
     ├── components/
     │   ├── Layout.tsx          # 通用 header（NewThread/ProfileSetup 用）
-    │   ├── ThreadListPane.tsx  # 左栏：thread 列表 + 未读红点 + 草稿列表
+    │   ├── ThreadListPane.tsx  # 左栏：收藏 / 草稿 / 讨论；讨论按 category 展开 thread
     │   ├── StatusControl.tsx   # 状态选择下拉（含外部点击关闭）
     │   ├── MentionField.tsx    # @mention 输入（含联系人高亮）
     │   ├── StatusBadge.tsx     # 5 色状态徽章
@@ -85,10 +87,11 @@ team-pivot-web/
     └── pages/
         ├── Login.tsx
         ├── ProfileSetup.tsx    # 首登 pinyin 收集
-        ├── Dashboard.tsx       # 主布局（左栏列表 + 右栏 Outlet），有**独立 header**；含 UserMenu 下拉
+        ├── Dashboard.tsx       # 主布局（左栏列表 + 右栏 Outlet），PC 双栏 / 移动端单栏
         ├── NewThread.tsx       # 发讨论表单（autosave）
         ├── SettingsPage.tsx    # /settings：个人设置，无密码，只有 PAT 管理
         ├── AdminPage.tsx       # /admin：管理员密码门 + 数据仓库配置 + AI 配置 + 联系人同步
+        ├── HomeWelcomePane.tsx # 主页欢迎页（版本、使用说明、更新记录）
         └── ThreadDetailPane.tsx  # 右栏：posts 列表 + 内联 ReplyForm + AIPane
 
 var/
@@ -214,6 +217,23 @@ with workspace.write_session(message, author_name, author_email):
 - 只有 `type: proposal` 和 `type: reply` 计入未读；comment/mention/状态变更不计
 - `append_standalone_mention` 不更新 `last_updated`，不影响 thread 排列顺序
 - 未读数附在 `/api/threads` 响应的 `unread_count` 字段，不需单独调 `/api/inbox`
+- 收藏不改变讨论分组；只是对当前用户额外出现在左栏顶级 `收藏` 分组
+
+### 左栏导航结构
+
+- 顶级顺序：`收藏 → 草稿 → 讨论`
+- `收藏` 和 `草稿` 都可整体折叠
+- `讨论` 下先按 `category` 聚合，再展开具体 `thread`
+- `category` 按其内部最近活跃 thread 的 `last_updated` 排序
+- `category` 的未读数 = 该分类下所有 thread 的 `unread_count` 总和
+- 当前正在浏览的 thread 所属分类会自动展开
+
+### Category 规则
+
+- `category` 现在支持中文
+- 最长 20 个字符
+- 不能包含 `/ \\ : * ? " < > |` 以及制表 / 换行
+- 这个规则已在前后端校验统一
 
 ### Post frontmatter 约定
 
@@ -235,10 +255,10 @@ with workspace.write_session(message, author_name, author_email):
 ## 8. 功能完成情况
 
 **已完成：**
-飞书 OAuth + 首登 / 讨论列表 + 详情 / 发讨论 + 回复 / 飞书卡片通知 / 草稿 autosave / 状态徽章 + 排序 / 状态转移（含 reopen 原因）/ @mention 系统（撰写 + 飞书 DM 通知）/ Session 持久化 / shadcn/ui + Tailwind / Thread 列表内嵌未读红点 / GFM markdown（表格、任务列表）/ Post 折叠 + 内联回复 + 草稿指示 / **AI 助手（OpenRouter SSE，回复对象+引用文件，按钮触发草稿生成，对话持久化）** / **PAT + 管理员密码门 + 设置页** / **workspace 配置迁移到 DB + `/api/workspace/mirror`**
+飞书 OAuth + 首登 / `/auth/entry` 统一登录入口 / 讨论列表 + 详情 / 发讨论 + 回复 / 飞书卡片通知 / 草稿 autosave / 状态徽章 + 排序 / 状态转移（含 reopen 原因）/ @mention 系统（撰写 + 飞书 DM 通知）/ Session 持久化 / shadcn/ui + Tailwind / GFM markdown（表格、任务列表）/ Post 折叠 + 内联回复 + 草稿指示 / **AI 助手（OpenRouter SSE，回复对象+引用文件，按钮触发草稿生成，对话持久化）** / **PAT + 管理员密码门 + 设置页** / **workspace 配置迁移到 DB + `/api/workspace/mirror`** / **欢迎首页（`HOME.md` + `CHANGELOG.md` + 版本号聚合）** / **左栏分类树导航** / **per-user 收藏**
 
 **暂缓（有意为之）：**
-附件上传 / RESULT 文件 / AI 摘要写入（post `auto-summary`、INDEX `files[].summary`）/ 多 tenant / 权限分级（PAT 当前 = 全权限）/ 搜索 / 键盘快捷键 / JSAPI 免登 / systemd+Caddy 部署
+附件上传 / RESULT 文件 / AI 摘要写入（post `auto-summary`、INDEX `files[].summary`）/ 多 tenant / 权限分级（PAT 当前 = 全权限）/ 搜索 / 键盘快捷键
 
 ## 9. 当前状态 + 下一步
 
@@ -249,11 +269,11 @@ with workspace.write_session(message, author_name, author_email):
 
 memo.md 只讲"现状怎么搭的"（模块边界、关键实现、当前约束），vision.md 讲"要去哪儿"（目标、缺口、计划）。两份互补，**改方向相关内容只动 vision.md，避免两份不同步**。
 
-部署与线上运维问题统一记录在 [`deploy.md`](./deploy.md)，不要再写进 memo。
+产品级部署与初始化手册统一记录在 [`product-deploy.md`](./product-deploy.md)。本地测试环境专用的 `deploy.md` 不再纳入 Git，不要再把部署过程性问题写进 memo。
 
 ## 11. 约束与边界
 
-- **不要启动服务器部署**——本地跑 MVP，上线由用户自己操作
+- **不要主动做服务器部署或线上配置修改**——除非用户明确要求
 - **不要主动 push 或改版本号**，等用户指示
 - **不要动 `old/` 里的文件**——参考资料；要复用就拷贝到 server/ 再改
 - **写代码前先问方向**

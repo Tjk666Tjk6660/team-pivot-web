@@ -76,13 +76,13 @@
   - `category?`
 - 返回：
   - `items[]`
-  - 每项含 `category / slug / title / author / author_display / status / last_updated / post_count / unread_count`
+  - 每项含 `category / slug / title / author / author_display / status / last_updated / post_count / unread_count / favorite`
 
 ### GET /api/threads/{category}/{slug}
 - 作用：获取线程详情与帖子内容
 - 鉴权：Cookie 或 Bearer PAT
 - 返回：
-  - `meta`
+  - `meta`：与线程列表同结构，包含 `favorite`
   - `posts[]`
   - 每个 post 含 `filename / frontmatter / body / author_display / mentions`
 
@@ -94,6 +94,9 @@
   - `title`
   - `body`
   - `mentions?`
+- 备注：
+  - `category` 支持中文，最长 20 个字符
+  - `category` 不能包含 `/ \\ : * ? " < > |` 或换行 / 制表符
 
 ### POST /api/threads/{category}/{slug}/posts
 - 作用：在线程内发布 reply
@@ -146,6 +149,8 @@
   - `mentions?`
   - `reply_to?`
   - `references?`
+- 备注：
+  - proposal 草稿的 `category` 与正式发帖共用同一规则：支持中文，最长 20 个字符，禁止路径危险字符
 
 ### GET /api/drafts/{draft_id}
 - 作用：读取草稿
@@ -168,6 +173,9 @@
 ### GET /api/inbox
 - 作用：获取当前用户的收件箱与未读信息
 - 鉴权：Cookie 或 Bearer PAT
+- 返回：
+  - `items[]`
+  - 每项含 `meta / unread_count / last_post_filename / last_post_author_display`
 
 ### POST /api/threads/{category}/{slug}/read
 - 作用：将线程标记为已读到最新帖子
@@ -198,6 +206,8 @@
   - `ready`
   - `path`
   - `head`
+- 可能错误：
+  - `503 {"detail":"workspace_not_configured"}`：管理员尚未完成工作区配置
 
 ### POST /api/workspace/refresh
 - 作用：从远端仓库拉取最新内容
@@ -205,6 +215,8 @@
 - 返回：
   - `ok`
   - `head`
+- 可能错误：
+  - `503 {"detail":"workspace_not_configured"}`
 
 ### GET /api/workspace/mirror
 - 作用：返回客户端 clone / pull 用的只读镜像配置
@@ -219,6 +231,10 @@
   - `git_username`
   - `git_token`
   - `head`
+- 备注：
+  - `branch` 固定为 `main`
+  - `visibility=public` 时，`git_username` 和 `git_token` 为 `null`
+  - `visibility=private` 时，返回只读凭据，不返回服务器写入 token
 
 ### GET /api/admin/workspace-config
 - 作用：读取管理员工作区配置
@@ -238,12 +254,21 @@
   - `visibility`
   - `write_token`
   - `readonly_token`
+- 校验规则：
+  - `write_token` 必填
+  - `visibility=private` 时，`readonly_token` 必填
 
 ## AI
 
 ### GET /api/ai/settings
 - 作用：读取 AI 配置
 - 鉴权：Cookie 会话 + 管理员口令
+- 返回：
+  - `model`
+  - `has_key`
+  - `max_context_tokens`
+  - `min_rounds`
+  - `max_rounds`
 
 ### PUT /api/ai/settings
 - 作用：更新 AI 配置
@@ -299,6 +324,9 @@
 ### GET /api/tokens
 - 作用：列出当前用户已有 PAT
 - 鉴权：Cookie 会话
+- 返回：
+  - `items[]`
+  - 每项含 `id / name / created_at / last_used_at / expires_at`
 
 ### DELETE /api/tokens/{short_id}
 - 作用：删除一个 PAT
@@ -310,8 +338,8 @@
 - 作用：获取首页欢迎页所需的版本、欢迎内容和更新信息
 - 鉴权：Cookie 或 Bearer PAT
 - 返回：
-  - `app`
-  - `welcome`
+  - `app`：`name / version / head`
+  - `welcome`：`title / body_md`
   - `latest_release`
   - `recent_releases`
 
