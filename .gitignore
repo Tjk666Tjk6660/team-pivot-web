@@ -25,3 +25,4 @@ tests/test_output/
 pivot-config.yaml
 .gstack/
 AI-docs/deploy.md
+CLAUDE.md
