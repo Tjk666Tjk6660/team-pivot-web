@@ -10,11 +10,11 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/login": "http://localhost:8000",
-      "/auth": "http://localhost:8000",
-      "/me": "http://localhost:8000",
-      "/logout": "http://localhost:8000",
-      "/api": "http://localhost:8000",
+      "/login": "http://127.0.0.1:8000",
+      "/auth": "http://127.0.0.1:8000",
+      "/me": "http://127.0.0.1:8000",
+      "/logout": "http://127.0.0.1:8000",
+      "/api": "http://127.0.0.1:8000",
     },
   },
 });
