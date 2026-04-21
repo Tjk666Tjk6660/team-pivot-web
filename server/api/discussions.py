@@ -80,6 +80,25 @@ def build_router(
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
 
+    @router.get("/categories")
+    def list_categories(user: User = Depends(current_user)):
+        all_threads = list_threads(workspace.discussions_dir, workspace.index_dir)
+        grouped: dict[str, dict] = {}
+        for m in all_threads:
+            cat = m.category
+            if cat not in grouped:
+                grouped[cat] = {"name": cat, "post_count": 0, "last_updated": None}
+            grouped[cat]["post_count"] += m.post_count
+            cur = grouped[cat]["last_updated"]
+            if m.last_updated and (cur is None or m.last_updated > cur):
+                grouped[cat]["last_updated"] = m.last_updated
+        items = sorted(
+            grouped.values(),
+            key=lambda c: c["last_updated"] or "",
+            reverse=True,
+        )
+        return {"items": items}
+
     @router.get("/threads")
     def threads(
         category: str | None = None,
