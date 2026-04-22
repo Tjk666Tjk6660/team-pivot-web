@@ -149,7 +149,7 @@ function CreateTokenDialog({
   onCreated: (t: ApiTokenCreated) => void;
 }) {
   const [name, setName] = useState("");
-  const [ttl, setTtl] = useState(90);
+  const [ttl, setTtl] = useState<number | "">(90);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -160,7 +160,7 @@ function CreateTokenDialog({
     if (!name.trim()) return;
     setSubmitting(true);
     try {
-      const t = await createApiToken(name.trim(), ttl);
+      const t = await createApiToken(name.trim(), ttl === "" ? 90 : ttl);
       onCreated(t);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -193,7 +193,10 @@ function CreateTokenDialog({
               type="number"
               min={1} max={365}
               value={ttl}
-              onChange={(e) => setTtl(Number(e.target.value))}
+              onChange={(e) => {
+                const v = e.target.value;
+                setTtl(v === "" ? "" : Number(v));
+              }}
             />
             <p className="text-xs text-muted-foreground">默认 90 天，最多 365 天</p>
           </div>

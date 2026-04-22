@@ -76,7 +76,7 @@ def test_append_reply_updates_last_updated_and_timeline(tmp_path):
         author_id="ken", now_iso="2026-04-19T11:00:00+08:00",
     )
     import yaml
-    data = yaml.safe_load((idx / "t-discuss.index.yaml").read_text())
+    data = yaml.safe_load((idx / "t-discuss.index.yaml").read_text(encoding="utf-8"))
     assert data["last_updated"] == "2026-04-19T11:00:00+08:00"
     assert len(data["timeline"]) == 2
     assert data["timeline"][1]["event"] == "ken replied"
@@ -97,7 +97,7 @@ def test_append_standalone_mention(tmp_path):
         now_iso="2026-04-19T12:00:00+08:00",
     )
     import yaml
-    data = yaml.safe_load((idx / "t-discuss.index.yaml").read_text())
+    data = yaml.safe_load((idx / "t-discuss.index.yaml").read_text(encoding="utf-8"))
     # mention 不更新 last_updated，排序顺序不受影响
     assert data["last_updated"] == "2026-04-19T10:00:00+08:00"
     last = data["timeline"][-1]
@@ -119,7 +119,7 @@ def test_change_status_updates_and_appends_timeline(tmp_path):
         now_iso="2026-04-19T12:00:00+08:00",
     )
     import yaml
-    data = yaml.safe_load((idx / "t-discuss.index.yaml").read_text())
+    data = yaml.safe_load((idx / "t-discuss.index.yaml").read_text(encoding="utf-8"))
     assert data["discussions"][0]["status"] == "concluded"
     assert data["last_updated"] == "2026-04-19T12:00:00+08:00"
     assert data["timeline"][-1]["event"] == "ken 状态变更 open -> concluded"
@@ -132,7 +132,7 @@ def test_change_status_reopen_records_reason(tmp_path):
         author_id="ken", now_iso="2026-04-19T10:00:00+08:00",
     )
     (idx / "t-discuss.index.yaml").write_text(
-        (idx / "t-discuss.index.yaml").read_text().replace(
+        (idx / "t-discuss.index.yaml").read_text(encoding="utf-8").replace(
             "status: open", "status: concluded"
         ),
         encoding="utf-8",
@@ -144,7 +144,7 @@ def test_change_status_reopen_records_reason(tmp_path):
         now_iso="2026-04-19T13:00:00+08:00",
     )
     import yaml
-    data = yaml.safe_load((idx / "t-discuss.index.yaml").read_text())
+    data = yaml.safe_load((idx / "t-discuss.index.yaml").read_text(encoding="utf-8"))
     assert data["discussions"][0]["status"] == "open"
     last = data["timeline"][-1]
     assert "从 concluded 状态重新打开" in last["event"]
@@ -178,7 +178,7 @@ def test_append_reply_adds_from_ref_to_proposal(tmp_path):
         author_id="dengke", now_iso="2026-04-19T11:00:00+08:00",
     )
     import yaml
-    data = yaml.safe_load((idx / "auth-discuss.index.yaml").read_text())
+    data = yaml.safe_load((idx / "auth-discuss.index.yaml").read_text(encoding="utf-8"))
     reply = data["discussions"][0]["files"][1]
     assert reply["refs"] == [
         {"type": "from", "path": "discussions/eng/auth/001_ken_proposal_aa.md"}

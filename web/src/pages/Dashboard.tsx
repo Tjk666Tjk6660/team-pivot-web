@@ -452,7 +452,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   return (
     <div className="flex h-screen flex-col bg-background">
       <Toaster position="top-center" richColors />
-      <header className="shrink-0 border-b bg-background/95 backdrop-blur">
+      <header className="relative z-40 shrink-0 border-b bg-background/95 backdrop-blur">
         <div className="flex min-h-14 flex-wrap items-center gap-2 px-4 py-2 sm:gap-4 sm:px-6">
           <Link to="/" className="font-semibold">team-pivot</Link>
           <div className="flex flex-wrap items-center gap-1">
