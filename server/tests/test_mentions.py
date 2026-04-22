@@ -24,6 +24,17 @@ def test_resolve_id_by_union_id(users):
     assert resolve_id("on_def456xxxxxxxxxxxx", users) == "邓柯"
 
 
+def test_resolve_id_by_pinyin(users):
+    users.upsert_from_feishu(
+        open_id="ou_abc123xxxxxxxxxxxx",
+        union_id="on_def456xxxxxxxxxxxx",
+        name="邓柯",
+        avatar_url="",
+    )
+    users.update_profile("ou_abc123xxxxxxxxxxxx", pinyin="dengke")
+    assert resolve_id("dengke", users) == "邓柯"
+
+
 def test_resolve_id_unknown_returns_input(users):
     assert resolve_id("ou_unknown000000000000", users) == "ou_unknown000000000000"
 

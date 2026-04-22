@@ -11,6 +11,7 @@ import {
   deleteDraft,
   fetchDrafts,
   fetchThread,
+  fetchWorkspaceMirror,
   markThreadRead,
   publishDraft,
   setThreadFavorite,
@@ -19,6 +20,7 @@ import {
   type MentionEntry,
   type Post,
   type ThreadDetail as ThreadDetailData,
+  type WorkspaceMirrorConfig,
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -27,7 +29,7 @@ import { StatusControl } from "@/components/StatusControl";
 import { MentionField, emptyMention, isMentionValid } from "@/components/MentionField";
 import { AIPane } from "@/components/AIPane";
 import { formatSaveStatus, useDraftAutosave } from "@/hooks/useDraftAutosave";
-import { relativeTime } from "@/lib/time";
+import { formatFullDateTime, relativeTime } from "@/lib/time";
 import { useDashboard } from "@/pages/Dashboard";
 import { HomeWelcomePane } from "@/pages/HomeWelcomePane";
 
@@ -58,6 +60,7 @@ export function ThreadDetailPane() {
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [replyReferences, setReplyReferences] = useState<string[]>([]);
   const [favoriteSaving, setFavoriteSaving] = useState(false);
+  const [workspaceMirror, setWorkspaceMirror] = useState<WorkspaceMirrorConfig | null>(null);
   const detailLayoutRef = useRef<HTMLDivElement>(null);
 
   const hasDraft = replyBody.trim().length > 0;
@@ -76,6 +79,12 @@ export function ThreadDetailPane() {
   };
 
   useEffect(load, [category, slug]);
+
+  useEffect(() => {
+    fetchWorkspaceMirror()
+      .then(setWorkspaceMirror)
+      .catch(() => setWorkspaceMirror(null));
+  }, []);
 
   // Reset and pre-load existing reply draft when navigating to a thread
   useEffect(() => {
@@ -323,12 +332,20 @@ export function ThreadDetailPane() {
 
           {/* Posts */}
           <div className="mt-6 space-y-4">
-            {data.posts.map((p) => (
+            {data.posts.map((p, index) => (
               <div key={p.filename}>
                 <PostCard
                   post={p}
+                  postNumber={index + 1}
                   category={category!}
                   slug={slug!}
+                  githubFileUrl={buildGitHubFileUrl(
+                    workspaceMirror?.repo_url ?? null,
+                    workspaceMirror?.head ?? workspaceMirror?.branch ?? null,
+                    category!,
+                    slug!,
+                    p.filename,
+                  )}
                   isReplyOpen={replyAfter === p.filename}
                   onAIReply={() => openAIReply(p)}
                   onMentioned={load}
@@ -407,11 +424,13 @@ export function ThreadDetailPane() {
 const COLLAPSE_HEIGHT = 208;
 
 function PostCard({
-  post, category, slug, isReplyOpen, onAIReply, onMentioned,
+  post, postNumber, category, slug, githubFileUrl, isReplyOpen, onAIReply, onMentioned,
 }: {
   post: Post;
+  postNumber: number;
   category: string;
   slug: string;
+  githubFileUrl: string | null;
   isReplyOpen: boolean;
   onAIReply: () => void;
   onMentioned: () => void;
@@ -419,6 +438,11 @@ function PostCard({
   const author = post.author_display ?? (post.frontmatter.author as string) ?? "unknown";
   const type = (post.frontmatter.type as string) ?? "";
   const created = post.frontmatter.created as string | null ?? null;
+  const actionLabel = type === "reply" ? "回复" : "发布";
+  const typeLabel = type === "reply" ? "回复" : type === "proposal" ? "提案" : type;
+  const typeBadgeClass = type === "reply"
+    ? "bg-blue-50 text-blue-700 ring-blue-200"
+    : "bg-amber-50 text-amber-700 ring-amber-200";
 
   const bodyRef = useRef<HTMLDivElement>(null);
   const [overflows, setOverflows] = useState(false);
@@ -472,13 +496,43 @@ function PostCard({
     <Card className="border-l-4 border-l-muted">
       <div className="p-4 sm:p-5">
         <div className="mb-2 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="text-xs text-muted-foreground leading-relaxed">
-            <span className="font-mono">{post.filename}</span>
-            {type && <span> · {type}</span>}
-            <span> · {author}</span>
-            {created && <span> · {relativeTime(created)}</span>}
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${typeBadgeClass}`}>
+                {typeLabel}
+              </span>
+              <span className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">
+                {author}
+              </span>
+              <span className="text-sm text-muted-foreground">
+                {actionLabel} 第 {postNumber} 条帖子
+                {created ? ` 于 ${formatFullDateTime(created)}` : ""}
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-relaxed text-muted-foreground">
+              {githubFileUrl ? (
+                <a
+                  href={githubFileUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-mono underline decoration-muted-foreground/50 underline-offset-2 hover:text-foreground"
+                >
+                  {post.filename}
+                </a>
+              ) : (
+                <span className="font-mono">{post.filename}</span>
+              )}
+            </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-1 sm:justify-end">
+            {!collapsed && overflows && (
+              <button
+                onClick={() => setCollapsed(true)}
+                className="h-7 px-2 text-xs text-primary hover:underline focus:outline-none motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-1 motion-safe:duration-200"
+              >
+                收起全文 ↑
+              </button>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -536,17 +590,47 @@ function PostCard({
         >
           <Markdown remarkPlugins={[remarkGfm]}>{post.body}</Markdown>
         </div>
-        {(overflows || !collapsed) && (
+        {overflows && (
           <button
             onClick={() => setCollapsed((c) => !c)}
             className="mt-1.5 text-xs text-primary hover:underline focus:outline-none"
           >
-            {collapsed ? "展开全文 ↓" : "收起 ↑"}
+            {collapsed ? "展开全文 ↓" : "收起全文 ↑"}
           </button>
         )}
       </div>
     </Card>
   );
+}
+
+function buildGitHubFileUrl(
+  repoUrl: string | null,
+  ref: string | null,
+  category: string,
+  slug: string,
+  filename: string,
+): string | null {
+  if (!repoUrl || !ref) return null;
+
+  const cleaned = repoUrl.trim().replace(/\.git$/, "");
+  let base: string | null = null;
+
+  if (cleaned.startsWith("https://github.com/")) {
+    base = cleaned;
+  } else {
+    const sshMatch = cleaned.match(/^git@github\.com:([^/]+\/[^/]+)$/);
+    if (sshMatch) {
+      base = `https://github.com/${sshMatch[1]}`;
+    }
+  }
+
+  if (!base) return null;
+
+  const path = ["discussions", category, slug, filename]
+    .map(encodeURIComponent)
+    .join("/");
+
+  return `${base}/blob/${encodeURIComponent(ref)}/${path}`;
 }
 
 function MentionChip({ mention }: { mention: MentionEntry }) {

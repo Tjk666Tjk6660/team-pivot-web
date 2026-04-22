@@ -69,7 +69,8 @@ class UserRepo:
             return None
         with self._db.connect() as conn:
             row = conn.execute(
-                "SELECT * FROM users WHERE open_id=? OR union_id=?", (id_, id_)
+                "SELECT * FROM users WHERE open_id=? OR union_id=? OR pinyin=?",
+                (id_, id_, id_),
             ).fetchone()
         return _row_to_user(row) if row else None
 

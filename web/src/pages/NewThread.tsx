@@ -2,7 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ArrowLeft } from "lucide-react";
-import { deleteDraft, fetchDraft, publishDraft, type Me, type MentionBlock } from "@/api";
+import {
+  deleteDraft,
+  fetchDraft,
+  fetchThreads,
+  publishDraft,
+  type Me,
+  type MentionBlock,
+} from "@/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -12,6 +19,9 @@ import { Layout } from "@/components/Layout";
 import { MentionField, emptyMention, isMentionValid } from "@/components/MentionField";
 import { formatSaveStatus, useDraftAutosave } from "@/hooks/useDraftAutosave";
 
+const NEW_CATEGORY_OPTION = "__new_category__";
+const CATEGORY_PATTERN = /^[^/\\:*?"<>|\t\n\r]{1,20}$/;
+
 export function NewThread({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -19,12 +29,25 @@ export function NewThread({ me, onLogout }: { me: Me; onLogout: () => void }) {
 
   const [draftId, setDraftIdState] = useState<string | null>(initialDraftId);
   const [category, setCategory] = useState("general");
+  const [availableCategories, setAvailableCategories] = useState<string[]>([]);
+  const [categoryMode, setCategoryMode] = useState<"select" | "create">("select");
+  const [newCategory, setNewCategory] = useState("");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [mentions, setMentions] = useState<MentionBlock>(emptyMention());
   const resolvedNames = useRef<Record<string, string>>({});
   const [loading, setLoading] = useState(initialDraftId !== null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    fetchThreads()
+      .then((items) => {
+        setAvailableCategories(
+          Array.from(new Set(items.map((item) => item.category.trim()).filter(Boolean))),
+        );
+      })
+      .catch((e) => toast.error(e instanceof Error ? e.message : String(e)));
+  }, []);
 
   useEffect(() => {
     if (!initialDraftId) return;
@@ -39,6 +62,16 @@ export function NewThread({ me, onLogout }: { me: Me; onLogout: () => void }) {
       .catch((e) => toast.error(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
   }, [initialDraftId]);
+
+  useEffect(() => {
+    if (category.trim() && !availableCategories.includes(category.trim())) {
+      setCategoryMode("create");
+      setNewCategory(category.trim());
+      return;
+    }
+    setCategoryMode("select");
+    setNewCategory("");
+  }, [availableCategories, category]);
 
   const setDraftId = (id: string) => {
     setDraftIdState(id);
@@ -58,6 +91,24 @@ export function NewThread({ me, onLogout }: { me: Me; onLogout: () => void }) {
     enabled: !loading && hasContent,
     deps: [category, title, body, loading, mentions],
   });
+
+  const categoryOptions = category.trim() && !availableCategories.includes(category.trim())
+    ? [category.trim(), ...availableCategories]
+    : availableCategories;
+
+  const createCategory = () => {
+    const next = newCategory.trim();
+    if (!CATEGORY_PATTERN.test(next)) {
+      toast.error('category 需为 1-20 个字符，且不能包含 / \\\\ : * ? " < > | 或换行');
+      return;
+    }
+    setAvailableCategories((current) => (
+      current.includes(next) ? current : [...current, next]
+    ));
+    setCategory(next);
+    setCategoryMode("select");
+    setNewCategory("");
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -109,14 +160,48 @@ export function NewThread({ me, onLogout }: { me: Me; onLogout: () => void }) {
           <form onSubmit={submit} className="space-y-4 p-6">
             <div className="grid gap-2">
               <Label htmlFor="category">Category</Label>
-              <Input
+              <select
                 id="category"
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
+                value={categoryMode === "create" ? NEW_CATEGORY_OPTION : category}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  if (next === NEW_CATEGORY_OPTION) {
+                    setCategoryMode("create");
+                    setNewCategory("");
+                    return;
+                  }
+                  setCategoryMode("select");
+                  setNewCategory("");
+                  setCategory(next);
+                }}
                 required
-                maxLength={20}
-                pattern={'^[^/\\\\:*?"<>|\\t\\n\\r]{1,20}$'}
-              />
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
+              >
+                {categoryOptions.map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+                <option value={NEW_CATEGORY_OPTION}>+ 新建 category</option>
+              </select>
+              {categoryMode === "create" && (
+                <div className="flex gap-2">
+                  <Input
+                    value={newCategory}
+                    onChange={(e) => setNewCategory(e.target.value)}
+                    placeholder="输入新的 category"
+                    maxLength={20}
+                    pattern={'^[^/\\\\:*?"<>|\\t\\n\\r]{1,20}$'}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        createCategory();
+                      }
+                    }}
+                  />
+                  <Button type="button" variant="outline" onClick={createCategory}>
+                    创建并选中
+                  </Button>
+                </div>
+              )}
               <p className="text-xs text-muted-foreground">
                 支持中文，最长 20 个字符；不能包含 <code>/ \\ : * ? " &lt; &gt; |</code> 或换行。
               </p>
