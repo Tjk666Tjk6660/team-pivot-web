@@ -260,16 +260,19 @@ with workspace.write_session(message, author_name, author_email):
 **暂缓（有意为之）：**
 附件上传 / RESULT 文件 / AI 摘要写入（post `auto-summary`、INDEX `files[].summary`）/ 多 tenant / 权限分级（PAT 当前 = 全权限）/ 搜索 / 键盘快捷键
 
-## 9. 当前状态 + 下一步
+## 9. 当前状态
 
-**详见 [`vision.md`](./vision.md)。** 那份文档讲"Pivot 要做什么、为什么、还差什么"，包括：
-- §6：当前实现状态盘点（✅ / ⚠️ / ❌ 三档）
-- §7：路线图（Phase A-G，按优先级）
-- §10：新 AI 起手式
+这份文档只记录当前实现事实，不记录产品方向和历史讨论。
 
-memo.md 只讲"现状怎么搭的"（模块边界、关键实现、当前约束），vision.md 讲"要去哪儿"（目标、缺口、计划）。两份互补，**改方向相关内容只动 vision.md，避免两份不同步**。
+产品设计结论文档统一查看 [`pivot-product.md`](./pivot-product.md)。愿景和方向文档统一查看 [`pivot-vision.md`](./pivot-vision.md)。产品级部署与初始化手册统一查看 [`pivot-deploy.md`](./pivot-deploy.md)。
 
-产品级部署与初始化手册统一记录在 [`product-deploy.md`](./product-deploy.md)。本地测试环境专用的 `deploy.md` 不再纳入 Git，不要再把部署过程性问题写进 memo。
+当前实现状态可概括为：
+
+- Web 端讨论系统已经可用，支持 thread 列表、详情、发帖、回复、收藏和未读
+- 鉴权、PAT、管理员密码门、workspace 配置、AI 配置、联系人同步都已接入
+- 工作区配置和 AI 配置已迁移到 SQLite `settings`
+- AI 助手目前仍是 thread 内回复助手，不是完整的事项调度系统
+- 仍未实现事项状态机、`index` 新模型、执行期结构和验收期结构
 
 ## 11. 约束与边界
 
@@ -312,8 +315,9 @@ uv run pytest -q
 
 ## 14. 新 session 起手式
 
-1. **先读 [`vision.md`](./vision.md)**——明白 Pivot 终极目标、当前缺口、下一步 Phase
-2. **再读这份 memo**——掌握现状的实现细节、目录结构、关键配置与当前约束（§8 看已完成的功能盘点）
-3. 改代码前看对应模块现有实现
-4. 跑 `uv run pytest -q` 验证 baseline 是绿色
-5. 写代码前确认方向（§11 第 3 条）
+1. **先读这份 memo**——掌握当前实现细节、目录结构、关键配置与运行约束
+2. **再读 [`pivot-product.md`](./pivot-product.md)**——理解当前认可的产品设计模型和设计边界
+3. **需要理解长期方向时，再读 [`pivot-vision.md`](./pivot-vision.md)**——把握项目的愿景和方向性要求
+4. 改代码前看对应模块现有实现
+5. 跑 `uv run pytest -q` 验证 baseline 是否为绿色
+6. 写代码前确认当前任务属于实现事实修改、产品设计修改，还是愿景方向修改

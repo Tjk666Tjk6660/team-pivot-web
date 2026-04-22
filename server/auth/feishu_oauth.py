@@ -20,7 +20,6 @@ DEFAULT_SCOPES = " ".join([
     "contact:contact.base:readonly",
     "contact:user.base:readonly",
     "contact:user.basic_profile:readonly",
-    "contact:user:search",
 ])
 
 
