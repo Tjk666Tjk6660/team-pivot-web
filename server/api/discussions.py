@@ -12,7 +12,7 @@ from server.contacts import ContactRepo
 from server.favorites import FavoriteRepo
 from server.inbox import compute_unread_counts
 from server.index_files import change_thread_status, get_mentions_by_file
-from server.mentions import resolve_id, resolve_text
+from server.mentions import resolve_avatar_url, resolve_id, resolve_text
 from server.notify import Notifier
 from server.publish import (
     PublishError,
@@ -148,6 +148,7 @@ def build_router(
                     "frontmatter": p.frontmatter,
                     "body": resolve_text(p.body, users, contacts),
                     "author_display": resolve_id(p.frontmatter.get("author"), users, contacts),
+                    "author_avatar_url": resolve_avatar_url(p.frontmatter.get("author"), users, contacts),
                     "mentions": [
                         {**m, "author_display": resolve_id(m.get("author_id"), users, contacts)}
                         for m in mentions_map.get(p.filename, [])

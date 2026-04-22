@@ -4,8 +4,7 @@ import {
   ChevronDown,
   GripVertical,
   LogOut,
-  PanelLeftOpen,
-  Plus,
+  MessageSquareText,
   RefreshCw,
   ShieldCheck,
   User,
@@ -115,7 +114,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [workspace, setWorkspace] = useState<WorkspaceStatus | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState(360);
+  const [sidebarWidth, setSidebarWidth] = useState(320);
   const [aiThreads, setAiThreads] = useState<Record<string, AIThreadState>>({});
   const [activeAIStream, setActiveAIStream] = useState<ActiveAIStream>(null);
   const isThreadView = location.pathname.startsWith("/t/");
@@ -450,36 +449,55 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   };
 
   return (
-    <div className="flex h-screen flex-col bg-background">
+    <div className="flex h-screen flex-col bg-transparent">
       <Toaster position="top-center" richColors />
-      <header className="relative z-40 shrink-0 border-b bg-background/95 backdrop-blur">
-        <div className="flex min-h-14 flex-wrap items-center gap-2 px-4 py-2 sm:gap-4 sm:px-6">
-          <Link to="/" className="font-semibold">team-pivot</Link>
-          <div className="flex flex-wrap items-center gap-1">
-            <Button asChild variant="ghost" size="sm">
-              <Link to="/new"><Plus className="h-4 w-4" /> 新讨论</Link>
-            </Button>
-            <Button variant="ghost" size="sm" onClick={onRefresh} disabled={refreshing}>
-              <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} /> 同步 Git
+      <header className="relative z-40 shrink-0 border-b border-slate-200/90 bg-[rgba(250,251,253,0.92)] backdrop-blur">
+        <div className="flex min-h-[3.75rem] items-center gap-3 px-3 py-2 sm:min-h-[4.1rem] sm:flex-wrap sm:gap-4 sm:px-6 sm:py-3">
+          <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-5">
+            <Link to="/" className="flex min-w-0 items-center gap-2.5">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm">
+                <MessageSquareText className="h-4 w-4" />
+              </span>
+              <span className="truncate text-[17px] font-semibold text-slate-900">
+                team-pivot
+              </span>
+            </Link>
+            <nav className="flex items-center gap-2">
+              <span className="inline-flex h-10 items-center border-b-2 border-blue-600 px-1 text-sm font-semibold text-slate-900">
+                讨论
+              </span>
+            </nav>
+          </div>
+          <div className="flex items-center gap-2 sm:flex-wrap sm:gap-3">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 rounded-xl border-slate-200/90 bg-white/84 px-2.5 text-sm font-medium text-slate-700 shadow-none hover:bg-slate-50 sm:h-10 sm:px-3.5"
+              onClick={onRefresh}
+              disabled={refreshing}
+              title="同步 Git"
+            >
+              <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+              <span className="hidden sm:inline">同步 Git</span>
             </Button>
             {workspace?.head && (
-              <span className="hidden text-xs text-muted-foreground sm:ml-2 sm:inline">
+              <span className="hidden h-10 items-center rounded-xl border border-slate-200/90 bg-white/84 px-3.5 text-sm font-medium text-slate-500 lg:inline-flex">
                 HEAD {workspace.head}
               </span>
             )}
           </div>
-          <div className="ml-auto">
+          <div className="rounded-xl border border-slate-200/90 bg-white/84 px-1.5 py-1 sm:px-2.5 sm:py-1.5">
             <UserMenu me={me} onLogout={onLogout} />
           </div>
         </div>
       </header>
 
-      <div ref={layoutRef} className="flex flex-1 flex-col overflow-hidden md:flex-row">
+      <div ref={layoutRef} className="flex flex-1 flex-col overflow-hidden px-0 pb-0 pt-0 md:flex-row md:gap-3 md:px-4 md:pb-4 md:pt-4">
         <aside
           className={cn(
-            "min-h-0 overflow-y-auto border-b md:shrink-0 md:border-b-0 md:border-r",
+            "min-h-0 overflow-y-auto md:workbench-panel md:shrink-0 md:rounded-[1.2rem] md:border",
             isThreadView ? "hidden md:block" : "block",
-            !sidebarOpen && "md:overflow-hidden md:border-r-0",
+            !sidebarOpen && "md:overflow-hidden md:border-transparent",
           )}
           style={{ width: sidebarOpen ? sidebarWidth : undefined }}
         >
@@ -493,33 +511,21 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
         </aside>
         {sidebarOpen && (
           <div
-            className="group relative hidden w-2 shrink-0 cursor-col-resize items-stretch justify-center border-r bg-muted/20 transition-colors hover:bg-muted/35 md:flex"
+            className="group relative hidden w-3 shrink-0 cursor-col-resize items-stretch justify-center md:flex"
             onMouseDown={startSidebarResize}
             title="拖拽调整导航栏宽度"
           >
-            <div className="pointer-events-none flex items-center text-muted-foreground/80 group-hover:text-foreground">
+            <div className="pointer-events-none flex items-center text-slate-300 transition-colors group-hover:text-slate-500">
               <GripVertical className="h-3.5 w-3.5" />
             </div>
           </div>
         )}
         <main
           className={cn(
-            "relative min-h-0 flex-1 overflow-y-auto",
+            "relative min-h-0 flex-1 overflow-y-auto md:workbench-panel md:rounded-[1.2rem] md:border",
             !isThreadView && "hidden md:block",
           )}
         >
-          <div className="pointer-events-none absolute left-3 top-3 z-20 hidden md:block">
-            <Button
-              variant="outline"
-              size="sm"
-              className="pointer-events-auto inline-flex h-8 gap-1.5 rounded-full bg-background/95 px-3 shadow-sm backdrop-blur"
-              onClick={() => setSidebarOpen((open) => !open)}
-              title={sidebarOpen ? "隐藏导航栏" : "展开导航栏"}
-            >
-              <PanelLeftOpen className="h-4 w-4" />
-              {sidebarOpen ? "隐藏导航" : "展开导航"}
-            </Button>
-          </div>
           <Outlet
             context={{
               reloadLists: load,
@@ -559,26 +565,27 @@ function UserMenu({ me, onLogout }: { me: Me; onLogout: () => void }) {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 rounded-full px-2 py-1 transition-colors hover:bg-muted"
+        className="flex h-8 items-center gap-2 rounded-lg px-1.5 transition-colors hover:bg-slate-100"
       >
         {me.avatar_url && (
           <img src={me.avatar_url} alt="" className="h-7 w-7 rounded-full" />
         )}
-        <div className="hidden text-left text-sm leading-tight sm:block">
-          <div className="font-medium">{me.name}</div>
-          <div className="text-xs text-muted-foreground">
-            {me.pinyin}
-            {me.github_username ? ` · @${me.github_username}` : ""}
-          </div>
-        </div>
-        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+        <div className="hidden text-left text-sm font-semibold text-slate-900 sm:block">{me.name}</div>
+        <ChevronDown className="h-4 w-4 text-slate-400" />
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-44 overflow-hidden rounded-lg border bg-white shadow-lg dark:bg-zinc-900">
+        <div className="absolute right-0 top-full z-50 mt-2 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_12px_32px_rgba(15,23,42,0.08)]">
+          <div className="border-b border-slate-200/80 px-3 py-2.5">
+            <div className="text-sm font-medium text-slate-900">{me.name}</div>
+            <div className="text-xs text-slate-500">
+              {me.pinyin}
+              {me.github_username ? ` · @${me.github_username}` : ""}
+            </div>
+          </div>
           <Link
             to="/settings"
             onClick={() => setOpen(false)}
-            className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted"
+            className="flex items-center gap-2 px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-50"
           >
             <User className="h-4 w-4" />
             个人设置
@@ -586,7 +593,7 @@ function UserMenu({ me, onLogout }: { me: Me; onLogout: () => void }) {
           <Link
             to="/admin"
             onClick={() => setOpen(false)}
-            className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted"
+            className="flex items-center gap-2 px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-50"
           >
             <ShieldCheck className="h-4 w-4" />
             管理员设置
@@ -594,7 +601,7 @@ function UserMenu({ me, onLogout }: { me: Me; onLogout: () => void }) {
           <button
             type="button"
             onClick={() => { setOpen(false); onLogout(); }}
-            className="flex w-full items-center gap-2 border-t px-3 py-2 text-left text-sm hover:bg-muted"
+            className="flex w-full items-center gap-2 border-t border-slate-200 px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50"
           >
             <LogOut className="h-4 w-4" />
             退出登录

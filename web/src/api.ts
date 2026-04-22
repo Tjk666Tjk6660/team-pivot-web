@@ -136,6 +136,7 @@ export type Post = {
   frontmatter: Record<string, unknown>;
   body: string;
   author_display: string | null;
+  author_avatar_url: string | null;
   mentions: MentionEntry[];
 };
 

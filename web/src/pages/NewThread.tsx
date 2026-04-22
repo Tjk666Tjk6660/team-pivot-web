@@ -144,107 +144,150 @@ export function NewThread({ me, onLogout }: { me: Me; onLogout: () => void }) {
 
   return (
     <Layout me={me} onLogout={onLogout}>
-      <div className="max-w-3xl space-y-4">
-        <Button asChild variant="ghost" size="sm">
+      <div className="mx-auto max-w-4xl space-y-4 sm:space-y-6">
+        <Button asChild variant="ghost" size="sm" className="rounded-xl px-3 text-slate-700 hover:bg-slate-100">
           <Link to="/"><ArrowLeft className="h-4 w-4" /> 返回讨论列表</Link>
         </Button>
-        <div className="flex items-baseline gap-3">
-          <h1 className="text-2xl font-semibold">
-            {draftId ? "编辑草稿" : "新讨论"}
-          </h1>
-          <span className={`text-xs ${status === "error" ? "text-destructive" : "text-muted-foreground"}`}>
-            {formatSaveStatus(status)}
-          </span>
+        <div className="space-y-2">
+          <div className="section-kicker">New Discussion</div>
+          <div className="flex flex-wrap items-baseline gap-3">
+            <h1 className="text-2xl font-semibold tracking-[-0.03em] text-slate-950 sm:text-3xl">
+              {draftId ? "编辑草稿" : "新讨论"}
+            </h1>
+            <span className={`text-xs ${status === "error" ? "text-destructive" : "text-muted-foreground"}`}>
+              {formatSaveStatus(status)}
+            </span>
+          </div>
+          <p className="max-w-2xl text-sm leading-7 text-slate-600">
+            这里直接进入 thread 的起草区。先确定分类和标题，再把正文写清楚；表单会自动保存草稿，不需要额外操作。
+          </p>
         </div>
-        <Card>
-          <form onSubmit={submit} className="space-y-4 p-6">
-            <div className="grid gap-2">
-              <Label htmlFor="category">Category</Label>
-              <select
-                id="category"
-                value={categoryMode === "create" ? NEW_CATEGORY_OPTION : category}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  if (next === NEW_CATEGORY_OPTION) {
-                    setCategoryMode("create");
+        <Card className="paper-panel rounded-[1.25rem] border sm:rounded-[1.75rem]">
+          <form onSubmit={submit} className="space-y-6 p-4 sm:p-8">
+            <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+              <div className="space-y-2">
+                <div className="section-kicker">Category</div>
+                <p className="text-sm leading-6 text-slate-500">
+                  从已有分类里选择，或者当场创建一个新的分类。
+                </p>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="category">Category</Label>
+                <select
+                  id="category"
+                  value={categoryMode === "create" ? NEW_CATEGORY_OPTION : category}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    if (next === NEW_CATEGORY_OPTION) {
+                      setCategoryMode("create");
+                      setNewCategory("");
+                      return;
+                    }
+                    setCategoryMode("select");
                     setNewCategory("");
-                    return;
-                  }
-                  setCategoryMode("select");
-                  setNewCategory("");
-                  setCategory(next);
-                }}
-                required
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
-              >
-                {categoryOptions.map((option) => (
-                  <option key={option} value={option}>{option}</option>
-                ))}
-                <option value={NEW_CATEGORY_OPTION}>+ 新建 category</option>
-              </select>
-              {categoryMode === "create" && (
-                <div className="flex gap-2">
-                  <Input
-                    value={newCategory}
-                    onChange={(e) => setNewCategory(e.target.value)}
-                    placeholder="输入新的 category"
-                    maxLength={20}
-                    pattern={'^[^/\\\\:*?"<>|\\t\\n\\r]{1,20}$'}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        createCategory();
-                      }
-                    }}
-                  />
-                  <Button type="button" variant="outline" onClick={createCategory}>
-                    创建并选中
-                  </Button>
-                </div>
-              )}
-              <p className="text-xs text-muted-foreground">
-                支持中文，最长 20 个字符；不能包含 <code>/ \\ : * ? " &lt; &gt; |</code> 或换行。
-              </p>
+                    setCategory(next);
+                  }}
+                  required
+                  className="flex h-11 w-full rounded-xl border border-input bg-slate-100/90 px-3 py-2 text-sm ring-offset-background"
+                >
+                  {categoryOptions.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                  <option value={NEW_CATEGORY_OPTION}>+ 新建 category</option>
+                </select>
+                {categoryMode === "create" && (
+                  <div className="flex gap-2">
+                    <Input
+                      value={newCategory}
+                      onChange={(e) => setNewCategory(e.target.value)}
+                      placeholder="输入新的 category"
+                      maxLength={20}
+                      pattern={'^[^/\\\\:*?"<>|\\t\\n\\r]{1,20}$'}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          createCategory();
+                        }
+                      }}
+                    />
+                    <Button type="button" variant="outline" className="rounded-xl" onClick={createCategory}>
+                      创建并选中
+                    </Button>
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  支持中文，最长 20 个字符；不能包含 <code>/ \\ : * ? " &lt; &gt; |</code> 或换行。
+                </p>
+              </div>
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="title">标题</Label>
-              <Input
-                id="title"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                required
-                maxLength={200}
+            <div className="editor-divider border-t" />
+            <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+              <div className="space-y-2">
+                <div className="section-kicker">Title</div>
+                <p className="text-sm leading-6 text-slate-500">
+                  标题决定 thread 在左侧目录里的可读性，尽量写成一个完整的主题句。
+                </p>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="title">标题</Label>
+                <Input
+                  id="title"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  required
+                  maxLength={200}
+                  className="h-11 rounded-xl bg-slate-100/90"
+                />
+              </div>
+            </div>
+            <div className="editor-divider border-t" />
+            <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+              <div className="space-y-2">
+                <div className="section-kicker">Body</div>
+                <p className="text-sm leading-6 text-slate-500">
+                  正文支持 Markdown，适合直接写提案、背景、判断和待讨论问题。
+                </p>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="body">正文（markdown）</Label>
+                <Textarea
+                  id="body"
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                  required
+                  rows={16}
+                  maxLength={50000}
+                  className="min-h-[18rem] rounded-2xl border-slate-300 bg-slate-100/92 font-mono text-sm sm:min-h-[24rem]"
+                />
+                <p className="text-xs text-muted-foreground">
+                  若你没写 <code># 标题</code>，会自动以表单 title 作为 H1。
+                </p>
+              </div>
+            </div>
+            <div className="editor-divider border-t" />
+            <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+              <div className="space-y-2">
+                <div className="section-kicker">Mention</div>
+                <p className="text-sm leading-6 text-slate-500">
+                  如果这条讨论需要明确提及某些人，可以直接在这里补上。
+                </p>
+              </div>
+              <MentionField
+                value={mentions}
+                onChange={setMentions}
+                resolvedNames={resolvedNames.current}
               />
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="body">正文（markdown）</Label>
-              <Textarea
-                id="body"
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-                required
-                rows={16}
-                maxLength={50000}
-                className="font-mono text-sm"
-              />
-              <p className="text-xs text-muted-foreground">
-                若你没写 <code># 标题</code>，会自动以表单 title 作为 H1。
-              </p>
-            </div>
-            <MentionField
-              value={mentions}
-              onChange={setMentions}
-              resolvedNames={resolvedNames.current}
-            />
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3 pt-2">
               <Button
                 type="submit"
+                className="rounded-xl px-5"
                 disabled={submitting || !title.trim() || !body.trim()}
               >
                 {submitting ? "发布中…" : "Publish"}
               </Button>
               {draftId && (
-                <Button type="button" variant="outline" onClick={discard}>
+                <Button type="button" variant="outline" className="rounded-xl" onClick={discard}>
                   删除草稿
                 </Button>
               )}

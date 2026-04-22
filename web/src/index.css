@@ -4,28 +4,38 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222 47% 11%;
+    --background: 210 24% 97%;
+    --foreground: 222 28% 16%;
     --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
-    --primary: 221 83% 53%;
+    --card-foreground: 222 28% 16%;
+    --primary: 205 70% 34%;
     --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96%;
-    --secondary-foreground: 222 47% 11%;
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
-    --accent: 210 40% 96%;
-    --accent-foreground: 222 47% 11%;
+    --secondary: 210 24% 95%;
+    --secondary-foreground: 222 28% 16%;
+    --muted: 210 22% 95%;
+    --muted-foreground: 215 16% 38%;
+    --accent: 204 32% 90%;
+    --accent-foreground: 222 28% 16%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 210 40% 98%;
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 221 83% 53%;
-    --radius: 0.5rem;
+    --border: 214 19% 84%;
+    --input: 214 19% 84%;
+    --ring: 205 70% 34%;
+    --radius: 0.65rem;
   }
 
   * { @apply border-border; }
-  body { @apply bg-background text-foreground; }
+  html {
+    font-feature-settings: "ss01" 1, "cv02" 1, "cv03" 1;
+  }
+  body {
+    @apply text-foreground;
+    background:
+      radial-gradient(circle at top left, rgba(226, 234, 245, 0.42), transparent 34%),
+      linear-gradient(180deg, rgba(246, 248, 252, 0.99), rgba(239, 243, 248, 0.99));
+    background-size: auto, auto;
+    background-position: 0 0, 0 0;
+  }
 }
 
 .prose-pivot {
@@ -47,3 +57,31 @@
 .prose-pivot td { @apply border border-border px-3 py-1.5; }
 .prose-pivot tr:nth-child(even) td { @apply bg-muted/30; }
 .prose-pivot input[type="checkbox"] { @apply mr-1.5 align-middle; }
+
+@layer utilities {
+  .workbench-panel {
+    background: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(10px);
+    border-color: rgba(203, 213, 225, 0.72);
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
+  }
+
+  .ink-panel {
+    background: rgba(247, 249, 252, 0.95);
+    border-color: rgba(203, 213, 225, 0.66);
+  }
+
+  .paper-panel {
+    background: rgba(255, 255, 255, 0.9);
+    border-color: rgba(203, 213, 225, 0.76);
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.035);
+  }
+
+  .section-kicker {
+    @apply text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500;
+  }
+
+  .editor-divider {
+    border-color: rgba(148, 163, 184, 0.2);
+  }
+}

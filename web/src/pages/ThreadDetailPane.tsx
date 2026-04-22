@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AtSign, Bot, ChevronLeft, GripVertical, Star } from "lucide-react";
+import { AtSign, Bot, ChevronLeft, FileText, PanelRightOpen, Star, X } from "lucide-react";
 import {
   addMention,
   changeThreadStatus,
@@ -23,37 +23,27 @@ import {
   type WorkspaceMirrorConfig,
 } from "@/api";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusControl } from "@/components/StatusControl";
 import { MentionField, emptyMention, isMentionValid } from "@/components/MentionField";
 import { AIPane } from "@/components/AIPane";
 import { formatSaveStatus, useDraftAutosave } from "@/hooks/useDraftAutosave";
 import { formatFullDateTime, relativeTime } from "@/lib/time";
+import { cn } from "@/lib/utils";
 import { useDashboard } from "@/pages/Dashboard";
 import { HomeWelcomePane } from "@/pages/HomeWelcomePane";
 
-// Sentinel: reply form after all posts
-const REPLY_LAST = "__last__";
+const COLLAPSE_HEIGHT = 208;
 
 export function ThreadDetailPane() {
   const { category, slug } = useParams<{ category: string; slug: string }>();
   const { reloadLists } = useDashboard();
   const [data, setData] = useState<ThreadDetailData | null | undefined>(undefined);
-
-  // AI pane visibility remains local to the current thread view. The actual
-  // streaming state now lives above this component in Dashboard, so switching
-  // threads no longer destroys the active AI output.
   const [aiOpen, setAiOpen] = useState(false);
-  const [aiMounted, setAiMounted] = useState(false);
-  const [aiPaneWidth, setAiPaneWidth] = useState(420);
-  // Filename within current thread that the AI draft should reply under in UI ordering
-  const [aiReplyAnchor, setAiReplyAnchor] = useState<string | null>(null);
-  // Pending reply target (full path "cat/slug/file") to push to AIPane on open
+  const [aiPaneWidth, setAiPaneWidth] = useState(520);
+  const [mobileAiMode, setMobileAiMode] = useState<"closed" | "peek" | "half" | "full">("closed");
+  const [desktopFloatFrame, setDesktopFloatFrame] = useState({ top: 16, height: 720 });
   const [aiPendingReplyTarget, setAiPendingReplyTarget] = useState<string | null>(null);
-
-  // Reply state lifted so content survives form open/close toggling
-  const [replyAfter, setReplyAfter] = useState<string | null>(null);
   const [replyBody, setReplyBody] = useState("");
   const [replyMentions, setReplyMentions] = useState<MentionBlock>(emptyMention());
   const [replyDraftId, setReplyDraftId] = useState<string | null>(null);
@@ -61,9 +51,44 @@ export function ThreadDetailPane() {
   const [replyReferences, setReplyReferences] = useState<string[]>([]);
   const [favoriteSaving, setFavoriteSaving] = useState(false);
   const [workspaceMirror, setWorkspaceMirror] = useState<WorkspaceMirrorConfig | null>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   const detailLayoutRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const hasDraft = replyBody.trim().length > 0;
+  const isDesktopViewport = () => typeof window !== "undefined" && window.innerWidth >= 1024;
+  const desktopFloatGap = 16;
+
+  const startAIPaneResize = (event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const minWidth = 420;
+    const contentMinWidth = 620;
+    const maxWidth = Math.min(920, Math.max(minWidth, rect.width - contentMinWidth - desktopFloatGap * 2));
+
+    const onMove = (moveEvent: MouseEvent) => {
+      const next = Math.min(
+        Math.max(rect.right - moveEvent.clientX - desktopFloatGap, minWidth),
+        maxWidth,
+      );
+      setAiPaneWidth(next);
+      if (!aiOpen) setAiOpen(true);
+    };
+
+    const onUp = () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
 
   const load = () => {
     if (!category || !slug) return;
@@ -86,59 +111,65 @@ export function ThreadDetailPane() {
       .catch(() => setWorkspaceMirror(null));
   }, []);
 
-  // Reset and pre-load existing reply draft when navigating to a thread
   useEffect(() => {
-    setReplyAfter(null);
+    if (typeof window === "undefined") return;
+
+    const updateFrame = () => {
+      const el = scrollContainerRef.current;
+      if (!el || !isDesktopViewport()) return;
+      const top = el.scrollTop + desktopFloatGap;
+      const height = Math.max(el.clientHeight - desktopFloatGap * 2, 520);
+      setDesktopFloatFrame({ top, height });
+    };
+
+    updateFrame();
+    const resizeObserver = scrollContainerRef.current
+      ? new ResizeObserver(() => updateFrame())
+      : null;
+    if (scrollContainerRef.current && resizeObserver) {
+      resizeObserver.observe(scrollContainerRef.current);
+    }
+    window.addEventListener("resize", updateFrame);
+    return () => {
+      window.removeEventListener("resize", updateFrame);
+      resizeObserver?.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
     setReplyBody("");
     setReplyMentions(emptyMention());
     setReplyDraftId(null);
     setReplyTo(null);
     setReplyReferences([]);
-    setAiReplyAnchor(null);
+    setAiPendingReplyTarget(null);
     setAiOpen(false);
-    setAiMounted(false);
+    setMobileAiMode("closed");
     if (!category || !slug) return;
     const threadKey = `${category}/${slug}`;
     fetchDrafts()
       .then((items) => {
         const existing = items.find((d) => d.type === "reply" && d.thread_key === threadKey);
-        if (existing && existing.body_md.trim()) {
-          setReplyBody(existing.body_md);
-          setReplyDraftId(existing.id);
-          if (existing.mentions) setReplyMentions(existing.mentions);
-          if (existing.reply_to) setReplyTo(existing.reply_to);
-          setReplyReferences(existing.references ?? []);
-          setReplyAfter(REPLY_LAST);
-        }
+        if (!existing || !existing.body_md.trim()) return;
+        setReplyBody(existing.body_md);
+        setReplyDraftId(existing.id);
+        if (existing.mentions) setReplyMentions(existing.mentions);
+        if (existing.reply_to) setReplyTo(existing.reply_to);
+        setReplyReferences(existing.references ?? []);
       })
       .catch(() => {});
   }, [category, slug]);
 
-  // Called when user clicks "AI 回复" on a specific post
   const openAIReply = (post: Post) => {
-    const filePath = `${category}/${slug}/${post.filename}`;
-    setAiReplyAnchor(post.filename);
-    setAiPendingReplyTarget(filePath);
-    setAiMounted(true);
-    setAiOpen(true);
-    if (hasDraft) setReplyAfter((prev) => prev ?? REPLY_LAST);
-  };
-
-  // Called when user clicks "AI 写回复" at the bottom — defaults to last post
-  const openAIReplyLast = () => {
-    setAiReplyAnchor(null);
-    if (data && data.posts.length > 0) {
-      const last = data.posts[data.posts.length - 1];
-      setAiPendingReplyTarget(`${category}/${slug}/${last.filename}`);
+    if (!category || !slug) return;
+    setAiPendingReplyTarget(`${category}/${slug}/${post.filename}`);
+    if (isDesktopViewport()) {
+      setAiOpen(true);
+      return;
     }
-    setAiMounted(true);
-    setAiOpen(true);
-    if (hasDraft) setReplyAfter((prev) => prev ?? REPLY_LAST);
+    setMobileAiMode("half");
   };
 
-  // Called by AIPane when it extracts a <draft> block. We persist FIRST, then mount
-  // ReplyForm — this way ReplyForm's autosave never fires with a stale draftId=null
-  // and creates a duplicate.
   const onUseDraftAsReply = async (
     content: string,
     aiReplyTo: string,
@@ -172,18 +203,15 @@ export function ThreadDetailPane() {
       return false;
     }
 
-    // Now that the draft is persisted, flip UI state. ReplyForm mounts with
-    // draftId already set so its autosave never tries to create another one.
     if (nextDraftId !== replyDraftId) setReplyDraftId(nextDraftId);
     setReplyBody(content);
     setReplyTo(replyToFilename);
     setReplyReferences(aiReferences);
-    const anchor = aiReplyAnchor || REPLY_LAST;
-    setReplyAfter(anchor);
-    setTimeout(() => {
-      document.getElementById(`reply-anchor-${anchor}`)
-        ?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 50);
+    if (isDesktopViewport()) {
+      setAiOpen(true);
+    } else {
+      setMobileAiMode("full");
+    }
     return true;
   };
 
@@ -202,6 +230,15 @@ export function ThreadDetailPane() {
     );
   }
 
+  const threadKey = `${category}/${slug}`;
+  const favorite = data.meta.favorite;
+  const proposalPost = data.posts.find((post) => ((post.frontmatter.type as string) ?? "") === "proposal")
+    ?? data.posts[0]
+    ?? null;
+  const replyPosts = proposalPost
+    ? data.posts.filter((post) => post.filename !== proposalPost.filename)
+    : data.posts;
+
   const replyFormProps = {
     category: category!,
     slug: slug!,
@@ -216,234 +253,377 @@ export function ThreadDetailPane() {
     references: replyReferences,
     setReferences: setReplyReferences,
     onPosted: () => {
-      setReplyAfter(null);
       setReplyBody("");
       setReplyMentions(emptyMention());
       setReplyDraftId(null);
       setReplyTo(null);
       setReplyReferences([]);
+      setMobileAiMode("closed");
       load();
       reloadLists();
     },
-    onCancel: () => setReplyAfter(null),
-  };
-
-  const threadKey = `${category}/${slug}`;
-  const favorite = data.meta.favorite;
-
-  const startAIPaneResize = (event: React.MouseEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const layout = detailLayoutRef.current;
-    if (!layout) return;
-    const rect = layout.getBoundingClientRect();
-    const minWidth = 320;
-    const maxWidth = Math.min(760, rect.width - 320);
-
-    const onMove = (moveEvent: MouseEvent) => {
-      const next = Math.min(Math.max(rect.right - moveEvent.clientX, minWidth), maxWidth);
-      setAiPaneWidth(next);
-    };
-
-    const onUp = () => {
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
   };
 
   return (
-    <div ref={detailLayoutRef} className="flex h-full min-h-0 flex-col overflow-hidden md:flex-row">
-      {/* Posts column */}
-      <div className={`min-h-0 overflow-y-auto ${aiOpen ? "flex-1 min-w-0" : "w-full"}`}>
-        <div className="mx-auto max-w-3xl px-4 py-5 sm:px-6 lg:px-8 lg:py-6">
+    <div
+      ref={scrollContainerRef}
+      className="relative h-full overflow-y-auto"
+      onScroll={() => {
+        if (isDesktopViewport()) {
+          const el = scrollContainerRef.current;
+          if (el) {
+            setDesktopFloatFrame({
+              top: el.scrollTop + desktopFloatGap,
+              height: Math.max(el.clientHeight - desktopFloatGap * 2, 520),
+            });
+          }
+        }
+        if (!isDesktopViewport() && mobileAiMode === "half") {
+          setMobileAiMode("peek");
+        }
+      }}
+    >
+      <div
+        className={cn(
+          "px-3 py-3 sm:px-5 sm:py-5",
+          aiOpen
+            ? "mx-0 max-w-none lg:pr-4"
+            : "mx-auto max-w-[72rem]",
+        )}
+        style={aiOpen && isDesktopViewport() ? { paddingRight: aiPaneWidth + desktopFloatGap * 2 } : undefined}
+      >
+        <div className="mb-3 lg:hidden">
+          <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-xs">
+            <Link to="/">
+              <ChevronLeft className="h-4 w-4" />
+              返回讨论列表
+            </Link>
+          </Button>
+        </div>
 
-          <div className="mb-4 lg:hidden">
-            <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-xs">
-              <Link to="/">
-                <ChevronLeft className="h-4 w-4" />
-                返回讨论列表
-              </Link>
-            </Button>
-          </div>
+        <div ref={detailLayoutRef} className="lg:flex lg:items-start lg:gap-4">
+          <div className="min-w-0 flex-1 space-y-5">
+            <div className="flex items-center justify-between gap-3 px-1">
+              <div className="min-w-0">
+                <div className="hidden min-w-0 items-center gap-2 text-xs text-slate-500 lg:flex">
+                  <Link to="/" className="hover:text-slate-800">讨论</Link>
+                  <span>/</span>
+                  <span>{category}</span>
+                  <span>/</span>
+                  <span className="truncate text-slate-700">{data.meta.title}</span>
+                </div>
+                <div className="lg:hidden">
+                  <div className="truncate text-sm font-semibold text-slate-900">{data.meta.title}</div>
+                  <div className="mt-0.5 text-[11px] text-slate-500">{category}</div>
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="hidden h-9 shrink-0 rounded-lg border-slate-200 bg-white/80 px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 lg:inline-flex"
+                onClick={() => {
+                  if (!aiPendingReplyTarget && data.posts.length > 0) {
+                    const last = data.posts[data.posts.length - 1];
+                    setAiPendingReplyTarget(`${category}/${slug}/${last.filename}`);
+                  }
+                  setAiOpen((open) => !open);
+                }}
+              >
+                <PanelRightOpen className="mr-1.5 h-3.5 w-3.5" />
+                {aiOpen ? "收起 AI 助手" : "打开 AI 助手"}
+              </Button>
+            </div>
 
-          {/* Thread header */}
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-xl font-semibold sm:text-2xl">{data.meta.title}</h1>
-            <StatusControl
-              status={data.meta.status}
-              onChange={async (to, reason) => {
-                if (!category || !slug) return;
-                await changeThreadStatus(category, slug, to, reason);
-                load();
-                reloadLists();
-              }}
-            />
-            <Button
-              variant={favorite ? "secondary" : "ghost"}
-              size="sm"
-              className="h-8 px-2 text-xs"
-              disabled={favoriteSaving}
-              onClick={async () => {
-                if (!category || !slug) return;
-                setFavoriteSaving(true);
-                try {
-                  const next = !favorite;
-                  await setThreadFavorite(category, slug, next);
-                  setData((current) => current ? {
-                    ...current,
-                    meta: { ...current.meta, favorite: next },
-                  } : current);
-                  await reloadLists();
-                } catch (e) {
-                  toast.error(e instanceof Error ? e.message : String(e));
-                } finally {
-                  setFavoriteSaving(false);
-                }
-              }}
-              title={favorite ? "取消收藏" : "收藏"}
-            >
-              <Star className={`h-4 w-4 ${favorite ? "fill-current text-amber-500" : ""}`} />
-              {favorite ? "已收藏" : "收藏"}
-            </Button>
-            <Button
-              variant={aiOpen ? "secondary" : "ghost"}
-              size="sm"
-              className="ml-auto h-7 px-2 text-xs"
-              onClick={() => {
-                if (!aiOpen) setAiMounted(true);
-                setAiOpen((o) => !o);
-              }}
-              title="AI 助手"
-            >
-              <Bot className="mr-1 h-3.5 w-3.5" />
-              AI 助手
-            </Button>
-          </div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            {data.meta.category} · {data.meta.author_display ?? data.meta.author ?? "unknown"} · {data.meta.post_count} posts
-            {data.meta.last_updated && ` · last activity ${relativeTime(data.meta.last_updated)}`}
-          </div>
-
-          {/* Posts */}
-          <div className="mt-6 space-y-4">
-            {data.posts.map((p, index) => (
-              <div key={p.filename}>
-                <PostCard
-                  post={p}
-                  postNumber={index + 1}
-                  category={category!}
-                  slug={slug!}
-                  githubFileUrl={buildGitHubFileUrl(
-                    workspaceMirror?.repo_url ?? null,
-                    workspaceMirror?.head ?? workspaceMirror?.branch ?? null,
-                    category!,
-                    slug!,
-                    p.filename,
-                  )}
-                  isReplyOpen={replyAfter === p.filename}
-                  onAIReply={() => openAIReply(p)}
-                  onMentioned={load}
-                />
-                {replyAfter === p.filename && (
-                  <div id={`reply-anchor-${p.filename}`} className="mt-3">
-                    <ReplyForm {...replyFormProps} />
-                  </div>
+            {proposalPost && (
+              <ProposalHeroCard
+                post={proposalPost}
+                category={category!}
+                slug={slug!}
+                threadStatus={data.meta.status}
+                postCount={data.meta.post_count}
+                favorite={favorite}
+                favoriteSaving={favoriteSaving}
+                githubFileUrl={buildGitHubFileUrl(
+                  workspaceMirror?.repo_url ?? null,
+                  workspaceMirror?.head ?? workspaceMirror?.branch ?? null,
+                  category!,
+                  slug!,
+                  proposalPost.filename,
                 )}
-              </div>
-            ))}
-          </div>
-
-          {/* Bottom: "AI 写回复" or reply form */}
-          <div id={`reply-anchor-${REPLY_LAST}`} className="mt-8 pb-6">
-            {replyAfter === REPLY_LAST ? (
-              <ReplyForm {...replyFormProps} />
-            ) : (
-              <div className="flex justify-center">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={openAIReplyLast}
-                  className={hasDraft ? "border-orange-300 text-orange-600 hover:bg-orange-50" : ""}
-                >
-                  <Bot className="mr-2 h-4 w-4" />
-                  {hasDraft ? "继续 AI 回复 ●" : "AI 写回复"}
-                </Button>
-              </div>
+                onToggleFavorite={async () => {
+                  if (!category || !slug) return;
+                  setFavoriteSaving(true);
+                  try {
+                    const next = !favorite;
+                    await setThreadFavorite(category, slug, next);
+                    setData((current) => current ? {
+                      ...current,
+                      meta: { ...current.meta, favorite: next },
+                    } : current);
+                    await reloadLists();
+                  } catch (e) {
+                    toast.error(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setFavoriteSaving(false);
+                  }
+                }}
+                onStatusChange={async (to, reason) => {
+                  if (!category || !slug) return;
+                  await changeThreadStatus(category, slug, to, reason);
+                  load();
+                  reloadLists();
+                }}
+                onAIReply={() => openAIReply(proposalPost)}
+                onMentioned={load}
+              />
             )}
+
+            <section className="space-y-3">
+              <div className="flex items-center justify-between px-1">
+                <div className="text-[15px] font-semibold text-slate-800">
+                  回复 · {replyPosts.length}
+                </div>
+                <div className="text-xs text-slate-500">
+                  按时间顺序显示
+                </div>
+              </div>
+
+              {replyPosts.length > 0 ? (
+                replyPosts.map((post, index) => (
+                  <ReplyPostCard
+                    key={post.filename}
+                    post={post}
+                    postNumber={proposalPost ? index + 2 : index + 1}
+                    category={category!}
+                    slug={slug!}
+                    githubFileUrl={buildGitHubFileUrl(
+                      workspaceMirror?.repo_url ?? null,
+                      workspaceMirror?.head ?? workspaceMirror?.branch ?? null,
+                      category!,
+                      slug!,
+                      post.filename,
+                    )}
+                    onAIReply={() => openAIReply(post)}
+                    onMentioned={load}
+                  />
+                ))
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-white/50 px-5 py-6 text-sm text-slate-500">
+                  还没有回复。你可以直接在下面写回复，或者切到 AI 助手先整理思路。
+                </div>
+              )}
+            </section>
+
+            <section
+              ref={composerRef}
+              className={mobileAiMode !== "closed"
+                ? "paper-panel overflow-hidden rounded-[1.3rem] border border-blue-200/90 shadow-[0_10px_30px_rgba(37,99,235,0.08)]"
+                : "paper-panel overflow-hidden rounded-[1.3rem] border"}
+            >
+              <div className="flex items-center gap-1 border-b border-slate-200/80 px-4 py-3">
+                <ComposerTab
+                  label="回复"
+                  active={mobileAiMode === "closed"}
+                  onClick={() => setMobileAiMode("closed")}
+                />
+                <ComposerTab
+                  label="AI 助手"
+                  active={mobileAiMode !== "closed"}
+                  className="lg:hidden"
+                  onClick={() => {
+                    if (!aiPendingReplyTarget && data.posts.length > 0) {
+                      const last = data.posts[data.posts.length - 1];
+                      setAiPendingReplyTarget(`${category}/${slug}/${last.filename}`);
+                    }
+                    setMobileAiMode((current) => (current === "closed" ? "half" : "closed"));
+                  }}
+                />
+                <div className="ml-auto hidden items-center gap-2 text-xs text-slate-500 sm:flex">
+                  <>
+                    <FileText className="h-3.5 w-3.5" />
+                    {replyTo ? `回复到 ${replyTo}` : "直接补充新的回复"}
+                  </>
+                </div>
+              </div>
+
+              <div className="p-4 sm:p-5">
+                <ReplyForm {...replyFormProps} />
+              </div>
+            </section>
           </div>
 
+          <aside className="hidden lg:block lg:self-start lg:shrink-0" />
         </div>
       </div>
 
-      {/* AI pane — kept mounted once opened so background streaming survives close */}
-    {aiMounted && (
-      <>
-        {aiOpen && (
+      {aiOpen && isDesktopViewport() && (
+        <>
           <div
-            className="group hidden w-2 shrink-0 cursor-col-resize items-stretch justify-center border-l bg-muted/20 transition-colors hover:bg-muted/35 md:flex"
+            className="group absolute z-40 hidden w-6 cursor-col-resize lg:block"
+            style={{
+              right: aiPaneWidth + desktopFloatGap - 3,
+              top: desktopFloatFrame.top,
+              height: desktopFloatFrame.height,
+            }}
             onMouseDown={startAIPaneResize}
-            title="拖拽调整 AI 对话框宽度"
           >
-            <div className="pointer-events-none flex items-center text-muted-foreground/80 group-hover:text-foreground">
-              <GripVertical className="h-3.5 w-3.5" />
+            <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-blue-300" />
+          </div>
+
+          <div
+            className="pointer-events-none absolute right-0 z-40 hidden translate-x-0 opacity-100 transition-all duration-200 ease-out lg:block"
+            style={{
+              top: desktopFloatFrame.top,
+              width: aiPaneWidth,
+              height: desktopFloatFrame.height,
+            }}
+          >
+            <div className="paper-panel pointer-events-auto mr-4 flex h-full min-h-0 flex-col overflow-hidden rounded-[1.3rem] border shadow-[0_10px_30px_rgba(15,23,42,0.04)]">
+              <div className="flex items-center justify-between border-b border-slate-200/80 px-4 py-3">
+                <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
+                  <Bot className="h-4 w-4 text-blue-600" />
+                  AI 助手
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-100"
+                  onClick={() => setAiOpen(false)}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+              <div className="min-h-0 flex-1 p-4 pb-5">
+                <AIPane
+                  category={category!}
+                  slug={slug!}
+                  threadKey={threadKey}
+                  threadTitle={data.meta.title}
+                  pendingReplyTarget={aiPendingReplyTarget}
+                  onPendingReplyTargetConsumed={() => setAiPendingReplyTarget(null)}
+                  onUseDraftAsReply={onUseDraftAsReply}
+                  hasReplyDraft={hasDraft}
+                />
+              </div>
             </div>
           </div>
-        )}
-          <div
-            className={
-              aiOpen
-                ? "flex min-h-0 w-full flex-col overflow-hidden border-t md:shrink-0 md:self-stretch md:border-l md:border-t-0"
-                : "hidden"
-            }
-            style={aiOpen ? { width: aiPaneWidth } : undefined}
-          >
-            <AIPane
-              category={category!}
-              slug={slug!}
-              threadKey={threadKey}
-              threadTitle={data.meta.title}
-              pendingReplyTarget={aiPendingReplyTarget}
-              onPendingReplyTargetConsumed={() => setAiPendingReplyTarget(null)}
-              onClose={() => setAiOpen(false)}
-              onUseDraftAsReply={onUseDraftAsReply}
-              hasReplyDraft={hasDraft}
-            />
-          </div>
         </>
+      )}
+
+      {!isDesktopViewport() && mobileAiMode !== "closed" && (
+        <div className="fixed inset-x-3 bottom-0 z-50 sm:hidden">
+          <div
+            className={cn(
+              "paper-panel overflow-hidden rounded-t-[1.5rem] border border-slate-200 shadow-[0_-12px_30px_rgba(15,23,42,0.08)] transition-all duration-200 ease-out",
+              mobileAiMode === "peek" && "h-16",
+              mobileAiMode === "half" && "h-[48svh]",
+              mobileAiMode === "full" && "h-[calc(100svh-4rem)]",
+            )}
+          >
+            <button
+              type="button"
+              className="flex w-full items-center justify-between border-b border-slate-200/80 px-4 py-3 text-left"
+              onClick={() => {
+                setMobileAiMode((current) => (current === "peek" || current === "half" ? "full" : "peek"));
+              }}
+            >
+              <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
+                <Bot className="h-4 w-4 text-blue-600" />
+                AI 助手
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-100"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setMobileAiMode("closed");
+                }}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </button>
+
+            {mobileAiMode !== "peek" && (
+              <div className="h-[calc(100%-3.5rem)] p-4 pb-5">
+                <AIPane
+                  category={category!}
+                  slug={slug!}
+                  threadKey={threadKey}
+                  threadTitle={data.meta.title}
+                  pendingReplyTarget={aiPendingReplyTarget}
+                  onPendingReplyTargetConsumed={() => setAiPendingReplyTarget(null)}
+                  onUseDraftAsReply={onUseDraftAsReply}
+                  hasReplyDraft={hasDraft}
+                />
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
 }
 
-const COLLAPSE_HEIGHT = 208;
+function ComposerTab({
+  label,
+  active,
+  className,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  className?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        className,
+        active
+          ? "rounded-lg bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700"
+          : "rounded-lg px-3 py-1.5 text-sm text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700",
+      )}
+    >
+      {label}
+    </button>
+  );
+}
 
-function PostCard({
-  post, postNumber, category, slug, githubFileUrl, isReplyOpen, onAIReply, onMentioned,
+function ProposalHeroCard({
+  post,
+  category,
+  slug,
+  threadStatus,
+  postCount,
+  favorite,
+  favoriteSaving,
+  githubFileUrl,
+  onToggleFavorite,
+  onStatusChange,
+  onAIReply,
+  onMentioned,
 }: {
   post: Post;
-  postNumber: number;
   category: string;
   slug: string;
+  threadStatus: string | null;
+  postCount: number;
+  favorite: boolean;
+  favoriteSaving: boolean;
   githubFileUrl: string | null;
-  isReplyOpen: boolean;
+  onToggleFavorite: () => Promise<void>;
+  onStatusChange: (to: string, reason?: string) => Promise<void>;
   onAIReply: () => void;
   onMentioned: () => void;
 }) {
   const author = post.author_display ?? (post.frontmatter.author as string) ?? "unknown";
-  const type = (post.frontmatter.type as string) ?? "";
   const created = post.frontmatter.created as string | null ?? null;
-  const actionLabel = type === "reply" ? "回复" : "发布";
-  const typeLabel = type === "reply" ? "回复" : type === "proposal" ? "提案" : type;
-  const typeBadgeClass = type === "reply"
-    ? "bg-blue-50 text-blue-700 ring-blue-200"
-    : "bg-amber-50 text-amber-700 ring-amber-200";
-
   const bodyRef = useRef<HTMLDivElement>(null);
   const [overflows, setOverflows] = useState(false);
   const [collapsed, setCollapsed] = useState(true);
@@ -454,6 +634,212 @@ function PostCard({
     setOverflows(el.scrollHeight > el.clientHeight + 2);
   }, [post.body]);
 
+  return (
+    <article className="paper-panel rounded-[1.2rem] border p-4 sm:rounded-[1.3rem] sm:p-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3 sm:gap-4">
+          <PostTypeBadge type="proposal" />
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-slate-500 sm:text-sm">
+              <span>第 1 条记录</span>
+              <span>作者：</span>
+              <span className="font-medium text-slate-900">{author}</span>
+              {created ? <span>{formatFullDateTime(created)}</span> : null}
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500 sm:text-xs">
+              <span className="font-mono">{post.filename}</span>
+              <span>{postCount} 条帖子</span>
+              <span className="hidden sm:inline">{category}</span>
+              <span className="hidden sm:inline">产品讨论人</span>
+            </div>
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <StatusControl status={threadStatus} onChange={onStatusChange} />
+          <Button
+            variant={favorite ? "secondary" : "ghost"}
+            size="sm"
+            className="h-9 rounded-lg px-3 text-xs text-slate-700"
+            disabled={favoriteSaving}
+            onClick={() => { void onToggleFavorite(); }}
+          >
+            <Star className={`h-4 w-4 ${favorite ? "fill-current text-amber-500" : ""}`} />
+            {favorite ? "已收藏" : "收藏"}
+          </Button>
+        </div>
+      </div>
+
+      <div className="mt-5 border-t border-slate-200/80 pt-5">
+        {post.mentions.length > 0 && (
+          <div className="mb-4 space-y-2">
+            {post.mentions.map((mention, index) => (
+              <MentionChip key={index} mention={mention} />
+            ))}
+          </div>
+        )}
+
+        <div
+          ref={bodyRef}
+          style={collapsed ? { maxHeight: COLLAPSE_HEIGHT, overflow: "hidden" } : undefined}
+          className="prose-pivot max-w-none text-[13.5px] leading-7 text-slate-700 sm:text-[15px]"
+        >
+          <Markdown remarkPlugins={[remarkGfm]}>{post.body}</Markdown>
+        </div>
+
+        {overflows && (
+          <button
+            type="button"
+            onClick={() => setCollapsed((value) => !value)}
+            className="mt-2 text-xs text-primary hover:underline"
+          >
+            {collapsed ? "展开全文 ↓" : "收起全文 ↑"}
+          </button>
+        )}
+      </div>
+
+      <div className="mt-5 flex flex-col gap-3 border-t border-slate-200/80 pt-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <PostMentionPopover category={category} slug={slug} post={post} onMentioned={onMentioned} />
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 rounded-lg px-3 text-xs font-medium text-slate-700 hover:bg-slate-100"
+            onClick={onAIReply}
+          >
+            <Bot className="mr-1.5 h-3.5 w-3.5" />
+            AI 回复
+          </Button>
+        </div>
+        {githubFileUrl ? (
+          <a
+            href={githubFileUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs font-mono text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-900"
+          >
+            {post.filename}
+          </a>
+        ) : (
+          <span className="text-xs font-mono text-slate-500">{post.filename}</span>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function ReplyPostCard({
+  post,
+  postNumber,
+  category,
+  slug,
+  githubFileUrl,
+  onAIReply,
+  onMentioned,
+}: {
+  post: Post;
+  postNumber: number;
+  category: string;
+  slug: string;
+  githubFileUrl: string | null;
+  onAIReply: () => void;
+  onMentioned: () => void;
+}) {
+  const author = post.author_display ?? (post.frontmatter.author as string) ?? "unknown";
+  const type = (post.frontmatter.type as string) ?? "";
+  const created = post.frontmatter.created as string | null ?? null;
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [overflows, setOverflows] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
+
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    setOverflows(el.scrollHeight > el.clientHeight + 2);
+  }, [post.body]);
+
+  return (
+    <article className="rounded-[1.05rem] border border-slate-200/90 bg-white/86 px-4 py-4 shadow-[0_4px_16px_rgba(15,23,42,0.025)] sm:rounded-[1.15rem] sm:px-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start gap-3">
+            <PostTypeBadge type={type === "reply" ? "reply" : "post"} compact />
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-slate-500 sm:text-sm">
+                <span>{`第 ${postNumber} 条记录`}</span>
+                <span>作者：</span>
+                <span className="font-medium text-slate-900">{author}</span>
+                {created ? <span className="text-xs text-slate-500">{formatFullDateTime(created)}</span> : null}
+              </div>
+              {githubFileUrl ? (
+                <a
+                  href={githubFileUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-1 inline-block text-xs font-mono text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-900"
+                >
+                  {post.filename}
+                </a>
+              ) : (
+                <span className="mt-1 inline-block text-xs font-mono text-slate-500">{post.filename}</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <PostMentionPopover category={category} slug={slug} post={post} onMentioned={onMentioned} />
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 rounded-lg px-3 text-xs font-medium text-slate-700 hover:bg-slate-100"
+            onClick={onAIReply}
+          >
+            <Bot className="mr-1.5 h-3.5 w-3.5" />
+            AI 回复
+          </Button>
+        </div>
+      </div>
+
+      {post.mentions.length > 0 && (
+        <div className="mt-4 space-y-2">
+          {post.mentions.map((mention, index) => (
+            <MentionChip key={index} mention={mention} />
+          ))}
+        </div>
+      )}
+
+        <div
+          ref={bodyRef}
+          style={collapsed ? { maxHeight: COLLAPSE_HEIGHT, overflow: "hidden" } : undefined}
+        className="prose-pivot mt-3 max-w-none text-[13.5px] leading-7 text-slate-700 sm:text-[15px]"
+      >
+        <Markdown remarkPlugins={[remarkGfm]}>{post.body}</Markdown>
+      </div>
+
+      {overflows && (
+        <button
+          type="button"
+          onClick={() => setCollapsed((value) => !value)}
+          className="mt-2 text-xs text-primary hover:underline"
+        >
+          {collapsed ? "展开全文 ↓" : "收起全文 ↑"}
+        </button>
+      )}
+    </article>
+  );
+}
+
+function PostMentionPopover({
+  category,
+  slug,
+  post,
+  onMentioned,
+}: {
+  category: string;
+  slug: string;
+  post: Post;
+  onMentioned: () => void;
+}) {
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionValue, setMentionValue] = useState<MentionBlock>(emptyMention());
   const resolvedNames = useRef<Record<string, string>>({});
@@ -488,158 +874,74 @@ function PostCard({
     }
   };
 
-  const aiReplyBtnClass = isReplyOpen
-    ? "h-7 px-2 text-xs bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
-    : "h-7 px-2 text-xs";
-
   return (
-    <Card className="border-l-4 border-l-muted">
-      <div className="p-4 sm:p-5">
-        <div className="mb-2 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${typeBadgeClass}`}>
-                {typeLabel}
-              </span>
-              <span className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">
-                {author}
-              </span>
-              <span className="text-sm text-muted-foreground">
-                {actionLabel} 第 {postNumber} 条帖子
-                {created ? ` 于 ${formatFullDateTime(created)}` : ""}
-              </span>
-            </div>
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-relaxed text-muted-foreground">
-              {githubFileUrl ? (
-                <a
-                  href={githubFileUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="font-mono underline decoration-muted-foreground/50 underline-offset-2 hover:text-foreground"
-                >
-                  {post.filename}
-                </a>
-              ) : (
-                <span className="font-mono">{post.filename}</span>
-              )}
-            </div>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-1 sm:justify-end">
-            {!collapsed && overflows && (
-              <button
-                onClick={() => setCollapsed(true)}
-                className="h-7 px-2 text-xs text-primary hover:underline focus:outline-none motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-1 motion-safe:duration-200"
-              >
-                收起全文 ↑
-              </button>
-            )}
+    <div className="relative" ref={popoverRef}>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-8 rounded-lg px-3 text-xs font-medium text-slate-700 hover:bg-slate-100"
+        onClick={() => setMentionOpen((open) => !open)}
+      >
+        <AtSign className="mr-1.5 h-3.5 w-3.5" />
+        提及
+      </Button>
+      {mentionOpen && (
+        <div className="fixed inset-x-4 top-20 z-50 rounded-xl border border-slate-200 bg-white p-4 shadow-[0_16px_40px_rgba(15,23,42,0.08)] sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 sm:w-[min(22rem,calc(100vw-2rem))]">
+          <p className="mb-3 text-xs font-semibold text-muted-foreground">提及某人</p>
+          <MentionField
+            value={mentionValue}
+            onChange={setMentionValue}
+            resolvedNames={resolvedNames.current}
+          />
+          <div className="mt-3 flex justify-end gap-2">
             <Button
-              variant="ghost"
               size="sm"
-              className={aiReplyBtnClass}
-              onClick={onAIReply}
+              variant="outline"
+              onClick={() => {
+                setMentionOpen(false);
+                setMentionValue(emptyMention());
+              }}
+              disabled={submitting}
             >
-              <Bot className="mr-1 h-3.5 w-3.5" />
-              AI 回复
+              取消
             </Button>
-            <div className="relative" ref={popoverRef}>
-              <Button
-                variant="ghost" size="sm" className="h-7 px-2 text-xs"
-                onClick={() => setMentionOpen((o) => !o)}
-              >
-                <AtSign className="mr-1 h-3.5 w-3.5" /> 提及
-              </Button>
-              {mentionOpen && (
-                <div className="fixed inset-x-4 top-20 z-50 rounded-lg border bg-white p-4 shadow-lg dark:bg-zinc-900 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-1 sm:w-[min(20rem,calc(100vw-2rem))]">
-                  <p className="mb-3 text-xs font-semibold text-muted-foreground">提及某人</p>
-                  <MentionField
-                    value={mentionValue}
-                    onChange={setMentionValue}
-                    resolvedNames={resolvedNames.current}
-                  />
-                  <div className="mt-3 flex justify-end gap-2">
-                    <Button
-                      size="sm" variant="outline"
-                      onClick={() => { setMentionOpen(false); setMentionValue(emptyMention()); }}
-                      disabled={submitting}
-                    >
-                      取消
-                    </Button>
-                    <Button size="sm" onClick={submitMention} disabled={submitting}>
-                      {submitting ? "发送中…" : "发送"}
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
+            <Button size="sm" onClick={submitMention} disabled={submitting}>
+              {submitting ? "发送中…" : "发送"}
+            </Button>
           </div>
         </div>
-
-        {post.mentions.length > 0 && (
-          <div className="mb-3 space-y-1.5">
-            {post.mentions.map((m, i) => (
-              <MentionChip key={i} mention={m} />
-            ))}
-          </div>
-        )}
-
-        <div
-          ref={bodyRef}
-          style={collapsed ? { maxHeight: COLLAPSE_HEIGHT, overflow: "hidden" } : undefined}
-          className="prose-pivot"
-        >
-          <Markdown remarkPlugins={[remarkGfm]}>{post.body}</Markdown>
-        </div>
-        {overflows && (
-          <button
-            onClick={() => setCollapsed((c) => !c)}
-            className="mt-1.5 text-xs text-primary hover:underline focus:outline-none"
-          >
-            {collapsed ? "展开全文 ↓" : "收起全文 ↑"}
-          </button>
-        )}
-      </div>
-    </Card>
+      )}
+    </div>
   );
 }
 
-function buildGitHubFileUrl(
-  repoUrl: string | null,
-  ref: string | null,
-  category: string,
-  slug: string,
-  filename: string,
-): string | null {
-  if (!repoUrl || !ref) return null;
-
-  const cleaned = repoUrl.trim().replace(/\.git$/, "");
-  let base: string | null = null;
-
-  if (cleaned.startsWith("https://github.com/")) {
-    base = cleaned;
-  } else {
-    const sshMatch = cleaned.match(/^git@github\.com:([^/]+\/[^/]+)$/);
-    if (sshMatch) {
-      base = `https://github.com/${sshMatch[1]}`;
-    }
-  }
-
-  if (!base) return null;
-
-  const path = ["discussions", category, slug, filename]
-    .map(encodeURIComponent)
-    .join("/");
-
-  return `${base}/blob/${encodeURIComponent(ref)}/${path}`;
+function PostTypeBadge({
+  type,
+  compact = false,
+}: {
+  type: "proposal" | "reply" | "post";
+  compact?: boolean;
+}) {
+  const label = type === "proposal" ? "提案" : type === "reply" ? "回复" : "帖子";
+  return (
+    <span
+      className={cn(
+        "flex shrink-0 items-center justify-center rounded-2xl bg-blue-50 font-semibold text-blue-700 ring-1 ring-blue-200",
+        compact ? "h-8 min-w-10 px-2.5 text-xs sm:h-10 sm:min-w-12 sm:px-3 sm:text-sm" : "h-10 min-w-12 px-3 text-xs sm:h-14 sm:min-w-14 sm:px-4 sm:text-sm",
+      )}
+    >
+      {label}
+    </span>
+  );
 }
 
 function MentionChip({ mention }: { mention: MentionEntry }) {
   const names = mention.users.map((u) => u.user).join("、");
   return (
-    <div className="flex items-start gap-2 rounded-md bg-muted/50 px-3 py-1.5 text-xs">
+    <div className="flex items-start gap-2 rounded-xl border border-slate-200/70 bg-slate-100/82 px-3 py-2.5 text-xs">
       <AtSign className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
       <div className="min-w-0">
-        <span className="font-medium">{names}</span>
+        <span className="font-medium text-slate-800">{names}</span>
         {mention.comments && (
           <span className="text-muted-foreground"> — {mention.comments}</span>
         )}
@@ -655,8 +957,17 @@ function MentionChip({ mention }: { mention: MentionEntry }) {
 }
 
 function ReplyForm({
-  category, slug, body, setBody, mentions, setMentions, draftId, setDraftId,
-  replyTo, references, onPosted, onCancel,
+  category,
+  slug,
+  body,
+  setBody,
+  mentions,
+  setMentions,
+  draftId,
+  setDraftId,
+  replyTo,
+  references,
+  onPosted,
 }: {
   category: string;
   slug: string;
@@ -671,17 +982,18 @@ function ReplyForm({
   references: string[];
   setReferences: (v: string[]) => void;
   onPosted: () => void;
-  onCancel: () => void;
 }) {
   const threadKey = `${category}/${slug}`;
   const resolvedNames = useRef<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
 
   const { status, saveNow } = useDraftAutosave({
-    draftId, setDraftId,
+    draftId,
+    setDraftId,
     type: "reply",
     payload: () => ({
-      body_md: body, thread_key: threadKey,
+      body_md: body,
+      thread_key: threadKey,
       mentions: mentions.open_ids.length > 0 || mentions.comments ? mentions : null,
       reply_to: replyTo,
       references,
@@ -721,45 +1033,69 @@ function ReplyForm({
   };
 
   return (
-    <Card>
-      <form onSubmit={submit} className="space-y-3 p-4 sm:p-5">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <div className="flex items-baseline gap-3">
-            <h3 className="font-semibold">回复</h3>
-            <span className={`text-xs ${status === "error" ? "text-destructive" : "text-muted-foreground"}`}>
-              {formatSaveStatus(status)}
-            </span>
-          </div>
-          <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onCancel}>
-            收起
+    <form onSubmit={submit} className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+        <span>{formatSaveStatus(status)}</span>
+        <span>{replyTo ? `当前将回复到：${replyTo}` : "当前将作为新的回复发布"}</span>
+      </div>
+
+      <Textarea
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        rows={6}
+        maxLength={50000}
+        placeholder="写下你的回复，或先切到 AI 助手整理草稿…"
+        className="min-h-[8rem] rounded-2xl border-slate-300 bg-slate-50/90 font-mono text-sm sm:min-h-[9rem]"
+      />
+
+      <MentionField
+        value={mentions}
+        onChange={setMentions}
+        resolvedNames={resolvedNames.current}
+      />
+
+      <div className="flex flex-wrap gap-3">
+        <Button type="submit" className="rounded-xl bg-blue-600 hover:bg-blue-700" disabled={submitting || !body.trim()}>
+          {submitting ? "发布中…" : "发布回复"}
+        </Button>
+        {(draftId || body.trim()) && (
+          <Button type="button" variant="outline" className="rounded-xl" onClick={discard}>
+            删除草稿
           </Button>
-        </div>
-        <Textarea
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          rows={6}
-          maxLength={50000}
-          placeholder="AI 生成的回复草稿，可在此编辑…"
-          className="font-mono text-sm"
-          autoFocus
-        />
-        <MentionField
-          value={mentions} onChange={setMentions}
-          resolvedNames={resolvedNames.current}
-        />
-        <div className="flex flex-wrap gap-3">
-          <Button type="submit" disabled={submitting || !body.trim()}>
-            {submitting ? "发布中…" : "发布回复"}
-          </Button>
-          {(draftId || body.trim()) && (
-            <Button type="button" variant="outline" onClick={discard}>
-              删除草稿
-            </Button>
-          )}
-        </div>
-      </form>
-    </Card>
+        )}
+      </div>
+    </form>
   );
+}
+
+function buildGitHubFileUrl(
+  repoUrl: string | null,
+  ref: string | null,
+  category: string,
+  slug: string,
+  filename: string,
+): string | null {
+  if (!repoUrl || !ref) return null;
+
+  const cleaned = repoUrl.trim().replace(/\.git$/, "");
+  let base: string | null = null;
+
+  if (cleaned.startsWith("https://github.com/")) {
+    base = cleaned;
+  } else {
+    const sshMatch = cleaned.match(/^git@github\.com:([^/]+\/[^/]+)$/);
+    if (sshMatch) {
+      base = `https://github.com/${sshMatch[1]}`;
+    }
+  }
+
+  if (!base) return null;
+
+  const path = ["discussions", category, slug, filename]
+    .map(encodeURIComponent)
+    .join("/");
+
+  return `${base}/blob/${encodeURIComponent(ref)}/${path}`;
 }
 
 export function ThreadDetailEmpty() {

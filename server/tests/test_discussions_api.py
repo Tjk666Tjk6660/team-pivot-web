@@ -229,3 +229,44 @@ def test_thread_detail_includes_favorite_flag(db, users, tmp_path):
     r = client.get("/api/threads/general/hello")
     assert r.status_code == 200, r.text
     assert r.json()["meta"]["favorite"] is True
+
+
+def test_thread_detail_includes_author_avatar_url(db, users, tmp_path):
+    discussions = tmp_path / "discussions"
+    index_dir = tmp_path / "index"
+    _write_post(
+        discussions / "general" / "hello" / "001_contact_proposal_abc123.md",
+        type_="proposal",
+        author="ou_1",
+        title="Hello",
+    )
+
+    contacts = ContactRepo(db)
+    users.upsert_from_feishu(
+        open_id="ou_1",
+        union_id=None,
+        name="Ken",
+        avatar_url="http://a/1.png",
+    )
+    sessions = SessionStore(db)
+    sid = sessions.create("ou_1")
+    current_user = make_current_user(sessions, users, ApiTokenRepo(db))
+
+    app = FastAPI()
+    app.include_router(
+        build_router(
+            _WorkspaceStub(discussions, index_dir),
+            users,
+            contacts,
+            NoOpNotifier(),
+            ReadStateRepo(db),
+            FavoriteRepo(db),
+            current_user,
+        )
+    )
+    client = TestClient(app)
+    client.cookies.set("sid", sid)
+
+    r = client.get("/api/threads/general/hello")
+    assert r.status_code == 200, r.text
+    assert r.json()["posts"][0]["author_avatar_url"] == "http://a/1.png"

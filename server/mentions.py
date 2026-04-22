@@ -22,6 +22,22 @@ def resolve_id(
     return c.name if c else value
 
 
+def resolve_avatar_url(
+    value: str | None,
+    users: UserRepo,
+    contacts: ContactRepo | None = None,
+) -> str | None:
+    if not value:
+        return None
+    u = users.get_by_any_id(value)
+    if u and u.avatar_url:
+        return u.avatar_url
+    c = contacts.get_by_any_id(value) if contacts else None
+    if c and c.avatar_url:
+        return c.avatar_url
+    return None
+
+
 def resolve_text(text: str, users: UserRepo, contacts: ContactRepo | None = None) -> str:
     def repl(m: re.Match[str]) -> str:
         oid = m.group(0)
