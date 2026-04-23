@@ -3,20 +3,21 @@ import { ChevronDown, X } from "lucide-react";
 import { searchContacts, type Contact } from "@/api";
 import { cn } from "@/lib/utils";
 
-// owner 存 contact.en_name（即 pinyin 约定）。
-// session 用户自身作为默认值：value = session.pinyin, displayName = session.name。
+// owner 存飞书 open_id（规范唯一键）。
+// 显示层由服务端 name resolver 兜底（users → contacts → 原始值，见 pivot-memo.md §5）。
+// 前端这里靠 displayName 缓存最近一次挑选的展示名，避免下拉关闭后显示裸 open_id。
 
 export function OwnerPicker({
   value,
   onChange,
-  sessionPinyin,
+  sessionOpenId,
   sessionName,
   displayName,
   placeholder = "选择执行人",
 }: {
   value: string;
-  onChange: (pinyin: string, displayName: string) => void;
-  sessionPinyin: string;
+  onChange: (openId: string, displayName: string) => void;
+  sessionOpenId: string;
   sessionName: string;
   displayName?: string;
   placeholder?: string;
@@ -59,19 +60,18 @@ export function OwnerPicker({
 
   const label = (() => {
     if (!value) return placeholder;
-    if (value === sessionPinyin) return `${sessionName}（= 你）`;
-    if (displayName) return `${displayName}（${value}）`;
+    if (value === sessionOpenId) return `${sessionName}（= 你）`;
+    if (displayName) return displayName;
     return value;
   })();
 
   const pickSelf = () => {
-    onChange(sessionPinyin, sessionName);
+    onChange(sessionOpenId, sessionName);
     setOpen(false);
   };
 
   const pickContact = (c: Contact) => {
-    if (!c.en_name) return;
-    onChange(c.en_name, c.name);
+    onChange(c.open_id, c.name);
     setOpen(false);
     setQuery("");
   };
@@ -118,15 +118,14 @@ export function OwnerPicker({
               onClick={pickSelf}
               className={cn(
                 "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-slate-100",
-                value === sessionPinyin && "bg-blue-50",
+                value === sessionOpenId && "bg-blue-50",
               )}
             >
               <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-100 text-[10px] font-semibold text-blue-700">
                 你
               </span>
               <span className="text-slate-800">{sessionName}</span>
-              <span className="text-xs text-slate-500">（{sessionPinyin}）</span>
-              {value === sessionPinyin && (
+              {value === sessionOpenId && (
                 <span className="ml-auto text-xs text-blue-600">✓</span>
               )}
             </button>
@@ -143,21 +142,15 @@ export function OwnerPicker({
             )}
             {!loading &&
               results.map((c) => {
-                const disabled = !c.en_name;
-                const selected = !!c.en_name && value === c.en_name;
+                const selected = value === c.open_id;
                 return (
                   <button
                     key={c.open_id}
                     type="button"
-                    disabled={disabled}
                     onClick={() => pickContact(c)}
-                    title={disabled ? "该联系人缺少拼音（en_name），无法作为 owner" : undefined}
                     className={cn(
-                      "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm",
-                      disabled
-                        ? "cursor-not-allowed text-slate-400"
-                        : "hover:bg-slate-100",
-                      selected && !disabled && "bg-blue-50",
+                      "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-slate-100",
+                      selected && "bg-blue-50",
                     )}
                   >
                     {c.avatar_url ? (
@@ -165,17 +158,11 @@ export function OwnerPicker({
                     ) : (
                       <span className="h-5 w-5 rounded-full bg-slate-200" />
                     )}
-                    <span className={disabled ? "text-slate-400" : "text-slate-800"}>
-                      {c.name}
-                    </span>
-                    {c.en_name ? (
+                    <span className="text-slate-800">{c.name}</span>
+                    {c.en_name && (
                       <span className="text-xs text-slate-500">（{c.en_name}）</span>
-                    ) : (
-                      <span className="text-xs text-amber-600">缺 en_name</span>
                     )}
-                    {selected && (
-                      <span className="ml-auto text-xs text-blue-600">✓</span>
-                    )}
+                    {selected && <span className="ml-auto text-xs text-blue-600">✓</span>}
                   </button>
                 );
               })}

@@ -101,12 +101,15 @@ export type TimelineItem = {
 export type MatterSummary = {
   id: string;
   title: string;
+  category: string | null;
   current_status: MatterStatus;
   created_at: string;
   updated_at: string;
   file_count: number;
   last_file_type: DocType | null;
   last_summary: string | null;
+  unread_count: number;
+  favorite: boolean;
 };
 
 export type MatterMeta = MatterSummary;
@@ -244,6 +247,36 @@ export async function appendMatterResult(
     throw new Error(detail);
   }
   return (await r.json()) as AppendFileResponse;
+}
+
+export async function markMatterRead(matterId: string): Promise<void> {
+  await fetch(
+    `/api/matters/${encodeURIComponent(matterId)}/read`,
+    { method: "POST", credentials: "include" },
+  );
+}
+
+export async function setMatterFavorite(
+  matterId: string,
+  favorite: boolean,
+): Promise<{ ok: true; thread_key: string; favorite: boolean }> {
+  const r = await fetch(
+    `/api/matters/${encodeURIComponent(matterId)}/favorite`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ favorite }),
+    },
+  );
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    const detail = typeof d.detail === "string"
+      ? d.detail
+      : d.detail?.message || d.detail?.code || `favorite failed: ${r.status}`;
+    throw new Error(detail);
+  }
+  return await r.json();
 }
 
 export async function appendMatterComment(

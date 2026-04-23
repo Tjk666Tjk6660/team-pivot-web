@@ -47,7 +47,7 @@ type FormState = {
 
 function initialFormState(
   ctx: CreateDialogContext,
-  sessionPinyin: string,
+  sessionOpenId: string,
   sessionName: string,
   actFiles: TimelineItem[],
 ): FormState {
@@ -60,7 +60,7 @@ function initialFormState(
   return {
     summary: "",
     body: "",
-    owner: sessionPinyin,
+    owner: sessionOpenId,
     ownerDisplayName: sessionName,
     refer: [],
     verifications,
@@ -74,7 +74,7 @@ export function CreateFileDialog({
   open,
   context,
   matterStatus,
-  sessionPinyin,
+  sessionOpenId,
   sessionName,
   timeline,
   onClose,
@@ -83,7 +83,7 @@ export function CreateFileDialog({
   open: boolean;
   context: CreateDialogContext | null;
   matterStatus: MatterStatus;
-  sessionPinyin: string;
+  sessionOpenId: string;
   sessionName: string;
   timeline: TimelineItem[];
   onClose: () => void;
@@ -95,15 +95,15 @@ export function CreateFileDialog({
   );
   const [form, setForm] = useState<FormState>(() =>
     context
-      ? initialFormState(context, sessionPinyin, sessionName, actFiles)
-      : initialFormState({ kind: "page", type: "insight" }, sessionPinyin, sessionName, actFiles),
+      ? initialFormState(context, sessionOpenId, sessionName, actFiles)
+      : initialFormState({ kind: "page", type: "insight" }, sessionOpenId, sessionName, actFiles),
   );
   const [submitting, setSubmitting] = useState(false);
 
   // reset form whenever dialog re-opens with a new context
   useMemo(() => {
     if (open && context) {
-      setForm(initialFormState(context, sessionPinyin, sessionName, actFiles));
+      setForm(initialFormState(context, sessionOpenId, sessionName, actFiles));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, context?.kind, context?.kind === "card" ? context.quote : null, context?.type]);
@@ -230,10 +230,10 @@ export function CreateFileDialog({
             >
               <OwnerPicker
                 value={form.owner}
-                onChange={(pinyin, name) =>
-                  setForm((p) => ({ ...p, owner: pinyin, ownerDisplayName: name }))
+                onChange={(openId, name) =>
+                  setForm((p) => ({ ...p, owner: openId, ownerDisplayName: name }))
                 }
-                sessionPinyin={sessionPinyin}
+                sessionOpenId={sessionOpenId}
                 sessionName={sessionName}
                 displayName={form.ownerDisplayName}
               />

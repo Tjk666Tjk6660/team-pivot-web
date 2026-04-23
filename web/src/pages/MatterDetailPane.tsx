@@ -8,6 +8,7 @@ import {
   appendMatterResult,
   fetchMatter,
   fetchMe,
+  markMatterRead,
   type DocType,
   type MatterDetail as MatterDetailData,
   type NewFileIn,
@@ -30,9 +31,9 @@ export function MatterDetailEmpty() {
 
 export function MatterDetailPane() {
   const { matter_id } = useParams<{ matter_id: string }>();
-  const { reloadLists, threadMeta, toggleMatterFavorite } = useDashboard();
+  const { reloadLists, toggleMatterFavorite } = useDashboard();
   const [data, setData] = useState<MatterDetailData | null | undefined>(undefined);
-  const [sessionPinyin, setSessionPinyin] = useState<string>("");
+  const [sessionOpenId, setSessionOpenId] = useState<string>("");
   const [sessionName, setSessionName] = useState<string>("");
   const [createCtx, setCreateCtx] = useState<CreateDialogContext | null>(null);
   const [resultOpen, setResultOpen] = useState(false);
@@ -42,12 +43,18 @@ export function MatterDetailPane() {
   const load = useCallback(() => {
     if (!matter_id) return;
     fetchMatter(matter_id)
-      .then(setData)
+      .then((d) => {
+        setData(d);
+        // Mark read on open, then refresh sidebar unread badges.
+        markMatterRead(matter_id)
+          .then(() => reloadLists())
+          .catch(() => {});
+      })
       .catch((e) => {
         toast.error(e instanceof Error ? e.message : String(e));
         setData(null);
       });
-  }, [matter_id]);
+  }, [matter_id, reloadLists]);
 
   useEffect(() => {
     load();
@@ -56,11 +63,11 @@ export function MatterDetailPane() {
   useEffect(() => {
     fetchMe()
       .then((me) => {
-        setSessionPinyin(me?.pinyin ?? "");
+        setSessionOpenId(me?.open_id ?? "");
         setSessionName(me?.name ?? "");
       })
       .catch(() => {
-        setSessionPinyin("");
+        setSessionOpenId("");
         setSessionName("");
       });
   }, []);
@@ -187,16 +194,33 @@ export function MatterDetailPane() {
                   variant="outline"
                   size="sm"
                   className="h-9 rounded-xl px-3 text-xs"
-                  onClick={() => void toggleMatterFavorite(matter_id)}
-                  title={threadMeta[matter_id]?.favorite ? "取消收藏" : "收藏"}
+                  onClick={() => {
+                    // optimistic flip locally (Dashboard does the authoritative optimistic on the list)
+                    setData((prev) =>
+                      prev
+                        ? { ...prev, matter: { ...prev.matter, favorite: !prev.matter.favorite } }
+                        : prev,
+                    );
+                    void toggleMatterFavorite(matter_id).catch(() => {
+                      setData((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              matter: { ...prev.matter, favorite: !prev.matter.favorite },
+                            }
+                          : prev,
+                      );
+                    });
+                  }}
+                  title={matter.favorite ? "取消收藏" : "收藏"}
                 >
                   <Star
                     className={cn(
                       "h-4 w-4",
-                      threadMeta[matter_id]?.favorite ? "fill-amber-400 text-amber-500" : "text-slate-400",
+                      matter.favorite ? "fill-amber-400 text-amber-500" : "text-slate-400",
                     )}
                   />
-                  {threadMeta[matter_id]?.favorite ? "已收藏" : "收藏"}
+                  {matter.favorite ? "已收藏" : "收藏"}
                 </Button>
               )}
               {canGenerateResult && (
@@ -273,8 +297,8 @@ export function MatterDetailPane() {
         open={createCtx !== null}
         context={createCtx}
         matterStatus={matter.current_status}
-        sessionPinyin={sessionPinyin}
-        sessionName={sessionName || sessionPinyin}
+        sessionOpenId={sessionOpenId}
+        sessionName={sessionName || sessionOpenId}
         timeline={timeline}
         onClose={() => setCreateCtx(null)}
         onSubmit={submitNewFile}

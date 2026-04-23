@@ -10,34 +10,22 @@ import {
   Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/StatusBadge";
 import { relativeTime } from "@/lib/time";
-import type { Draft, MatterStatus, MatterSummary } from "@/api";
-import type { MatterThreadMeta } from "@/pages/Dashboard";
+import type { Draft, MatterSummary } from "@/api";
 
-type StatusBucket = {
-  key: string;
-  title: string;
-  statuses: MatterStatus[];
-};
-
-const BUCKETS: StatusBucket[] = [
-  { key: "active",   title: "进行中", statuses: ["planning", "executing", "paused"] },
-  { key: "closed",   title: "已结束", statuses: ["finished", "cancelled"] },
-  { key: "reviewed", title: "已复盘", statuses: ["reviewed"] },
-];
+const UNCATEGORIZED = "未分类";
 
 export function ThreadListPane({
   drafts,
   matters,
-  threadMeta,
   onToggleFavorite,
   onRemoveDraft,
 }: {
   drafts: Draft[] | null;
   matters: MatterSummary[] | null;
-  threadMeta: Record<string, MatterThreadMeta>;
   onToggleFavorite: (matterId: string) => Promise<void>;
   onRemoveDraft: (id: string) => void;
 }) {
@@ -50,16 +38,18 @@ export function ThreadListPane({
   const favorites = useMemo(() => {
     if (!matters) return [];
     return matters
-      .filter((m) => threadMeta[m.id]?.favorite)
+      .filter((m) => m.favorite)
       .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
-  }, [matters, threadMeta]);
+  }, [matters]);
 
-  const grouped = useMemo(() => groupByBucket(matters), [matters]);
-  const [openBuckets, setOpenBuckets] = useState<Record<string, boolean>>({
-    active: true,
-    closed: false,
-    reviewed: false,
-  });
+  const grouped = useMemo(() => groupByCategory(matters), [matters]);
+  const activeCategory = useMemo(() => {
+    if (!activeMatterId || !matters) return null;
+    const m = matters.find((x) => x.id === activeMatterId);
+    return m ? (m.category ?? UNCATEGORIZED) : null;
+  }, [activeMatterId, matters]);
+
+  const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({});
   const [favoritesOpen, setFavoritesOpen] = useState(true);
   const [draftsOpen, setDraftsOpen] = useState(true);
   const [mattersOpen, setMattersOpen] = useState(true);
@@ -69,17 +59,26 @@ export function ThreadListPane({
   const mattersRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    if (!activeMatterId || !matters) return;
-    const active = matters.find((m) => m.id === activeMatterId);
-    if (!active) return;
-    const bucket = BUCKETS.find((b) => b.statuses.includes(active.current_status));
-    if (bucket) {
-      setOpenBuckets((prev) => (prev[bucket.key] ? prev : { ...prev, [bucket.key]: true }));
-    }
-  }, [activeMatterId, matters]);
+    if (!grouped.length) return;
+    setOpenCategories((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const g of grouped) {
+        if (!(g.category in next)) {
+          next[g.category] = activeCategory === g.category;
+          changed = true;
+        }
+      }
+      if (activeCategory && !next[activeCategory]) {
+        next[activeCategory] = true;
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [grouped, activeCategory]);
 
-  const toggleBucket = (key: string) =>
-    setOpenBuckets((prev) => ({ ...prev, [key]: !prev[key] }));
+  const toggleCategory = (c: string) =>
+    setOpenCategories((prev) => ({ ...prev, [c]: !prev[c] }));
 
   return (
     <div className="flex h-full flex-col bg-transparent px-3 py-3 md:px-3 md:py-4">
@@ -108,7 +107,6 @@ export function ThreadListPane({
                 <MatterRow
                   key={`fav-${m.id}`}
                   matter={m}
-                  favorite={true}
                   onToggleFavorite={() => void onToggleFavorite(m.id)}
                 />
               ))}
@@ -173,26 +171,29 @@ export function ThreadListPane({
           )}
           {mattersOpen &&
             matters !== null &&
-            grouped.map((group) =>
-              group.items.length === 0 ? null : (
+            grouped.length > 0 &&
+            grouped.map((group) => {
+              const open = !!openCategories[group.category];
+              return (
                 <div
-                  key={group.key}
+                  key={group.category}
                   className="mx-1 border-b border-slate-200/60 py-1 last:border-b-0"
                 >
                   <button
                     type="button"
-                    onClick={() => toggleBucket(group.key)}
+                    onClick={() => toggleCategory(group.category)}
                     className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-slate-100/80"
                   >
-                    {openBuckets[group.key] ? (
+                    {open ? (
                       <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
                     ) : (
                       <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
                     )}
+                    <FolderTree className="h-4 w-4 shrink-0 text-slate-400" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="truncate text-sm font-semibold text-slate-900 md:text-[15px]">
-                          {group.title}
+                          {group.category}
                         </span>
                         <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
                           {group.items.length}
@@ -204,22 +205,24 @@ export function ThreadListPane({
                         </div>
                       )}
                     </div>
+                    {group.unread > 0 && (
+                      <Badge variant="red" className="shrink-0">{group.unread}</Badge>
+                    )}
                   </button>
-                  {openBuckets[group.key] && (
+                  {open && (
                     <div className="mt-1 ml-5 border-l border-slate-200/70 bg-transparent pl-2">
                       {group.items.map((m) => (
                         <MatterRow
                           key={m.id}
                           matter={m}
-                          favorite={!!threadMeta[m.id]?.favorite}
                           onToggleFavorite={() => void onToggleFavorite(m.id)}
                         />
                       ))}
                     </div>
                   )}
                 </div>
-              ),
-            )}
+              );
+            })}
         </Section>
       </div>
     </div>
@@ -228,11 +231,9 @@ export function ThreadListPane({
 
 function MatterRow({
   matter,
-  favorite,
   onToggleFavorite,
 }: {
   matter: MatterSummary;
-  favorite: boolean;
   onToggleFavorite: () => void;
 }) {
   const meta = [
@@ -256,6 +257,9 @@ function MatterRow({
         {({ isActive }) => (
           <>
             <div className="flex items-center gap-2">
+              {matter.unread_count > 0 && (
+                <Badge variant="red" className="shrink-0">{matter.unread_count}</Badge>
+              )}
               <span className="truncate text-[14px] font-medium">{matter.title}</span>
               <span className="ml-auto shrink-0">
                 <StatusBadge status={matter.current_status} />
@@ -279,13 +283,13 @@ function MatterRow({
           e.stopPropagation();
           onToggleFavorite();
         }}
-        title={favorite ? "取消收藏" : "收藏"}
+        title={matter.favorite ? "取消收藏" : "收藏"}
         className="absolute right-1 top-1.5 rounded-md p-1 opacity-60 hover:bg-slate-100 hover:opacity-100"
       >
         <Star
           className={cn(
             "h-4 w-4",
-            favorite ? "fill-amber-400 text-amber-500" : "text-slate-400",
+            matter.favorite ? "fill-amber-400 text-amber-500" : "text-slate-400",
           )}
         />
       </button>
@@ -331,20 +335,40 @@ function Section({
   );
 }
 
-type BucketGroup = {
-  key: string;
-  title: string;
+type CategoryGroup = {
+  category: string;
   items: MatterSummary[];
   last_updated: string | null;
+  unread: number;
 };
 
-function groupByBucket(matters: MatterSummary[] | null): BucketGroup[] {
-  if (!matters) return BUCKETS.map((b) => ({ key: b.key, title: b.title, items: [], last_updated: null }));
-  return BUCKETS.map((b) => {
-    const items = matters
-      .filter((m) => b.statuses.includes(m.current_status))
-      .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
-    const last_updated = items[0]?.updated_at ?? null;
-    return { key: b.key, title: b.title, items, last_updated };
-  });
+function groupByCategory(matters: MatterSummary[] | null): CategoryGroup[] {
+  if (!matters || matters.length === 0) return [];
+  const map = new Map<string, CategoryGroup>();
+  for (const m of matters) {
+    const cat = m.category ?? UNCATEGORIZED;
+    const existing = map.get(cat);
+    if (existing) {
+      existing.items.push(m);
+      existing.unread += m.unread_count;
+      if ((m.updated_at || "") > (existing.last_updated || "")) {
+        existing.last_updated = m.updated_at;
+      }
+    } else {
+      map.set(cat, {
+        category: cat,
+        items: [m],
+        last_updated: m.updated_at,
+        unread: m.unread_count,
+      });
+    }
+  }
+  return Array.from(map.values())
+    .map((g) => ({
+      ...g,
+      items: [...g.items].sort((a, b) =>
+        (b.updated_at || "").localeCompare(a.updated_at || ""),
+      ),
+    }))
+    .sort((a, b) => (b.last_updated || "").localeCompare(a.last_updated || ""));
 }
