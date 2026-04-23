@@ -76,15 +76,19 @@ def create_app() -> FastAPI:
     current_user_dep = make_current_user(sessions, users, api_tokens)
     current_user_cookie_dep = make_current_user_cookie_only(sessions, users)
 
+    workspace = WorkspaceRuntime(base_dir=cfg.data_dir / "git", settings=settings)
+
     notifier: Notifier
     if cfg.notify_enabled:
-        notifier = FeishuNotifier(tokens=tokens, web_base_url=cfg.web_dev_origin)
+        notifier = FeishuNotifier(
+            tokens=tokens,
+            web_base_url=cfg.web_dev_origin,
+            workspace=workspace,
+        )
         log.info("notifier enabled (feishu)")
     else:
         notifier = NoOpNotifier()
         log.info("notifier disabled (no-op)")
-
-    workspace = WorkspaceRuntime(base_dir=cfg.data_dir / "git", settings=settings)
 
     app = FastAPI(title="team-pivot-web")
     app.add_middleware(

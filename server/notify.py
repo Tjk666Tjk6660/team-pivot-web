@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Protocol
+from typing import TYPE_CHECKING, Callable, Protocol
 
 import httpx
 
 from server.feishu_token import FeishuTokenManager
+
+if TYPE_CHECKING:
+    from server.workspace import Workspace
 
 log = logging.getLogger(__name__)
 
@@ -23,7 +26,7 @@ class Notifier(Protocol):
         slug: str,
         title: str,
         author_name: str,
-        body: str,
+        filename: str,
         mention_open_ids: list[str] | None = None,
         mention_comments: str | None = None,
     ) -> None: ...
@@ -35,7 +38,7 @@ class Notifier(Protocol):
         slug: str,
         thread_title: str,
         author_name: str,
-        body: str,
+        filename: str,
         mention_open_ids: list[str] | None = None,
         mention_comments: str | None = None,
     ) -> None: ...
@@ -79,9 +82,11 @@ class FeishuNotifier:
         *,
         tokens: FeishuTokenManager,
         web_base_url: str,
+        workspace: "Workspace | None" = None,
     ) -> None:
         self._tokens = tokens
         self._web_base_url = web_base_url.rstrip("/")
+        self._workspace = workspace
 
     def notify_new_thread(
         self,
@@ -90,27 +95,34 @@ class FeishuNotifier:
         slug: str,
         title: str,
         author_name: str,
-        body: str,
+        filename: str,
         mention_open_ids: list[str] | None = None,
         mention_comments: str | None = None,
     ) -> None:
-        url = self._thread_url(category, slug)
+        post_url = self._post_url(category, slug, filename)
+        directory_content, post_count = self._build_directory(category, slug, filename)
         card = build_thread_card(
+            category=category,
+            thread_slug=slug,
             title=title,
             author_name=author_name,
-            body=body,
-            thread_url=url,
+            filename=filename,
+            thread_url=post_url,
             mention_open_ids=mention_open_ids or [],
             mention_comments=mention_comments,
+            directory_content=directory_content,
+            directory_post_count=post_count,
         )
         self._broadcast(card, event=f"new_thread slug={slug}")
         if mention_open_ids:
             dm = build_mention_dm_card(
                 author_name=author_name,
                 thread_title=title,
+                thread_slug=slug,
+                target_filename=filename,
                 kind="发起讨论",
                 comments=mention_comments,
-                thread_url=url,
+                post_url=post_url,
             )
             self._dm_many(mention_open_ids, dm, event=f"new_thread slug={slug}")
 
@@ -121,27 +133,34 @@ class FeishuNotifier:
         slug: str,
         thread_title: str,
         author_name: str,
-        body: str,
+        filename: str,
         mention_open_ids: list[str] | None = None,
         mention_comments: str | None = None,
     ) -> None:
-        url = self._thread_url(category, slug)
+        post_url = self._post_url(category, slug, filename)
+        directory_content, post_count = self._build_directory(category, slug, filename)
         card = build_reply_card(
+            category=category,
+            thread_slug=slug,
             thread_title=thread_title,
             author_name=author_name,
-            body=body,
-            thread_url=url,
+            filename=filename,
+            thread_url=post_url,
             mention_open_ids=mention_open_ids or [],
             mention_comments=mention_comments,
+            directory_content=directory_content,
+            directory_post_count=post_count,
         )
         self._broadcast(card, event=f"new_reply slug={slug}")
         if mention_open_ids:
             dm = build_mention_dm_card(
                 author_name=author_name,
                 thread_title=thread_title,
+                thread_slug=slug,
+                target_filename=filename,
                 kind="回复讨论",
                 comments=mention_comments,
-                thread_url=url,
+                post_url=post_url,
             )
             self._dm_many(mention_open_ids, dm, event=f"new_reply slug={slug}")
 
@@ -149,22 +168,28 @@ class FeishuNotifier:
         self, *, category, slug, thread_title, target_filename,
         author_name, mention_open_ids, mention_comments, post_excerpt,
     ) -> None:
-        url = self._thread_url(category, slug)
+        post_url = self._post_url(category, slug, target_filename)
         card = build_standalone_mention_card(
+            category=category,
+            thread_slug=slug,
             thread_title=thread_title,
             author_name=author_name,
+            target_filename=target_filename,
             mention_open_ids=mention_open_ids,
             mention_comments=mention_comments,
             post_excerpt=post_excerpt,
-            thread_url=url,
+            post_url=post_url,
         )
         self._broadcast(card, event=f"mention slug={slug} file={target_filename}")
         dm = build_mention_dm_card(
             author_name=author_name,
             thread_title=thread_title,
+            thread_slug=slug,
+            target_filename=target_filename,
             kind="提及",
             comments=mention_comments,
-            thread_url=url,
+            post_url=post_url,
+            post_excerpt=post_excerpt,
         )
         self._dm_many(mention_open_ids, dm, event=f"mention slug={slug}")
 
@@ -186,6 +211,31 @@ class FeishuNotifier:
 
         next_path = f"/t/{category}/{slug}"
         return f"{self._web_base_url}/auth/entry?{urlencode({'next': next_path})}"
+
+    def _post_url(self, category: str, slug: str, filename: str) -> str:
+        from urllib.parse import urlencode
+
+        anchor = filename[:-3] if filename.endswith(".md") else filename
+        next_path = f"/t/{category}/{slug}?post={anchor}#post-{anchor}"
+        return f"{self._web_base_url}/auth/entry?{urlencode({'next': next_path})}"
+
+    def _build_directory(
+        self, category: str, slug: str, current_filename: str,
+    ) -> tuple[str, int]:
+        """Return (content, post_count) for the thread-directory panel.
+
+        Returns ("", 0) if there is no workspace reference or the thread
+        can't be read — callers skip adding the panel in that case.
+        """
+        if self._workspace is None:
+            return "", 0
+        return build_thread_directory(
+            self._workspace,
+            category=category,
+            slug=slug,
+            current_filename=current_filename,
+            post_url_builder=self._post_url,
+        )
 
     def _broadcast(self, card: dict, *, event: str) -> None:
         try:
@@ -264,43 +314,61 @@ class FeishuNotifier:
 
 def build_thread_card(
     *,
+    category: str,
+    thread_slug: str,
     title: str,
     author_name: str,
-    body: str,
+    filename: str,
     thread_url: str,
     mention_open_ids: list[str] | None = None,
     mention_comments: str | None = None,
+    directory_content: str | None = None,
+    directory_post_count: int | None = None,
 ) -> dict:
-    return _build_card(
+    return _build_card_6fields(
         header=f"新讨论：{title}",
         template="blue",
+        category=category,
+        thread_slug=thread_slug,
+        action_text="发起了新讨论",
         author_name=author_name,
-        body=body,
-        button_text="去 Web 查看",
+        filename=filename,
         thread_url=thread_url,
+        button_text="去 Web 查看",
         mention_open_ids=mention_open_ids or [],
         mention_comments=mention_comments,
+        directory_content=directory_content,
+        directory_post_count=directory_post_count,
     )
 
 
 def build_reply_card(
     *,
+    category: str,
+    thread_slug: str,
     thread_title: str,
     author_name: str,
-    body: str,
+    filename: str,
     thread_url: str,
     mention_open_ids: list[str] | None = None,
     mention_comments: str | None = None,
+    directory_content: str | None = None,
+    directory_post_count: int | None = None,
 ) -> dict:
-    return _build_card(
-        header=f"新回复：{thread_title}",
+    return _build_card_6fields(
+        header=f"{author_name} 回复：{thread_title}",
         template="green",
+        category=category,
+        thread_slug=thread_slug,
+        action_text="发布了新回复",
         author_name=author_name,
-        body=body,
-        button_text="查看讨论",
+        filename=filename,
         thread_url=thread_url,
+        button_text="查看讨论",
         mention_open_ids=mention_open_ids or [],
         mention_comments=mention_comments,
+        directory_content=directory_content,
+        directory_post_count=directory_post_count,
     )
 
 
@@ -331,71 +399,218 @@ def build_status_change_card(
 
 def build_standalone_mention_card(
     *,
+    category: str,
+    thread_slug: str,
     thread_title: str,
     author_name: str,
+    target_filename: str,
     mention_open_ids: list[str],
     mention_comments: str,
     post_excerpt: str,
-    thread_url: str,
+    post_url: str,
 ) -> dict:
-    parts: list[str] = []
+    from datetime import datetime
+
+    lines: list[str] = []
     if mention_open_ids:
-        parts.append(" ".join(f'<at user_id="{oid}"></at>' for oid in mention_open_ids))
-    parts.append(f"**{author_name}** 提及（主题：**{thread_title}**）")
-    parts.append(f"**说明**：{mention_comments}")
+        lines.append(
+            " ".join(f'<at user_id="{oid}"></at>' for oid in mention_open_ids)
+        )
+    lines.append(f"**{author_name}** 提及了以上成员")
+    lines.append(f"**项目**：{category}")
+    lines.append(f"**主题**：{thread_title}")
+    lines.append(f"**帖子**：{target_filename}")
+    lines.append(f"**说明**：{mention_comments}")
+    lines.append(f"**时间**：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
+
+    sections = ["<br>".join(lines)]
     if post_excerpt:
-        parts.append(f"**相关内容**：{_truncate(post_excerpt, 150)}")
+        sections.append(f"**相关内容**：{_truncate(post_excerpt, 150)}")
+
     return _card_shell(
         header=f"提及：{thread_title}",
         template="orange",
-        markdown="\n\n".join(parts),
-        button_text="查看讨论",
-        thread_url=thread_url,
+        markdown="\n\n".join(sections),
+        button_text="查看该帖子",
+        thread_url=post_url,
     )
 
 
 def build_mention_dm_card(
-    *, author_name: str, thread_title: str, kind: str,
-    comments: str | None, thread_url: str,
+    *,
+    author_name: str,
+    thread_title: str,
+    thread_slug: str,
+    target_filename: str,
+    kind: str,
+    comments: str | None,
+    post_url: str,
+    post_excerpt: str | None = None,
 ) -> dict:
-    md_parts = [f"**{author_name}** 在{kind}中提到了你（主题：**{thread_title}**）"]
+    lines = [f"**{author_name}** 在「{thread_title}」的 {kind} 中 @ 了你"]
+    lines.append(f"**帖子**：{target_filename}")
     if comments:
-        md_parts.append(f"**说明**：{comments}")
+        lines.append(f"**说明**：{comments}")
+
+    sections = ["<br>".join(lines)]
+    if post_excerpt:
+        sections.append(f"**相关内容**：{_truncate(post_excerpt, 150)}")
     return _card_shell(
         header="有人 @ 了你",
         template="orange",
-        markdown="\n\n".join(md_parts),
+        markdown="\n\n".join(sections),
         button_text="去查看",
-        thread_url=thread_url,
+        thread_url=post_url,
     )
 
 
-def _build_card(
+def _build_card_6fields(
     *,
     header: str,
     template: str,
+    category: str,
+    thread_slug: str,
+    action_text: str,
     author_name: str,
-    body: str,
-    button_text: str,
+    filename: str | None,
     thread_url: str,
+    button_text: str,
     mention_open_ids: list[str],
     mention_comments: str | None,
+    directory_content: str | None = None,
+    directory_post_count: int | None = None,
 ) -> dict:
-    parts: list[str] = []
+    """Build the 6-field info card (project / thread / action / file / time).
+
+    @mention block, 说明, and the 5 info rows all live in a single paragraph
+    joined with <br> so Feishu's markdown tag does not insert paragraph
+    spacing between rows.
+
+    Note: this is the v2 card layout. v1 included a 7th row (摘要) sourced
+    from summary frontmatter; summary ability is deferred to the next phase
+    so this version omits that row entirely. If summary comes back later,
+    append one more paragraph section here.
+    """
+    from datetime import datetime
+
+    info_rows: list[str] = []
     if mention_open_ids:
-        parts.append(" ".join(f'<at user_id="{oid}"></at>' for oid in mention_open_ids))
+        info_rows.append(
+            " ".join(f'<at user_id="{oid}"></at>' for oid in mention_open_ids)
+        )
     if mention_comments:
-        parts.append(f"**说明**：{mention_comments}")
-    parts.append(f"**作者**：{author_name}")
-    parts.append(_truncate(body, 200))
+        info_rows.append(f"**说明**：{mention_comments}")
+    info_rows.append(f"**项目**：{category}")
+    info_rows.append(f"**主题**：{thread_slug}")
+    info_rows.append(f"**操作**：{author_name} {action_text}")
+    if filename:
+        info_rows.append(f"**文件**：{filename}")
+    info_rows.append(f"**时间**：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
+
     return _card_shell(
         header=header, template=template,
-        markdown="\n\n".join(parts),
+        markdown="<br>".join(info_rows),
         button_text=button_text, thread_url=thread_url,
+        directory_content=directory_content,
+        directory_post_count=directory_post_count,
     )
 
 
-def _card_shell(*, header: str, template: str, markdown: str, button_text: str, thread_url: str) -> dict:
+def build_thread_directory(
+    workspace: "Workspace",
+    *,
+    category: str,
+    slug: str,
+    current_filename: str,
+    post_url_builder: Callable[[str, str, str], str] | None = None,
+) -> tuple[str, int]:
+    """Build a lark_md-formatted listing of every post in the thread.
+
+    Mirrors appv2's 讨论目录 block but without per-post summaries (summary
+    ability is deferred to the next phase). Each post is one entry showing
+    filename (optionally linked), author, and date. The current post is
+    highlighted in blue with a 🔷 marker; others use 📄.
+
+    Returns ``(content, post_count)``; ``("", 0)`` on any failure so the
+    caller can skip rendering the panel.
+    """
+    try:
+        from server.threads import get_thread
+        detail = get_thread(
+            workspace.discussions_dir, workspace.index_dir, category, slug,
+        )
+    except Exception:
+        log.warning(
+            "build_thread_directory failed category=%s slug=%s",
+            category, slug, exc_info=True,
+        )
+        return "", 0
+    if detail is None:
+        return "", 0
+
+    entries: list[str] = []
+    for post in detail.posts:
+        fname = post.filename
+        fm = post.frontmatter or {}
+        author = str(fm.get("author") or "unknown")
+        created = str(fm.get("created") or "")
+        date_short = created[:10] if created else ""
+
+        if post_url_builder is not None:
+            label = f"[{fname}]({post_url_builder(category, slug, fname)})"
+        else:
+            label = fname
+        header_bits = [f"**{label}**", author]
+        if date_short:
+            header_bits.append(date_short)
+        head = " · ".join(header_bits)
+
+        if fname == current_filename:
+            head = f"<font color='blue'>🔷 {head}</font>"
+        else:
+            head = f"📄 {head}"
+
+        entries.append(head)
+
+    return "\n\n".join(entries), len(detail.posts)
+
+
+def _card_shell(
+    *,
+    header: str,
+    template: str,
+    markdown: str,
+    button_text: str,
+    thread_url: str,
+    directory_content: str | None = None,
+    directory_post_count: int | None = None,
+) -> dict:
+    elements: list[dict] = [{"tag": "markdown", "content": markdown}]
+    if directory_content:
+        post_count = directory_post_count or 0
+        title = (
+            f"<font color='orange'>**📂 讨论目录（{post_count} 篇帖子）**</font>"
+            if post_count
+            else "<font color='orange'>**📂 讨论目录**</font>"
+        )
+        elements.append({
+            "tag": "collapsible_panel",
+            "expanded": False,
+            "header": {
+                "title": {"tag": "markdown", "content": title},
+                "vertical_align": "center",
+                "padding": "4px 0 4px 8px",
+            },
+            "elements": [
+                {"tag": "markdown", "content": directory_content},
+            ],
+        })
+    elements.append({
+        "tag": "button",
+        "text": {"tag": "plain_text", "content": button_text},
+        "type": "primary",
+        "multi_url": {"url": thread_url, "pc_url": "", "android_url": "", "ios_url": ""},
+    })
     return {
         "schema": "2.0",
         "config": {"wide_screen_mode": True},
@@ -403,17 +618,7 @@ def _card_shell(*, header: str, template: str, markdown: str, button_text: str, 
             "title": {"tag": "plain_text", "content": header},
             "template": template,
         },
-        "body": {
-            "elements": [
-                {"tag": "markdown", "content": markdown},
-                {
-                    "tag": "button",
-                    "text": {"tag": "plain_text", "content": button_text},
-                    "type": "primary",
-                    "multi_url": {"url": thread_url, "pc_url": "", "android_url": "", "ios_url": ""},
-                },
-            ],
-        },
+        "body": {"elements": elements},
     }
 
 

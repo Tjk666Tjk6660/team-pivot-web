@@ -75,7 +75,8 @@ def publish_proposal(
     if notifier is not None:
         notifier.notify_new_thread(
             category=category, slug=slug, title=title,
-            author_name=user.name, body=body,
+            author_name=user.name,
+            filename=filename,
             mention_open_ids=mention_open_ids or None,
             mention_comments=mention_comments,
         )
@@ -135,7 +136,8 @@ def publish_reply(
         thread_title = _lookup_thread_title(workspace, category, slug)
         notifier.notify_new_reply(
             category=category, slug=slug, thread_title=thread_title,
-            author_name=user.name, body=body,
+            author_name=user.name,
+            filename=filename,
             mention_open_ids=mention_open_ids or None,
             mention_comments=mention_comments,
         )
