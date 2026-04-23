@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AtSign, Bot, ChevronLeft, FileText, Maximize2, Minimize2, PanelRightOpen, Star, X } from "lucide-react";
+import { AtSign, Bot, ChevronLeft, FileText, Maximize2, Minimize2, Sparkles, Star, X } from "lucide-react";
 import {
   addMention,
   changeThreadStatus,
@@ -39,7 +39,7 @@ const MOBILE_AI_PEEK_HEIGHT = 64;
 
 export function ThreadDetailPane() {
   const { category, slug } = useParams<{ category: string; slug: string }>();
-  const { reloadLists } = useDashboard();
+  const { reloadLists, ai } = useDashboard();
   const [data, setData] = useState<ThreadDetailData | null | undefined>(undefined);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiPaneWidth, setAiPaneWidth] = useState(520);
@@ -47,6 +47,7 @@ export function ThreadDetailPane() {
   const [mobileViewportHeight, setMobileViewportHeight] = useState(
     () => (typeof window === "undefined" ? 0 : Math.round(window.visualViewport?.height ?? window.innerHeight)),
   );
+  const [mobileKeyboardInset, setMobileKeyboardInset] = useState(0);
   const [mobileAiDragHeight, setMobileAiDragHeight] = useState<number | null>(null);
   const [desktopFloatFrame, setDesktopFloatFrame] = useState({ top: 16, height: 720 });
   const [aiPendingReplyTarget, setAiPendingReplyTarget] = useState<string | null>(null);
@@ -161,8 +162,13 @@ export function ThreadDetailPane() {
     if (typeof window === "undefined") return;
 
     const updateViewportHeight = () => {
-      const next = window.visualViewport?.height ?? window.innerHeight;
+      const viewport = window.visualViewport;
+      const next = viewport?.height ?? window.innerHeight;
+      const inset = viewport
+        ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop)
+        : 0;
       setMobileViewportHeight(Math.round(next));
+      setMobileKeyboardInset(Math.round(inset));
     };
 
     updateViewportHeight();
@@ -220,6 +226,29 @@ export function ThreadDetailPane() {
       return;
     }
     openMobileAi();
+  };
+
+  const openThreadAIAssistant = () => {
+    if (!category || !slug || data === undefined || data === null || data.posts.length === 0) return;
+    const threadFiles = data.posts.map((post) => `${category}/${slug}/${post.filename}`);
+    const [replyTarget, ...referenceFiles] = threadFiles;
+    ai.setReplyTarget(category, slug, threadKey, replyTarget);
+    ai.setReferenceFiles(category, slug, threadKey, referenceFiles);
+    ai.setInput(
+      threadKey,
+      [
+        "请按文件的时间顺序完整阅读这个主题中的全部文件。",
+        "先逐个概括每个文件分别讲了什么、推进了什么、回应了什么。",
+        "然后基于时间线总结这些文件之间最主要的关系，包括：谁在回应谁、哪些内容是在延续、补充、反驳或收敛前面的讨论。",
+        "最后用清晰的结构总结这个主题的整体讨论逻辑走线，以及目前形成了哪些结论、分歧和待解决问题。",
+      ].join("\n"),
+    );
+    setAiPendingReplyTarget(null);
+    if (isDesktopViewport()) {
+      setAiOpen(true);
+      return;
+    }
+    maximizeMobileAi();
   };
 
   const startMobileAiDrag = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -412,19 +441,13 @@ export function ThreadDetailPane() {
               </div>
               <Button
                 type="button"
-                variant="outline"
+                variant="default"
                 size="sm"
-                className="hidden h-9 shrink-0 rounded-lg border-slate-200 bg-white/80 px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 lg:inline-flex"
-                onClick={() => {
-                  if (!aiPendingReplyTarget && data.posts.length > 0) {
-                    const last = data.posts[data.posts.length - 1];
-                    setAiPendingReplyTarget(`${category}/${slug}/${last.filename}`);
-                  }
-                  setAiOpen((open) => !open);
-                }}
+                className="h-9 shrink-0 rounded-xl bg-blue-600 px-3.5 text-xs font-semibold text-white shadow-[0_8px_22px_rgba(37,99,235,0.24)] hover:bg-blue-700"
+                onClick={openThreadAIAssistant}
               >
-                <PanelRightOpen className="mr-1.5 h-3.5 w-3.5" />
-                {aiOpen ? "收起 AI 助手" : "打开 AI 助手"}
+                <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                AI 总结
               </Button>
             </div>
 
@@ -606,7 +629,7 @@ export function ThreadDetailPane() {
       )}
 
       {!isDesktopViewport() && mobileAiMode !== "closed" && (
-        <div className="fixed inset-x-0 bottom-0 z-50 sm:hidden">
+        <div className="fixed inset-x-0 z-50 sm:hidden" style={{ bottom: mobileKeyboardInset }}>
           <div
             className={cn(
               "overflow-hidden border border-slate-200 bg-white shadow-[0_-12px_30px_rgba(15,23,42,0.12)] transition-all duration-200 ease-out",
@@ -886,7 +909,7 @@ function ReplyPostCard({
   }, [post.body]);
 
   return (
-    <article className="rounded-[1.05rem] border border-slate-200/90 bg-white/86 px-4 py-4 shadow-[0_4px_16px_rgba(15,23,42,0.025)] sm:rounded-[1.15rem] sm:px-6">
+    <article className="rounded-[1.05rem] border border-slate-200/90 bg-white px-4 py-4 shadow-[0_4px_16px_rgba(15,23,42,0.025)] sm:rounded-[1.15rem] sm:px-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex items-start gap-3">

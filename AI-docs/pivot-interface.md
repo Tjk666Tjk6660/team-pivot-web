@@ -278,9 +278,16 @@
     - `current_status`
     - `created_at`
     - `updated_at`
+    - `file_count`
+    - `last_file_type?`
+    - `last_summary?`
   - `timeline[]`
     - 按时间顺序返回全部文件节点
-    - 每项建议至少包含：
+    - 每项建议包含三层信息：
+      - 卡片首屏字段
+      - 类型专属结构化字段
+      - 可选正文字段
+    - `timeline[]` 每项基础字段：
       - `file`
       - `created_at`
       - `creator`
@@ -289,10 +296,92 @@
       - `summary`
       - `quote?`
       - `refer?`
-      - `verifications?`
-      - `outcome?`
       - `comments`
       - `status_change?`
+      - `expanded`: `true | false`
+    - 类型专属字段：
+      - `think`
+        - 无额外必需字段
+      - `act`
+        - 无额外必需字段
+      - `verify`
+        - `verifications[]`
+          - `target`
+          - `judgement`
+          - `comment`
+      - `result`
+        - `outcome`
+      - `insight`
+        - 无额外必需字段
+    - 正文字段：
+      - `body?`
+        - 第一版可直接返回完整 Markdown 正文
+        - 如果后续列表首屏性能有压力，再改成按需加载
+  - 说明：
+    - 第一版建议 `GET /api/matters/{matter_id}` 直接返回完整 timeline 和文件正文，优先换取实现简单
+    - 前端时间轴和文件卡片首屏主要使用基础字段
+    - 文件展开后直接读取同一条 timeline item 里的 `body`
+    - `verify` 的被验证对象只通过 `verifications[]` 返回，不再通过 `refer` 表达
+    - `result` 的最终状态只通过 `outcome` 返回
+
+### GET /api/matters/{matter_id} 返回示例
+
+```json
+{
+  "matter": {
+    "id": "auth-redesign",
+    "title": "Authentication Redesign",
+    "current_status": "executing",
+    "created_at": "2026-04-23T10:00:00+08:00",
+    "updated_at": "2026-04-23T18:00:00+08:00",
+    "file_count": 6,
+    "last_file_type": "verify",
+    "last_summary": "003 行动通过；004 行动未通过"
+  },
+  "timeline": [
+    {
+      "file": "discussions/auth-redesign/001_dengke_think_f9e2.md",
+      "created_at": "2026-04-23T10:00:00+08:00",
+      "creator": "dengke",
+      "owner": "dengke",
+      "type": "think",
+      "summary": "梳理当前登录链路的问题和目标边界",
+      "quote": null,
+      "refer": [],
+      "comments": [],
+      "status_change": null,
+      "expanded": false,
+      "body": "# Summary\\n\\n梳理当前登录链路的问题和目标边界。"
+    },
+    {
+      "file": "discussions/auth-redesign/006_liuyu_verify_f6g7.md",
+      "created_at": "2026-04-23T15:30:00+08:00",
+      "creator": "liuyu",
+      "owner": "dengke",
+      "type": "verify",
+      "summary": "003 行动通过；004 行动未通过",
+      "quote": "discussions/auth-redesign/004_liuyu_act_b2c3.md",
+      "refer": [],
+      "verifications": [
+        {
+          "target": "discussions/auth-redesign/003_dengke_act_a1b2.md",
+          "judgement": "passed",
+          "comment": "主链路完成，质量一般，但结果可接受"
+        },
+        {
+          "target": "discussions/auth-redesign/004_liuyu_act_b2c3.md",
+          "judgement": "failed",
+          "comment": "关键边界遗漏，当前结果不可接受"
+        }
+      ],
+      "comments": [],
+      "status_change": null,
+      "expanded": false,
+      "body": "# Verifications\\n\\n- 003_dengke_act_a1b2.md\\n  - judgement: passed\\n  - comment: 主链路完成，质量一般，但结果可接受"
+    }
+  ]
+}
+```
 
 ### POST /api/matters
 - 作用：创建新的 `matter`

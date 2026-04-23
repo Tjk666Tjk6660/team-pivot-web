@@ -41,6 +41,7 @@ export function AIPane({
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   const [targetOpen, setTargetOpen] = useState(!replyTarget);
   const [referencesOpen, setReferencesOpen] = useState(false);
 
@@ -62,6 +63,20 @@ export function AIPane({
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const ensureComposerVisible = () => {
+      requestAnimationFrame(() => {
+        composerRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      });
+    };
+
+    const viewport = window.visualViewport;
+    viewport?.addEventListener("resize", ensureComposerVisible);
+    return () => viewport?.removeEventListener("resize", ensureComposerVisible);
+  }, []);
 
   useEffect(() => {
     if (!replyTarget) {
@@ -284,7 +299,7 @@ export function AIPane({
         })}
       </div>
 
-      <div className="shrink-0 rounded-xl border border-slate-200/80 bg-slate-50/80 p-3.5 pb-5">
+      <div ref={composerRef} className="shrink-0 rounded-xl border border-slate-200/80 bg-slate-50/80 p-3.5 pb-5">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
             <Bot className="h-4 w-4 text-blue-600" />
@@ -339,6 +354,11 @@ export function AIPane({
             ref={inputRef}
             value={input}
             onChange={(e) => ai.setInput(threadKey, e.target.value)}
+            onFocus={() => {
+              requestAnimationFrame(() => {
+                composerRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+              });
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
