@@ -12,6 +12,7 @@ htmlcov/
 venv/
 *.local
 .DS_Store
+.idea/
 
 # docs/superpowers/
 docs/superpowers/

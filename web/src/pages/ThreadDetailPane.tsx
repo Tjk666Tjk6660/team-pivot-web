@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -37,8 +37,14 @@ const COLLAPSE_HEIGHT = 208;
 const MOBILE_AI_TOP_OFFSET = 64;
 const MOBILE_AI_PEEK_HEIGHT = 64;
 
+function postAnchorId(filename: string): string {
+  const base = filename.endsWith(".md") ? filename.slice(0, -3) : filename;
+  return `post-${base}`;
+}
+
 export function ThreadDetailPane() {
   const { category, slug } = useParams<{ category: string; slug: string }>();
+  const [searchParams] = useSearchParams();
   const { reloadLists, ai } = useDashboard();
   const [data, setData] = useState<ThreadDetailData | null | undefined>(undefined);
   const [aiOpen, setAiOpen] = useState(false);
@@ -132,6 +138,20 @@ export function ThreadDetailPane() {
       .then(setWorkspaceMirror)
       .catch(() => setWorkspaceMirror(null));
   }, []);
+
+  // W1: feishu mention 卡片里 "查看该帖子" 按钮深链带 ?post=<anchor>#post-<anchor>，
+  // 这里在数据加载完成后读 URL 参数并滚动到对应 post 元素。下一帧再滚，
+  // 保证 <div id="post-..."> 已经 mount。
+  useEffect(() => {
+    if (!data) return;
+    const target = searchParams.get("post");
+    if (!target) return;
+    const raf = requestAnimationFrame(() => {
+      const el = document.getElementById(`post-${target}`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [data, searchParams]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -452,47 +472,49 @@ export function ThreadDetailPane() {
             </div>
 
             {proposalPost && (
-              <ProposalHeroCard
-                post={proposalPost}
-                category={category!}
-                slug={slug!}
-                threadStatus={data.meta.status}
-                postCount={data.meta.post_count}
-                favorite={favorite}
-                favoriteSaving={favoriteSaving}
-                githubFileUrl={buildGitHubFileUrl(
-                  workspaceMirror?.repo_url ?? null,
-                  workspaceMirror?.head ?? workspaceMirror?.branch ?? null,
-                  category!,
-                  slug!,
-                  proposalPost.filename,
-                )}
-                onToggleFavorite={async () => {
-                  if (!category || !slug) return;
-                  setFavoriteSaving(true);
-                  try {
-                    const next = !favorite;
-                    await setThreadFavorite(category, slug, next);
-                    setData((current) => current ? {
-                      ...current,
-                      meta: { ...current.meta, favorite: next },
-                    } : current);
-                    await reloadLists();
-                  } catch (e) {
-                    toast.error(e instanceof Error ? e.message : String(e));
-                  } finally {
-                    setFavoriteSaving(false);
-                  }
-                }}
-                onStatusChange={async (to, reason) => {
-                  if (!category || !slug) return;
-                  await changeThreadStatus(category, slug, to, reason);
-                  load();
-                  reloadLists();
-                }}
-                onAIReply={() => openAIReply(proposalPost)}
-                onMentioned={load}
-              />
+              <div id={postAnchorId(proposalPost.filename)} className="scroll-mt-4">
+                <ProposalHeroCard
+                  post={proposalPost}
+                  category={category!}
+                  slug={slug!}
+                  threadStatus={data.meta.status}
+                  postCount={data.meta.post_count}
+                  favorite={favorite}
+                  favoriteSaving={favoriteSaving}
+                  githubFileUrl={buildGitHubFileUrl(
+                    workspaceMirror?.repo_url ?? null,
+                    workspaceMirror?.head ?? workspaceMirror?.branch ?? null,
+                    category!,
+                    slug!,
+                    proposalPost.filename,
+                  )}
+                  onToggleFavorite={async () => {
+                    if (!category || !slug) return;
+                    setFavoriteSaving(true);
+                    try {
+                      const next = !favorite;
+                      await setThreadFavorite(category, slug, next);
+                      setData((current) => current ? {
+                        ...current,
+                        meta: { ...current.meta, favorite: next },
+                      } : current);
+                      await reloadLists();
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : String(e));
+                    } finally {
+                      setFavoriteSaving(false);
+                    }
+                  }}
+                  onStatusChange={async (to, reason) => {
+                    if (!category || !slug) return;
+                    await changeThreadStatus(category, slug, to, reason);
+                    load();
+                    reloadLists();
+                  }}
+                  onAIReply={() => openAIReply(proposalPost)}
+                  onMentioned={load}
+                />
+              </div>
             )}
 
             <section className="space-y-3">
@@ -507,22 +529,27 @@ export function ThreadDetailPane() {
 
               {replyPosts.length > 0 ? (
                 replyPosts.map((post, index) => (
-                  <ReplyPostCard
+                  <div
                     key={post.filename}
-                    post={post}
-                    postNumber={proposalPost ? index + 2 : index + 1}
-                    category={category!}
-                    slug={slug!}
-                    githubFileUrl={buildGitHubFileUrl(
-                      workspaceMirror?.repo_url ?? null,
-                      workspaceMirror?.head ?? workspaceMirror?.branch ?? null,
-                      category!,
-                      slug!,
-                      post.filename,
-                    )}
-                    onAIReply={() => openAIReply(post)}
-                    onMentioned={load}
-                  />
+                    id={postAnchorId(post.filename)}
+                    className="scroll-mt-4"
+                  >
+                    <ReplyPostCard
+                      post={post}
+                      postNumber={proposalPost ? index + 2 : index + 1}
+                      category={category!}
+                      slug={slug!}
+                      githubFileUrl={buildGitHubFileUrl(
+                        workspaceMirror?.repo_url ?? null,
+                        workspaceMirror?.head ?? workspaceMirror?.branch ?? null,
+                        category!,
+                        slug!,
+                        post.filename,
+                      )}
+                      onAIReply={() => openAIReply(post)}
+                      onMentioned={load}
+                    />
+                  </div>
                 ))
               ) : (
                 <div className="rounded-2xl border border-dashed border-slate-200 bg-white/50 px-5 py-6 text-sm text-slate-500">
