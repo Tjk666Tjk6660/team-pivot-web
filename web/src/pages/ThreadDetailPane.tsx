@@ -801,6 +801,7 @@ function ProposalHeroCard({
   const bodyRef = useRef<HTMLDivElement>(null);
   const [overflows, setOverflows] = useState(false);
   const [collapsed, setCollapsed] = useState(true);
+  const [headerCollapseHint, setHeaderCollapseHint] = useState(false);
 
   useLayoutEffect(() => {
     const el = bodyRef.current;
@@ -808,17 +809,43 @@ function ProposalHeroCard({
     setOverflows(el.scrollHeight > el.clientHeight + 2);
   }, [post.body]);
 
+  useEffect(() => {
+    if (!headerCollapseHint) return;
+    const timer = window.setTimeout(() => setHeaderCollapseHint(false), 1200);
+    return () => window.clearTimeout(timer);
+  }, [headerCollapseHint]);
+
+  const toggleCollapsed = (source: "header" | "footer") => {
+    setCollapsed((value) => {
+      const next = !value;
+      if (source === "footer" && value && !next) {
+        setHeaderCollapseHint(true);
+      }
+      if (next) {
+        setHeaderCollapseHint(false);
+      }
+      return next;
+    });
+  };
+
   return (
     <article className="paper-panel rounded-[1.2rem] border p-4 sm:rounded-[1.3rem] sm:p-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex min-w-0 items-start gap-3 sm:gap-4">
           <PostTypeBadge type="proposal" />
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-slate-500 sm:text-sm">
-              <span>第 1 条记录</span>
-              <span>作者：</span>
-              <span className="font-medium text-slate-900">{author}</span>
-              {created ? <span>{formatFullDateTime(created)}</span> : null}
+            <div className="flex flex-wrap items-center gap-2 text-[12px] text-slate-500 sm:text-sm">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span>第 1 条记录</span>
+                <span>作者：</span>
+                <span className="font-medium text-slate-900">{author}</span>
+                {created ? <span>{formatFullDateTime(created)}</span> : null}
+              </div>
+              <CollapseHeaderAction
+                visible={overflows && !collapsed}
+                active={headerCollapseHint}
+                onClick={() => toggleCollapsed("header")}
+              />
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500 sm:text-xs">
               <span className="font-mono">{post.filename}</span>
@@ -863,7 +890,7 @@ function ProposalHeroCard({
         {overflows && (
           <button
             type="button"
-            onClick={() => setCollapsed((value) => !value)}
+            onClick={() => toggleCollapsed("footer")}
             className="mt-2 text-xs text-primary hover:underline"
           >
             {collapsed ? "展开全文 ↓" : "收起全文 ↑"}
@@ -924,12 +951,32 @@ function ReplyPostCard({
   const bodyRef = useRef<HTMLDivElement>(null);
   const [overflows, setOverflows] = useState(false);
   const [collapsed, setCollapsed] = useState(true);
+  const [headerCollapseHint, setHeaderCollapseHint] = useState(false);
 
   useLayoutEffect(() => {
     const el = bodyRef.current;
     if (!el) return;
     setOverflows(el.scrollHeight > el.clientHeight + 2);
   }, [post.body]);
+
+  useEffect(() => {
+    if (!headerCollapseHint) return;
+    const timer = window.setTimeout(() => setHeaderCollapseHint(false), 1200);
+    return () => window.clearTimeout(timer);
+  }, [headerCollapseHint]);
+
+  const toggleCollapsed = (source: "header" | "footer") => {
+    setCollapsed((value) => {
+      const next = !value;
+      if (source === "footer" && value && !next) {
+        setHeaderCollapseHint(true);
+      }
+      if (next) {
+        setHeaderCollapseHint(false);
+      }
+      return next;
+    });
+  };
 
   return (
     <article className="rounded-[1.05rem] border border-slate-200/90 bg-white px-4 py-4 shadow-[0_4px_16px_rgba(15,23,42,0.025)] sm:rounded-[1.15rem] sm:px-6">
@@ -938,11 +985,18 @@ function ReplyPostCard({
           <div className="flex items-start gap-3">
             <PostTypeBadge type={type === "reply" ? "reply" : "post"} compact />
             <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-slate-500 sm:text-sm">
-                <span>{`第 ${postNumber} 条记录`}</span>
-                <span>作者：</span>
-                <span className="font-medium text-slate-900">{author}</span>
-                {created ? <span className="text-xs text-slate-500">{formatFullDateTime(created)}</span> : null}
+              <div className="flex flex-wrap items-center gap-2 text-[12px] text-slate-500 sm:text-sm">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span>{`第 ${postNumber} 条记录`}</span>
+                  <span>作者：</span>
+                  <span className="font-medium text-slate-900">{author}</span>
+                  {created ? <span className="text-xs text-slate-500">{formatFullDateTime(created)}</span> : null}
+                </div>
+                <CollapseHeaderAction
+                  visible={overflows && !collapsed}
+                  active={headerCollapseHint}
+                  onClick={() => toggleCollapsed("header")}
+                />
               </div>
               {githubFileUrl ? (
                 <a
@@ -993,13 +1047,42 @@ function ReplyPostCard({
       {overflows && (
         <button
           type="button"
-          onClick={() => setCollapsed((value) => !value)}
+          onClick={() => toggleCollapsed("footer")}
           className="mt-2 text-xs text-primary hover:underline"
         >
           {collapsed ? "展开全文 ↓" : "收起全文 ↑"}
         </button>
       )}
     </article>
+  );
+}
+
+function CollapseHeaderAction({
+  visible,
+  active,
+  onClick,
+}: {
+  visible: boolean;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-hidden={!visible}
+      tabIndex={visible ? 0 : -1}
+      className={cn(
+        "inline-flex h-7 items-center gap-1 rounded-full border px-2.5 text-[11px] font-medium transition-all duration-300 sm:text-xs",
+        visible
+          ? "pointer-events-auto translate-y-0 opacity-100 border-blue-200 bg-blue-50 text-blue-700 shadow-[0_6px_16px_rgba(37,99,235,0.12)]"
+          : "pointer-events-none -translate-y-1 opacity-0 border-transparent bg-transparent text-transparent shadow-none",
+        active && "scale-[1.04] border-blue-300 bg-blue-100 shadow-[0_10px_24px_rgba(37,99,235,0.18)]",
+      )}
+    >
+      收起全文
+      <span className={cn("transition-transform duration-300", active && "-translate-y-0.5")}>↑</span>
+    </button>
   );
 }
 
