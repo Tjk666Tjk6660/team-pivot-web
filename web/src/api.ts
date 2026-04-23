@@ -55,6 +55,220 @@ export async function fetchThreads(category?: string): Promise<ThreadMeta[]> {
   return body.items;
 }
 
+// ── Matter (pivot-interface.md §Matter API) ────────────────────────────────
+
+export type MatterStatus =
+  | "planning" | "executing" | "paused" | "finished" | "cancelled" | "reviewed";
+
+export type DocType = "think" | "act" | "verify" | "result" | "insight";
+
+export type Judgement = "passed" | "failed" | "cancelled";
+
+export type Outcome = "finished" | "cancelled";
+
+export type StatusChange = { from: MatterStatus; to: MatterStatus };
+
+export type Verification = {
+  target: string;
+  judgement: Judgement;
+  comment: string;
+};
+
+export type TimelineComment = {
+  author: string;
+  created_at: string;
+  body: string;
+  mentions?: string[];
+};
+
+export type TimelineItem = {
+  file: string;
+  created_at: string;
+  creator: string;
+  owner: string;
+  type: DocType;
+  summary: string;
+  quote: string | null;
+  refer: string[];
+  comments: TimelineComment[];
+  status_change: StatusChange | null;
+  expanded: boolean;
+  body: string;
+  verifications?: Verification[];
+  outcome?: Outcome;
+};
+
+export type MatterSummary = {
+  id: string;
+  title: string;
+  current_status: MatterStatus;
+  created_at: string;
+  updated_at: string;
+  file_count: number;
+  last_file_type: DocType | null;
+  last_summary: string | null;
+};
+
+export type MatterMeta = MatterSummary;
+
+export type MatterDetail = {
+  matter: MatterMeta;
+  timeline: TimelineItem[];
+};
+
+export async function fetchMatters(query?: {
+  status?: MatterStatus;
+  owner?: string;
+  q?: string;
+}): Promise<MatterSummary[]> {
+  const params = new URLSearchParams();
+  if (query?.status) params.set("status", query.status);
+  if (query?.owner) params.set("owner", query.owner);
+  if (query?.q) params.set("q", query.q);
+  const qs = params.toString() ? `?${params}` : "";
+  const r = await fetch(`/api/matters${qs}`, { credentials: "include" });
+  if (!r.ok) throw new Error(`/api/matters failed: ${r.status}`);
+  const body = (await r.json()) as { items: MatterSummary[] };
+  return body.items;
+}
+
+export async function fetchMatter(matterId: string): Promise<MatterDetail> {
+  const r = await fetch(`/api/matters/${encodeURIComponent(matterId)}`, {
+    credentials: "include",
+  });
+  if (r.status === 404) throw new Error("matter not found");
+  if (!r.ok) throw new Error(`fetch matter failed: ${r.status}`);
+  return (await r.json()) as MatterDetail;
+}
+
+export type InitialFileIn = {
+  type: DocType;
+  summary: string;
+  body?: string;
+  owner?: string | null;
+  comments?: { body: string; mentions?: string[] }[];
+};
+
+export type NewMatterResponse = {
+  matter: MatterMeta;
+  initial_timeline_item: TimelineItem;
+  matter_id: string;
+  file: string;
+};
+
+export async function createMatter(body: {
+  category: string;
+  title: string;
+  initial_file: InitialFileIn;
+}): Promise<NewMatterResponse> {
+  const r = await fetch("/api/matters", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    const detail = typeof d.detail === "string"
+      ? d.detail
+      : d.detail?.message || d.detail?.code || `create matter failed: ${r.status}`;
+    throw new Error(detail);
+  }
+  return (await r.json()) as NewMatterResponse;
+}
+
+export type NewFileIn = {
+  type: DocType;
+  summary: string;
+  body?: string;
+  owner?: string | null;
+  quote?: string | null;
+  refer?: string[];
+  comments?: { body: string; mentions?: string[] }[];
+  verifications?: Verification[];
+  outcome?: Outcome;
+  status_change?: StatusChange;
+};
+
+export type AppendFileResponse = {
+  item: TimelineItem;
+  matter: MatterMeta;
+};
+
+export async function appendMatterFile(
+  matterId: string,
+  body: NewFileIn,
+): Promise<AppendFileResponse> {
+  const r = await fetch(
+    `/api/matters/${encodeURIComponent(matterId)}/files`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    const detail = typeof d.detail === "string"
+      ? d.detail
+      : d.detail?.message || d.detail?.code || `append file failed: ${r.status}`;
+    throw new Error(detail);
+  }
+  return (await r.json()) as AppendFileResponse;
+}
+
+export async function appendMatterResult(
+  matterId: string,
+  body: {
+    summary: string;
+    body?: string;
+    outcome: Outcome;
+    comments?: { body: string; mentions?: string[] }[];
+  },
+): Promise<AppendFileResponse> {
+  const r = await fetch(
+    `/api/matters/${encodeURIComponent(matterId)}/result`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    const detail = typeof d.detail === "string"
+      ? d.detail
+      : d.detail?.message || d.detail?.code || `append result failed: ${r.status}`;
+    throw new Error(detail);
+  }
+  return (await r.json()) as AppendFileResponse;
+}
+
+export async function appendMatterComment(
+  matterId: string,
+  body: { target_file: string; body: string; mentions?: string[] },
+): Promise<{ item: TimelineItem }> {
+  const r = await fetch(
+    `/api/matters/${encodeURIComponent(matterId)}/comments`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    const detail = typeof d.detail === "string"
+      ? d.detail
+      : d.detail?.message || d.detail?.code || `append comment failed: ${r.status}`;
+    throw new Error(detail);
+  }
+  return (await r.json()) as { item: TimelineItem };
+}
+
 export type WorkspaceStatus = {
   ready: boolean;
   path: string;

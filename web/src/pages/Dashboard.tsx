@@ -15,15 +15,15 @@ import {
   deleteDraft,
   fetchAIConversation,
   fetchDrafts,
-  fetchThreads,
+  fetchMatters,
   fetchWorkspaceStatus,
   refreshWorkspace,
   saveAIConversation,
   streamAIChat,
   type ChatMessage,
   type Draft,
+  type MatterSummary,
   type Me,
-  type ThreadMeta,
   type WorkspaceStatus,
 } from "@/api";
 import { Button } from "@/components/ui/button";
@@ -109,7 +109,7 @@ export function useDashboard() {
 
 export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const location = useLocation();
-  const [threads, setThreads] = useState<ThreadMeta[] | null>(null);
+  const [matters, setMatters] = useState<MatterSummary[] | null>(null);
   const [drafts, setDrafts] = useState<Draft[] | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceStatus | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -117,7 +117,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const [aiThreads, setAiThreads] = useState<Record<string, AIThreadState>>({});
   const [activeAIStream, setActiveAIStream] = useState<ActiveAIStream>(null);
-  const isThreadView = location.pathname.startsWith("/t/");
+  const isThreadView = location.pathname.startsWith("/m/");
   const layoutRef = useRef<HTMLDivElement>(null);
   const aiThreadsRef = useRef<Record<string, AIThreadState>>({});
   const activeAIStreamRef = useRef<ActiveAIStream>(null);
@@ -132,10 +132,10 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
 
   const load = async () => {
     try {
-      const [t, w, d] = await Promise.all([
-        fetchThreads(), fetchWorkspaceStatus(), fetchDrafts(),
+      const [m, w, d] = await Promise.all([
+        fetchMatters(), fetchWorkspaceStatus(), fetchDrafts(),
       ]);
-      setThreads(t); setWorkspace(w); setDrafts(d);
+      setMatters(m); setWorkspace(w); setDrafts(d);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     }
@@ -464,7 +464,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
             </Link>
             <nav className="flex items-center gap-2">
               <span className="inline-flex h-10 items-center border-b-2 border-blue-600 px-1 text-sm font-semibold text-slate-900">
-                讨论
+                事项
               </span>
             </nav>
           </div>
@@ -508,7 +508,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
           {sidebarOpen && (
             <ThreadListPane
               drafts={drafts}
-              threads={threads}
+              matters={matters}
               onRemoveDraft={removeDraft}
             />
           )}
