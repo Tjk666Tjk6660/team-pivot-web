@@ -319,18 +319,24 @@ def test_view_missing_returns_none(tmp_path):
 
 def test_timeline_item_key_order_matches_example(tmp_path):
     path = _bootstrap(tmp_path)
+    # First add an act so the verify has a valid target in the same matter.
+    act_path = "discussions/auth-redesign/002_u_act_a.md"
+    append_file_item(path, item={
+        "file": act_path,
+        "creator": "u", "type": "act", "summary": "act1",
+    }, now_iso="2026-04-23T10:30:00+08:00")
     # Caller presents fields in arbitrary order
     append_file_item(path, item={
         "summary": "s",
         "type": "verify",
         "creator": "u",
-        "verifications": [{"target": "001_dengke_think_aaa.md", "judgement": "passed", "comment": "ok"}],
-        "file": "discussions/auth-redesign/002_u_verify.md",
-        "quote": "discussions/auth-redesign/001_dengke_think_aaa.md",
+        "verifications": [{"target": act_path, "judgement": "passed", "comment": "ok"}],
+        "file": "discussions/auth-redesign/003_u_verify.md",
+        "quote": act_path,
     }, now_iso="2026-04-23T11:00:00+08:00")
     raw = path.read_text(encoding="utf-8")
     # The verify item should have file first, then created_at, creator, owner, type, summary, quote, verifications
-    verify_block = raw.split("- file: discussions/auth-redesign/002_u_verify.md", 1)[1]
+    verify_block = raw.split("- file: discussions/auth-redesign/003_u_verify.md", 1)[1]
     # Assert the first six keys appear in the canonical order
     idx_created = verify_block.find("created_at:")
     idx_creator = verify_block.find("creator:")

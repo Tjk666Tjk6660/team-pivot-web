@@ -89,7 +89,7 @@ def validate_append(
             )
 
     if doc_type == "verify":
-        err = _validate_verify_shape(item)
+        err = _validate_verify_shape(item, index_data)
         if err:
             return err
 
@@ -101,7 +101,9 @@ def validate_append(
     return OK
 
 
-def _validate_verify_shape(item: dict[str, Any]) -> ValidationResult | None:
+def _validate_verify_shape(
+    item: dict[str, Any], index_data: dict[str, Any]
+) -> ValidationResult | None:
     verifications = item.get("verifications")
     if verifications is None:
         return _fail(
@@ -115,6 +117,19 @@ def _validate_verify_shape(item: dict[str, Any]) -> ValidationResult | None:
             "verifications",
             "verifications must be a non-empty list",
         )
+    # Build local (same-matter) file → type map from timeline.
+    # A target is valid when:
+    #   (a) it exists in the current matter timeline and its type == "act", OR
+    #   (b) it appears in the item's refer[] (treated as cross-matter whitelist;
+    #       the pure validator trusts the client on cross-matter type per
+    #       AI-docs/designs/2026-04-23-index-refactor-design.md §2.4).
+    local_types: dict[str, str] = {}
+    for entry in index_data.get("timeline") or []:
+        path = entry.get("file")
+        if path:
+            local_types[path] = entry.get("type") or ""
+    refer_set = set(item.get("refer") or [])
+
     for i, v in enumerate(verifications):
         if not isinstance(v, dict):
             return _fail(
@@ -122,7 +137,8 @@ def _validate_verify_shape(item: dict[str, Any]) -> ValidationResult | None:
                 f"verifications[{i}]",
                 "each verification must be an object",
             )
-        if not v.get("target"):
+        target = v.get("target")
+        if not target:
             return _fail(
                 "verification_target_required",
                 f"verifications[{i}].target",
@@ -135,6 +151,22 @@ def _validate_verify_shape(item: dict[str, Any]) -> ValidationResult | None:
                 f"verifications[{i}].judgement",
                 f"judgement must be one of {sorted(VALID_JUDGEMENTS)}",
             )
+        local_type = local_types.get(target)
+        if local_type is not None:
+            if local_type != "act":
+                return _fail(
+                    "verification_target_not_act",
+                    f"verifications[{i}].target",
+                    f"target exists in timeline with type {local_type!r}; must be 'act'",
+                )
+            continue
+        if target in refer_set:
+            continue
+        return _fail(
+            "verification_target_not_found",
+            f"verifications[{i}].target",
+            f"target {target!r} is not in matter timeline and not listed in refer[]",
+        )
     return None
 
 

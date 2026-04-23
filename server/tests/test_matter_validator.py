@@ -20,9 +20,14 @@ def test_act_in_planning_ok():
 
 
 def test_verify_in_planning_ok():
+    # Target whitelisted via refer (cross-matter); validator trusts client.
     item = {
         "type": "verify",
-        "verifications": [{"target": "f.md", "judgement": "passed", "comment": ""}],
+        "refer": ["discussions/other/001_u_act_a.md"],
+        "verifications": [
+            {"target": "discussions/other/001_u_act_a.md",
+             "judgement": "passed", "comment": ""},
+        ],
     }
     assert validate_append(_matter("planning"), item) == OK
 
@@ -190,9 +195,88 @@ def test_verify_all_three_judgements_accepted():
     for j in ("passed", "failed", "cancelled"):
         item = {
             "type": "verify",
+            "refer": ["x.md"],
             "verifications": [{"target": "x.md", "judgement": j}],
         }
         assert validate_append(_matter("planning"), item).ok
+
+
+# ---------- verify.target whitelist (P4) ----------
+
+
+def _matter_with_timeline(status: str, timeline: list[dict]) -> dict:
+    return {"matter": {"current_status": status}, "timeline": timeline}
+
+
+def test_verify_target_is_local_act_ok():
+    index = _matter_with_timeline("planning", [
+        {"file": "discussions/m/001_u_act_a.md", "type": "act"},
+    ])
+    item = {
+        "type": "verify",
+        "verifications": [{"target": "discussions/m/001_u_act_a.md",
+                           "judgement": "passed", "comment": ""}],
+    }
+    assert validate_append(index, item) == OK
+
+
+def test_verify_target_local_but_not_act_rejected():
+    index = _matter_with_timeline("planning", [
+        {"file": "discussions/m/001_u_think_a.md", "type": "think"},
+    ])
+    item = {
+        "type": "verify",
+        "verifications": [{"target": "discussions/m/001_u_think_a.md",
+                           "judgement": "passed", "comment": ""}],
+    }
+    r = validate_append(index, item)
+    assert not r.ok and r.code == "verification_target_not_act"
+
+
+def test_verify_target_not_in_timeline_and_not_refer_rejected():
+    index = _matter_with_timeline("planning", [
+        {"file": "discussions/m/001_u_act_a.md", "type": "act"},
+    ])
+    item = {
+        "type": "verify",
+        "verifications": [{"target": "discussions/other/999_unknown.md",
+                           "judgement": "passed", "comment": ""}],
+    }
+    r = validate_append(index, item)
+    assert not r.ok and r.code == "verification_target_not_found"
+
+
+def test_verify_target_via_refer_whitelist_ok():
+    # Cross-matter target listed in refer is trusted by the pure validator.
+    index = _matter_with_timeline("planning", [
+        {"file": "discussions/m/001_u_act_a.md", "type": "act"},
+    ])
+    item = {
+        "type": "verify",
+        "refer": ["discussions/other/123_u_act_x.md"],
+        "verifications": [{"target": "discussions/other/123_u_act_x.md",
+                           "judgement": "passed", "comment": ""}],
+    }
+    assert validate_append(index, item) == OK
+
+
+def test_verify_multiple_targets_one_bad_rejected():
+    index = _matter_with_timeline("planning", [
+        {"file": "discussions/m/001_u_act_a.md", "type": "act"},
+        {"file": "discussions/m/002_u_think_b.md", "type": "think"},
+    ])
+    item = {
+        "type": "verify",
+        "verifications": [
+            {"target": "discussions/m/001_u_act_a.md",
+             "judgement": "passed", "comment": ""},
+            {"target": "discussions/m/002_u_think_b.md",
+             "judgement": "failed", "comment": ""},
+        ],
+    }
+    r = validate_append(index, item)
+    assert not r.ok and r.code == "verification_target_not_act"
+    assert r.field == "verifications[1].target"
 
 
 # ---------- result shape rejections ----------

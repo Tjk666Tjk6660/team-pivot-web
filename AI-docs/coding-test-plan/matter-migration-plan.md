@@ -137,44 +137,48 @@
 
 ---
 
-## P4 · creator/owner + verify/insight/reviewed 完善
+## P4 · verify.target 跨时间线白名单校验
 
-**目标**：责任字段严格化；verify / insight 后端闭环；`reviewed` 可达；AI 候选写入通路就绪。
+**目标**：补齐 `verify.verifications[].target` 的跨时间线存在性与类型校验；P1/P2 已做完的 creator/owner、insight→reviewed 触发、全生命周期等不再重复。
 
-### 任务拆解
+### 范围对齐（与 P1/P2 去重）
 
-1. creator/owner 严格化
-   - writer：`creator` = 当前用户 pinyin；`owner` = 请求体值，未传默认 creator；`act` 允许 owner ≠ creator
-   - 名称解析沿用 `users → contacts → open_id` 回退链
-2. verify 补齐
-   - `verifications[].target` 必须指向本 matter 内已存在且 `type=act` 的文件
-   - `judgement ∈ {passed, failed, cancelled}`
-3. insight → reviewed
-   - 仅 `insight` 可触发 `finished|cancelled → reviewed`
-   - 前置：matter 必须在 finished 或 cancelled
-4. AI 候选字段通路
-   - writer 接受可选 `ai_candidate_*` 元数据（summary / quote / refer / verifications.comment / status_change）
-   - 事件流记录采纳 / 丢弃
-5. `reviewed` 终态事件：独立 topic，供 AI-monitor 停止巡视
-6. 测试：owner 分叉、verify target 非法拒绝、insight 非终态拒绝、AI 候选采纳/丢弃两路径
+- P1/P2 已完成、不在 P4 重做：
+  - `creator/owner` 严格化（`_build_timeline_item` / `_body_to_item_preview` 已落）
+  - `act.owner` 允许非 creator
+  - `verifications[].judgement ∈ {passed, failed, cancelled}`（validator 已校验）
+  - `insight` 携带 `status_change: finished|cancelled → reviewed` 时触发（trigger 表 + `apply_status_change` 已支持）
+  - 全生命周期 `planning → executing → verify → result → reviewed` 端到端（`test_matters_api.py::test_full_lifecycle_planning_to_reviewed`）
+- 从 P4 移除、交给 AI-monitor 自行设计：
+  - `ai_candidate_*` 元数据通路（无权威文档依据，由 AI-monitor 设计时自定契约）
+  - `reviewed` 独立事件 topic（`matter.status_changed` 已含 `to` 字段，消费者自行 filter）
+
+### 任务拆解（本次实做）
+
+1. `verify.verifications[].target` 白名单校验 —— 按 `AI-docs/designs/2026-04-23-index-refactor-design.md §2.4` 实现：
+   - target 必须指向同 matter timeline 中已存在且 `type=act` 的文件；
+   - 或 target 在当前 item 的 `refer[]` 里（视为跨 matter 白名单，纯函数不做跨文件类型验证，信任客户端声明）。
+   - 新增错误码：`verification_target_not_found` / `verification_target_not_act`。
+2. 扩 `matter_validator.validate_append`：verify 走进类型专属分支时执行上面的白名单检查。
+3. 测试补齐：
+   - 本 matter 内 act 通过；
+   - 本 matter 内非 act（think / verify / result / insight）拒绝，错误码 `verification_target_not_act`；
+   - 不在 timeline 也不在 refer 拒绝，错误码 `verification_target_not_found`；
+   - 不在 timeline 但在 item.refer 通过（跨 matter 白名单）。
 
 ### 预审事项（核心）
 
-- `ai_candidate_*` 元数据 shape 与落点（frontmatter / INDEX / 独立侧表）
-- `reviewed` 入口：`insight` 自动触发 vs 用户显式确认
-- `verify.target` 校验范围：仅本 matter 内，还是允许跨 matter
+- 无。design doc §2.4 已定规则，其余 P1/P2 已做完。
 
 ### 交付物
 
-- writer 层校验强化
-- AI 候选字段通路 + 采纳事件
-- reviewed 终态事件
+- `server/matter_validator.py` 扩展
+- 对应 pytest 用例（新增 4 类）
 
 ### 验收
 
-- `uv run pytest -q` 全绿
-- 端到端跑完整生命周期：`planning → act 触发 executing → verify → result 触发 finished → insight 触发 reviewed`
-- AI 候选采纳/丢弃在事件流中可观察
+- `uv run pytest -q` 全绿（P4 新增用例 + 原有 311 项不退化）
+- 新增 2 个错误码在 API 路径上可复现（由 API 层 422 返回）
 
 ---
 

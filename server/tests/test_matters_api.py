@@ -246,6 +246,64 @@ def test_append_verify_with_verifications(client):
     assert item["verifications"][0]["judgement"] == "passed"
 
 
+def test_append_verify_target_not_found_422(client):
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+
+    r2 = client.post(f"/api/matters/{matter_id}/files", json={
+        "type": "verify",
+        "summary": "check",
+        "verifications": [
+            {"target": "discussions/other/999_nobody.md",
+             "judgement": "passed", "comment": ""},
+        ],
+    })
+    assert r2.status_code == 422
+    assert r2.json()["detail"]["code"] == "verification_target_not_found"
+
+
+def test_append_verify_target_not_act_422(client):
+    # Matter has a think only; verify pointing at it should be rejected.
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+    think_file = r.json()["initial_timeline_item"]["file"]
+
+    r2 = client.post(f"/api/matters/{matter_id}/files", json={
+        "type": "verify",
+        "summary": "check",
+        "verifications": [
+            {"target": think_file, "judgement": "passed", "comment": ""},
+        ],
+    })
+    assert r2.status_code == 422
+    assert r2.json()["detail"]["code"] == "verification_target_not_act"
+
+
+def test_append_verify_target_via_refer_ok(client):
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+    external = "discussions/another-matter/001_u_act_x.md"
+
+    r2 = client.post(f"/api/matters/{matter_id}/files", json={
+        "type": "verify",
+        "summary": "check cross-matter",
+        "refer": [external],
+        "verifications": [
+            {"target": external, "judgement": "passed", "comment": "cross-matter"},
+        ],
+    })
+    assert r2.status_code == 200, r2.text
+
+
 def test_append_verify_missing_verifications_422(client):
     r = client.post("/api/matters", json={
         "category": "Pivot", "title": "T",
