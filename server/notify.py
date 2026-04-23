@@ -431,7 +431,7 @@ def build_standalone_mention_card(
     info_block = "<br>".join(info_rows)
 
     return _card_shell(
-        header=f"提及：{thread_title}",
+        header=f"📣 提及：{thread_title}",
         template="orange",
         markdown="\n\n".join([comment_line, info_block]),
         button_text="查看该帖子",

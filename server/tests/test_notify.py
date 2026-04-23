@@ -246,7 +246,7 @@ def test_standalone_mention_card_structure():
 
     # 7. header 和模板
     assert card["header"]["template"] == "orange"
-    assert "提及：EnClaws 内容营销推广方案" in card["header"]["title"]["content"]
+    assert "📣 提及：EnClaws 内容营销推广方案" in card["header"]["title"]["content"]
 
 
 def test_mention_dm_card_structure():
