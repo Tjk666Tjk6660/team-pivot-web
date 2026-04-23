@@ -72,15 +72,19 @@
    - writer 层嵌入 status_machine + doc_types 约束
 4. 单元测试：状态机全量迁移、违规拒绝、`status × type` 矩阵、roundtrip 字节一致、crash 注入
 
-### 预审事项（核心）
+### 预审事项（核心）— 已决
 
-- `matter_index` 的 on-disk 字段集：完全采用 §八 示例，不加不减
-- `status × type` 允许矩阵：对齐 interface.md "最小服务端校验建议"
-- writer 层约束嵌入方式：append 时内联校验 vs 独立 validator 层
+- **schema**：`matter_index` on-disk 字段集完全采用 `pivot-product.md §八` 示例，不加不减
+- **status × type 矩阵**：按 `pivot-interface.md` "最小服务端校验建议"字面照搬；两处软约束放宽：
+  - `executing + result` 的"准备结束时才允许" → 放宽为"executing 状态下随时允许"
+  - `reviewed` 的"原则上不再新增" → 收紧为"严格禁"
+  - 以上两处放宽已记入 `AI-docs/coding-test-plan/deviations.md`
+- **触发表**：状态迁移触发规则作为第二张表并列嵌入 writer 约束（think 触发 paused 进出；act 可带 planning→executing；result 触发 finished/cancelled；insight 触发 reviewed；verify 无触发权）
+- **校验架构**：独立 `server/matter_validator.py` 纯函数层 + writer 内部兜底"双闸"。API 层先过 validator 以返回精准 422，writer 开头再调一次 validator 防绕过
 
 ### 交付物
 
-`matter_status.py` / `doc_types.py` / `matter_index.py` + 配套 pytest
+`matter_status.py` / `doc_types.py` / `matter_validator.py` / `matter_index.py` + 配套 pytest
 
 ### 验收
 
