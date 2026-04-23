@@ -6,8 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 
-const MAX_REFERENCES = 4;
-
 type Mode = "reply_target" | "reference";
 
 export function FileTreeBrowser({
@@ -89,7 +87,7 @@ function FileTreeDialog({
   const isSingle = mode === "reply_target";
   const title = isSingle
     ? "选择回复对象（单选）"
-    : `选择引用其他文件（最多 ${MAX_REFERENCES} 个）`;
+    : "选择引用其他文件（多选）";
 
   useEffect(() => {
     if (!open) return;
@@ -115,10 +113,6 @@ function FileTreeDialog({
     setDraft((prev) => {
       if (isSingle) return prev[0] === path ? [] : [path];
       if (prev.includes(path)) return prev.filter((p) => p !== path);
-      if (prev.length >= MAX_REFERENCES) {
-        toast.error(`最多选 ${MAX_REFERENCES} 个引用文件`);
-        return prev;
-      }
       return [...prev, path];
     });
   };
@@ -161,7 +155,7 @@ function FileTreeDialog({
           />
           {!isSingle && (
             <span className="shrink-0 text-xs text-muted-foreground">
-              已选 {draft.length}/{MAX_REFERENCES}
+              已选 {draft.length}
             </span>
           )}
         </div>
