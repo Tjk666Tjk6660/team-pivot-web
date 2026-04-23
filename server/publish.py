@@ -336,7 +336,10 @@ def publish_matter_create(
         author_name=user.name,
         author_email=f"{user.pinyin}@pivot.local",
     ):
-        write_post(md_path, frontmatter=md_fm, body=md_body)
+        # Two-phase write: MD gets index_state=un-indexed first, then after the
+        # matter index is updated we flip it to indexed. Crash between the two
+        # writes leaves the MD as un-indexed so recovery/operators can see it.
+        write_post_pending(md_path, frontmatter=md_fm, body=md_body)
         create_matter_index(
             index_path,
             matter_id=matter_id,
@@ -344,6 +347,7 @@ def publish_matter_create(
             initial_item=item,
             now_iso=now,
         )
+        mark_indexed(md_path)
 
     matter_snapshot = read_matter_index(index_path) or {}
     emit(
@@ -438,8 +442,10 @@ def publish_matter_append(
         author_name=user.name,
         author_email=f"{user.pinyin}@pivot.local",
     ):
-        write_post(md_path, frontmatter=md_fm, body=md_body)
+        # Two-phase write (see publish_matter_create for rationale).
+        write_post_pending(md_path, frontmatter=md_fm, body=md_body)
         matter_append_file_item(index_path, item=item, now_iso=now)
+        mark_indexed(md_path)
 
     matter_snapshot = read_matter_index(index_path) or {}
     _emit_file_appended(matter_snapshot, item, actor=user.pinyin, now=now)
