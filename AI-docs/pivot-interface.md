@@ -387,6 +387,7 @@
 - 作用：创建新的 `matter`
 - 鉴权：Cookie 或 Bearer PAT
 - 请求体：
+  - `category`
   - `title`
   - `initial_file`
     - `type`: `think | act`
@@ -395,11 +396,15 @@
     - `body`
     - `comments?`
 - 说明：
+  - `category` 与 `POST /api/threads` 同规则：支持中文，最长 20 字符，禁止 `/ \\ : * ? " < > |` 及换行 / 制表符
+  - `category` 仅作为磁盘分组标签（`discussions/<category>/<slug>/`），不参与 matter 模型语义
   - 第一篇文件允许没有 `quote`
   - 第一篇文件通常是 `think`，但也允许直接是 `act`
 - 返回：
   - `matter`
   - `initial_timeline_item`
+  - `matter_id`：等同 `matter.id`，前端便利字段
+  - `file`：首个 timeline item 的完整路径（`discussions/<category>/<slug>/<filename>`）
 
 ### POST /api/matters/{matter_id}/files
 - 作用：在指定 `matter` 下新增文件
@@ -592,6 +597,22 @@
 - 返回：
   - `item`
   - `matter`
+
+### POST /api/matters/{matter_id}/comments
+- 作用：向指定 timeline item 追加一条评论
+- 鉴权：Cookie 或 Bearer PAT
+- 请求体：
+  - `target_file`：目标 timeline item 的 `file` 字段值
+  - `body`：评论正文，必填
+  - `mentions?`：@人列表（open_id 或 pinyin），可选
+- 说明：
+  - 评论挂在 timeline item 的 `comments[]` 下，与该文件同生命周期
+  - 评论追加**不会**刷新 `matter.updated_at`（评论不计入事项推进）
+  - `target_file` 不存在于本 matter 的 timeline 时返回 `404 comment_target_not_found`
+- 返回：
+  - `matter_id`
+  - `target_file`
+  - `at`：本次评论的时间戳
 
 ### 最小服务端校验建议
 

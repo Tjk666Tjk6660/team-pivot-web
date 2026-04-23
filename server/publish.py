@@ -7,13 +7,28 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 from server.contacts import ContactRepo
+from server.events import (
+    TOPIC_COMMENT_APPENDED,
+    TOPIC_FILE_APPENDED,
+    TOPIC_MATTER_CREATED,
+    TOPIC_RESULT_CREATED,
+    TOPIC_STATUS_CHANGED,
+    emit,
+)
 from server.index_files import (
     append_reply_to_index,
     append_standalone_mention,
     create_thread_index,
 )
+from server.matter_index import (
+    append_comment as matter_append_comment,
+    append_file_item as matter_append_file_item,
+    create_matter_index,
+    matter_index_path,
+    read_matter_index,
+)
 from server.notify import Notifier
-from server.posts import mark_indexed, read_post, write_post_pending
+from server.posts import mark_indexed, read_post, write_post, write_post_pending
 from server.threads import (
     generate_unique_hash,
     get_thread,
@@ -25,6 +40,14 @@ from server.workspace import Workspace
 
 
 class PublishError(Exception):
+    pass
+
+
+class MatterNotFoundError(PublishError):
+    pass
+
+
+class MatterAlreadyExistsError(PublishError):
     pass
 
 
@@ -246,3 +269,329 @@ def _ensure_h1(body: str, title: str) -> str:
     if stripped.startswith("# "):
         return body
     return f"# {title}\n\n{body.rstrip()}\n"
+
+
+# =============================================================================
+# Matter model publish path (P2)
+#
+# Disk layout stays the same: discussions/<category>/<slug>/NNN_<pinyin>_<type>_<hash>.md
+# matter_id = slug (flat, per AI-docs/designs/2026-04-23-index-refactor-design.md §2.1).
+# INDEX file: index/<matter_id>.index.yaml.
+# =============================================================================
+
+
+def publish_matter_create(
+    workspace: Workspace,
+    user: User,
+    *,
+    category: str,
+    title: str,
+    initial_item: dict,
+    contacts: ContactRepo | None = None,
+    notifier: Notifier | None = None,
+) -> dict:
+    """Create a new matter and write its first timeline item.
+
+    initial_item keys (per pivot-interface.md POST /api/matters):
+        type: think | act  (validator also rejects anything else in planning)
+        summary: str  (required)
+        body: str  (Markdown body of the MD file)
+        owner: str  (optional; defaults to creator)
+        comments: list[dict]  (optional)
+    """
+    if not user.pinyin:
+        raise PublishError("profile setup required")
+    if not title.strip():
+        raise PublishError("title required")
+
+    slug = _make_unique_matter_slug(workspace, title)
+    matter_id = slug
+    index_path = matter_index_path(workspace.index_dir, matter_id)
+    thread_dir = workspace.discussions_dir / category / slug
+
+    doc_type = initial_item.get("type") or "think"
+    now = _now_iso()
+    filename = f"001_{user.pinyin}_{doc_type}_{generate_unique_hash(thread_dir)}.md"
+    file_rel = f"discussions/{category}/{slug}/{filename}"
+
+    md_body = initial_item.get("body") or ""
+    md_body = _ensure_h1(md_body, title)
+    md_fm = {"type": doc_type, "author": user.pinyin, "created": now}
+    md_path = thread_dir / filename
+
+    item = _build_timeline_item(
+        initial_item,
+        file_rel=file_rel,
+        creator=user.pinyin,
+        now_iso=now,
+    )
+
+    log.info(
+        "publish matter create user=%s category=%s slug=%s filename=%s",
+        user.pinyin, category, slug, filename,
+    )
+
+    with workspace.write_session(
+        message=f"feat: new matter - {title}",
+        author_name=user.name,
+        author_email=f"{user.pinyin}@pivot.local",
+    ):
+        write_post(md_path, frontmatter=md_fm, body=md_body)
+        create_matter_index(
+            index_path,
+            matter_id=matter_id,
+            title=title,
+            initial_item=item,
+            now_iso=now,
+        )
+
+    matter_snapshot = read_matter_index(index_path) or {}
+    emit(
+        TOPIC_MATTER_CREATED,
+        matter_id=matter_id,
+        actor=user.pinyin,
+        at=now,
+        payload={"title": title, "category": category, "first_file": file_rel},
+    )
+    _emit_file_appended(matter_snapshot, item, actor=user.pinyin, now=now)
+
+    if notifier is not None:
+        notifier.notify_new_thread(
+            category=category, slug=slug, title=title,
+            author_name=user.name,
+            filename=filename,
+            body=md_body,
+            mention_open_ids=None,
+            mention_comments=None,
+        )
+    return {
+        "matter_id": matter_id,
+        "category": category,
+        "slug": slug,
+        "filename": filename,
+        "file": file_rel,
+        "matter": matter_snapshot.get("matter", {}),
+        "item": item,
+    }
+
+
+def publish_matter_append(
+    workspace: Workspace,
+    user: User,
+    *,
+    matter_id: str,
+    item_body: dict,
+    contacts: ContactRepo | None = None,
+    notifier: Notifier | None = None,
+) -> dict:
+    """Append a new timeline item (think/act/verify/result/insight) to a matter.
+
+    item_body keys (per pivot-interface.md POST /api/matters/{id}/files):
+        type: think | act | verify | result | insight  (required)
+        summary: str  (required)
+        body: str  (optional MD body)
+        owner: str  (optional; defaults to creator)
+        quote: str  (optional)
+        refer: list[str]  (optional)
+        comments: list[dict]  (optional)
+        verifications: list[dict]  (verify only)
+        outcome: str  (result only)
+        status_change: {from, to}  (optional; validator enforces trigger rules)
+    """
+    if not user.pinyin:
+        raise PublishError("profile setup required")
+
+    index_path = matter_index_path(workspace.index_dir, matter_id)
+    data = read_matter_index(index_path)
+    if data is None:
+        raise MatterNotFoundError(matter_id)
+
+    category = _derive_category_from_timeline(data)
+    if category is None:
+        raise PublishError(f"cannot derive category for matter {matter_id!r}")
+
+    thread_dir = workspace.discussions_dir / category / matter_id
+    now = _now_iso()
+    doc_type = item_body.get("type") or ""
+    seq = next_post_number(thread_dir)
+    filename = f"{seq:03d}_{user.pinyin}_{doc_type}_{generate_unique_hash(thread_dir)}.md"
+    file_rel = f"discussions/{category}/{matter_id}/{filename}"
+
+    item = _build_timeline_item(
+        item_body,
+        file_rel=file_rel,
+        creator=user.pinyin,
+        now_iso=now,
+    )
+
+    md_body = item_body.get("body") or ""
+    md_fm = {"type": doc_type, "author": user.pinyin, "created": now}
+    md_path = thread_dir / filename
+
+    log.info(
+        "publish matter append user=%s matter=%s type=%s filename=%s",
+        user.pinyin, matter_id, doc_type, filename,
+    )
+
+    with workspace.write_session(
+        message=f"chore: append {doc_type} to {matter_id}",
+        author_name=user.name,
+        author_email=f"{user.pinyin}@pivot.local",
+    ):
+        write_post(md_path, frontmatter=md_fm, body=md_body)
+        matter_append_file_item(index_path, item=item, now_iso=now)
+
+    matter_snapshot = read_matter_index(index_path) or {}
+    _emit_file_appended(matter_snapshot, item, actor=user.pinyin, now=now)
+
+    return {
+        "matter_id": matter_id,
+        "filename": filename,
+        "file": file_rel,
+        "matter": matter_snapshot.get("matter", {}),
+        "item": item,
+    }
+
+
+def publish_matter_comment(
+    workspace: Workspace,
+    user: User,
+    *,
+    matter_id: str,
+    target_file: str,
+    body: str,
+    mentions: list[str] | None = None,
+    contacts: ContactRepo | None = None,
+    notifier: Notifier | None = None,
+) -> dict:
+    """Append a comment to a specific timeline item in a matter."""
+    if not user.pinyin:
+        raise PublishError("profile setup required")
+    if not (body or "").strip():
+        raise PublishError("comment body required")
+
+    index_path = matter_index_path(workspace.index_dir, matter_id)
+    data = read_matter_index(index_path)
+    if data is None:
+        raise MatterNotFoundError(matter_id)
+
+    now = _now_iso()
+    comment = {
+        "body": body,
+        "author": user.pinyin,
+    }
+    if mentions:
+        comment["mentions"] = list(mentions)
+
+    with workspace.write_session(
+        message=f"chore: comment on {matter_id}",
+        author_name=user.name,
+        author_email=f"{user.pinyin}@pivot.local",
+    ):
+        matter_append_comment(
+            index_path,
+            target_file=target_file,
+            comment=comment,
+            now_iso=now,
+        )
+
+    emit(
+        TOPIC_COMMENT_APPENDED,
+        matter_id=matter_id,
+        actor=user.pinyin,
+        at=now,
+        payload={"target_file": target_file, "body": body, "mentions": mentions or []},
+    )
+    return {"matter_id": matter_id, "target_file": target_file, "at": now}
+
+
+# --- matter helpers -----------------------------------------------------------
+
+
+def _build_timeline_item(
+    body: dict,
+    *,
+    file_rel: str,
+    creator: str,
+    now_iso: str,
+) -> dict:
+    item: dict = {
+        "file": file_rel,
+        "created_at": now_iso,
+        "creator": creator,
+        "owner": body.get("owner") or creator,
+        "type": body.get("type"),
+        "summary": body.get("summary") or "",
+    }
+    for key in ("quote", "refer", "verifications", "outcome", "comments", "status_change"):
+        if body.get(key) is not None:
+            item[key] = body[key]
+    return item
+
+
+def _emit_file_appended(matter_snapshot: dict, item: dict, *, actor: str, now: str) -> None:
+    matter = matter_snapshot.get("matter") or {}
+    matter_id = matter.get("id", "")
+    payload_base = {
+        "file": item.get("file"),
+        "type": item.get("type"),
+        "creator": item.get("creator"),
+        "owner": item.get("owner"),
+    }
+    emit(
+        TOPIC_FILE_APPENDED,
+        matter_id=matter_id,
+        actor=actor,
+        at=now,
+        payload=payload_base,
+    )
+    sc = item.get("status_change")
+    if sc:
+        emit(
+            TOPIC_STATUS_CHANGED,
+            matter_id=matter_id,
+            actor=actor,
+            at=now,
+            payload={
+                "from": sc.get("from"),
+                "to": sc.get("to"),
+                "trigger_file": item.get("file"),
+                "trigger_type": item.get("type"),
+            },
+        )
+    if item.get("type") == "result":
+        emit(
+            TOPIC_RESULT_CREATED,
+            matter_id=matter_id,
+            actor=actor,
+            at=now,
+            payload={
+                "file": item.get("file"),
+                "outcome": item.get("outcome"),
+            },
+        )
+
+
+def _derive_category_from_timeline(matter_data: dict) -> str | None:
+    """Pull category out of the first timeline item's path.
+
+    file: "discussions/<category>/<slug>/<NNN>_..."
+    """
+    timeline = matter_data.get("timeline") or []
+    if not timeline:
+        return None
+    first = timeline[0]
+    path = first.get("file") or ""
+    parts = path.split("/")
+    if len(parts) < 4 or parts[0] != "discussions":
+        return None
+    return parts[1]
+
+
+def _make_unique_matter_slug(workspace: Workspace, title: str) -> str:
+    base = sanitize_slug(title)
+    index_dir = workspace.index_dir
+    if not matter_index_path(index_dir, base).exists():
+        return base
+    suffix = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return f"{base}-{suffix}"
