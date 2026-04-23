@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ChevronLeft, Sparkles } from "lucide-react";
+import { ChevronLeft, Sparkles, Star } from "lucide-react";
 import {
   appendMatterComment,
   appendMatterFile,
@@ -22,6 +22,7 @@ import { ResultConfirmDialog } from "@/components/matter/ResultConfirmDialog";
 import { STATUS_DESC } from "@/components/matter/timeline-config";
 import { HomeWelcomePane } from "@/pages/HomeWelcomePane";
 import { useDashboard } from "@/pages/Dashboard";
+import { cn } from "@/lib/utils";
 
 export function MatterDetailEmpty() {
   return <HomeWelcomePane />;
@@ -29,9 +30,10 @@ export function MatterDetailEmpty() {
 
 export function MatterDetailPane() {
   const { matter_id } = useParams<{ matter_id: string }>();
-  const { reloadLists } = useDashboard();
+  const { reloadLists, threadMeta, toggleMatterFavorite } = useDashboard();
   const [data, setData] = useState<MatterDetailData | null | undefined>(undefined);
   const [sessionPinyin, setSessionPinyin] = useState<string>("");
+  const [sessionName, setSessionName] = useState<string>("");
   const [createCtx, setCreateCtx] = useState<CreateDialogContext | null>(null);
   const [resultOpen, setResultOpen] = useState(false);
   const [highlight, setHighlight] = useState<string | null>(null);
@@ -53,8 +55,14 @@ export function MatterDetailPane() {
 
   useEffect(() => {
     fetchMe()
-      .then((me) => setSessionPinyin(me?.pinyin ?? ""))
-      .catch(() => setSessionPinyin(""));
+      .then((me) => {
+        setSessionPinyin(me?.pinyin ?? "");
+        setSessionName(me?.name ?? "");
+      })
+      .catch(() => {
+        setSessionPinyin("");
+        setSessionName("");
+      });
   }, []);
 
   const onJump = (file: string) => {
@@ -174,6 +182,23 @@ export function MatterDetailPane() {
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
               <StatusBadge status={matter.current_status} />
+              {matter_id && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9 rounded-xl px-3 text-xs"
+                  onClick={() => void toggleMatterFavorite(matter_id)}
+                  title={threadMeta[matter_id]?.favorite ? "取消收藏" : "收藏"}
+                >
+                  <Star
+                    className={cn(
+                      "h-4 w-4",
+                      threadMeta[matter_id]?.favorite ? "fill-amber-400 text-amber-500" : "text-slate-400",
+                    )}
+                  />
+                  {threadMeta[matter_id]?.favorite ? "已收藏" : "收藏"}
+                </Button>
+              )}
               {canGenerateResult && (
                 <Button
                   className="h-9 rounded-xl bg-purple-600 px-3 text-xs font-semibold text-white hover:bg-purple-700"
@@ -248,8 +273,8 @@ export function MatterDetailPane() {
         open={createCtx !== null}
         context={createCtx}
         matterStatus={matter.current_status}
-        sessionUser={sessionPinyin}
-        teamMembers={sessionPinyin ? [sessionPinyin] : []}
+        sessionPinyin={sessionPinyin}
+        sessionName={sessionName || sessionPinyin}
         timeline={timeline}
         onClose={() => setCreateCtx(null)}
         onSubmit={submitNewFile}

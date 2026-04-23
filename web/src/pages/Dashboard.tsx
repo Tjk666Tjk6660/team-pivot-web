@@ -15,10 +15,13 @@ import {
   deleteDraft,
   fetchAIConversation,
   fetchDrafts,
+  fetchMatter,
   fetchMatters,
+  fetchThreads,
   fetchWorkspaceStatus,
   refreshWorkspace,
   saveAIConversation,
+  setThreadFavorite,
   streamAIChat,
   type ChatMessage,
   type Draft,
@@ -50,8 +53,17 @@ type ActiveAIStream = {
   title: string;
 } | null;
 
+// Favorite / category still live on the legacy /api/threads payload (slug = matter_id).
+// We surface them here so MatterDetailPane can read/toggle without duplicating the fetch.
+export type MatterThreadMeta = {
+  category: string;
+  favorite: boolean;
+};
+
 type DashboardContext = {
   reloadLists: () => Promise<void>;
+  threadMeta: Record<string, MatterThreadMeta>;
+  toggleMatterFavorite: (matterId: string) => Promise<void>;
   ai: {
     activeStream: ActiveAIStream;
     getThreadState: (threadKey: string) => AIThreadState;
@@ -110,6 +122,7 @@ export function useDashboard() {
 export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const location = useLocation();
   const [matters, setMatters] = useState<MatterSummary[] | null>(null);
+  const [threadMeta, setThreadMeta] = useState<Record<string, MatterThreadMeta>>({});
   const [drafts, setDrafts] = useState<Draft[] | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceStatus | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -132,11 +145,58 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
 
   const load = async () => {
     try {
-      const [m, w, d] = await Promise.all([
-        fetchMatters(), fetchWorkspaceStatus(), fetchDrafts(),
+      const [m, w, d, t] = await Promise.all([
+        fetchMatters(),
+        fetchWorkspaceStatus(),
+        fetchDrafts(),
+        fetchThreads().catch(() => []),
       ]);
-      setMatters(m); setWorkspace(w); setDrafts(d);
+      setMatters(m);
+      setWorkspace(w);
+      setDrafts(d);
+      const meta: Record<string, MatterThreadMeta> = {};
+      for (const th of t) {
+        if (th.slug) meta[th.slug] = { category: th.category, favorite: th.favorite };
+      }
+      setThreadMeta(meta);
     } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const toggleMatterFavorite = async (matterId: string) => {
+    let meta = threadMeta[matterId];
+    // /api/threads 只返回带 proposal 的老 thread；新 matter 不在里面。
+    // 懒查：首次点击时从 /api/matters/{id} 的 timeline[0].file 推 category。
+    if (!meta) {
+      try {
+        const detail = await fetchMatter(matterId);
+        const firstFile = detail.timeline[0]?.file || "";
+        const parts = firstFile.split("/");
+        if (parts.length < 4 || parts[0] !== "discussions") {
+          toast.error("事项还没有可推导 category 的文件");
+          return;
+        }
+        meta = { category: parts[1], favorite: false };
+        setThreadMeta((prev) => ({ ...prev, [matterId]: meta! }));
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : String(e));
+        return;
+      }
+    }
+    const next = !meta.favorite;
+    const category = meta.category;
+    setThreadMeta((prev) => ({
+      ...prev,
+      [matterId]: { ...(prev[matterId] ?? { category, favorite: false }), favorite: next },
+    }));
+    try {
+      await setThreadFavorite(category, matterId, next);
+    } catch (e) {
+      setThreadMeta((prev) => ({
+        ...prev,
+        [matterId]: { ...(prev[matterId] ?? { category, favorite: next }), favorite: !next },
+      }));
       toast.error(e instanceof Error ? e.message : String(e));
     }
   };
@@ -509,6 +569,8 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
             <ThreadListPane
               drafts={drafts}
               matters={matters}
+              threadMeta={threadMeta}
+              onToggleFavorite={toggleMatterFavorite}
               onRemoveDraft={removeDraft}
             />
           )}
@@ -533,6 +595,8 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
           <Outlet
             context={{
               reloadLists: load,
+              threadMeta,
+              toggleMatterFavorite,
               ai: {
                 activeStream: activeAIStream,
                 getThreadState,

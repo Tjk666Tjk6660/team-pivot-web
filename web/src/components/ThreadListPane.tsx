@@ -6,6 +6,7 @@ import {
   FileText,
   FolderTree,
   Plus,
+  Star,
   Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -13,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/StatusBadge";
 import { relativeTime } from "@/lib/time";
 import type { Draft, MatterStatus, MatterSummary } from "@/api";
+import type { MatterThreadMeta } from "@/pages/Dashboard";
 
 type StatusBucket = {
   key: string;
@@ -29,10 +31,14 @@ const BUCKETS: StatusBucket[] = [
 export function ThreadListPane({
   drafts,
   matters,
+  threadMeta,
+  onToggleFavorite,
   onRemoveDraft,
 }: {
   drafts: Draft[] | null;
   matters: MatterSummary[] | null;
+  threadMeta: Record<string, MatterThreadMeta>;
+  onToggleFavorite: (matterId: string) => Promise<void>;
   onRemoveDraft: (id: string) => void;
 }) {
   const location = useLocation();
@@ -41,15 +47,24 @@ export function ThreadListPane({
     return match ? decodeURIComponent(match[1]) : null;
   }, [location.pathname]);
 
+  const favorites = useMemo(() => {
+    if (!matters) return [];
+    return matters
+      .filter((m) => threadMeta[m.id]?.favorite)
+      .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
+  }, [matters, threadMeta]);
+
   const grouped = useMemo(() => groupByBucket(matters), [matters]);
   const [openBuckets, setOpenBuckets] = useState<Record<string, boolean>>({
     active: true,
     closed: false,
     reviewed: false,
   });
+  const [favoritesOpen, setFavoritesOpen] = useState(true);
   const [draftsOpen, setDraftsOpen] = useState(true);
   const [mattersOpen, setMattersOpen] = useState(true);
 
+  const favoritesRef = useRef<HTMLElement | null>(null);
   const draftsRef = useRef<HTMLElement | null>(null);
   const mattersRef = useRef<HTMLElement | null>(null);
 
@@ -79,6 +94,27 @@ export function ThreadListPane({
       </Button>
 
       <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
+        {matters !== null && favorites.length > 0 && (
+          <Section
+            sectionRef={favoritesRef}
+            title="收藏"
+            count={favorites.length}
+            open={favoritesOpen}
+            onToggle={() => setFavoritesOpen((v) => !v)}
+            icon={<Star className="h-3.5 w-3.5 shrink-0 text-amber-500" />}
+          >
+            {favoritesOpen &&
+              favorites.map((m) => (
+                <MatterRow
+                  key={`fav-${m.id}`}
+                  matter={m}
+                  favorite={true}
+                  onToggleFavorite={() => void onToggleFavorite(m.id)}
+                />
+              ))}
+          </Section>
+        )}
+
         {drafts && drafts.length > 0 && (
           <Section
             sectionRef={draftsRef}
@@ -172,7 +208,12 @@ export function ThreadListPane({
                   {openBuckets[group.key] && (
                     <div className="mt-1 ml-5 border-l border-slate-200/70 bg-transparent pl-2">
                       {group.items.map((m) => (
-                        <MatterRow key={m.id} matter={m} />
+                        <MatterRow
+                          key={m.id}
+                          matter={m}
+                          favorite={!!threadMeta[m.id]?.favorite}
+                          onToggleFavorite={() => void onToggleFavorite(m.id)}
+                        />
                       ))}
                     </div>
                   )}
@@ -185,7 +226,15 @@ export function ThreadListPane({
   );
 }
 
-function MatterRow({ matter }: { matter: MatterSummary }) {
+function MatterRow({
+  matter,
+  favorite,
+  onToggleFavorite,
+}: {
+  matter: MatterSummary;
+  favorite: boolean;
+  onToggleFavorite: () => void;
+}) {
   const meta = [
     matter.file_count ? `${matter.file_count} 个文件` : null,
     matter.last_file_type ? `最近 ${matter.last_file_type}` : null,
@@ -194,34 +243,53 @@ function MatterRow({ matter }: { matter: MatterSummary }) {
     .filter(Boolean)
     .join(" · ");
   return (
-    <NavLink
-      to={`/m/${encodeURIComponent(matter.id)}`}
-      className={({ isActive }) =>
-        cn(
-          "mx-0 block rounded-lg border-l-2 border-transparent px-3 py-2.5 pl-4 transition-colors hover:bg-slate-100/80",
-          isActive && "border-blue-500 bg-blue-100/85 text-blue-950 hover:bg-blue-100/85",
-        )
-      }
-    >
-      {({ isActive }) => (
-        <>
-          <div className="flex items-center gap-2">
-            <span className="truncate text-[14px] font-medium">{matter.title}</span>
-            <span className="ml-auto shrink-0">
-              <StatusBadge status={matter.current_status} />
-            </span>
-          </div>
-          <div
-            className={cn(
-              "mt-1 truncate text-[10px] leading-5 text-slate-500 md:text-[11px]",
-              isActive && "text-blue-800/80",
-            )}
-          >
-            {meta}
-          </div>
-        </>
-      )}
-    </NavLink>
+    <div className="relative">
+      <NavLink
+        to={`/m/${encodeURIComponent(matter.id)}`}
+        className={({ isActive }) =>
+          cn(
+            "mx-0 block rounded-lg border-l-2 border-transparent px-3 py-2.5 pl-4 pr-8 transition-colors hover:bg-slate-100/80",
+            isActive && "border-blue-500 bg-blue-100/85 text-blue-950 hover:bg-blue-100/85",
+          )
+        }
+      >
+        {({ isActive }) => (
+          <>
+            <div className="flex items-center gap-2">
+              <span className="truncate text-[14px] font-medium">{matter.title}</span>
+              <span className="ml-auto shrink-0">
+                <StatusBadge status={matter.current_status} />
+              </span>
+            </div>
+            <div
+              className={cn(
+                "mt-1 truncate text-[10px] leading-5 text-slate-500 md:text-[11px]",
+                isActive && "text-blue-800/80",
+              )}
+            >
+              {meta}
+            </div>
+          </>
+        )}
+      </NavLink>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onToggleFavorite();
+        }}
+        title={favorite ? "取消收藏" : "收藏"}
+        className="absolute right-1 top-1.5 rounded-md p-1 opacity-60 hover:bg-slate-100 hover:opacity-100"
+      >
+        <Star
+          className={cn(
+            "h-4 w-4",
+            favorite ? "fill-amber-400 text-amber-500" : "text-slate-400",
+          )}
+        />
+      </button>
+    </div>
   );
 }
 

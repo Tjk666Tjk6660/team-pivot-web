@@ -6,7 +6,6 @@ import type {
   Judgement,
   MatterStatus,
   NewFileIn,
-  Outcome,
   StatusChange,
   TimelineItem,
   Verification,
@@ -24,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { MAX_REFER, shortFile } from "./timeline-config";
+import { OwnerPicker } from "./OwnerPicker";
 
 export type CreateDialogContext =
   | { kind: "card"; type: DocType; quote: string }
@@ -34,6 +34,7 @@ type FormState = {
   summary: string;
   body: string;
   owner: string;
+  ownerDisplayName: string;
   refer: string[];
   verifications: Verification[];
   // think 专属
@@ -46,7 +47,8 @@ type FormState = {
 
 function initialFormState(
   ctx: CreateDialogContext,
-  sessionUser: string,
+  sessionPinyin: string,
+  sessionName: string,
   actFiles: TimelineItem[],
 ): FormState {
   const verifications: Verification[] =
@@ -58,7 +60,8 @@ function initialFormState(
   return {
     summary: "",
     body: "",
-    owner: sessionUser,
+    owner: sessionPinyin,
+    ownerDisplayName: sessionName,
     refer: [],
     verifications,
     thinkChange: "none",
@@ -71,8 +74,8 @@ export function CreateFileDialog({
   open,
   context,
   matterStatus,
-  sessionUser,
-  teamMembers,
+  sessionPinyin,
+  sessionName,
   timeline,
   onClose,
   onSubmit,
@@ -80,8 +83,8 @@ export function CreateFileDialog({
   open: boolean;
   context: CreateDialogContext | null;
   matterStatus: MatterStatus;
-  sessionUser: string;
-  teamMembers: string[];
+  sessionPinyin: string;
+  sessionName: string;
   timeline: TimelineItem[];
   onClose: () => void;
   onSubmit: (body: NewFileIn) => Promise<void>;
@@ -91,14 +94,16 @@ export function CreateFileDialog({
     [timeline],
   );
   const [form, setForm] = useState<FormState>(() =>
-    context ? initialFormState(context, sessionUser, actFiles) : initialFormState({ kind: "page", type: "insight" }, sessionUser, actFiles),
+    context
+      ? initialFormState(context, sessionPinyin, sessionName, actFiles)
+      : initialFormState({ kind: "page", type: "insight" }, sessionPinyin, sessionName, actFiles),
   );
   const [submitting, setSubmitting] = useState(false);
 
   // reset form whenever dialog re-opens with a new context
   useMemo(() => {
     if (open && context) {
-      setForm(initialFormState(context, sessionUser, actFiles));
+      setForm(initialFormState(context, sessionPinyin, sessionName, actFiles));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, context?.kind, context?.kind === "card" ? context.quote : null, context?.type]);
@@ -162,6 +167,10 @@ export function CreateFileDialog({
       status_change = { from: matterStatus, to: "reviewed" };
     }
 
+    if ((isAct || isVerify) && !form.owner.trim()) {
+      toast.error("owner 必填");
+      return;
+    }
     const body: NewFileIn = {
       type,
       summary: form.summary.trim(),
@@ -219,17 +228,15 @@ export function CreateFileDialog({
               required
               hint={isAct ? "执行责任人（可 ≠ 作者）" : "对这次判断负责的人"}
             >
-              <select
+              <OwnerPicker
                 value={form.owner}
-                onChange={(e) => setForm((p) => ({ ...p, owner: e.target.value }))}
-                className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-              >
-                {teamMembers.map((m) => (
-                  <option key={m} value={m}>
-                    {m === sessionUser ? `${m}（= 你）` : m}
-                  </option>
-                ))}
-              </select>
+                onChange={(pinyin, name) =>
+                  setForm((p) => ({ ...p, owner: pinyin, ownerDisplayName: name }))
+                }
+                sessionPinyin={sessionPinyin}
+                sessionName={sessionName}
+                displayName={form.ownerDisplayName}
+              />
             </FieldRow>
           )}
 
@@ -492,5 +499,3 @@ function VerificationsEditor({
     </div>
   );
 }
-// ensure Outcome is exported somewhere (used transitively via NewFileIn)
-export type _OutcomeRef = Outcome;
