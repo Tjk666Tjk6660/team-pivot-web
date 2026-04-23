@@ -69,13 +69,16 @@ export function ThreadListPane({
           changed = true;
         }
       }
-      if (activeCategory && !next[activeCategory]) {
-        next[activeCategory] = true;
-        changed = true;
-      }
       return changed ? next : prev;
     });
-  }, [grouped, activeCategory]);
+  }, [grouped]);
+
+  useEffect(() => {
+    if (!activeCategory) return;
+    setOpenCategories((prev) =>
+      prev[activeCategory] ? prev : { ...prev, [activeCategory]: true },
+    );
+  }, [activeCategory]);
 
   const toggleCategory = (c: string) =>
     setOpenCategories((prev) => ({ ...prev, [c]: !prev[c] }));
@@ -157,7 +160,7 @@ export function ThreadListPane({
 
         <Section
           sectionRef={mattersRef}
-          title="事项"
+          title="空间"
           count={matters?.length ?? 0}
           open={mattersOpen}
           onToggle={() => setMattersOpen((v) => !v)}
