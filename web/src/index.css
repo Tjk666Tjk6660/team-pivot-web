@@ -52,9 +52,10 @@
 .prose-pivot pre code { @apply bg-transparent p-0; }
 .prose-pivot blockquote { @apply border-l-4 border-muted pl-3 my-2 text-muted-foreground; }
 .prose-pivot a { @apply text-primary underline underline-offset-2; }
-.prose-pivot table { @apply my-3 w-full border-collapse text-sm; }
-.prose-pivot th { @apply border border-border bg-muted px-3 py-1.5 text-left font-semibold; }
-.prose-pivot td { @apply border border-border px-3 py-1.5; }
+.prose-pivot .table-scroll { @apply my-3 overflow-x-auto; }
+.prose-pivot table { @apply w-full border-collapse text-sm; }
+.prose-pivot th { @apply border border-border bg-muted px-3 py-1.5 text-left font-semibold; word-break: break-word; }
+.prose-pivot td { @apply border border-border px-3 py-1.5 align-top; word-break: break-word; }
 .prose-pivot tr:nth-child(even) td { @apply bg-muted/30; }
 .prose-pivot input[type="checkbox"] { @apply mr-1.5 align-middle; }
 

@@ -2,15 +2,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from server.ai.tools import find_file_entry_in_index
 from server.posts import read_post
 from server.threads import ThreadDetail
 
-MAX_CONTEXT_CHARS = 80_000
+MAX_STARTING_POST_CHARS = 40_000
 CHARS_PER_TOKEN = 4  # rough approximation
 
 
+class ContextTooLongError(Exception):
+    pass
+
+
 def build_thread_context(detail: ThreadDetail) -> str:
-    """Format a thread into a text block for the LLM system prompt."""
+    """Format a thread into a text block (retained as a utility for callers
+    that want to inline an entire thread; no longer used by the chat endpoint
+    directly)."""
     meta = detail.meta
     lines = [
         f"# {meta.title}",
@@ -26,65 +33,139 @@ def build_thread_context(detail: ThreadDetail) -> str:
         lines.append(f"\n### [{ptype}] {author}  {created}")
         if post.body.strip():
             lines.append(post.body.strip())
-
-    text = "\n".join(lines)
-    if len(text) > MAX_CONTEXT_CHARS:
-        raise ContextTooLongError(
-            f"讨论内容过长（{len(text)} 字符），超出上下文限制（{MAX_CONTEXT_CHARS}）"
-        )
-    return text
+    return "\n".join(lines)
 
 
-def build_context_from_files(
+def build_starting_post_block(
     discussions_dir: Path,
-    reply_target: str | None,
-    references: list[str] | None = None,
+    index_dir: Path,
+    reply_target: str,
 ) -> str:
     """
-    Load and format the reply target file and reference files.
-    Paths are in form "category/slug/filename.md".
-    Raises ContextTooLongError if total exceeds MAX_CONTEXT_CHARS.
+    Build the <starting_post> XML block that we inject into the system prompt.
+
+    reply_target is "<category>/<slug>/<filename.md>".
+
+    Emits index-derived metadata alongside the body so future schema
+    extensions (matter status, doc type, quote/refer/verifications/
+    status_change) can be added by widening this function alone.
     """
-    references = references or []
-
-    def _section(label: str, path: str) -> str | None:
-        parts = path.split("/")
-        if len(parts) != 3:
-            return None
-        cat, slug, fname = parts
-        full_path = Path(discussions_dir) / cat / slug / fname
-        if not full_path.is_file():
-            return None
-        try:
-            post = read_post(full_path)
-        except Exception:
-            return None
-        fm = post.frontmatter
-        ptype = fm.get("type", "")
-        author = str(fm.get("author", "unknown"))
-        created = fm.get("created", "")
-        header = (
-            f"### 【{label}】 {path}\n"
-            f"类型: {ptype}  作者: {author}  时间: {created}"
-        )
-        return f"{header}\n\n{post.body.strip()}"
-
-    sections: list[str] = []
-    if reply_target:
-        s = _section("回复对象", reply_target)
-        if s:
-            sections.append(s)
-    for ref in references:
-        s = _section("引用文件", ref)
-        if s:
-            sections.append(s)
-
-    text = "\n\n---\n\n".join(sections)
-    if len(text) > MAX_CONTEXT_CHARS:
+    parts = reply_target.split("/")
+    if len(parts) != 3:
         raise ContextTooLongError(
-            f"选中文件内容过长（{len(text)} 字符），超出上下文限制（{MAX_CONTEXT_CHARS}）"
+            f"reply_target 格式非法：{reply_target}，应为 '<category>/<slug>/<filename>.md'"
         )
-    return text
+    category, slug, filename = parts
+    full = Path(discussions_dir) / category / slug / filename
+    if not full.is_file():
+        raise ContextTooLongError(f"起点帖子不存在：{reply_target}")
+
+    try:
+        post = read_post(full)
+    except Exception as e:
+        raise ContextTooLongError(f"起点帖子解析失败：{e}") from e
+
+    fm = post.frontmatter or {}
+    entry = find_file_entry_in_index(Path(index_dir), slug, filename)
+    attrs = _attr_pairs(
+        path=f"discussions/{reply_target}",
+        type=str(fm.get("type") or ""),
+        creator=str(fm.get("author") or fm.get("creator") or ""),
+        owner=str(fm.get("owner") or ""),
+        created=str(fm.get("created") or ""),
+    )
+
+    refs_xml = ""
+    if entry:
+        refs = entry.get("refs") or []
+        if refs:
+            ref_lines = []
+            for r in refs:
+                if not isinstance(r, dict):
+                    continue
+                rtype = str(r.get("type") or "")
+                rpath = str(r.get("path") or "")
+                if rtype and rpath:
+                    ref_lines.append(f'    <ref type="{rtype}" path="{_esc(rpath)}"/>')
+            if ref_lines:
+                refs_xml = "\n  <refs>\n" + "\n".join(ref_lines) + "\n  </refs>"
+
+    body = post.body
+    clipped = ""
+    if len(body) > MAX_STARTING_POST_CHARS:
+        clipped = f"\n...（已截断，原文 {len(body)} 字符）"
+        body = body[:MAX_STARTING_POST_CHARS]
+
+    return (
+        f"<starting_post {attrs}>{refs_xml}\n"
+        f"  <body>\n{body}{clipped}\n  </body>\n"
+        f"</starting_post>"
+    )
+
+
+def _attr_pairs(**kwargs: str) -> str:
+    return " ".join(f'{k}="{_esc(v)}"' for k, v in kwargs.items() if v)
+
+
+def _esc(s: str) -> str:
+    return (
+        s.replace("&", "&amp;")
+        .replace('"', "&quot;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def _message_length(msg: dict) -> int:
+    """Rough length estimate for budgeting across text + tool_call arguments + tool results."""
+    total = 0
+    content = msg.get("content")
+    if isinstance(content, str):
+        total += len(content)
+    elif isinstance(content, list):  # tool_result blocks in some providers
+        for item in content:
+            if isinstance(item, dict):
+                total += len(str(item.get("text") or item.get("content") or ""))
+    for tc in msg.get("tool_calls") or []:
+        fn = (tc.get("function") or {}) if isinstance(tc, dict) else {}
+        total += len(str(fn.get("arguments") or ""))
+        total += len(str(fn.get("name") or ""))
+    return total
+
+
+def _split_into_blocks(messages: list[dict]) -> list[list[dict]]:
+    """
+    Group messages into atomic blocks so a truncation boundary never splits a
+    tool_call/tool_result pair. Boundaries are:
+      - right before every `role == 'user'`
+      - between two consecutive assistant messages with no tool_calls
+    An assistant message with `tool_calls` stays glued to the subsequent
+    `tool` messages that answer it.
+    """
+    blocks: list[list[dict]] = []
+    current: list[dict] = []
+    for msg in messages:
+        role = msg.get("role")
+        if role == "user":
+            if current:
+                blocks.append(current)
+            current = [msg]
+        elif role == "assistant":
+            current.append(msg)
+            if not msg.get("tool_calls"):
+                blocks.append(current)
+                current = []
+        elif role == "tool":
+            current.append(msg)
+        else:
+            # Unknown roles: isolate into their own block.
+            if current:
+                blocks.append(current)
+            blocks.append([msg])
+            current = []
+    if current:
+        blocks.append(current)
+    return blocks
 
 
 def truncate_messages(
@@ -95,33 +176,34 @@ def truncate_messages(
     max_rounds: int,
 ) -> list[dict]:
     """
-    Select messages to send to LLM, from newest backwards.
-    - Always includes min_rounds rounds (even if over char budget).
-    - Stops at max_rounds regardless of remaining char budget.
-    - Stops early if char budget exceeded (after min_rounds guaranteed).
-    A "round" = one user message + one assistant message (2 messages).
+    Select messages to send to the LLM, from newest backwards, keeping
+    tool_call/tool_result pairs intact. A "round" = one atomic block
+    (user + assistant[+tool_calls + tool_results...]).
     """
     max_chars = max_context_tokens * CHARS_PER_TOKEN
+    blocks = _split_into_blocks(messages)
+
+    selected_blocks: list[list[dict]] = []
     total = system_prompt_len
-    selected: list[dict] = []
 
-    for msg in reversed(messages):
-        current_round = (len(selected) // 2) + 1
-
+    for block in reversed(blocks):
+        current_round = len(selected_blocks) + 1
+        block_len = sum(_message_length(m) for m in block)
         must_include = current_round <= min_rounds
         within_round_limit = current_round <= max_rounds
-        within_char_limit = total + len(msg.get("content", "")) <= max_chars
+        within_char_limit = total + block_len <= max_chars
 
         if not within_round_limit:
             break
         if not must_include and not within_char_limit:
             break
 
-        selected.insert(0, msg)
-        total += len(msg.get("content", ""))
+        selected_blocks.insert(0, block)
+        total += block_len
 
-    return selected
+    out: list[dict] = []
+    for block in selected_blocks:
+        out.extend(block)
+    return out
 
 
-class ContextTooLongError(Exception):
-    pass

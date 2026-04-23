@@ -20,6 +20,7 @@ import {
   refreshWorkspace,
   saveAIConversation,
   streamAIChat,
+  type AIToolUse,
   type ChatMessage,
   type Draft,
   type Me,
@@ -30,14 +31,13 @@ import { Button } from "@/components/ui/button";
 import { ThreadListPane } from "@/components/ThreadListPane";
 import { cn } from "@/lib/utils";
 
-type AIMsg = ChatMessage & { id: number };
+export type AIMsg = ChatMessage & { id: number; toolUses?: AIToolUse[] };
 
 type AIThreadState = {
   loaded: boolean;
   loading: boolean;
   messages: AIMsg[];
   replyTarget: string | null;
-  referenceFiles: string[];
   input: string;
   streaming: boolean;
   nextId: number;
@@ -63,12 +63,6 @@ type DashboardContext = {
       threadKey: string,
       value: string | null,
     ) => void;
-    setReferenceFiles: (
-      category: string,
-      slug: string,
-      threadKey: string,
-      files: string[],
-    ) => void;
     clearThreadConversation: (category: string, slug: string, threadKey: string) => Promise<void>;
     sendMessage: (args: {
       category: string;
@@ -77,7 +71,7 @@ type DashboardContext = {
       threadTitle: string;
       rawText: string;
       hasReplyDraft: boolean;
-      onUseDraftAsReply: (content: string, replyTo: string, references: string[]) => Promise<boolean>;
+      onUseDraftAsReply: (content: string, replyTo: string) => Promise<boolean>;
     }) => Promise<void>;
   };
 };
@@ -88,19 +82,26 @@ function emptyAIThreadState(): AIThreadState {
     loading: false,
     messages: [],
     replyTarget: null,
-    referenceFiles: [],
     input: "",
     streaming: false,
     nextId: 1,
   };
 }
 
-const DRAFT_RE = /<draft>([\s\S]*?)<\/draft>/i;
+// Matches `<draft>...</draft>` with an optional `type="..."` attribute.
+// The captured type (or "think" when omitted) drives future doc-type branches.
+const DRAFT_RE = /<draft(?:\s+type="([^"]*)")?\s*>([\s\S]*?)<\/draft>/i;
 
-function extractDraft(text: string): { draft: string; rest: string } | null {
+function extractDraft(
+  text: string,
+): { draft: string; rest: string; type: string } | null {
   const m = text.match(DRAFT_RE);
   if (!m) return null;
-  return { draft: m[1].trim(), rest: text.replace(DRAFT_RE, "").trim() };
+  return {
+    draft: m[2].trim(),
+    rest: text.replace(DRAFT_RE, "").trim(),
+    type: (m[1] || "think").toLowerCase(),
+  };
 }
 
 export function useDashboard() {
@@ -156,7 +157,6 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       slug,
       thread.messages.map(({ role, content }) => ({ role, content })),
       thread.replyTarget,
-      thread.referenceFiles,
     ).catch(() => {});
   };
 
@@ -185,7 +185,6 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
             loading: false,
             messages: mapped,
             replyTarget: conv.reply_target,
-            referenceFiles: conv.reference_files,
             nextId: mapped.length + 1,
           },
         };
@@ -223,24 +222,6 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       const nextState: AIThreadState = {
         ...existing,
         replyTarget: value,
-        referenceFiles: existing.referenceFiles.filter((ref) => ref !== value),
-      };
-      queueMicrotask(() => persistThreadConversation(category, slug, threadKey, nextState));
-      return { ...prev, [threadKey]: nextState };
-    });
-  };
-
-  const setReferenceFiles = (
-    category: string,
-    slug: string,
-    threadKey: string,
-    files: string[],
-  ) => {
-    setAiThreads((prev) => {
-      const existing = prev[threadKey] ?? emptyAIThreadState();
-      const nextState: AIThreadState = {
-        ...existing,
-        referenceFiles: files,
       };
       queueMicrotask(() => persistThreadConversation(category, slug, threadKey, nextState));
       return { ...prev, [threadKey]: nextState };
@@ -281,7 +262,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     threadTitle: string;
     rawText: string;
     hasReplyDraft: boolean;
-    onUseDraftAsReply: (content: string, replyTo: string, references: string[]) => Promise<boolean>;
+    onUseDraftAsReply: (content: string, replyTo: string) => Promise<boolean>;
   }) => {
     const trimmed = rawText.trim();
     if (!trimmed) return;
@@ -295,18 +276,17 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     const current = aiThreadsRef.current[threadKey] ?? emptyAIThreadState();
     if (current.streaming) return;
     if (!current.replyTarget) {
-      toast.error("请先选择「回复对象」文件");
+      toast.error("未找到起点帖子，请从某条帖子上点击「AI 回复」进入");
       return;
     }
 
     const currentReplyTarget = current.replyTarget;
-    const currentReferenceFiles = current.referenceFiles;
     const userMsg: AIMsg = { id: current.nextId, role: "user", content: trimmed };
     const assistantId = current.nextId + 1;
     const withUser: AIMsg[] = [...current.messages, userMsg];
     const pendingMessages: AIMsg[] = [
       ...withUser,
-      { id: assistantId, role: "assistant", content: "" },
+      { id: assistantId, role: "assistant", content: "", toolUses: [] },
     ];
 
     setAiThreads((prev) => ({
@@ -327,47 +307,99 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
 
     try {
       let accumulated = "";
-      for await (const chunk of streamAIChat(category, slug, historyForApi, currentReplyTarget, currentReferenceFiles)) {
-        accumulated += chunk;
-        setAiThreads((prev) => {
-          const existing = prev[threadKey] ?? emptyAIThreadState();
-          return {
-            ...prev,
-            [threadKey]: {
-              ...existing,
-              messages: existing.messages.map((m) =>
-                m.id === assistantId ? { ...m, content: accumulated } : m,
-              ),
-            },
-          };
-        });
+      const toolUses: AIToolUse[] = [];
+      for await (const ev of streamAIChat(category, slug, historyForApi, currentReplyTarget)) {
+        if (ev.kind === "delta") {
+          accumulated += ev.delta;
+          setAiThreads((prev) => {
+            const existing = prev[threadKey] ?? emptyAIThreadState();
+            return {
+              ...prev,
+              [threadKey]: {
+                ...existing,
+                messages: existing.messages.map((m) =>
+                  m.id === assistantId ? { ...m, content: accumulated } : m,
+                ),
+              },
+            };
+          });
+        } else if (ev.kind === "tool_start") {
+          toolUses.push({
+            id: ev.id,
+            name: ev.name,
+            arguments: ev.arguments,
+          });
+          const snapshot = toolUses.map((t) => ({ ...t }));
+          setAiThreads((prev) => {
+            const existing = prev[threadKey] ?? emptyAIThreadState();
+            return {
+              ...prev,
+              [threadKey]: {
+                ...existing,
+                messages: existing.messages.map((m) =>
+                  m.id === assistantId ? { ...m, toolUses: snapshot } : m,
+                ),
+              },
+            };
+          });
+        } else if (ev.kind === "tool_end") {
+          const target = toolUses.find((t) => t.id === ev.id);
+          if (target) target.output_summary = ev.output_summary;
+          const snapshot = toolUses.map((t) => ({ ...t }));
+          setAiThreads((prev) => {
+            const existing = prev[threadKey] ?? emptyAIThreadState();
+            return {
+              ...prev,
+              [threadKey]: {
+                ...existing,
+                messages: existing.messages.map((m) =>
+                  m.id === assistantId ? { ...m, toolUses: snapshot } : m,
+                ),
+              },
+            };
+          });
+        }
       }
 
       const extracted = extractDraft(accumulated);
       let finalContent = accumulated;
       if (extracted) {
-        let proceed = true;
-        if (hasReplyDraft) {
-          proceed = window.confirm("你已修改 Reply 框内容，是否用 AI 新草稿覆盖？");
-        }
-        if (proceed) {
-          const ok = await onUseDraftAsReply(extracted.draft, currentReplyTarget, currentReferenceFiles);
+        if (extracted.type !== "think") {
           finalContent = extracted.rest
-            ? `${extracted.rest}\n\n_${ok ? "✅" : "⚠️"} ${ok ? "草稿已填入回复框" : "填入草稿失败"}_`
-            : `_${ok ? "✅ 草稿已填入回复框" : "⚠️ 填入草稿失败"}_`;
+            ? `${extracted.rest}\n\n_⚠️ 暂不支持 type="${extracted.type}" 的草稿_`
+            : `_⚠️ 暂不支持 type="${extracted.type}" 的草稿_`;
         } else {
-          finalContent = extracted.rest
-            ? `${extracted.rest}\n\n_⚠️ 已放弃覆盖（保留你在回复框中的内容）_`
-            : "_⚠️ 已放弃覆盖（保留你在回复框中的内容）_";
+          let proceed = true;
+          if (hasReplyDraft) {
+            proceed = window.confirm("你已修改 Reply 框内容，是否用 AI 新草稿覆盖？");
+          }
+          if (proceed) {
+            const ok = await onUseDraftAsReply(extracted.draft, currentReplyTarget);
+            finalContent = extracted.rest
+              ? `${extracted.rest}\n\n_${ok ? "✅" : "⚠️"} ${ok ? "草稿已填入回复框" : "填入草稿失败"}_`
+              : `_${ok ? "✅ 草稿已填入回复框" : "⚠️ 填入草稿失败"}_`;
+          } else {
+            finalContent = extracted.rest
+              ? `${extracted.rest}\n\n_⚠️ 已放弃覆盖（保留你在回复框中的内容）_`
+              : "_⚠️ 已放弃覆盖（保留你在回复框中的内容）_";
+          }
         }
       }
 
+      const frozenToolUses = toolUses.map((t) => ({ ...t }));
       let finalSnapshot: AIThreadState | null = null;
       setAiThreads((prev) => {
         const existing = prev[threadKey] ?? emptyAIThreadState();
         const nextState: AIThreadState = {
           ...existing,
-          messages: withUser.concat([{ id: assistantId, role: "assistant", content: finalContent }]),
+          messages: withUser.concat([
+            {
+              id: assistantId,
+              role: "assistant",
+              content: finalContent,
+              toolUses: frozenToolUses,
+            },
+          ]),
           streaming: false,
         };
         finalSnapshot = nextState;
@@ -539,7 +571,6 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
                 ensureThreadLoaded,
                 setInput,
                 setReplyTarget,
-                setReferenceFiles,
                 clearThreadConversation,
                 sendMessage,
               },

@@ -250,14 +250,12 @@ export function ThreadDetailPane() {
 
   const openThreadAIAssistant = () => {
     if (!category || !slug || data === undefined || data === null || data.posts.length === 0) return;
-    const threadFiles = data.posts.map((post) => `${category}/${slug}/${post.filename}`);
-    const [replyTarget, ...referenceFiles] = threadFiles;
-    ai.setReplyTarget(category, slug, threadKey, replyTarget);
-    ai.setReferenceFiles(category, slug, threadKey, referenceFiles);
+    const [firstPost] = data.posts;
+    ai.setReplyTarget(category, slug, threadKey, `${category}/${slug}/${firstPost.filename}`);
     ai.setInput(
       threadKey,
       [
-        "请按文件的时间顺序完整阅读这个主题中的全部文件。",
+        "请按文件的时间顺序完整阅读这个主题中的全部文件（可调用 read_thread_index 查目录，再逐个 read_post）。",
         "先逐个概括每个文件分别讲了什么、推进了什么、回应了什么。",
         "然后基于时间线总结这些文件之间最主要的关系，包括：谁在回应谁、哪些内容是在延续、补充、反驳或收敛前面的讨论。",
         "最后用清晰的结构总结这个主题的整体讨论逻辑走线，以及目前形成了哪些结论、分歧和待解决问题。",
@@ -318,7 +316,6 @@ export function ThreadDetailPane() {
   const onUseDraftAsReply = async (
     content: string,
     aiReplyTo: string,
-    aiReferences: string[],
   ): Promise<boolean> => {
     if (!category || !slug) return false;
     const threadKey = `${category}/${slug}`;
@@ -332,7 +329,7 @@ export function ThreadDetailPane() {
         await updateDraft(replyDraftId, {
           body_md: content,
           reply_to: replyToFilename,
-          references: aiReferences,
+          references: replyReferences,
         });
       } else {
         const d = await createDraft({
@@ -340,7 +337,7 @@ export function ThreadDetailPane() {
           body_md: content,
           thread_key: threadKey,
           reply_to: replyToFilename,
-          references: aiReferences,
+          references: replyReferences,
         });
         nextDraftId = d.id;
       }
@@ -351,7 +348,6 @@ export function ThreadDetailPane() {
     if (nextDraftId !== replyDraftId) setReplyDraftId(nextDraftId);
     setReplyBody(content);
     setReplyTo(replyToFilename);
-    setReplyReferences(aiReferences);
     if (isDesktopViewport()) {
       setAiOpen(true);
     } else {

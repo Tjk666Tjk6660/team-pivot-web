@@ -12,15 +12,14 @@ from pydantic import BaseModel, Field
 from server.ai.client import AIError, DEFAULT_BASE_URL, DEFAULT_MODEL, stream_chat
 from server.ai.context import (
     ContextTooLongError,
-    build_context_from_files,
+    build_starting_post_block,
     truncate_messages,
 )
 from server.ai.prompts import build_system_prompt
+from server.ai.tools import AITools
 from server.ai_conversations import AIConversationRepo
 from server.auth.admin import require_admin
-from server.posts import read_post
 from server.settings import SettingsRepo
-from server.threads import list_threads, get_thread
 from server.users import User
 from server.workspace import Workspace
 
@@ -37,6 +36,8 @@ _DEFAULT_MAX_CONTEXT_TOKENS = 5000
 _DEFAULT_MIN_ROUNDS = 3
 _DEFAULT_MAX_ROUNDS = 20
 
+_MAX_TOOL_TURNS = 8
+
 
 def _get_int(settings: SettingsRepo, key: str, default: int) -> int:
     v = settings.get(key)
@@ -48,13 +49,12 @@ def _get_int(settings: SettingsRepo, key: str, default: int) -> int:
 
 class ChatMessage(BaseModel):
     role: str = Field(pattern=r"^(user|assistant)$")
-    content: str = Field(min_length=1, max_length=50000)
+    content: str = Field(max_length=50000)
 
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=200)
     reply_target: str | None = Field(default=None, max_length=300)
-    reference_files: list[str] = Field(default_factory=list, max_length=4)
 
 
 class AISettingsUpdate(BaseModel):
@@ -69,7 +69,10 @@ class AISettingsUpdate(BaseModel):
 class ConversationSave(BaseModel):
     messages: list[ChatMessage] = Field(max_length=500)
     reply_target: str | None = Field(default=None, max_length=300)
-    reference_files: list[str] = Field(default_factory=list, max_length=4)
+
+
+def _sse(event: dict) -> str:
+    return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
 def build_router(
@@ -115,37 +118,6 @@ def build_router(
             settings.set(_KEY_MAX_ROUNDS, str(body.max_rounds))
         return {"ok": True}
 
-    # ── File tree ─────────────────────────────────────────────────────────────
-
-    @router.get("/api/ai/files")
-    def list_ai_files(_: User = Depends(current_user)):
-        metas = list_threads(workspace.discussions_dir, workspace.index_dir)
-        items = []
-        for meta in metas[:200]:
-            detail = get_thread(
-                workspace.discussions_dir, workspace.index_dir, meta.category, meta.slug
-            )
-            if detail is None:
-                continue
-            files = []
-            for post in detail.posts:
-                fm = post.frontmatter
-                files.append({
-                    "path": f"{meta.category}/{meta.slug}/{post.filename}",
-                    "filename": post.filename,
-                    "type": str(fm.get("type", "")),
-                    "author": str(fm.get("author", "")),
-                    "created": str(fm.get("created", "")),
-                })
-            if files:
-                items.append({
-                    "category": meta.category,
-                    "slug": meta.slug,
-                    "title": meta.title,
-                    "files": files,
-                })
-        return {"items": items}
-
     # ── Conversation persistence ───────────────────────────────────────────────
 
     @router.get("/api/ai/threads/{category}/{slug}/conversation")
@@ -154,13 +126,12 @@ def build_router(
         slug: str,
         user: User = Depends(current_user),
     ):
-        messages, reply_target, reference_files = conversations.get(
+        messages, reply_target = conversations.get(
             user.open_id, f"{category}/{slug}"
         )
         return {
             "messages": messages,
             "reply_target": reply_target,
-            "reference_files": reference_files,
         }
 
     @router.put("/api/ai/threads/{category}/{slug}/conversation")
@@ -173,9 +144,8 @@ def build_router(
         conversations.save(
             user.open_id,
             f"{category}/{slug}",
-            [{"role": m.role, "content": m.content} for m in body.messages],
+            [m.model_dump() for m in body.messages],
             body.reply_target,
-            body.reference_files,
         )
         return {"ok": True}
 
@@ -208,40 +178,142 @@ def build_router(
         max_rounds = _get_int(settings, _KEY_MAX_ROUNDS, _DEFAULT_MAX_ROUNDS)
 
         if not body.reply_target:
-            raise HTTPException(400, "请先选择「回复对象」文件")
+            raise HTTPException(400, "缺少起点帖子（reply_target）")
 
         try:
-            file_context = build_context_from_files(
-                workspace.discussions_dir,
-                body.reply_target,
-                body.reference_files,
+            starting_block = build_starting_post_block(
+                workspace.discussions_dir, workspace.index_dir, body.reply_target
             )
         except ContextTooLongError as e:
             raise HTTPException(422, str(e))
 
-        system_prompt = build_system_prompt(file_context)
-        all_messages = [{"role": m.role, "content": m.content} for m in body.messages]
-        selected = truncate_messages(
-            all_messages,
-            system_prompt_len=len(system_prompt),
-            max_context_tokens=max_context_tokens,
-            min_rounds=min_rounds,
-            max_rounds=max_rounds,
-        )
-        llm_messages = [{"role": "system", "content": system_prompt}] + selected
+        system_prompt = build_system_prompt(starting_block)
+        user_history = [{"role": m.role, "content": m.content} for m in body.messages]
+
+        tools_handler = AITools(workspace.discussions_dir, workspace.index_dir)
+        tool_specs = tools_handler.specs()
 
         async def generate():
             try:
-                async for delta in stream_chat(llm_messages, model, api_key, base_url):
-                    yield f"data: {json.dumps({'delta': delta})}\n\n"
+                selected = truncate_messages(
+                    user_history,
+                    system_prompt_len=len(system_prompt),
+                    max_context_tokens=max_context_tokens,
+                    min_rounds=min_rounds,
+                    max_rounds=max_rounds,
+                )
+                messages: list[dict] = [{"role": "system", "content": system_prompt}]
+                messages.extend(selected)
+
+                for turn in range(_MAX_TOOL_TURNS):
+                    pending_tool_calls: list[dict] = []
+                    finish_reason = "stop"
+                    assistant_text_parts: list[str] = []
+
+                    async for event in stream_chat(
+                        messages, model, api_key, base_url, tools=tool_specs
+                    ):
+                        etype = event.get("type")
+                        if etype == "text":
+                            delta = event.get("delta") or ""
+                            assistant_text_parts.append(delta)
+                            yield _sse({"delta": delta})
+                        elif etype == "tool_call":
+                            pending_tool_calls.append(
+                                {
+                                    "id": event.get("id") or "",
+                                    "name": event.get("name") or "",
+                                    "arguments": event.get("arguments") or "",
+                                }
+                            )
+                        elif etype == "finish":
+                            finish_reason = event.get("reason") or "stop"
+
+                    if not pending_tool_calls:
+                        break
+
+                    # Record the assistant turn that requested tools, then
+                    # dispatch each one, streaming tool_call_start/end so the
+                    # frontend can render "已读" markers.
+                    assistant_msg: dict = {
+                        "role": "assistant",
+                        "content": "".join(assistant_text_parts),
+                        "tool_calls": [
+                            {
+                                "id": tc["id"],
+                                "type": "function",
+                                "function": {
+                                    "name": tc["name"],
+                                    "arguments": tc["arguments"],
+                                },
+                            }
+                            for tc in pending_tool_calls
+                        ],
+                    }
+                    messages.append(assistant_msg)
+
+                    for tc in pending_tool_calls:
+                        try:
+                            args = json.loads(tc["arguments"] or "{}")
+                            if not isinstance(args, dict):
+                                args = {}
+                        except json.JSONDecodeError:
+                            args = {}
+
+                        yield _sse(
+                            {
+                                "tool_call_start": {
+                                    "id": tc["id"],
+                                    "name": tc["name"],
+                                    "arguments": args,
+                                }
+                            }
+                        )
+                        result = tools_handler.dispatch(tc["name"], args)
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc["id"],
+                                "content": result,
+                            }
+                        )
+                        yield _sse(
+                            {
+                                "tool_call_end": {
+                                    "id": tc["id"],
+                                    "name": tc["name"],
+                                    "output_summary": _summarize(result),
+                                }
+                            }
+                        )
+
+                    if finish_reason not in ("tool_calls", "function_call", None):
+                        # Provider signaled end-of-turn after tools; loop will
+                        # still run once more so the model gets to respond.
+                        pass
+                else:
+                    yield _sse(
+                        {
+                            "error": f"工具调用超过 {_MAX_TOOL_TURNS} 轮，已中止。"
+                        }
+                    )
             except AIError as e:
                 log.warning("ai chat error: %s", e)
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                yield _sse({"error": str(e)})
             except Exception:
                 log.exception("unexpected ai error")
-                yield f"data: {json.dumps({'error': '服务异常，请稍后重试'})}\n\n"
+                yield _sse({"error": "服务异常，请稍后重试"})
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(generate(), media_type="text/event-stream")
 
     return router
+
+
+def _summarize(tool_result: str) -> dict:
+    """Lightweight preview of a tool result for the frontend's 已读 line."""
+    head = tool_result.strip().splitlines()[:1]
+    return {
+        "size": len(tool_result),
+        "head": head[0][:160] if head else "",
+    }
