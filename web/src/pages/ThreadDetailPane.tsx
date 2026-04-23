@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AtSign, Bot, ChevronLeft, FileText, PanelRightOpen, Star, X } from "lucide-react";
+import { AtSign, Bot, ChevronLeft, FileText, Maximize2, Minimize2, PanelRightOpen, Star, X } from "lucide-react";
 import {
   addMention,
   changeThreadStatus,
@@ -34,6 +34,8 @@ import { useDashboard } from "@/pages/Dashboard";
 import { HomeWelcomePane } from "@/pages/HomeWelcomePane";
 
 const COLLAPSE_HEIGHT = 208;
+const MOBILE_AI_TOP_OFFSET = 64;
+const MOBILE_AI_PEEK_HEIGHT = 64;
 
 export function ThreadDetailPane() {
   const { category, slug } = useParams<{ category: string; slug: string }>();
@@ -41,7 +43,11 @@ export function ThreadDetailPane() {
   const [data, setData] = useState<ThreadDetailData | null | undefined>(undefined);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiPaneWidth, setAiPaneWidth] = useState(520);
-  const [mobileAiMode, setMobileAiMode] = useState<"closed" | "peek" | "half" | "full">("closed");
+  const [mobileAiMode, setMobileAiMode] = useState<"closed" | "peek" | "full">("closed");
+  const [mobileViewportHeight, setMobileViewportHeight] = useState(
+    () => (typeof window === "undefined" ? 0 : Math.round(window.visualViewport?.height ?? window.innerHeight)),
+  );
+  const [mobileAiDragHeight, setMobileAiDragHeight] = useState<number | null>(null);
   const [desktopFloatFrame, setDesktopFloatFrame] = useState({ top: 16, height: 720 });
   const [aiPendingReplyTarget, setAiPendingReplyTarget] = useState<string | null>(null);
   const [replyBody, setReplyBody] = useState("");
@@ -54,10 +60,25 @@ export function ThreadDetailPane() {
   const composerRef = useRef<HTMLDivElement>(null);
   const detailLayoutRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const mobileAiDragRef = useRef<{ pointerId: number; startY: number; startHeight: number } | null>(null);
 
   const hasDraft = replyBody.trim().length > 0;
   const isDesktopViewport = () => typeof window !== "undefined" && window.innerWidth >= 1024;
   const desktopFloatGap = 16;
+  const mobileAiMaxHeight = Math.max(mobileViewportHeight - MOBILE_AI_TOP_OFFSET, MOBILE_AI_PEEK_HEIGHT);
+  const mobileAiRestHeight = mobileAiMode === "full" ? mobileAiMaxHeight : MOBILE_AI_PEEK_HEIGHT;
+  const mobileAiHeight = mobileAiDragHeight ?? mobileAiRestHeight;
+  const mobileAiShowsBody =
+    mobileAiMode === "full" || (mobileAiDragHeight !== null && mobileAiHeight > MOBILE_AI_PEEK_HEIGHT + 24);
+  const openMobileAi = () => setMobileAiMode("full");
+  const minimizeMobileAi = () => {
+    setMobileAiDragHeight(null);
+    setMobileAiMode("peek");
+  };
+  const maximizeMobileAi = () => {
+    setMobileAiDragHeight(null);
+    setMobileAiMode("full");
+  };
 
   const startAIPaneResize = (event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -137,6 +158,23 @@ export function ThreadDetailPane() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const updateViewportHeight = () => {
+      const next = window.visualViewport?.height ?? window.innerHeight;
+      setMobileViewportHeight(Math.round(next));
+    };
+
+    updateViewportHeight();
+    window.addEventListener("resize", updateViewportHeight);
+    window.visualViewport?.addEventListener("resize", updateViewportHeight);
+    return () => {
+      window.removeEventListener("resize", updateViewportHeight);
+      window.visualViewport?.removeEventListener("resize", updateViewportHeight);
+    };
+  }, []);
+
+  useEffect(() => {
     setReplyBody("");
     setReplyMentions(emptyMention());
     setReplyDraftId(null);
@@ -160,6 +198,20 @@ export function ThreadDetailPane() {
       .catch(() => {});
   }, [category, slug]);
 
+  useEffect(() => {
+    if (mobileAiMode === "closed") {
+      setMobileAiDragHeight(null);
+    }
+  }, [mobileAiMode]);
+
+  useEffect(() => {
+    if (mobileAiDragHeight === null) return;
+    setMobileAiDragHeight((current) => {
+      if (current === null) return null;
+      return Math.min(Math.max(current, MOBILE_AI_PEEK_HEIGHT), mobileAiMaxHeight);
+    });
+  }, [mobileAiDragHeight, mobileAiMaxHeight]);
+
   const openAIReply = (post: Post) => {
     if (!category || !slug) return;
     setAiPendingReplyTarget(`${category}/${slug}/${post.filename}`);
@@ -167,7 +219,51 @@ export function ThreadDetailPane() {
       setAiOpen(true);
       return;
     }
-    setMobileAiMode("half");
+    openMobileAi();
+  };
+
+  const startMobileAiDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (isDesktopViewport() || mobileAiMode === "closed") return;
+    mobileAiDragRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startHeight: mobileAiHeight,
+    };
+    setMobileAiDragHeight(mobileAiHeight);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const moveMobileAiDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = mobileAiDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const deltaY = event.clientY - drag.startY;
+    const nextHeight = Math.min(
+      Math.max(drag.startHeight - deltaY, MOBILE_AI_PEEK_HEIGHT),
+      mobileAiMaxHeight,
+    );
+    setMobileAiDragHeight(nextHeight);
+  };
+
+  const endMobileAiDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = mobileAiDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const finalHeight = mobileAiDragHeight ?? mobileAiHeight;
+    const threshold = MOBILE_AI_PEEK_HEIGHT + (mobileAiMaxHeight - MOBILE_AI_PEEK_HEIGHT) / 2;
+    setMobileAiDragHeight(null);
+    setMobileAiMode(finalHeight >= threshold ? "full" : "peek");
+    mobileAiDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const cancelMobileAiDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!mobileAiDragRef.current || mobileAiDragRef.current.pointerId !== event.pointerId) return;
+    setMobileAiDragHeight(null);
+    mobileAiDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
   };
 
   const onUseDraftAsReply = async (
@@ -277,9 +373,6 @@ export function ThreadDetailPane() {
               height: Math.max(el.clientHeight - desktopFloatGap * 2, 520),
             });
           }
-        }
-        if (!isDesktopViewport() && mobileAiMode === "half") {
-          setMobileAiMode("peek");
         }
       }}
     >
@@ -436,7 +529,7 @@ export function ThreadDetailPane() {
                       const last = data.posts[data.posts.length - 1];
                       setAiPendingReplyTarget(`${category}/${slug}/${last.filename}`);
                     }
-                    setMobileAiMode((current) => (current === "closed" ? "half" : "closed"));
+                    setMobileAiMode((current) => (current === "closed" ? "full" : "closed"));
                   }}
                 />
                 <div className="ml-auto hidden items-center gap-2 text-xs text-slate-500 sm:flex">
@@ -479,7 +572,7 @@ export function ThreadDetailPane() {
               height: desktopFloatFrame.height,
             }}
           >
-            <div className="paper-panel pointer-events-auto mr-4 flex h-full min-h-0 flex-col overflow-hidden rounded-[1.3rem] border shadow-[0_10px_30px_rgba(15,23,42,0.04)]">
+            <div className="pointer-events-auto mr-4 flex h-full min-h-0 flex-col overflow-hidden rounded-[1.3rem] border border-slate-200 bg-white shadow-[0_10px_30px_rgba(15,23,42,0.08)]">
               <div className="flex items-center justify-between border-b border-slate-200/80 px-4 py-3">
                 <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
                   <Bot className="h-4 w-4 text-blue-600" />
@@ -513,41 +606,76 @@ export function ThreadDetailPane() {
       )}
 
       {!isDesktopViewport() && mobileAiMode !== "closed" && (
-        <div className="fixed inset-x-3 bottom-0 z-50 sm:hidden">
+        <div className="fixed inset-x-0 bottom-0 z-50 sm:hidden">
           <div
             className={cn(
-              "paper-panel overflow-hidden rounded-t-[1.5rem] border border-slate-200 shadow-[0_-12px_30px_rgba(15,23,42,0.08)] transition-all duration-200 ease-out",
-              mobileAiMode === "peek" && "h-16",
-              mobileAiMode === "half" && "h-[48svh]",
-              mobileAiMode === "full" && "h-[calc(100svh-4rem)]",
+              "overflow-hidden border border-slate-200 bg-white shadow-[0_-12px_30px_rgba(15,23,42,0.12)] transition-all duration-200 ease-out",
+              mobileAiMode === "peek" && "rounded-t-[1.5rem]",
+              mobileAiMode === "full" && "rounded-t-[1.5rem]",
             )}
+            style={{ height: mobileAiHeight }}
           >
-            <button
-              type="button"
-              className="flex w-full items-center justify-between border-b border-slate-200/80 px-4 py-3 text-left"
-              onClick={() => {
-                setMobileAiMode((current) => (current === "peek" || current === "half" ? "full" : "peek"));
-              }}
+            <div
+              className="flex w-full touch-none items-center justify-between border-b border-slate-200/80 px-4 py-3 text-left"
+              onPointerDown={startMobileAiDrag}
+              onPointerMove={moveMobileAiDrag}
+              onPointerUp={endMobileAiDrag}
+              onPointerCancel={cancelMobileAiDrag}
             >
-              <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
-                <Bot className="h-4 w-4 text-blue-600" />
-                AI 助手
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                <div className="h-1.5 w-10 rounded-full bg-slate-200" />
+                <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
+                  <Bot className="h-4 w-4 text-blue-600" />
+                  AI 助手
+                </div>
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-100"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setMobileAiMode("closed");
-                }}
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </button>
+              <div className="ml-3 flex items-center gap-1">
+                {mobileAiMode === "full" ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-100"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      minimizeMobileAi();
+                    }}
+                  >
+                    <Minimize2 className="h-4 w-4" />
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-100"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      maximizeMobileAi();
+                    }}
+                  >
+                    <Maximize2 className="h-4 w-4" />
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-100"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setMobileAiMode("closed");
+                  }}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
 
-            {mobileAiMode !== "peek" && (
+            {mobileAiShowsBody && (
               <div className="h-[calc(100%-3.5rem)] p-4 pb-5">
                 <AIPane
                   category={category!}

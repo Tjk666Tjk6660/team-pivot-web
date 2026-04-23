@@ -495,11 +495,15 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       <div ref={layoutRef} className="flex flex-1 flex-col overflow-hidden px-0 pb-0 pt-0 md:flex-row md:gap-3 md:px-4 md:pb-4 md:pt-4">
         <aside
           className={cn(
-            "min-h-0 overflow-y-auto md:workbench-panel md:shrink-0 md:rounded-[1.2rem] md:border",
+            "min-h-0 w-full overflow-y-auto md:workbench-panel md:w-[var(--sidebar-width)] md:shrink-0 md:rounded-[1.2rem] md:border",
             isThreadView ? "hidden md:block" : "block",
             !sidebarOpen && "md:overflow-hidden md:border-transparent",
           )}
-          style={{ width: sidebarOpen ? sidebarWidth : undefined }}
+          style={
+            sidebarOpen
+              ? ({ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties)
+              : undefined
+          }
         >
           {sidebarOpen && (
             <ThreadListPane
