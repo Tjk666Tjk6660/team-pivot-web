@@ -140,6 +140,54 @@ timeline:
 - `legacy_type`：迁移产物，新建文件不写入；只用于读时向老客户端展示
 - 第八.4 节列出的所有字段（`goal / task / transitions / files / anchor / importance / title / id / filename / path`）**禁止进入 schema**
 
+### 2.5 写入原则（依据 `pivot-product.md` 第六节新增要求）
+
+本节约定本次重构必须满足的写入侧硬原则，任何偏离都需要评审确认：
+
+1. **`index` 不反向解析 MD 正文**
+   - 服务端不得通过解析 frontmatter 字段或正文段落来"推导"出 `index` 字段
+   - 现行 `server/index_files.py:_build_reply_refs` / `append_reply_to_index` 从 frontmatter 的 `type / author / created` 读值再写 refs 的方式**违反此原则，必须改**
+
+2. **客户端 / AI 先准备结构化字段，API 一次性提交**
+   - 所有写入 timeline 的接口（`POST /api/matters/{matter_id}/timeline` 等）必须接受**完整的结构化 `TimelineItem` 字段**（含 `quote / refer / verifications / outcome / status_change / summary / creator / owner / type`），由客户端侧装配好再提交
+   - 服务端根据这份结构化提交**原子地同时写入 index yaml 和对应 MD 文件**；要么两者全部成功，要么都不写（临时文件 + rename 顺序）
+   - 这意味着 MD frontmatter 里不再需要冗余承载 `type / author / created_at` 等字段用于反向解析（可以保留作为人读便利，但 schema 真相只在 index 里）
+
+3. **正文不承担硬约束**
+   - `think / act / verify / result / insight` 的正文可以是任意 Markdown，不限模板、不限段落名
+   - 真正的硬约束全部在 index 结构化字段里：`type`、`verifications[].target/judgement/comment`、`outcome`、`status_change.from/to`
+   - 校验层（M1 的 `MatterIndex` 模块）必须覆盖这些字段的完整性，与正文无关
+
+### 2.6 写入端 API 契约样例
+
+```
+POST /api/matters/{matter_id}/timeline
+Content-Type: application/json
+
+{
+  "type": "verify",
+  "creator": "dengke",
+  "owner": "dengke",
+  "summary": "汇总当前行动验证结果",
+  "body": "# Verifications\n\n- 003_xxx.md\n  - judgement: passed\n  - comment: ...\n",
+  "quote": "discussions/xxx/005_liuyu_act_d4e5.md",
+  "refer": [],
+  "verifications": [
+    { "target": "discussions/xxx/003_dengke_act_a1b2.md",
+      "judgement": "passed",
+      "comment": "主链路完成，质量一般，但结果可接受" }
+  ],
+  "status_change": { "from": "executing", "to": "finished" }
+}
+```
+
+服务端行为：
+
+1. 校验 `type` 对当前 `matter.current_status` 允许；校验 `quote / refer / verifications[].target` 白名单；校验 `status_change.from` 等于当前 matter 状态
+2. 分配文件名（沿用现有 `next_post_number + generate_unique_hash` 逻辑）
+3. **原子双写**：先写 MD 临时文件 → 写 index 临时文件 → 两个 rename 序列化成功后返回；中途任一步失败都回滚
+4. 返回新 `TimelineItem`（含最终文件路径）
+
 ---
 
 ## 三、数据迁移
@@ -277,9 +325,11 @@ def migrate_all(index_dir: Path, dry_run: bool = True) -> list[MigrationReport]:
 迁移处理：
 
 - **迁移前先跑一次 `repair_partial_writes`**，把所有 un-indexed 状态的文件补进旧 index，避免迁移时漏数据
-- 迁移完成后，`index_state` 字段的定位：
-  - **保留在 post frontmatter 里**：不挪到 timeline item，因为这是 post 层面的"写入原子性"标记，不是 index 层面的语义
-  - `recovery.py` 改写为：扫 un-indexed → 调 `MatterIndex.append_item(...)` 补进新 schema，而不是调旧函数
+- 迁移完成后：
+  - 新写入路径（2.6 节的原子双写）**不再留下 un-indexed 状态**——MD 和 index 要么一起成功、要么一起失败
+  - `index_state` 字段**从新生成的 post frontmatter 中移除**（schema 层面不再需要）
+  - 对迁移后新出现的 un-indexed 文件（理论上只会因崩溃产生）：保留 `recovery.py` 作为灾备工具，但改写为"扫 un-indexed → 告警 + 放到 `var/orphan-posts/` 人工处理"，**不自动补 index**（因为缺少 type / creator / owner / quote 等结构化字段，无法安全补全）
+  - 旧数据迁移产物的 frontmatter 保留 `index_state: indexed` 不动（人读便利），但代码路径不再消费该字段
 
 ### 3.8 `SUMMARY*.md` / `RESULT*.md` 文件
 
@@ -364,9 +414,9 @@ class MatterIndex:
 
 | 函数 | 原行为 | 改造 |
 |---|---|---|
-| `create_thread_index` | 建 thread 时写初始 index（`discussions[].status=open`、timeline 首条 `created thread`） | 改为 `MatterIndex.create(matter_id, title, initial_item)`，写入新 schema 头部 + 首条 timeline item |
-| `append_reply_to_index` | 回帖时写 `discussions[0].files[].path` + timeline `replied` 事件 | 改为 `MatterIndex.append_item(TimelineItem)`，`refs[]` 构造改走 `_build_reply_refs` 的新实现（见下） |
-| `_build_reply_refs` | 构建旧 `refs: [{type: from, path}, {type: refer, path}]` | 重写为返回 `(quote: str, refer: list[str])`；调用方按 `TimelineItem.quote / refer` 赋值 |
+| `create_thread_index` | 建 thread 时写初始 index（`discussions[].status=open`、timeline 首条 `created thread`） | 改为 `MatterIndex.create(matter_id, title, initial_item: TimelineItem)`。**调用方必须传入完整 TimelineItem**，不再由本函数反向读 frontmatter |
+| `append_reply_to_index` | 回帖时读 frontmatter 反推字段写 `discussions[0].files[].path` + refs + timeline 事件 | **全函数语义翻转**：改为 `MatterIndex.append_item(TimelineItem)`，**不再反向解析 MD**；调用方（`publish.py`）必须把 `type / creator / owner / quote / refer / summary / status_change` 等结构化字段传进来 |
+| `_build_reply_refs` | 构建旧 `refs: [{type: from, path}, {type: refer, path}]` | **不再需要**。`quote / refer` 由 API 层直接接受结构化提交；此函数保留空壳仅为兼容测试，实际标 `@deprecated`，3 个月内删除 |
 | `append_standalone_mention` | 写旧 timeline 事件流（独立 @人事件） | 改为 `MatterIndex.append_comment(file_path, comment)` 挂到目标文件下 |
 | `change_thread_status` | 写旧 `discussions[0].status` + timeline 文本事件 | 改为 `MatterIndex.apply_status_change(file_path, from_, to)`，写 `status_change` 到触发文件项 + 更新 header |
 | `read_thread_index` | 读 `{status, last_updated}` 头部 | 改为返回 `MatterHeader` 的兼容 dataclass |
@@ -378,8 +428,8 @@ class MatterIndex:
 |---|---|---|
 | `server/threads.py:list_threads / get_thread / _thread_meta` | 扫 `index/` 拼 `ThreadMeta / ThreadDetail`；`_thread_meta` 靠 `type: proposal` 找主帖 | 改为通过 `MatterIndex.load` 读；title 改为从 `MatterHeader.title` 取（迁移时已抽），不再依赖 proposal 类型 |
 | `server/recovery.py:repair_partial_writes / _repair_post` | 扫 un-indexed 文件、直接调 `create_thread_index / append_reply_to_index` | 改为调 `MatterIndex.create / append_item`（新 schema）。见 3.7 |
-| `server/publish.py` | 发帖流程，调 `append_reply_to_index` / `create_thread_index` | 接口签名改：接受 `type` 参数（`think / act / verify / result / insight`），默认 `think`；quote 由前端传入 |
-| `server/drafts.py` | 草稿保存；字段含 `reply_to / references` 对应未来的 quote/refer | 字段保持兼容，内部发布时映射到新 schema 的 `quote / refer` |
+| `server/publish.py` | 发帖流程：写 MD → 调 `append_reply_to_index` 解析写 index → 事后 `mark_indexed` | **核心改造点**：改为接受结构化 `TimelineItem`，执行**原子双写**（MD 临时文件 + index 临时文件 → 两次 rename），不再走"先写 MD、再补 index"的两步式流程；`scan_un_indexed / mark_indexed` 机制在新路径下不需要（见 3.7） |
+| `server/drafts.py` | 草稿保存；字段含 `reply_to / references` 对应未来的 quote/refer | 字段保持兼容；客户端从草稿装配 `TimelineItem` 提交时，将 `reply_to → quote`、`references → refer`。服务端不再从草稿"推"出这些字段 |
 | `server/mentions.py` | 处理 @ 通知与 comment 关联 | 新 comment 写在 `timeline[].comments[]`；流程里调 `MatterIndex.append_comment` 替换 `append_standalone_mention` |
 | `server/notify.py` | 飞书通知推送 | 接口不改，但数据来源切到新 schema；测试回归 |
 | `server/favorites.py`, `server/read_state.py`, `server/inbox.py` | 以 `(category, slug)` 作为 thread 身份存 db | 第一版**保持 `(category, slug)` 键不变**（新 matter_id 就等于 slug）；后续若要引入纯 matter_id 维度再做 db migration。本次只做读写 shim 适配 |
@@ -630,3 +680,4 @@ matter 详情页顶部（靠近时间轴）新增**页面级 result 创建入口
 3. **迁移脚本运行时机**：部署到服务端时是否需要停机窗口，还是可以在线迁移（每个 matter 单独处理期间读写加文件锁）
 4. **"生成 Result"按钮的位置与文案**：详情页顶部是否过于显眼？还是希望它收起在菜单里避免误触
 5. **"回复"按钮文案过渡**：M6 中保留旧文案"回复"作为"基于此新增 think"的实现，等用户习惯再改——保留多久？
+6. **原子双写失败路径**（2.6）：服务端原子写中途断电 / IO 错误，回滚策略是"都不留"还是"留下 MD 但不写 index + 告警"？两种选择对恢复难度影响不同

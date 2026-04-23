@@ -24,6 +24,7 @@
 - 移动端改造（已由主干代码覆盖）
 - 用户手动追加 reference 的"逃生舱"入口
 - 让 AI 扫仓库、或读任意路径文件
+- **AI 写入 index / 创建 timeline item 的工具链**（即 `pivot-product.md` 第六节里"AI 整理结构化字段 → 用户确认 → 客户端一次性提交 API"这部分流程中 AI 的协助环节）。本轮 A 的全部 tool 均为只读；若后续要让 AI 参与 `TimelineItem` 字段装配（生成 `summary / type / quote / refer / verifications` 候选），另起设计。本份文档的 `read_matter_index` / `read_file` 是读取侧基础设施，对后续写入侧改造是增量而非重构
 
 ---
 
@@ -433,3 +434,4 @@ Grep 当前调用方：只在 `AIPane.tsx` 中被使用（`mode="reply_target"` 
 2. **tool_result 内容不推前端**是否会让用户对 AI 的阅读过程不透明，需不需要让前端可点击查看读了什么
 3. **旧请求体兼容期**（`reply_target` 被当作 `target_file`、`reference_files` 被忽略）保留多久
 4. **生成草稿流程**（`[[GENERATE_REPLY_DRAFT]]` tag）是否也借这次机会改造为 tool（比如 `generate_draft(...)`），还是保持现有 tag-based 约定不动
+5. **AI 写入侧能力的排期**（针对 `pivot-product.md` 第六节 "AI 整理结构化字段 → 用户确认 → 一次性提交 API" 的流程）：本轮 A 只做只读是否可以接受？AI 协助装配 `TimelineItem` 字段的写入工具放到哪轮？
