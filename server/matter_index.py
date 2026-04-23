@@ -61,9 +61,9 @@ class ValidationError(Exception):
 
 
 def matter_index_path(index_dir: Path, matter_id: str) -> Path:
-    # Filename convention is a P2 pre-audit item; keep it isolated here so
-    # higher layers don't hardcode it.
-    return Path(index_dir) / f"{matter_id}.matter.yaml"
+    # matter_id = slug (flat), per AI-docs/designs/2026-04-23-index-refactor-design.md §2.1.
+    # Filename {matter_id}.index.yaml replaces the old {slug}-discuss.index.yaml.
+    return Path(index_dir) / f"{matter_id}.index.yaml"
 
 
 # ---------- read ----------
