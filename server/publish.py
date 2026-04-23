@@ -450,6 +450,29 @@ def publish_matter_append(
     matter_snapshot = read_matter_index(index_path) or {}
     _emit_file_appended(matter_snapshot, item, actor=user.pinyin, now=now)
 
+    # Notifier: reuse the existing thread-era methods so Feishu keeps pushing
+    # card updates. Semantically a matter file append is "reply to the matter".
+    if notifier is not None:
+        matter_meta = matter_snapshot.get("matter") or {}
+        matter_title = matter_meta.get("title") or matter_id
+        notifier.notify_new_reply(
+            category=category, slug=matter_id, thread_title=matter_title,
+            author_name=user.name,
+            filename=filename,
+            body=md_body,
+            mention_open_ids=None,
+            mention_comments=None,
+        )
+        sc = item.get("status_change")
+        if sc:
+            notifier.notify_status_change(
+                category=category, slug=matter_id, thread_title=matter_title,
+                from_state=sc.get("from") or "",
+                to_state=sc.get("to") or "",
+                author_name=user.name,
+                reason=None,
+            )
+
     return {
         "matter_id": matter_id,
         "filename": filename,
@@ -508,6 +531,22 @@ def publish_matter_comment(
         at=now,
         payload={"target_file": target_file, "body": body, "mentions": mentions or []},
     )
+
+    # Notifier: reuse the standalone-mention path so @-recipients get a DM.
+    if notifier is not None and mentions:
+        matter_meta = data.get("matter") or {}
+        matter_title = matter_meta.get("title") or matter_id
+        category = _derive_category_from_timeline(data) or "matters"
+        target_basename = (target_file or "").rsplit("/", 1)[-1] or target_file
+        notifier.notify_standalone_mention(
+            category=category, slug=matter_id, thread_title=matter_title,
+            target_filename=target_basename,
+            author_name=user.name,
+            mention_open_ids=list(mentions),
+            mention_comments=body,
+            post_excerpt="",
+        )
+
     return {"matter_id": matter_id, "target_file": target_file, "at": now}
 
 

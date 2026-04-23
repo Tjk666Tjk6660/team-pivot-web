@@ -13,7 +13,9 @@ from server.auth.deps import make_current_user
 from server.auth.session import SessionStore
 from server.contacts import ContactRepo
 from server.events import Event, clear_subscribers, subscribe
+from server.favorites import FavoriteRepo
 from server.notify import NoOpNotifier
+from server.read_state import ReadStateRepo
 
 
 class _WorkspaceStub:
@@ -54,7 +56,10 @@ def client(db, users, tmp_path):
 
     app = FastAPI()
     app.include_router(
-        build_router(workspace, users, ContactRepo(db), NoOpNotifier(), current_user)
+        build_router(
+            workspace, users, ContactRepo(db), NoOpNotifier(),
+            ReadStateRepo(db), FavoriteRepo(db), current_user,
+        )
     )
     c = TestClient(app)
     c.cookies.set("sid", sid)
@@ -490,6 +495,64 @@ def test_list_matters_basic_and_filters(client):
 
 
 # ---------- full lifecycle + reviewed ----------
+
+
+def test_notifier_is_called_on_append_and_status_change(db, users, tmp_path):
+    """P4.5 G: publish_matter_append must reuse notify_new_reply;
+    status_change must trigger notify_status_change."""
+    calls: list[tuple[str, dict]] = []
+
+    class RecordingNotifier:
+        def notify_new_thread(self, **kwargs):
+            calls.append(("new_thread", kwargs))
+
+        def notify_new_reply(self, **kwargs):
+            calls.append(("new_reply", kwargs))
+
+        def notify_status_change(self, **kwargs):
+            calls.append(("status_change", kwargs))
+
+        def notify_standalone_mention(self, **kwargs):
+            calls.append(("standalone_mention", kwargs))
+
+    workspace = _WorkspaceStub(tmp_path)
+    users.upsert_from_feishu(open_id="ou_1", union_id=None, name="邓柯", avatar_url="")
+    users.update_profile("ou_1", pinyin="dengke")
+    sessions = SessionStore(db)
+    sid = sessions.create("ou_1")
+    current_user = make_current_user(sessions, users, ApiTokenRepo(db))
+
+    from fastapi import FastAPI
+    app = FastAPI()
+    app.include_router(
+        build_router(
+            workspace, users, ContactRepo(db), RecordingNotifier(),
+            ReadStateRepo(db), FavoriteRepo(db), current_user,
+        )
+    )
+    c = TestClient(app)
+    c.cookies.set("sid", sid)
+
+    r = c.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+    c.post(f"/api/matters/{matter_id}/files", json={
+        "type": "act", "summary": "go",
+        "status_change": {"from": "planning", "to": "executing"},
+    })
+    c.post(f"/api/matters/{matter_id}/comments", json={
+        "target_file": r.json()["initial_timeline_item"]["file"],
+        "body": "请看一下",
+        "mentions": ["ou_test0000000000000001"],
+    })
+
+    topics = [t for t, _ in calls]
+    assert "new_thread" in topics, topics
+    assert "new_reply" in topics, topics
+    assert "status_change" in topics, topics
+    assert "standalone_mention" in topics, topics
 
 
 def test_full_lifecycle_planning_to_reviewed(client):

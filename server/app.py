@@ -114,7 +114,8 @@ def create_app() -> FastAPI:
         workspace, users, contacts, notifier, read_states, favorites, current_user_dep,
     ))
     app.include_router(build_matters_router(
-        workspace, users, contacts, notifier, current_user_dep,
+        workspace, users, contacts, notifier,
+        read_states, favorites, current_user_dep,
     ))
     app.include_router(build_workspace_router(
         workspace, settings, current_user_dep, current_user_cookie_dep,

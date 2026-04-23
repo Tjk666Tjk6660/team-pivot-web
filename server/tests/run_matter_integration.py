@@ -676,6 +676,122 @@ def case_d3_cross_matter_refer(client, workspace_path) -> list[str]:
     return r.failures
 
 
+def case_e1_favorite_and_read_cycle(client, workspace_path) -> list[str]:
+    """P4.5 favorite + read_state integration:
+      - create a matter
+      - GET /api/matters: unread_count == 1, favorite == false
+      - POST /favorite → favorite true
+      - POST /read → unread_count == 0
+      - append a file → unread_count back to 1 (new item since last_read)
+    """
+    r = CaseRunner("E1-favorite-and-read-cycle", client)
+    title = _title("IntegTest-E1-FavoriteRead")
+    created = r.do(Step("create", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {"type": "think", "summary": "start", "body": ""},
+    }))
+    matter_id = created["matter_id"]
+
+    # Step: list → baseline state
+    listing1 = r.do(Step("list-1-baseline", "GET", "/api/matters"))
+    entry = next((m for m in listing1["items"] if m["id"] == matter_id), None)
+    r.expect(entry is not None, "matter appears in list")
+    if entry:
+        r.expect(entry.get("unread_count", 0) >= 1,
+                 f"expect unread >= 1, got {entry.get('unread_count')}")
+        r.expect(entry.get("favorite") is False, "not yet favorited")
+
+    # Step: favorite on
+    r.do(Step("favorite-on", "POST", _url_matter(matter_id, "/favorite"),
+              body={"favorite": True}))
+    listing2 = r.do(Step("list-2-after-fav", "GET", "/api/matters"))
+    e2 = next((m for m in listing2["items"] if m["id"] == matter_id), None)
+    r.expect(e2 and e2.get("favorite") is True, "favorite reflected in list")
+
+    # Step: mark read → unread becomes 0
+    r.do(Step("mark-read", "POST", _url_matter(matter_id, "/read")))
+    listing3 = r.do(Step("list-3-after-read", "GET", "/api/matters"))
+    e3 = next((m for m in listing3["items"] if m["id"] == matter_id), None)
+    r.expect(e3 and e3.get("unread_count") == 0,
+             f"unread should reset to 0, got {e3 and e3.get('unread_count')}")
+
+    # Step: append a file → unread becomes 1 again
+    r.do(Step("append-after-read", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "think", "summary": "new", "body": "",
+    }))
+    listing4 = r.do(Step("list-4-after-append", "GET", "/api/matters"))
+    e4 = next((m for m in listing4["items"] if m["id"] == matter_id), None)
+    r.expect(e4 and e4.get("unread_count") == 1,
+             f"unread should be 1 (new item since last_read), got {e4 and e4.get('unread_count')}")
+
+    # Step: favorite off
+    r.do(Step("favorite-off", "POST", _url_matter(matter_id, "/favorite"),
+              body={"favorite": False}))
+    listing5 = r.do(Step("list-5-after-unfav", "GET", "/api/matters"))
+    e5 = next((m for m in listing5["items"] if m["id"] == matter_id), None)
+    r.expect(e5 and e5.get("favorite") is False, "favorite cleared")
+
+    r.save_final_index(matter_id, workspace_path)
+    return r.failures
+
+
+def case_e2_name_resolution(client, workspace_path) -> list[str]:
+    """P4.5 name resolution: GET /api/matters/{id} must expose
+    creator_display / owner_display / *_avatar_url."""
+    r = CaseRunner("E2-name-resolution", client)
+    title = _title("IntegTest-E2-Display")
+    created = r.do(Step("create", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {
+            "type": "think",
+            "summary": "测试 display 字段",
+            "body": "",
+        },
+    }))
+    matter_id = created["matter_id"]
+
+    detail = r.do(Step("detail", "GET", _url_matter(matter_id)))
+    first_item = detail["timeline"][0]
+    r.expect("creator_display" in first_item, "timeline item has creator_display")
+    r.expect("owner_display" in first_item, "timeline item has owner_display")
+    r.expect("creator_avatar_url" in first_item, "timeline item has creator_avatar_url")
+    r.expect("owner_avatar_url" in first_item, "timeline item has owner_avatar_url")
+
+    listing = r.do(Step("list-has-display", "GET", "/api/matters"))
+    entry = next((m for m in listing["items"] if m["id"] == matter_id), None)
+    r.expect(entry is not None, "matter in list")
+    if entry:
+        r.expect("creator_display" in entry, "list entry has creator_display")
+        r.expect("creator_avatar_url" in entry, "list entry has creator_avatar_url")
+
+    r.save_final_index(matter_id, workspace_path)
+    return r.failures
+
+
+def case_e3_categories_aggregation(client, workspace_path) -> list[str]:
+    """P4.5 /api/categories must aggregate both threads and matters and
+    expose matter_count / thread_count counters for the IntegTest category."""
+    r = CaseRunner("E3-categories-aggregation", client)
+    # Make sure there is at least one matter under IntegTest from this run.
+    title = _title("IntegTest-E3-CategorySeed")
+    r.do(Step("seed", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {"type": "think", "summary": "seed", "body": ""},
+    }))
+    cats = r.do(Step("list-categories", "GET", "/api/categories"))
+    integ = next((c for c in cats["items"] if c["name"] == "IntegTest"), None)
+    r.expect(integ is not None, "IntegTest category present in /api/categories")
+    if integ:
+        r.expect("matter_count" in integ and integ["matter_count"] >= 1,
+                 f"matter_count must be >= 1, got {integ.get('matter_count')}")
+        r.expect("thread_count" in integ,
+                 "thread_count key must be present (even if 0)")
+    return r.failures
+
+
 def case_c1_comment_with_mention(client, workspace_path) -> list[str]:
     """Exercise /comments endpoint + mention, using TEST_MY_OPENID as the @target."""
     r = CaseRunner("C1-comment-with-mention", client)
@@ -774,6 +890,9 @@ def main() -> int:
         case_d1_multi_round_discussion,
         case_d2_executing_depth_multiple_acts,
         case_d3_cross_matter_refer,
+        case_e1_favorite_and_read_cycle,
+        case_e2_name_resolution,
+        case_e3_categories_aggregation,
     ]
 
     summary: list[str] = []

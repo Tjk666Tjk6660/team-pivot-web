@@ -8,11 +8,17 @@ from pydantic import BaseModel, Field
 
 from server.auth.deps import require_profile
 from server.contacts import ContactRepo
+from server.favorites import FavoriteRepo
+from server.inbox import (
+    compute_matter_unread_counts,
+    latest_matter_post_filename,
+)
 from server.matter_index import (
     matter_index_path,
     read_matter_index,
 )
 from server.matter_validator import validate_append
+from server.mentions import resolve_avatar_url, resolve_id, resolve_text
 from server.notify import Notifier
 from server.posts import read_post
 from server.publish import (
@@ -23,6 +29,7 @@ from server.publish import (
     publish_matter_comment,
     publish_matter_create,
 )
+from server.read_state import ReadStateRepo
 from server.users import User, UserRepo
 from server.workspace import Workspace
 
@@ -83,6 +90,10 @@ class CommentBody(BaseModel):
     mentions: list[str] | None = None
 
 
+class FavoriteToggleBody(BaseModel):
+    favorite: bool
+
+
 # ---------- Router ----------
 
 
@@ -91,6 +102,8 @@ def build_router(
     users: UserRepo,
     contacts: ContactRepo,
     notifier: Notifier,
+    read_states: ReadStateRepo,
+    favorites: FavoriteRepo,
     current_user: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
@@ -102,18 +115,32 @@ def build_router(
         q: str | None = None,
         user: User = Depends(current_user),
     ):
+        # Per-user overlays: unread counts + favorites. Keyed by category/slug
+        # (matter_id == slug), reusing the thread read_state / favorites tables
+        # with no schema change.
+        unread = compute_matter_unread_counts(
+            workspace.discussions_dir, workspace.index_dir,
+            user.open_id, read_states,
+        )
+        favorite_keys = favorites.all_for_user(user.open_id)
+
         items = []
         for path in _list_index_files(workspace.index_dir):
             data = read_matter_index(path)
             if data is None:
                 continue
-            summary = _summarize_matter(data)
+            summary = _summarize_matter(data, users, contacts)
             if status and summary.get("current_status") != status:
                 continue
             if owner and not _matter_has_owner(data, owner):
                 continue
             if q and q.lower() not in (summary.get("title") or "").lower():
                 continue
+            category = _matter_category(data)
+            key = f"{category}/{summary['id']}" if category else summary["id"]
+            summary["unread_count"] = unread.get(key, 0)
+            summary["favorite"] = key in favorite_keys
+            summary["category"] = category
             items.append(summary)
         items.sort(key=lambda m: m.get("updated_at") or "", reverse=True)
         return {"items": items}
@@ -123,7 +150,55 @@ def build_router(
         data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
         if data is None:
             raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
-        return _render_matter_detail(workspace, data)
+        rendered = _render_matter_detail(workspace, data, users, contacts)
+        category = _matter_category(data)
+        key = f"{category}/{matter_id}" if category else matter_id
+        rendered["matter"]["category"] = category
+        rendered["matter"]["favorite"] = favorites.has(user.open_id, key)
+        return rendered
+
+    @router.post("/matters/{matter_id}/read")
+    def mark_read(matter_id: str, user: User = Depends(current_user)):
+        data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
+        if data is None:
+            raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
+        category = _matter_category(data)
+        if not category:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "matter_category_unknown"},
+            )
+        tdir = workspace.discussions_dir / category / matter_id
+        latest = latest_matter_post_filename(tdir)
+        if latest is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "no_files_in_matter"},
+            )
+        read_states.set(user.open_id, f"{category}/{matter_id}", latest)
+        return {"ok": True, "last_read_post_filename": latest}
+
+    @router.post("/matters/{matter_id}/favorite")
+    def toggle_favorite(
+        matter_id: str,
+        body: FavoriteToggleBody,
+        user: User = Depends(current_user),
+    ):
+        data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
+        if data is None:
+            raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
+        category = _matter_category(data)
+        if not category:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "matter_category_unknown"},
+            )
+        key = f"{category}/{matter_id}"
+        if body.favorite:
+            favorites.set(user.open_id, key)
+        else:
+            favorites.delete(user.open_id, key)
+        return {"ok": True, "thread_key": key, "favorite": body.favorite}
 
     @router.post("/matters")
     def create_matter(body: NewMatterBody, user: User = Depends(current_user)):
@@ -327,11 +402,15 @@ def _list_index_files(index_dir: Path) -> list[Path]:
     return result
 
 
-def _summarize_matter(data: dict) -> dict:
+def _summarize_matter(
+    data: dict,
+    users: UserRepo | None = None,
+    contacts: ContactRepo | None = None,
+) -> dict:
     matter = data.get("matter") or {}
     timeline = data.get("timeline") or []
     last = timeline[-1] if timeline else {}
-    return {
+    out: dict = {
         "id": matter.get("id"),
         "title": matter.get("title"),
         "current_status": matter.get("current_status"),
@@ -341,6 +420,13 @@ def _summarize_matter(data: dict) -> dict:
         "last_file_type": last.get("type"),
         "last_summary": last.get("summary"),
     }
+    if users is not None:
+        first = timeline[0] if timeline else {}
+        creator = first.get("creator")
+        out["creator"] = creator
+        out["creator_display"] = resolve_id(creator, users, contacts)
+        out["creator_avatar_url"] = resolve_avatar_url(creator, users, contacts)
+    return out
 
 
 def _matter_has_owner(data: dict, owner: str) -> bool:
@@ -350,11 +436,27 @@ def _matter_has_owner(data: dict, owner: str) -> bool:
     return False
 
 
-def _render_matter_detail(workspace: Workspace, data: dict) -> dict:
+def _matter_category(data: dict) -> str | None:
+    timeline = data.get("timeline") or []
+    if not timeline:
+        return None
+    first = timeline[0].get("file") or ""
+    parts = first.split("/")
+    if len(parts) < 4 or parts[0] != "discussions":
+        return None
+    return parts[1]
+
+
+def _render_matter_detail(
+    workspace: Workspace,
+    data: dict,
+    users: UserRepo,
+    contacts: ContactRepo,
+) -> dict:
     matter = data.get("matter") or {}
     timeline_out = []
     for item in data.get("timeline") or []:
-        rendered = _render_item(workspace, item)
+        rendered = _render_item(workspace, item, users, contacts)
         timeline_out.append(rendered)
     return {
         "matter": {
@@ -367,7 +469,12 @@ def _render_matter_detail(workspace: Workspace, data: dict) -> dict:
     }
 
 
-def _render_item(workspace: Workspace, item: dict) -> dict:
+def _render_item(
+    workspace: Workspace,
+    item: dict,
+    users: UserRepo,
+    contacts: ContactRepo,
+) -> dict:
     out = dict(item)
     # Per pivot-interface.md: every timeline entry carries `expanded: false` and `body`.
     out.setdefault("quote", None)
@@ -376,6 +483,29 @@ def _render_item(workspace: Workspace, item: dict) -> dict:
     out.setdefault("status_change", None)
     out["expanded"] = False
     out["body"] = _read_item_body(workspace, item.get("file") or "")
+    # Name resolution (reuse users→contacts→open_id chain from thread path).
+    creator = out.get("creator")
+    owner = out.get("owner")
+    out["creator_display"] = resolve_id(creator, users, contacts)
+    out["creator_avatar_url"] = resolve_avatar_url(creator, users, contacts)
+    out["owner_display"] = resolve_id(owner, users, contacts)
+    out["owner_avatar_url"] = resolve_avatar_url(owner, users, contacts)
+    # Comments: resolve author_display + mentions_display.
+    resolved_comments = []
+    for c in out.get("comments") or []:
+        cc = dict(c)
+        author = cc.get("author")
+        if author:
+            cc["author_display"] = resolve_id(author, users, contacts)
+        if cc.get("mentions"):
+            cc["mentions_display"] = [
+                resolve_id(m, users, contacts) for m in cc["mentions"]
+            ]
+        # Also resolve @ids inside the comment body text.
+        if cc.get("body"):
+            cc["body"] = resolve_text(cc["body"], users, contacts)
+        resolved_comments.append(cc)
+    out["comments"] = resolved_comments
     return out
 
 

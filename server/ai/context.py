@@ -48,7 +48,11 @@ def build_context_from_files(
     references = references or []
 
     def _section(label: str, path: str) -> str | None:
-        parts = path.split("/")
+        # Accept both the legacy thread-style 3-part form
+        # ("category/slug/filename.md") and the matter-style 4-part form
+        # ("discussions/category/slug/filename.md").
+        rel = path[len("discussions/"):] if path.startswith("discussions/") else path
+        parts = rel.split("/")
         if len(parts) != 3:
             return None
         cat, slug, fname = parts

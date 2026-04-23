@@ -182,6 +182,46 @@
 
 ---
 
+## P4.5 · Threads → Matters 迁移缝合
+
+**目标**：P1/P2/P4 已搭出 matter 基础设施，但 thread 模型原有的未读 / 收藏 / 通知 / 名字解析 / AI 会话这几块还没接到 matter 上。P4.5 把这些"已有能力"全部铺到 matter，保证前端 P3 切到 matter 之后不丢功能。
+
+### 范围（7 项，全部不改 DB schema）
+
+1. **A. matter 响应名字解析**：`GET /api/matters` / `GET /api/matters/{id}` 加 `creator_display / owner_display / *_avatar_url`；`comments[].author_display`；`mentions` 的 display 名数组。复用 `resolve_id / resolve_avatar_url / resolve_text` 的 `users → contacts → open_id` 回退链。
+2. **B. matter 未读 + inbox**：**全部 timeline item 计未读**（决策：前端简单优先，不按 type 区分）。`server/inbox.py` 扩展扫 matter index；`GET /api/inbox` 合并 thread + matter；`GET /api/matters` 每项加 `unread_count`；`POST /api/matters/{id}/read` 复用 `read_state` 表（thread_key 列存 `category/slug`，matter_id 就是 slug）。
+3. **C. matter 收藏**：`GET /api/matters` 每项加 `favorite`；`POST /api/matters/{id}/favorite` toggle；复用 `favorites` 表。
+4. **D. `GET /api/categories` 合并统计**：按 category 聚合时同时含 thread + matter（matter 的 category 从 `timeline[0].file` 解出）。
+5. **E. AI 接口 matter 化**：新增 `GET/PUT/DELETE /api/ai/matters/{id}/conversation` + `POST /api/ai/matters/{id}/chat`。`server/ai/context.py` 增加 `build_context_from_matter(matter_id, quote_target, refer[])` 分支。`ai_conversations` 表复用，thread_key 列存 `category/slug`。旧 `/api/ai/threads/*` 路由暂留（P5 再下线）。
+6. **G. 通知调用点补齐**（复用现有 4 个 notifier 方法，不新增）：
+   - `publish_matter_append` 调 `notify_new_reply`（语义 "XX 回复了某 matter" 仍然自然）
+   - matter 文件触发 `status_change` 时调 `notify_status_change`
+   - `publish_matter_comment` 有 mentions 时调 `notify_standalone_mention`
+   - `publish_matter_create` 已调 `notify_new_thread`（不动）
+7. **H. 集成测试扩充**：favorite toggle / read mark / unread count / AI matter chat / NoOpNotifier 侦测调用等新 case，随后全量跑一遍真后端。
+
+### 决策记录
+
+- 未读规则：**全部 timeline item 计未读**（对前端实现简单；不按 type 区分）
+- 通知方法：**不新增，全部复用现有 4 个**（`notify_new_thread / notify_new_reply / notify_status_change / notify_standalone_mention`）；卡片文案可按 matter 语境微调但方法签名不动
+- SQLite 表（`favorites / read_state / ai_conversations`）：**不动 schema**；thread_key 列存 `category/slug`（matter_id 就是 slug，键自然唯一）
+- 名字解析字段命名：沿用老 thread 的 `<field>_display` / `<field>_avatar_url` 并列风格
+
+### 从 P4.5 移除、后续独立立项
+
+- **drafts 扩展 matter**：需要 drop `CHECK(type IN ('proposal','reply'))` + 新增 `matter_payload_json` 列，属 DB schema rebuild，走核心变更评审门单独做
+- **matter 真 recovery**：MD→INDEX 重建，两阶段写已大幅缩窗，接受运维层手工处理
+- **事件流前端消费**：AI-monitor 接入阶段统一做
+
+### 验收
+
+- 7 项全部落地，无 DB schema 变更
+- 集成测试真后端全过
+- 旧 `/api/threads/*` 全部接口依然可用、行为不变
+- `uv run pytest -q` 全绿
+
+---
+
 # 前端部分（同事承担）
 
 ## P3 · Matter 详情页（前端主导）
