@@ -68,7 +68,6 @@ class Notifier(Protocol):
         author_name: str,
         mention_open_ids: list[str],
         mention_comments: str,
-        post_excerpt: str,
     ) -> None: ...
 
 
@@ -173,7 +172,7 @@ class FeishuNotifier:
 
     def notify_standalone_mention(
         self, *, category, slug, thread_title, target_filename,
-        author_name, mention_open_ids, mention_comments, post_excerpt,
+        author_name, mention_open_ids, mention_comments,
     ) -> None:
         post_url = self._post_url(category, slug, target_filename)
         card = build_standalone_mention_card(
@@ -187,17 +186,6 @@ class FeishuNotifier:
             post_url=post_url,
         )
         self._broadcast(card, event=f"mention slug={slug} file={target_filename}")
-        dm = build_mention_dm_card(
-            author_name=author_name,
-            thread_title=thread_title,
-            thread_slug=slug,
-            target_filename=target_filename,
-            kind="提及",
-            comments=mention_comments,
-            post_url=post_url,
-            post_excerpt=post_excerpt,
-        )
-        self._dm_many(mention_open_ids, dm, event=f"mention slug={slug}")
 
     def notify_status_change(
         self, *, category, slug, thread_title, from_state, to_state, author_name, reason,

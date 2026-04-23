@@ -13,7 +13,7 @@ from server.index_files import (
     create_thread_index,
 )
 from server.notify import Notifier
-from server.posts import mark_indexed, read_post, write_post_pending
+from server.posts import mark_indexed, write_post_pending
 from server.threads import (
     generate_unique_hash,
     get_thread,
@@ -189,17 +189,12 @@ def add_standalone_mention(
         )
     if notifier is not None:
         thread_title = _lookup_thread_title(workspace, category, slug)
-        try:
-            excerpt = read_post(target_path).body
-        except Exception:
-            excerpt = ""
         notifier.notify_standalone_mention(
             category=category, slug=slug, thread_title=thread_title,
             target_filename=target_filename,
             author_name=user.name,
             mention_open_ids=mention_open_ids,
             mention_comments=mention_comments,
-            post_excerpt=excerpt,
         )
     return {"ok": True}
 

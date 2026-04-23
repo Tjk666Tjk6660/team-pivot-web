@@ -386,5 +386,31 @@ def test_noop_notifier_silent():
     n.notify_standalone_mention(
         category="c", slug="s", thread_title="t", target_filename="f.md",
         author_name="a", mention_open_ids=["ou_x"], mention_comments="hi",
-        post_excerpt="body",
     )
+
+
+def test_feishu_notifier_standalone_mention_does_not_dm(monkeypatch):
+    """群卡片里 <at id=…> 已能触发推送，不再额外发 DM（避免双通知）。"""
+    notifier = FeishuNotifier(tokens=None, web_base_url="https://x")  # type: ignore[arg-type]
+
+    calls: dict[str, int] = {"broadcast": 0, "dm": 0}
+
+    def fake_broadcast(self, card, *, event):
+        calls["broadcast"] += 1
+
+    def fake_dm_many(self, open_ids, card, *, event):
+        calls["dm"] += 1
+
+    monkeypatch.setattr(FeishuNotifier, "_broadcast", fake_broadcast)
+    monkeypatch.setattr(FeishuNotifier, "_dm_many", fake_dm_many)
+
+    notifier.notify_standalone_mention(
+        category="c", slug="s", thread_title="t",
+        target_filename="001_a.md",
+        author_name="Alice",
+        mention_open_ids=["ou_x"],
+        mention_comments="hi",
+    )
+
+    assert calls["broadcast"] == 1
+    assert calls["dm"] == 0
