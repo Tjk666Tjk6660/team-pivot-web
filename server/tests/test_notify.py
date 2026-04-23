@@ -27,12 +27,12 @@ def test_thread_card_shape_6_fields():
     )
     assert card["schema"] == "2.0"
     assert card["header"]["template"] == "blue"
-    assert "新讨论：Hello" in card["header"]["title"]["content"]
+    assert card["header"]["title"]["content"] == "📨 来自 邓柯 的新讨论主题通知：Hello"
 
     md = card["body"]["elements"][0]["content"]
     # 6 字段都在
     assert "**项目**：general" in md
-    assert "**主题**：hello" in md
+    assert "**主题**：Hello" in md
     assert "**操作**：邓柯 发起了新讨论" in md
     assert "**文件**：001_deng_proposal_xxx.md" in md
     assert "**时间**：" in md
@@ -55,15 +55,16 @@ def test_reply_card_header_carries_author():
         thread_url="http://x/y",
     )
     assert card["header"]["template"] == "green"
-    assert "Ken 回复：Parent" in card["header"]["title"]["content"]
+    assert card["header"]["title"]["content"] == "📩 来自 Ken 的新回复通知：Parent"
 
     md = card["body"]["elements"][0]["content"]
+    assert "**主题**：Parent" in md
     assert "**操作**：Ken 发布了新回复" in md
     assert "**文件**：002_ken_reply_xxx.md" in md
 
 
-def test_card_no_longer_contains_raw_body():
-    """v2: no 200-char body preview, no **作者** row."""
+def test_card_no_author_row():
+    """No **作者** row — author lives in header / 操作."""
     card = build_thread_card(
         category="c",
         thread_slug="s",
@@ -74,6 +75,123 @@ def test_card_no_longer_contains_raw_body():
     )
     md = card["body"]["elements"][0]["content"]
     assert "**作者**：" not in md
+
+
+def test_card_omits_body_preview_when_no_body():
+    card = build_thread_card(
+        category="c",
+        thread_slug="s",
+        title="T",
+        author_name="a",
+        filename="f.md",
+        thread_url="http://x",
+    )
+    md = card["body"]["elements"][0]["content"]
+    assert "**内容**" not in md
+
+
+def test_thread_card_body_preview_strips_markdown():
+    body = (
+        "# Hello\n\n"
+        "This is **bold** and *italic* text with `inline code`.\n\n"
+        "- item one\n- item two\n\n"
+        "See [link](http://x) and ![img](http://y)."
+    )
+    card = build_thread_card(
+        category="c",
+        thread_slug="s",
+        title="T",
+        author_name="a",
+        filename="f.md",
+        thread_url="http://x",
+        body=body,
+    )
+    md = card["body"]["elements"][0]["content"]
+    assert "**内容**：" in md
+    # Extract the 内容 row
+    preview_row = next(
+        r for r in md.split("<br>") if r.startswith("**内容**：")
+    )
+    preview = preview_row[len("**内容**："):]
+    # No raw markdown left
+    for junk in ("**", "*", "`", "#", "[", "]", "(http", "!["):
+        assert junk not in preview, f"found {junk!r} in {preview!r}"
+    assert "bold" in preview
+    assert "italic" in preview
+    assert "link" in preview
+    assert "img" in preview
+    assert "inline code" in preview
+
+
+def test_mention_comments_collapsed_to_single_line():
+    """Multi-line mention_comments must not introduce paragraph breaks."""
+    card = build_thread_card(
+        category="c",
+        thread_slug="s",
+        title="T",
+        author_name="a",
+        filename="f.md",
+        thread_url="http://x",
+        mention_open_ids=["ou_abc"],
+        mention_comments="请看\n\n\n   一下   \n重要事项",
+    )
+    md = card["body"]["elements"][0]["content"]
+    assert "**说明**：请看 一下 重要事项" in md
+    # No paragraph-break sequence inside the info block
+    assert "\n\n" not in md
+
+
+def test_mention_comments_rendered_below_time_row():
+    """说明 must sit below 时间 (not at top) so the first row of the card
+    is always a compact meta field, avoiding the Feishu first-paragraph
+    top-margin gap when a 说明 is present."""
+    card = build_thread_card(
+        category="c",
+        thread_slug="s",
+        title="T",
+        author_name="a",
+        filename="f.md",
+        thread_url="http://x",
+        mention_comments="重要说明",
+    )
+    md = card["body"]["elements"][0]["content"]
+    rows = md.split("<br>")
+    time_idx = next(i for i, r in enumerate(rows) if r.startswith("**时间**"))
+    说明_idx = next(i for i, r in enumerate(rows) if r.startswith("**说明**"))
+    assert 说明_idx > time_idx
+
+
+def test_card_body_has_tight_top_padding():
+    card = build_thread_card(
+        category="c",
+        thread_slug="s",
+        title="T",
+        author_name="a",
+        filename="f.md",
+        thread_url="http://x",
+    )
+    assert card["body"]["padding"].startswith("4px ")
+
+
+def test_reply_card_body_preview_truncates_at_200():
+    body = "一" * 300
+    card = build_reply_card(
+        category="c",
+        thread_slug="s",
+        thread_title="T",
+        author_name="a",
+        filename="f.md",
+        thread_url="http://x",
+        body=body,
+    )
+    md = card["body"]["elements"][0]["content"]
+    preview_row = next(
+        r for r in md.split("<br>") if r.startswith("**内容**：")
+    )
+    preview = preview_row[len("**内容**："):]
+    assert preview.endswith("...")
+    # 200 chars + "..."
+    assert len(preview) == 203
 
 
 # ─── Mention 卡片 ───────────────────────────────────────────────────────────

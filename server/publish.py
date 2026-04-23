@@ -77,6 +77,7 @@ def publish_proposal(
             category=category, slug=slug, title=title,
             author_name=user.name,
             filename=filename,
+            body=body,
             mention_open_ids=mention_open_ids or None,
             mention_comments=mention_comments,
         )
@@ -138,6 +139,7 @@ def publish_reply(
             category=category, slug=slug, thread_title=thread_title,
             author_name=user.name,
             filename=filename,
+            body=body,
             mention_open_ids=mention_open_ids or None,
             mention_comments=mention_comments,
         )

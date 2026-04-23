@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import TYPE_CHECKING, Callable, Protocol
 
 import httpx
@@ -27,6 +28,7 @@ class Notifier(Protocol):
         title: str,
         author_name: str,
         filename: str,
+        body: str | None = None,
         mention_open_ids: list[str] | None = None,
         mention_comments: str | None = None,
     ) -> None: ...
@@ -39,6 +41,7 @@ class Notifier(Protocol):
         thread_title: str,
         author_name: str,
         filename: str,
+        body: str | None = None,
         mention_open_ids: list[str] | None = None,
         mention_comments: str | None = None,
     ) -> None: ...
@@ -96,6 +99,7 @@ class FeishuNotifier:
         title: str,
         author_name: str,
         filename: str,
+        body: str | None = None,
         mention_open_ids: list[str] | None = None,
         mention_comments: str | None = None,
     ) -> None:
@@ -107,6 +111,7 @@ class FeishuNotifier:
             title=title,
             author_name=author_name,
             filename=filename,
+            body=body,
             thread_url=post_url,
             mention_open_ids=mention_open_ids or [],
             mention_comments=mention_comments,
@@ -134,6 +139,7 @@ class FeishuNotifier:
         thread_title: str,
         author_name: str,
         filename: str,
+        body: str | None = None,
         mention_open_ids: list[str] | None = None,
         mention_comments: str | None = None,
     ) -> None:
@@ -145,6 +151,7 @@ class FeishuNotifier:
             thread_title=thread_title,
             author_name=author_name,
             filename=filename,
+            body=body,
             thread_url=post_url,
             mention_open_ids=mention_open_ids or [],
             mention_comments=mention_comments,
@@ -320,19 +327,21 @@ def build_thread_card(
     author_name: str,
     filename: str,
     thread_url: str,
+    body: str | None = None,
     mention_open_ids: list[str] | None = None,
     mention_comments: str | None = None,
     directory_content: str | None = None,
     directory_post_count: int | None = None,
 ) -> dict:
     return _build_card_6fields(
-        header=f"新讨论：{title}",
+        header=f"📨 来自 {author_name} 的新讨论主题通知：{title}",
         template="blue",
         category=category,
-        thread_slug=thread_slug,
+        thread_title=title,
         action_text="发起了新讨论",
         author_name=author_name,
         filename=filename,
+        body=body,
         thread_url=thread_url,
         button_text="去 Web 查看",
         mention_open_ids=mention_open_ids or [],
@@ -350,19 +359,21 @@ def build_reply_card(
     author_name: str,
     filename: str,
     thread_url: str,
+    body: str | None = None,
     mention_open_ids: list[str] | None = None,
     mention_comments: str | None = None,
     directory_content: str | None = None,
     directory_post_count: int | None = None,
 ) -> dict:
     return _build_card_6fields(
-        header=f"{author_name} 回复：{thread_title}",
+        header=f"📩 来自 {author_name} 的新回复通知：{thread_title}",
         template="green",
         category=category,
-        thread_slug=thread_slug,
+        thread_title=thread_title,
         action_text="发布了新回复",
         author_name=author_name,
         filename=filename,
+        body=body,
         thread_url=thread_url,
         button_text="查看讨论",
         mention_open_ids=mention_open_ids or [],
@@ -420,7 +431,7 @@ def build_standalone_mention_card(
     lines.append(f"**项目**：{category}")
     lines.append(f"**主题**：{thread_title}")
     lines.append(f"**帖子**：{target_filename}")
-    lines.append(f"**说明**：{mention_comments}")
+    lines.append(f"**说明**：{_oneline(mention_comments)}")
     lines.append(f"**时间**：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
     sections = ["<br>".join(lines)]
@@ -449,8 +460,9 @@ def build_mention_dm_card(
 ) -> dict:
     lines = [f"**{author_name}** 在「{thread_title}」的 {kind} 中 @ 了你"]
     lines.append(f"**帖子**：{target_filename}")
-    if comments:
-        lines.append(f"**说明**：{comments}")
+    clean_comments = _oneline(comments)
+    if clean_comments:
+        lines.append(f"**说明**：{clean_comments}")
 
     sections = ["<br>".join(lines)]
     if post_excerpt:
@@ -469,7 +481,7 @@ def _build_card_6fields(
     header: str,
     template: str,
     category: str,
-    thread_slug: str,
+    thread_title: str,
     action_text: str,
     author_name: str,
     filename: str | None,
@@ -477,6 +489,7 @@ def _build_card_6fields(
     button_text: str,
     mention_open_ids: list[str],
     mention_comments: str | None,
+    body: str | None = None,
     directory_content: str | None = None,
     directory_post_count: int | None = None,
 ) -> dict:
@@ -498,14 +511,18 @@ def _build_card_6fields(
         info_rows.append(
             " ".join(f'<at user_id="{oid}"></at>' for oid in mention_open_ids)
         )
-    if mention_comments:
-        info_rows.append(f"**说明**：{mention_comments}")
     info_rows.append(f"**项目**：{category}")
-    info_rows.append(f"**主题**：{thread_slug}")
+    info_rows.append(f"**主题**：{thread_title}")
     info_rows.append(f"**操作**：{author_name} {action_text}")
     if filename:
         info_rows.append(f"**文件**：{filename}")
     info_rows.append(f"**时间**：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    clean_comments = _oneline(mention_comments)
+    if clean_comments:
+        info_rows.append(f"**说明**：{clean_comments}")
+    preview = _preview_body(body)
+    if preview:
+        info_rows.append(f"**内容**：{preview}")
 
     return _card_shell(
         header=header, template=template,
@@ -618,10 +635,59 @@ def _card_shell(
             "title": {"tag": "plain_text", "content": header},
             "template": template,
         },
-        "body": {"elements": elements},
+        "body": {
+            "padding": "4px 16px 12px 16px",
+            "elements": elements,
+        },
     }
 
 
 def _truncate(s: str, n: int) -> str:
     s = s.strip()
     return s if len(s) <= n else s[:n].rstrip() + "…"
+
+
+def _oneline(s: str | None) -> str:
+    """Collapse to a single line so the field stays on one row and doesn't
+    introduce paragraph breaks that Feishu's markdown tag pads with extra
+    vertical margin.
+    """
+    if not s:
+        return ""
+    return " ".join(s.split())
+
+
+def _strip_markdown(s: str) -> str:
+    """Strip common markdown syntax so the preview reads as plain text.
+
+    Handles code fences / inline code, images, links, headings, blockquotes,
+    list markers, horizontal rules, bold / italic / strikethrough, and HTML
+    tags. Collapses all whitespace into single spaces.
+    """
+    s = re.sub(r"```[\s\S]*?```", " ", s)
+    s = re.sub(r"`([^`]*)`", r"\1", s)
+    s = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r"\1", s)
+    s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", s)
+    s = re.sub(r"\[([^\]]*)\]\[[^\]]*\]", r"\1", s)
+    s = re.sub(r"<[^>]+>", " ", s)
+    s = re.sub(r"(?m)^\s{0,3}#{1,6}\s*", "", s)
+    s = re.sub(r"(?m)^\s*>\s?", "", s)
+    s = re.sub(r"(?m)^\s*[-*+]\s+", "", s)
+    s = re.sub(r"(?m)^\s*\d+\.\s+", "", s)
+    s = re.sub(r"(?m)^\s*[-*_]{3,}\s*$", "", s)
+    s = re.sub(r"\*\*([^*]+)\*\*", r"\1", s)
+    s = re.sub(r"__([^_]+)__", r"\1", s)
+    s = re.sub(r"\*([^*\n]+)\*", r"\1", s)
+    s = re.sub(r"(?<!\w)_([^_\n]+)_(?!\w)", r"\1", s)
+    s = re.sub(r"~~([^~]+)~~", r"\1", s)
+    s = re.sub(r"\s+", " ", s)
+    return s.strip()
+
+
+def _preview_body(body: str | None, limit: int = 200) -> str:
+    if not body:
+        return ""
+    cleaned = _strip_markdown(body)
+    if not cleaned:
+        return ""
+    return cleaned if len(cleaned) <= limit else cleaned[:limit].rstrip() + "..."
