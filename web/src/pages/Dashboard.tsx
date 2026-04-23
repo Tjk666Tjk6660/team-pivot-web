@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useOutletContext } from "react-router-dom";
 import {
   ChevronDown,
@@ -132,7 +132,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     activeAIStreamRef.current = activeAIStream;
   }, [activeAIStream]);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const [m, w, d] = await Promise.all([
         fetchMatters(), fetchWorkspaceStatus(), fetchDrafts(),
@@ -141,10 +141,15 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     }
-  };
+  }, []);
 
-  const toggleMatterFavorite = async (matterId: string) => {
-    const current = matters?.find((m) => m.id === matterId);
+  const mattersRef = useRef<MatterSummary[] | null>(null);
+  useEffect(() => {
+    mattersRef.current = matters;
+  }, [matters]);
+
+  const toggleMatterFavorite = useCallback(async (matterId: string) => {
+    const current = mattersRef.current?.find((m) => m.id === matterId);
     if (!current) return;
     const next = !current.favorite;
     // optimistic
@@ -159,7 +164,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       );
       toast.error(e instanceof Error ? e.message : String(e));
     }
-  };
+  }, []);
 
   const getThreadState = (threadKey: string): AIThreadState =>
     aiThreads[threadKey] ?? emptyAIThreadState();
@@ -416,7 +421,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, [load]);
 
   const onRefresh = async () => {
     setRefreshing(true);

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ChevronLeft, Sparkles, Star } from "lucide-react";
+import { Bot, ChevronRight, Sparkles, Star, X } from "lucide-react";
 import {
   appendMatterComment,
   appendMatterFile,
@@ -15,6 +15,7 @@ import {
   type Outcome,
 } from "@/api";
 import { Button } from "@/components/ui/button";
+import { AIPane } from "@/components/AIPane";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TimelineStrip } from "@/components/matter/TimelineStrip";
 import { FileCard } from "@/components/matter/FileCard";
@@ -38,27 +39,38 @@ export function MatterDetailPane() {
   const [createCtx, setCreateCtx] = useState<CreateDialogContext | null>(null);
   const [resultOpen, setResultOpen] = useState(false);
   const [highlight, setHighlight] = useState<string | null>(null);
+  const [aiOpen, setAiOpen] = useState(false);
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // Keep reloadLists in a ref so callbacks/effects depending on matter_id
+  // don't re-run when the Dashboard re-renders and hands down a new reference.
+  const reloadListsRef = useRef(reloadLists);
+  useEffect(() => {
+    reloadListsRef.current = reloadLists;
+  }, [reloadLists]);
 
   const load = useCallback(() => {
     if (!matter_id) return;
     fetchMatter(matter_id)
-      .then((d) => {
-        setData(d);
-        // Mark read on open, then refresh sidebar unread badges.
-        markMatterRead(matter_id)
-          .then(() => reloadLists())
-          .catch(() => {});
-      })
+      .then(setData)
       .catch((e) => {
         toast.error(e instanceof Error ? e.message : String(e));
         setData(null);
       });
-  }, [matter_id, reloadLists]);
+  }, [matter_id]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Mark read once per opened matter, then refresh sidebar unread badges.
+  // Isolated from `load` so the reloadLists identity churn doesn't loop.
+  useEffect(() => {
+    if (!matter_id) return;
+    markMatterRead(matter_id)
+      .then(() => reloadListsRef.current())
+      .catch(() => {});
+  }, [matter_id]);
 
   useEffect(() => {
     fetchMe()
@@ -150,16 +162,38 @@ export function MatterDetailPane() {
     }
   };
 
+  const threadKey = matter.category ? `${matter.category}/${matter.id}` : matter.id;
+
   return (
-    <div className="relative h-full overflow-y-auto">
+    <div className="relative flex h-full min-h-0">
+      {/* 左：主内容 */}
+      <div className="min-w-0 flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-5xl px-3 py-3 sm:px-5 sm:py-5">
-        {/* mobile back link */}
-        <div className="mb-3 lg:hidden">
-          <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-xs">
-            <Link to="/">
-              <ChevronLeft className="h-4 w-4" />
-              返回 matter 列表
-            </Link>
+        {/* 顶部 bar：面包屑 + AI 总结 */}
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <nav className="flex min-w-0 items-center gap-1.5 text-sm text-slate-500">
+            <Link to="/" className="shrink-0 hover:text-slate-800">事项</Link>
+            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-300" />
+            {matter.category && (
+              <>
+                <span className="shrink-0 truncate text-slate-600">{matter.category}</span>
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-300" />
+              </>
+            )}
+            <span className="truncate text-slate-800">{matter.title}</span>
+          </nav>
+          <Button
+            type="button"
+            variant={aiOpen ? "secondary" : "default"}
+            size="sm"
+            className={cn(
+              "h-9 shrink-0 rounded-xl px-3.5 text-xs font-semibold",
+              !aiOpen && "bg-blue-600 text-white shadow-[0_8px_22px_rgba(37,99,235,0.24)] hover:bg-blue-700",
+            )}
+            onClick={() => setAiOpen((o) => !o)}
+          >
+            <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+            AI 总结
           </Button>
         </div>
 
@@ -292,6 +326,38 @@ export function MatterDetailPane() {
           )}
         </section>
       </div>
+      </div>
+
+      {/* 右：AI 助手（桌面端拆分布局） */}
+      {aiOpen && (
+        <aside className="hidden w-[480px] shrink-0 flex-col border-l border-slate-200 bg-white lg:flex">
+          <div className="flex items-center justify-between border-b border-slate-200/80 px-4 py-3">
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
+              <Bot className="h-4 w-4 text-blue-600" />
+              AI 助手
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-100"
+              onClick={() => setAiOpen(false)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="min-h-0 flex-1 p-4">
+            <AIPane
+              category={matter.category ?? ""}
+              slug={matter.id}
+              threadKey={threadKey}
+              threadTitle={matter.title}
+              onUseDraftAsReply={async () => false}
+              hasReplyDraft={false}
+            />
+          </div>
+        </aside>
+      )}
 
       <CreateFileDialog
         open={createCtx !== null}
