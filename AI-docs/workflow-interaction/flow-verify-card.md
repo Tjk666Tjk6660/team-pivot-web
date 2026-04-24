@@ -5,6 +5,7 @@
 > + 文档：`pivot-product.md` §三 §五 §九
 >
 > AI 助手部分见 [`flow-ai-assistant.md`](./flow-ai-assistant.md)
+> summary 由 AI 基于 body 自动生成，与 think / act 一致。
 
 ```mermaid
 sequenceDiagram
@@ -16,7 +17,7 @@ sequenceDiagram
   participant CHAT as 后端 streamAIChat<br/>/api/ai/matters/:matter_id/chat
   participant API as 后端 /api/matters/:id
 
-  Note over FC: matter.current_status<br/>必须 ∈ planning / executing<br/>且本 matter 必须有 ≥1 条 act
+  Note over FC: matter.current_status<br/>必须 ∈ planning / executing<br/>且本 matter 必须有 ≥1 条 act<br/>paused/finished/cancelled/reviewed 灰禁
 
   U->>FC: 点击 + verify
   alt 已存在同 quote+verify 草稿
@@ -25,6 +26,7 @@ sequenceDiagram
     FC->>DC: 在下方追加草稿卡<br/>虚线框 + 黄色左色条<br/>quote=FileCard.file 自动只读
     DC-->>U: 渲染头部 VERIFY chip + 新增 基于 + AI 回复 按钮
     DC-->>U: 渲染表单 quote / owner 必填 / body 必填 / verifications 必填<br/>注意 不出现 refer 字段
+    Note over DC: body 必填 提示<br/>发布时 AI 将基于此生成 summary
 
     alt 源 FileCard.type === act 且属本 matter
       DC->>VE: 预填一行 target=quote judgement=passed comment 空
@@ -45,7 +47,7 @@ sequenceDiagram
     end
   end
 
-  opt 需要 AI 协助
+  opt 需要 AI 协助起草
     U->>DC: 点击 AI 回复
     DC->>AP: setAiOpen(true) 见 flow-ai-assistant
     U->>DC: 复制 AI 输出回填 body
@@ -54,14 +56,14 @@ sequenceDiagram
   U->>DC: 填 owner / body / 调整 verifications
   U->>DC: 点击 发布
 
-  DC->>DC: 校验 body / owner / verifications.length>=1 / 每条 comment 必填
+  DC->>DC: 校验 body 必填 owner 必填 verifications.length>=1 每条 comment 必填
   alt 校验失败
     DC-->>U: toast 错误信息
   else 校验通过
     DC->>DC: stage=generating 按钮 AI 生成中
 
     DC->>CHAT: streamAIChat<br/>messages = 内置提示词 + body<br/>reply_target = quote
-    alt 流出错
+    alt 流出错或超时
       CHAT-->>DC: error
       DC->>DC: stage=idle
       DC-->>U: toast 生成 summary 失败
