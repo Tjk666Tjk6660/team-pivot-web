@@ -63,3 +63,12 @@
     3. `publish.py::publish_matter_append` 在 status_change 触发时把 `item.type / item.summary / item.file` 透传
   - 原因：matter 的状态迁移本就由特定文件触发（`pivot-product.md §三 / §九`），触发文件的 type + summary 比老 thread 的 `reason` 字段密度高；老 `_STATUS_LABEL` 只覆盖 5 老态会让卡片显示半英文
   - 前端路由：P3 已用 `/m/:matter_id`（`web/src/App.tsx:33`），原 `_thread_url` 的 `/t/...` 路径在前端是 catch-all 归一到首页，matter 通知按钮必须走新 URL
+
+- **P4 `verify.verifications[].target` 跨 matter refer[] 白名单 fallback**
+  - 原文档要求：`pivot-product.md §九.4` 规定 "verify 验证和评价行动"、每个 `act` 给出判断结果——即 target 语义上是"本事项内被验证的 act"；文档**未明示** target 可以跨 matter
+  - 实际实现：`server/matter_validator.py::_validate_verify_shape` 对每条 `verifications[].target` 走两级判定——
+    1. target 在本 matter timeline 存在且 `type=act` → 通过
+    2. target 在当前 item 的 `refer[]` 里 → 通过（跨 matter 白名单，纯函数 validator 不读其他 matter 文件的 type，信任客户端主动声明）
+    3. 否则拒绝（`verification_target_not_found` / `verification_target_not_act`）
+  - 原因：支持"matter B 的 verify 覆盖 matter A 里某个 act 的完成情况"这类跨事项协作场景；`pivot-product.md §八.3` 的 `refer` 字段本身是"其他补充参考文件"的泛语义，并未排除 act；跨 matter 类型校验靠 refer[] 白名单交给客户端显式声明是合适的安全阀
+  - 兼容面：本 matter 内的 verify 行为完全按 `pivot-product.md §九.4` 落；跨 matter 用法是严格受限的扩展路径——必须先把目标路径放进同一 item 的 `refer[]` 才能引用

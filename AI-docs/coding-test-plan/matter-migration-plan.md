@@ -155,9 +155,9 @@
 
 ### 任务拆解（本次实做）
 
-1. `verify.verifications[].target` 白名单校验 —— 按 `AI-docs/designs/2026-04-23-index-refactor-design.md §2.4` 实现：
+1. `verify.verifications[].target` 白名单校验 —— 按 `pivot-product.md §九.4`（`verify` 验证和评价 `act`；每个 `act` 给出判断结果）推演的规则：
    - target 必须指向同 matter timeline 中已存在且 `type=act` 的文件；
-   - 或 target 在当前 item 的 `refer[]` 里（视为跨 matter 白名单，纯函数不做跨文件类型验证，信任客户端声明）。
+   - 或 target 在当前 item 的 `refer[]` 里（视为跨 matter 白名单，纯函数不做跨文件类型验证，信任客户端声明——这条 fallback 是本阶段自行决策，已登记 `deviations.md`）。
    - 新增错误码：`verification_target_not_found` / `verification_target_not_act`。
 2. 扩 `matter_validator.validate_append`：verify 走进类型专属分支时执行上面的白名单检查。
 3. 测试补齐：
@@ -168,7 +168,7 @@
 
 ### 预审事项（核心）
 
-- 无。design doc §2.4 已定规则，其余 P1/P2 已做完。
+- 无。校验规则按 `pivot-product.md §九.4` 推演（"verify 验证 act" + "target 限定为 act"），跨 matter refer[] 白名单作为自行决策记入 `deviations.md`，不属核心评审门。
 
 ### 交付物
 
