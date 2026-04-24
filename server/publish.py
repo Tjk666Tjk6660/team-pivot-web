@@ -190,14 +190,11 @@ def add_standalone_mention(
         )
     if notifier is not None:
         thread_title = _lookup_thread_title(workspace, category, slug)
-        target_author_name, target_type = _lookup_target_meta(
-            target_path, users,
-        )
+        target_author_name = _lookup_target_author_name(target_path, users)
         notifier.notify_standalone_mention(
             category=category, slug=slug, thread_title=thread_title,
             target_filename=target_filename,
             target_author_name=target_author_name,
-            target_type=target_type,
             author_name=user.name,
             mention_open_ids=mention_open_ids,
             mention_comments=mention_comments,
@@ -205,28 +202,24 @@ def add_standalone_mention(
     return {"ok": True}
 
 
-def _lookup_target_meta(
-    target_path: Path,
-    users: UserRepo,
-) -> tuple[str, str]:
-    """Read target post frontmatter to get (display_name, type).
+def _lookup_target_author_name(target_path: Path, users: UserRepo) -> str:
+    """Resolve the target post's author to a display name (Chinese when known).
 
-    Falls back gracefully on any read/parse/lookup failure — the notifier
-    just renders whatever string we return, never raises.
+    Falls back to the pinyin literal if the author never logged in, or to
+    "作者" if the file can't be read.
     """
     try:
         fm = read_post(target_path).frontmatter or {}
     except Exception:
         log.warning("target post frontmatter read failed path=%s", target_path, exc_info=True)
-        return "作者", "reply"
+        return "作者"
     author_pinyin = str(fm.get("author") or "").strip()
-    target_type = str(fm.get("type") or "reply").strip() or "reply"
-    display = author_pinyin or "作者"
-    if author_pinyin:
-        u = users.get_by_any_id(author_pinyin)
-        if u is not None and u.name:
-            display = u.name
-    return display, target_type
+    if not author_pinyin:
+        return "作者"
+    u = users.get_by_any_id(author_pinyin)
+    if u is not None and u.name:
+        return u.name
+    return author_pinyin
 
 
 def _resolve_mentions(

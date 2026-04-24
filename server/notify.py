@@ -66,7 +66,6 @@ class Notifier(Protocol):
         thread_title: str,
         target_filename: str,
         target_author_name: str,
-        target_type: str,
         author_name: str,
         mention_open_ids: list[str],
         mention_comments: str,
@@ -174,7 +173,7 @@ class FeishuNotifier:
 
     def notify_standalone_mention(
         self, *, category, slug, thread_title, target_filename,
-        target_author_name, target_type,
+        target_author_name,
         author_name, mention_open_ids, mention_comments,
     ) -> None:
         post_url = self._post_url(category, slug, target_filename)
@@ -185,7 +184,6 @@ class FeishuNotifier:
             author_name=author_name,
             target_filename=target_filename,
             target_author_name=target_author_name,
-            target_type=target_type,
             mention_open_ids=mention_open_ids,
             mention_comments=mention_comments,
             post_url=post_url,
@@ -400,12 +398,6 @@ def build_status_change_card(
     )
 
 
-_MENTION_TARGET_TYPE_LABEL = {
-    "proposal": "提及",
-    "reply": "回复",
-}
-
-
 def build_standalone_mention_card(
     *,
     category: str,
@@ -414,7 +406,6 @@ def build_standalone_mention_card(
     author_name: str,
     target_filename: str,
     target_author_name: str,
-    target_type: str,
     mention_open_ids: list[str],
     mention_comments: str,
     post_url: str,
@@ -422,7 +413,7 @@ def build_standalone_mention_card(
     """Standalone mention 群卡片（邮件式评论体）。
 
     评论行布局：
-      **评论**：<橙色主评论人> 对 <蓝色被评人> 的{提及|回复} <at><at>… 说：<br>{comment}
+      **评论**：<橙色主评论人> 对 <at><at>… 说：<蓝色被评人><br>{comment}
 
     每个 <at id="ou_xxx"></at> 的 content 留空，由飞书自动拉取最新中文名 + 头像，
     并触发被 @ 人的红点 + 推送（schema 2.0 markdown tag 行为）。
@@ -432,11 +423,10 @@ def build_standalone_mention_card(
     from datetime import datetime
 
     at_tags = " ".join(f'<at id="{oid}"></at>' for oid in mention_open_ids)
-    type_label = _MENTION_TARGET_TYPE_LABEL.get(target_type, "帖子")
     comment_line = (
         f"**评论**：<font color='orange'>**{author_name}**</font> 对 "
-        f"<font color='blue'>**{target_author_name}**</font> 的{type_label} "
-        f"{at_tags} 说：<br>{_oneline(mention_comments)}"
+        f"{at_tags} 说：<font color='blue'>**{target_author_name}**</font>"
+        f"<br>{_oneline(mention_comments)}"
     )
 
     info_rows = [
