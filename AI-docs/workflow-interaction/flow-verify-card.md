@@ -13,7 +13,7 @@ sequenceDiagram
   participant DC as 草稿卡 VERIFY
   participant VE as VerificationsEditor
   participant AP as 右侧 AIPane
-  participant CHAT as 后端 streamAIChat<br/>/api/ai/threads/:cat/:matter_id/chat
+  participant CHAT as 后端 streamAIChat<br/>/api/ai/matters/:matter_id/chat
   participant API as 后端 /api/matters/:id
 
   Note over FC: matter.current_status<br/>必须 ∈ planning / executing<br/>且本 matter 必须有 ≥1 条 act
