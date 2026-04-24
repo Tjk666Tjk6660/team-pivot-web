@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import { MessageSquare, Plus } from "lucide-react";
 import type { DocType, Judgement, MatterStatus, TimelineItem } from "@/api";
 import { Button } from "@/components/ui/button";
+import { CopyForAIButton } from "@/components/CopyForAIButton";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { relativeTime, formatFullDateTime } from "@/lib/time";
@@ -18,6 +19,7 @@ const COLLAPSE_HEIGHT = 208;
 export function FileCard({
   item,
   index,
+  matterId,
   matterStatus,
   activeType,
   onCreate,
@@ -28,6 +30,7 @@ export function FileCard({
 }: {
   item: TimelineItem;
   index: number;
+  matterId: string;
   matterStatus: MatterStatus;
   activeType: DocType | null;
   onCreate: (type: DocType, quote: string) => void;
@@ -216,6 +219,7 @@ export function FileCard({
           active={activeType === "verify"}
           onClick={() => onCreate("verify", item.file)}
         />
+        <CopyForAIButton matterId={matterId} filePath={item.file} />
         <div className="ml-auto text-[10px] text-slate-400">
           点按钮 · 新文件 quote 自动写入 <span className="font-mono">{shortFile(item.file)}</span>
         </div>

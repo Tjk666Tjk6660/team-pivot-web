@@ -16,6 +16,7 @@ import {
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import { AIPane } from "@/components/AIPane";
+import { CopyForAIButton } from "@/components/CopyForAIButton";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TimelineStrip } from "@/components/matter/TimelineStrip";
 import { FileCard } from "@/components/matter/FileCard";
@@ -234,6 +235,7 @@ export function MatterDetailPane() {
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
               <StatusBadge status={matter.current_status} />
+              <CopyForAIButton matterId={matter.id} />
               {matter_id && (
                 <Button
                   variant="outline"
@@ -318,6 +320,7 @@ export function MatterDetailPane() {
               key={item.file}
               item={item}
               index={i}
+              matterId={matter.id}
               matterStatus={matter.current_status}
               activeType={
                 pendingCreate && pendingCreate.quote === item.file
