@@ -4,7 +4,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from server.mcp.tools import MatterApiClient, ToolError, tool_resolve_context
+from server.mcp.tools import (
+    MatterApiClient,
+    ToolError,
+    tool_list_matters,
+    tool_resolve_context,
+)
 
 
 def _make_client(matter: dict, timeline: list[dict]) -> MatterApiClient:
@@ -65,3 +70,32 @@ def test_resolve_context_file_not_in_matter():
         )
     assert ei.value.status == 404
     assert ei.value.detail == "file_not_in_matter"
+
+
+def test_list_matters_passes_filters():
+    client = MagicMock(spec=MatterApiClient)
+    client.list_matters.return_value = [
+        {
+            "id": "a", "title": "A", "current_status": "executing",
+            "updated_at": "2026-04-23T10:00:00+08:00", "file_count": 3,
+        },
+    ]
+    out = tool_list_matters(
+        {"status": "executing", "q": "auth"},
+        client,
+    )
+    client.list_matters.assert_called_once_with(
+        status="executing", owner=None, q="auth",
+    )
+    assert len(out["items"]) == 1
+    assert out["items"][0]["id"] == "a"
+
+
+def test_list_matters_no_filters():
+    client = MagicMock(spec=MatterApiClient)
+    client.list_matters.return_value = []
+    out = tool_list_matters({}, client)
+    assert out["items"] == []
+    client.list_matters.assert_called_once_with(
+        status=None, owner=None, q=None,
+    )

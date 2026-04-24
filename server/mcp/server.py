@@ -15,8 +15,13 @@ from starlette.routing import Mount
 from server.api_tokens import ApiTokenRepo
 from server.mcp.auth import McpAuthError, authenticate
 from server.mcp.runtime import current_user_token, set_user_token
-from server.mcp.schemas import ResolveContextIn
-from server.mcp.tools import MatterApiClient, ToolError, tool_resolve_context
+from server.mcp.schemas import ListMattersIn, ResolveContextIn
+from server.mcp.tools import (
+    MatterApiClient,
+    ToolError,
+    tool_list_matters,
+    tool_resolve_context,
+)
 from server.users import UserRepo
 
 log = logging.getLogger(__name__)
@@ -47,6 +52,11 @@ def _register_tools(mcp_server: Server, api_base_url: str) -> None:
                 ),
                 inputSchema=ResolveContextIn.model_json_schema(),
             ),
+            Tool(
+                name="list_matters",
+                description="List matters visible to the current user. Supports status/owner/q filters.",
+                inputSchema=ListMattersIn.model_json_schema(),
+            ),
         ]
 
     @mcp_server.call_tool()
@@ -56,6 +66,8 @@ def _register_tools(mcp_server: Server, api_base_url: str) -> None:
         try:
             if name == "resolve_context":
                 out = tool_resolve_context(arguments, client)
+            elif name == "list_matters":
+                out = tool_list_matters(arguments, client)
             else:
                 raise ToolError(404, f"unknown_tool: {name}")
         except ToolError as e:

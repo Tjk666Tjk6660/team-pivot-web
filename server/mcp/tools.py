@@ -10,6 +10,9 @@ from server.mcp.context import (
     parse_context_url,
 )
 from server.mcp.schemas import (
+    ListMattersIn,
+    ListMattersOut,
+    MatterListItem,
     MatterSnapshot,
     ResolveContextIn,
     ResolveContextOut,
@@ -58,6 +61,31 @@ class MatterApiClient:
         resp.raise_for_status()
         return resp.json()
 
+    def list_matters(
+        self,
+        status: str | None = None,
+        owner: str | None = None,
+        q: str | None = None,
+    ) -> list[dict]:
+        params: dict[str, str] = {}
+        if status:
+            params["status"] = status
+        if owner:
+            params["owner"] = owner
+        if q:
+            params["q"] = q
+        resp = httpx.get(
+            f"{self._base}/api/matters",
+            headers=self._headers,
+            params=params,
+            timeout=10.0,
+        )
+        if resp.status_code == 401:
+            raise ToolError(401, "invalid_token")
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("items", [])
+
 
 def tool_resolve_context(
     payload: dict,
@@ -93,3 +121,23 @@ def tool_resolve_context(
         user_facing_summary=summary_text,
     )
     return result.model_dump(mode="json")
+
+
+def tool_list_matters(payload: dict, client: MatterApiClient) -> dict:
+    input_ = ListMattersIn.model_validate(payload)
+    raw_items = client.list_matters(
+        status=input_.status,
+        owner=input_.owner,
+        q=input_.q,
+    )
+    items = [
+        MatterListItem(
+            id=it.get("id", ""),
+            title=it.get("title", ""),
+            current_status=it.get("current_status", ""),
+            updated_at=it.get("updated_at", ""),
+            file_count=it.get("file_count"),
+        )
+        for it in raw_items
+    ]
+    return ListMattersOut(items=items).model_dump(mode="json")
