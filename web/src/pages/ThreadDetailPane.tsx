@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AtSign, Bot, ChevronLeft, FileText, Maximize2, Minimize2, Sparkles, Star, X } from "lucide-react";
+import { ArrowDown, ArrowUp, AtSign, Bot, ChevronLeft, FileText, Maximize2, Minimize2, Sparkles, Star, X } from "lucide-react";
 import {
   addMention,
   changeThreadStatus,
@@ -34,8 +34,6 @@ import { useDashboard } from "@/pages/Dashboard";
 import { HomeWelcomePane } from "@/pages/HomeWelcomePane";
 
 const COLLAPSE_HEIGHT = 208;
-const MOBILE_AI_TOP_OFFSET = 64;
-const MOBILE_AI_PEEK_HEIGHT = 64;
 
 function postAnchorId(filename: string): string {
   const base = filename.endsWith(".md") ? filename.slice(0, -3) : filename;
@@ -49,12 +47,9 @@ export function ThreadDetailPane() {
   const [data, setData] = useState<ThreadDetailData | null | undefined>(undefined);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiPaneWidth, setAiPaneWidth] = useState(520);
+  const [scrollPos, setScrollPos] = useState({ top: 0, max: 0 });
   const [mobileAiMode, setMobileAiMode] = useState<"closed" | "peek" | "full">("closed");
-  const [mobileViewportHeight, setMobileViewportHeight] = useState(
-    () => (typeof window === "undefined" ? 0 : Math.round(window.visualViewport?.height ?? window.innerHeight)),
-  );
   const [mobileKeyboardInset, setMobileKeyboardInset] = useState(0);
-  const [mobileAiDragHeight, setMobileAiDragHeight] = useState<number | null>(null);
   const [desktopFloatFrame, setDesktopFloatFrame] = useState({ top: 16, height: 720 });
   const [aiPendingReplyTarget, setAiPendingReplyTarget] = useState<string | null>(null);
   const [replyBody, setReplyBody] = useState("");
@@ -67,25 +62,15 @@ export function ThreadDetailPane() {
   const composerRef = useRef<HTMLDivElement>(null);
   const detailLayoutRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const mobileAiDragRef = useRef<{ pointerId: number; startY: number; startHeight: number } | null>(null);
 
   const hasDraft = replyBody.trim().length > 0;
-  const isDesktopViewport = () => typeof window !== "undefined" && window.innerWidth >= 1024;
+  // 桌面 AI 浮动面板需要 sidebar (≈320) + 主内容 (≥620) + AI panel (≥420) + gaps
+  // 加起来约 1380+px 才不挤。1024-1280 (iPad Pro) 走移动端全屏抽屉更舒服。
+  const isDesktopViewport = () => typeof window !== "undefined" && window.innerWidth >= 1280;
   const desktopFloatGap = 16;
-  const mobileAiMaxHeight = Math.max(mobileViewportHeight - MOBILE_AI_TOP_OFFSET, MOBILE_AI_PEEK_HEIGHT);
-  const mobileAiRestHeight = mobileAiMode === "full" ? mobileAiMaxHeight : MOBILE_AI_PEEK_HEIGHT;
-  const mobileAiHeight = mobileAiDragHeight ?? mobileAiRestHeight;
-  const mobileAiShowsBody =
-    mobileAiMode === "full" || (mobileAiDragHeight !== null && mobileAiHeight > MOBILE_AI_PEEK_HEIGHT + 24);
   const openMobileAi = () => setMobileAiMode("full");
-  const minimizeMobileAi = () => {
-    setMobileAiDragHeight(null);
-    setMobileAiMode("peek");
-  };
-  const maximizeMobileAi = () => {
-    setMobileAiDragHeight(null);
-    setMobileAiMode("full");
-  };
+  const minimizeMobileAi = () => setMobileAiMode("peek");
+  const closeMobileAi = () => setMobileAiMode("closed");
 
   const startAIPaneResize = (event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -132,6 +117,14 @@ export function ThreadDetailPane() {
   };
 
   useEffect(load, [category, slug]);
+
+  useEffect(() => {
+    // Recompute scroll bounds whenever the thread data changes — keeps the
+    // floating "to top / to bottom" buttons accurate on first render.
+    if (typeof window === "undefined") return;
+    const id = window.requestAnimationFrame(() => updateScrollPos());
+    return () => window.cancelAnimationFrame(id);
+  }, [data]);
 
   useEffect(() => {
     fetchWorkspaceMirror()
@@ -183,11 +176,9 @@ export function ThreadDetailPane() {
 
     const updateViewportHeight = () => {
       const viewport = window.visualViewport;
-      const next = viewport?.height ?? window.innerHeight;
       const inset = viewport
         ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop)
         : 0;
-      setMobileViewportHeight(Math.round(next));
       setMobileKeyboardInset(Math.round(inset));
     };
 
@@ -224,20 +215,6 @@ export function ThreadDetailPane() {
       .catch(() => {});
   }, [category, slug]);
 
-  useEffect(() => {
-    if (mobileAiMode === "closed") {
-      setMobileAiDragHeight(null);
-    }
-  }, [mobileAiMode]);
-
-  useEffect(() => {
-    if (mobileAiDragHeight === null) return;
-    setMobileAiDragHeight((current) => {
-      if (current === null) return null;
-      return Math.min(Math.max(current, MOBILE_AI_PEEK_HEIGHT), mobileAiMaxHeight);
-    });
-  }, [mobileAiDragHeight, mobileAiMaxHeight]);
-
   const openAIReply = (post: Post) => {
     if (!category || !slug) return;
     setAiPendingReplyTarget(`${category}/${slug}/${post.filename}`);
@@ -266,51 +243,7 @@ export function ThreadDetailPane() {
       setAiOpen(true);
       return;
     }
-    maximizeMobileAi();
-  };
-
-  const startMobileAiDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (isDesktopViewport() || mobileAiMode === "closed") return;
-    mobileAiDragRef.current = {
-      pointerId: event.pointerId,
-      startY: event.clientY,
-      startHeight: mobileAiHeight,
-    };
-    setMobileAiDragHeight(mobileAiHeight);
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const moveMobileAiDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    const drag = mobileAiDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    const deltaY = event.clientY - drag.startY;
-    const nextHeight = Math.min(
-      Math.max(drag.startHeight - deltaY, MOBILE_AI_PEEK_HEIGHT),
-      mobileAiMaxHeight,
-    );
-    setMobileAiDragHeight(nextHeight);
-  };
-
-  const endMobileAiDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    const drag = mobileAiDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    const finalHeight = mobileAiDragHeight ?? mobileAiHeight;
-    const threshold = MOBILE_AI_PEEK_HEIGHT + (mobileAiMaxHeight - MOBILE_AI_PEEK_HEIGHT) / 2;
-    setMobileAiDragHeight(null);
-    setMobileAiMode(finalHeight >= threshold ? "full" : "peek");
-    mobileAiDragRef.current = null;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-  };
-
-  const cancelMobileAiDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!mobileAiDragRef.current || mobileAiDragRef.current.pointerId !== event.pointerId) return;
-    setMobileAiDragHeight(null);
-    mobileAiDragRef.current = null;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
+    openMobileAi();
   };
 
   const onUseDraftAsReply = async (
@@ -405,6 +338,23 @@ export function ThreadDetailPane() {
     },
   };
 
+  const updateScrollPos = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    setScrollPos({
+      top: el.scrollTop,
+      max: Math.max(0, el.scrollHeight - el.clientHeight),
+    });
+  };
+
+  const scrollToTop = () => {
+    scrollContainerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  const scrollToBottom = () => {
+    const el = scrollContainerRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  };
+
   return (
     <div
       ref={scrollContainerRef}
@@ -419,6 +369,7 @@ export function ThreadDetailPane() {
             });
           }
         }
+        updateScrollPos();
       }}
     >
       <div
@@ -426,7 +377,7 @@ export function ThreadDetailPane() {
           "px-3 py-3 sm:px-5 sm:py-5",
           aiOpen
             ? "mx-0 max-w-none lg:pr-4"
-            : "mx-auto max-w-[72rem]",
+            : "mx-auto max-w-[88rem]",
         )}
         style={aiOpen && isDesktopViewport() ? { paddingRight: aiPaneWidth + desktopFloatGap * 2 } : undefined}
       >
@@ -443,23 +394,42 @@ export function ThreadDetailPane() {
           <div className="min-w-0 flex-1 space-y-5">
             <div className="flex items-center justify-between gap-3 px-1">
               <div className="min-w-0">
-                <div className="hidden min-w-0 items-center gap-2 text-xs text-slate-500 lg:flex">
-                  <Link to="/" className="hover:text-slate-800">讨论</Link>
-                  <span>/</span>
-                  <span>{category}</span>
-                  <span>/</span>
-                  <span className="truncate text-slate-700">{data.meta.title}</span>
+                <div
+                  className="hidden min-w-0 items-center gap-2 text-[11.5px] font-meta uppercase tracking-[0.06em] lg:flex"
+                  style={{ color: "var(--text-mute)" }}
+                >
+                  <Link
+                    to="/"
+                    className="hover:opacity-80"
+                    style={{ color: "var(--text-mute)" }}
+                  >
+                    Pivot
+                  </Link>
+                  <span>›</span>
+                  <span style={{ color: "var(--text-soft)" }}>{category}</span>
                 </div>
                 <div className="lg:hidden">
-                  <div className="truncate text-sm font-semibold text-slate-900">{data.meta.title}</div>
-                  <div className="mt-0.5 text-[11px] text-slate-500">{category}</div>
+                  <div
+                    className="truncate text-[15px] font-semibold font-serif-body"
+                    style={{ color: "var(--text)", letterSpacing: "var(--letter-tight)" }}
+                  >
+                    {data.meta.title}
+                  </div>
+                  <div className="mt-0.5 text-[11px] font-meta" style={{ color: "var(--text-mute)" }}>
+                    {category}
+                  </div>
                 </div>
               </div>
               <Button
                 type="button"
                 variant="default"
                 size="sm"
-                className="h-9 shrink-0 rounded-xl bg-blue-600 px-3.5 text-xs font-semibold text-white shadow-[0_8px_22px_rgba(37,99,235,0.24)] hover:bg-blue-700"
+                className="h-9 shrink-0 rounded-md px-3.5 text-xs font-semibold shadow-none"
+                style={{
+                  background: "var(--accent)",
+                  color: "var(--accent-ink)",
+                  border: "1px solid var(--accent)",
+                }}
                 onClick={openThreadAIAssistant}
               >
                 <Sparkles className="mr-1.5 h-3.5 w-3.5" />
@@ -514,12 +484,29 @@ export function ThreadDetailPane() {
             )}
 
             <section className="space-y-3">
-              <div className="flex items-center justify-between px-1">
-                <div className="text-[15px] font-semibold text-slate-800">
-                  回复 · {replyPosts.length}
+              <div
+                className="flex items-center justify-between gap-3 px-1 pt-2"
+                style={{ borderTop: "1px solid var(--line)" }}
+              >
+                <div className="flex items-center gap-3 pt-3">
+                  <span
+                    className="section-kicker"
+                    style={{ color: "var(--text-mute)" }}
+                  >
+                    II. 讨论
+                  </span>
+                  <span
+                    className="text-[12.5px] font-meta"
+                    style={{ color: "var(--text-mute)" }}
+                  >
+                    · {replyPosts.length} 封回信
+                  </span>
                 </div>
-                <div className="text-xs text-slate-500">
-                  按时间顺序显示
+                <div
+                  className="pt-3 text-[11.5px] font-meta"
+                  style={{ color: "var(--text-mute)" }}
+                >
+                  按时间顺序
                 </div>
               </div>
 
@@ -548,19 +535,41 @@ export function ThreadDetailPane() {
                   </div>
                 ))
               ) : (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-white/50 px-5 py-6 text-sm text-slate-500">
-                  还没有回复。你可以直接在下面写回复，或者切到 AI 助手先整理思路。
+                <div
+                  className="rounded-[var(--r-md)] px-5 py-6 text-[13.5px] font-serif-body italic"
+                  style={{
+                    border: "1px dashed var(--line-strong)",
+                    background: "var(--surface-alt)",
+                    color: "var(--text-mute)",
+                  }}
+                >
+                  还没有回信。你可以直接在下面写第一封回信，或先切到 AI 助手整理思路。
                 </div>
               )}
             </section>
 
             <section
               ref={composerRef}
-              className={mobileAiMode !== "closed"
-                ? "paper-panel overflow-hidden rounded-[1.3rem] border border-blue-200/90 shadow-[0_10px_30px_rgba(37,99,235,0.08)]"
-                : "paper-panel overflow-hidden rounded-[1.3rem] border"}
+              className="overflow-hidden rounded-[var(--r-lg)]"
+              style={{
+                background: "var(--surface)",
+                border: "1px solid var(--line-strong)",
+                boxShadow: "var(--shadow-md)",
+              }}
             >
-              <div className="flex items-center gap-1 border-b border-slate-200/80 px-4 py-3">
+              <div
+                className="flex items-center gap-1 px-4 py-3"
+                style={{
+                  borderBottom: "1px solid var(--line-soft)",
+                  background: "var(--surface-alt)",
+                }}
+              >
+                <span
+                  className="text-[11.5px] font-bold uppercase tracking-[0.06em] font-meta mr-1"
+                  style={{ color: "var(--accent)" }}
+                >
+                  分析你的想法
+                </span>
                 <ComposerTab
                   label="回复"
                   active={mobileAiMode === "closed"}
@@ -569,7 +578,7 @@ export function ThreadDetailPane() {
                 <ComposerTab
                   label="AI 助手"
                   active={mobileAiMode !== "closed"}
-                  className="lg:hidden"
+                  className="xl:hidden"
                   onClick={() => {
                     if (!aiPendingReplyTarget && data.posts.length > 0) {
                       const last = data.posts[data.posts.length - 1];
@@ -578,11 +587,12 @@ export function ThreadDetailPane() {
                     setMobileAiMode((current) => (current === "closed" ? "full" : "closed"));
                   }}
                 />
-                <div className="ml-auto hidden items-center gap-2 text-xs text-slate-500 sm:flex">
-                  <>
-                    <FileText className="h-3.5 w-3.5" />
-                    {replyTo ? `回复到 ${replyTo}` : "直接补充新的回复"}
-                  </>
+                <div
+                  className="ml-auto hidden items-center gap-1.5 text-[11.5px] font-meta sm:flex"
+                  style={{ color: "var(--text-mute)" }}
+                >
+                  <FileText className="h-3 w-3" />
+                  {replyTo ? `回复到 ${replyTo}` : "直接补充新的回复"}
                 </div>
               </div>
 
@@ -596,10 +606,55 @@ export function ThreadDetailPane() {
         </div>
       </div>
 
+      {/* Floating scroll-to-top / scroll-to-bottom controls */}
+      {scrollPos.max > 400 && (
+        <div
+          className="pointer-events-none sticky bottom-4 z-30 flex justify-end pr-4 sm:pr-6"
+          style={{ marginTop: -56 }}
+        >
+          <div
+            className="pointer-events-auto flex flex-col overflow-hidden rounded-full"
+            style={{
+              background: "var(--surface)",
+              border: "1px solid var(--line-strong)",
+              boxShadow: "var(--shadow-md)",
+            }}
+          >
+            <button
+              type="button"
+              onClick={scrollToTop}
+              disabled={scrollPos.top <= 8}
+              title="回到顶部"
+              aria-label="回到顶部"
+              className="flex h-9 w-9 items-center justify-center transition-colors hover:bg-[var(--accent-bg)] disabled:cursor-default disabled:opacity-30"
+              style={{ color: "var(--text-soft)" }}
+            >
+              <ArrowUp className="h-4 w-4" />
+            </button>
+            <span
+              aria-hidden
+              className="mx-2 h-px"
+              style={{ background: "var(--line-soft)" }}
+            />
+            <button
+              type="button"
+              onClick={scrollToBottom}
+              disabled={scrollPos.top >= scrollPos.max - 8}
+              title="跳到底部"
+              aria-label="跳到底部"
+              className="flex h-9 w-9 items-center justify-center transition-colors hover:bg-[var(--accent-bg)] disabled:cursor-default disabled:opacity-30"
+              style={{ color: "var(--text-soft)" }}
+            >
+              <ArrowDown className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {aiOpen && isDesktopViewport() && (
         <>
           <div
-            className="group absolute z-40 hidden w-6 cursor-col-resize lg:block"
+            className="group absolute z-40 hidden w-6 cursor-col-resize xl:block"
             style={{
               right: aiPaneWidth + desktopFloatGap - 3,
               top: desktopFloatFrame.top,
@@ -611,27 +666,51 @@ export function ThreadDetailPane() {
           </div>
 
           <div
-            className="pointer-events-none absolute right-0 z-40 hidden translate-x-0 opacity-100 transition-all duration-200 ease-out lg:block"
+            className="pointer-events-none absolute right-0 z-40 hidden translate-x-0 opacity-100 transition-all duration-200 ease-out xl:block"
             style={{
               top: desktopFloatFrame.top,
               width: aiPaneWidth,
               height: desktopFloatFrame.height,
             }}
           >
-            <div className="pointer-events-auto mr-4 flex h-full min-h-0 flex-col overflow-hidden rounded-[1.3rem] border border-slate-200 bg-white shadow-[0_10px_30px_rgba(15,23,42,0.08)]">
-              <div className="flex items-center justify-between border-b border-slate-200/80 px-4 py-3">
-                <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
-                  <Bot className="h-4 w-4 text-blue-600" />
-                  AI 助手
+            <div
+              className="pointer-events-auto mr-4 flex h-full min-h-0 flex-col overflow-hidden rounded-[var(--r-lg)]"
+              style={{
+                background: "var(--bg-alt)",
+                border: "1px solid var(--line-strong)",
+                boxShadow: "var(--shadow-lg)",
+              }}
+            >
+              <div
+                className="flex items-center justify-between px-4 py-3"
+                style={{
+                  borderBottom: "1px solid var(--line)",
+                  background: "var(--surface)",
+                }}
+              >
+                <div className="flex items-center gap-2.5">
+                  <span
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-white"
+                    style={{ background: "linear-gradient(135deg,#6c52d9,#3a6bf5)" }}
+                  >
+                    <Bot className="h-3.5 w-3.5" />
+                  </span>
+                  <span
+                    className="text-[13px] font-semibold font-serif-body"
+                    style={{ color: "var(--text)" }}
+                  >
+                    AI 助手
+                  </span>
                 </div>
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-100"
+                  className="h-7 w-7 rounded-md hover:bg-[var(--surface-alt)]"
+                  style={{ color: "var(--text-mute)" }}
                   onClick={() => setAiOpen(false)}
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-3.5 w-3.5" />
                 </Button>
               </div>
               <div className="min-h-0 flex-1 p-4 pb-5">
@@ -651,92 +730,131 @@ export function ThreadDetailPane() {
         </>
       )}
 
-      {!isDesktopViewport() && mobileAiMode !== "closed" && (
-        <div className="fixed inset-x-0 z-50 sm:hidden" style={{ bottom: mobileKeyboardInset }}>
+      {!isDesktopViewport() && mobileAiMode === "full" && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col xl:hidden"
+          style={{
+            background: "var(--bg-alt)",
+            paddingBottom: mobileKeyboardInset,
+          }}
+        >
           <div
-            className={cn(
-              "overflow-hidden border border-slate-200 bg-white shadow-[0_-12px_30px_rgba(15,23,42,0.12)] transition-all duration-200 ease-out",
-              mobileAiMode === "peek" && "rounded-t-[1.5rem]",
-              mobileAiMode === "full" && "rounded-t-[1.5rem]",
-            )}
-            style={{ height: mobileAiHeight }}
+            className="flex shrink-0 items-center justify-between px-4 py-3"
+            style={{
+              borderBottom: "1px solid var(--line)",
+              background: "var(--surface)",
+            }}
           >
-            <div
-              className="flex w-full touch-none items-center justify-between border-b border-slate-200/80 px-4 py-3 text-left"
-              onPointerDown={startMobileAiDrag}
-              onPointerMove={moveMobileAiDrag}
-              onPointerUp={endMobileAiDrag}
-              onPointerCancel={cancelMobileAiDrag}
-            >
-              <div className="flex min-w-0 flex-1 items-center gap-3">
-                <div className="h-1.5 w-10 rounded-full bg-slate-200" />
-                <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
-                  <Bot className="h-4 w-4 text-blue-600" />
-                  AI 助手
-                </div>
-              </div>
-              <div className="ml-3 flex items-center gap-1">
-                {mobileAiMode === "full" ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-100"
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      minimizeMobileAi();
-                    }}
-                  >
-                    <Minimize2 className="h-4 w-4" />
-                  </Button>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-100"
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      maximizeMobileAi();
-                    }}
-                  >
-                    <Maximize2 className="h-4 w-4" />
-                  </Button>
-                )}
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-100"
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setMobileAiMode("closed");
-                  }}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
+            <div className="flex min-w-0 flex-1 items-center gap-2.5">
+              <span
+                className="flex h-6 w-6 items-center justify-center rounded-md text-white"
+                style={{ background: "linear-gradient(135deg,#6c52d9,#3a6bf5)" }}
+              >
+                <Bot className="h-3.5 w-3.5" />
+              </span>
+              <span
+                className="text-[13px] font-semibold font-serif-body"
+                style={{ color: "var(--text)" }}
+              >
+                AI 助手
+              </span>
             </div>
+            <div className="ml-3 flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-md hover:bg-[var(--surface-alt)]"
+                style={{ color: "var(--text-mute)" }}
+                onClick={minimizeMobileAi}
+                title="最小化"
+                aria-label="最小化"
+              >
+                <Minimize2 className="h-4 w-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-md hover:bg-[var(--surface-alt)]"
+                style={{ color: "var(--text-mute)" }}
+                onClick={closeMobileAi}
+                title="关闭"
+                aria-label="关闭"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
 
-            {mobileAiShowsBody && (
-              <div className="h-[calc(100%-3.5rem)] p-4 pb-5">
-                <AIPane
-                  category={category!}
-                  slug={slug!}
-                  threadKey={threadKey}
-                  threadTitle={data.meta.title}
-                  pendingReplyTarget={aiPendingReplyTarget}
-                  onPendingReplyTargetConsumed={() => setAiPendingReplyTarget(null)}
-                  onUseDraftAsReply={onUseDraftAsReply}
-                  hasReplyDraft={hasDraft}
-                />
-              </div>
-            )}
+          <div className="min-h-0 flex-1 p-1 pb-2">
+            <AIPane
+              category={category!}
+              slug={slug!}
+              threadKey={threadKey}
+              threadTitle={data.meta.title}
+              pendingReplyTarget={aiPendingReplyTarget}
+              onPendingReplyTargetConsumed={() => setAiPendingReplyTarget(null)}
+              onUseDraftAsReply={onUseDraftAsReply}
+              hasReplyDraft={hasDraft}
+            />
           </div>
         </div>
+      )}
+
+      {!isDesktopViewport() && mobileAiMode === "peek" && (
+        <button
+          type="button"
+          onClick={openMobileAi}
+          className="fixed inset-x-0 bottom-0 z-50 flex h-14 items-center justify-between gap-2 px-4 xl:hidden"
+          style={{
+            bottom: mobileKeyboardInset,
+            background: "var(--surface)",
+            borderTop: "1px solid var(--line-strong)",
+            boxShadow: "0 -8px 20px rgba(31, 29, 23, 0.08)",
+          }}
+        >
+          <div className="flex min-w-0 flex-1 items-center gap-2.5">
+            <span
+              className="flex h-6 w-6 items-center justify-center rounded-md text-white"
+              style={{ background: "linear-gradient(135deg,#6c52d9,#3a6bf5)" }}
+            >
+              <Bot className="h-3.5 w-3.5" />
+            </span>
+            <span
+              className="truncate text-[13px] font-semibold font-serif-body"
+              style={{ color: "var(--text)" }}
+            >
+              AI 助手
+            </span>
+          </div>
+          <div className="ml-3 flex items-center gap-1">
+            <span
+              className="flex h-8 w-8 items-center justify-center rounded-md"
+              style={{ color: "var(--text-mute)" }}
+              aria-hidden
+            >
+              <Maximize2 className="h-4 w-4" />
+            </span>
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => { e.stopPropagation(); closeMobileAi(); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.stopPropagation();
+                  closeMobileAi();
+                }
+              }}
+              className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-[var(--surface-alt)]"
+              style={{ color: "var(--text-mute)" }}
+              title="关闭"
+              aria-label="关闭"
+            >
+              <X className="h-4 w-4" />
+            </span>
+          </div>
+        </button>
       )}
     </div>
   );
@@ -759,10 +877,13 @@ function ComposerTab({
       onClick={onClick}
       className={cn(
         className,
-        active
-          ? "rounded-lg bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700"
-          : "rounded-lg px-3 py-1.5 text-sm text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700",
+        "rounded-md px-3 py-1.5 text-[12.5px] font-semibold transition-colors",
       )}
+      style={
+        active
+          ? { background: "var(--accent-bg)", color: "var(--accent)" }
+          : { background: "transparent", color: "var(--text-mute)" }
+      }
     >
       {label}
     </button>
@@ -829,48 +950,83 @@ function ProposalHeroCard({
   };
 
   return (
-    <article className="paper-panel rounded-[1.2rem] border p-4 sm:rounded-[1.3rem] sm:p-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+    <article
+      className="relative rounded-[var(--r-lg)] p-5 sm:p-6"
+      style={{
+        background: "var(--surface)",
+        border: "1px solid var(--line)",
+        boxShadow: "var(--shadow-sm)",
+      }}
+    >
+      {/* Sepia accent rule on the left edge */}
+      <span
+        aria-hidden
+        className="absolute left-0 top-6 bottom-6 w-[3px] rounded-r"
+        style={{ background: "var(--accent)" }}
+      />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="flex min-w-0 items-start gap-3 sm:gap-4">
           <PostTypeBadge type="proposal" />
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2 text-[12px] text-slate-500 sm:text-sm">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span>第 1 条记录</span>
-                <span>作者：</span>
-                <span className="font-medium text-slate-900">{author}</span>
-                {created ? <span>{formatFullDateTime(created)}</span> : null}
+          <div className="min-w-0 flex-1 space-y-1">
+            <div
+              className="text-[12.5px] leading-[1.55] font-meta"
+              style={{ color: "var(--text-mute)" }}
+            >
+              作者{" "}
+              <span style={{ color: "var(--text)", fontWeight: 600 }}>{author}</span>
+              {created ? ` · ${formatFullDateTime(created)}` : null}
+            </div>
+            <div
+              className="flex min-w-0 flex-wrap items-center gap-x-2 text-[11px] font-meta"
+              style={{ color: "var(--text-mute)" }}
+            >
+              <span
+                className="min-w-0 max-w-full truncate font-mono"
+                title={post.filename}
+              >
+                {post.filename}
+              </span>
+              <span>· {postCount} 条</span>
+              <span className="hidden sm:inline">· {category}</span>
+            </div>
+            {overflows && !collapsed && (
+              <div className="pt-1">
+                <CollapseHeaderAction
+                  visible
+                  active={headerCollapseHint}
+                  onClick={() => toggleCollapsed("header")}
+                />
               </div>
-              <CollapseHeaderAction
-                visible={overflows && !collapsed}
-                active={headerCollapseHint}
-                onClick={() => toggleCollapsed("header")}
-              />
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500 sm:text-xs">
-              <span className="font-mono">{post.filename}</span>
-              <span>{postCount} 条帖子</span>
-              <span className="hidden sm:inline">{category}</span>
-              <span className="hidden sm:inline">产品讨论人</span>
-            </div>
+            )}
           </div>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <StatusControl status={threadStatus} onChange={onStatusChange} />
           <Button
-            variant={favorite ? "secondary" : "ghost"}
+            variant="ghost"
             size="sm"
-            className="h-9 rounded-lg px-3 text-xs text-slate-700"
+            className="h-9 rounded-md px-3 text-xs"
+            style={{
+              color: favorite ? "var(--accent)" : "var(--text-soft)",
+              background: favorite ? "var(--accent-bg)" : "transparent",
+              border: favorite ? "1px solid var(--accent-soft)" : "1px solid transparent",
+            }}
             disabled={favoriteSaving}
             onClick={() => { void onToggleFavorite(); }}
           >
-            <Star className={`h-4 w-4 ${favorite ? "fill-current text-amber-500" : ""}`} />
+            <Star
+              className="h-3.5 w-3.5"
+              style={{ fill: favorite ? "currentColor" : "none" }}
+            />
             {favorite ? "已收藏" : "收藏"}
           </Button>
         </div>
       </div>
 
-      <div className="mt-5 border-t border-slate-200/80 pt-5">
+      <div
+        className="mt-5 pt-5"
+        style={{ borderTop: "1px solid var(--line-soft)" }}
+      >
         {post.mentions.length > 0 && (
           <div className="mb-4 space-y-2">
             {post.mentions.map((mention, index) => (
@@ -882,7 +1038,7 @@ function ProposalHeroCard({
         <div
           ref={bodyRef}
           style={collapsed ? { maxHeight: COLLAPSE_HEIGHT, overflow: "hidden" } : undefined}
-          className="prose-pivot max-w-none text-[13.5px] leading-7 text-slate-700 sm:text-[15px]"
+          className="prose-pivot max-w-none text-[14.5px] leading-[1.75] sm:text-[16px]"
         >
           <Markdown remarkPlugins={[remarkGfm]}>{post.body}</Markdown>
         </div>
@@ -891,20 +1047,35 @@ function ProposalHeroCard({
           <button
             type="button"
             onClick={() => toggleCollapsed("footer")}
-            className="mt-2 text-xs text-primary hover:underline"
+            className="mt-2 text-[12px] font-meta hover:underline"
+            style={{ color: "var(--accent)" }}
           >
             {collapsed ? "展开全文 ↓" : "收起全文 ↑"}
           </button>
         )}
       </div>
 
-      <div className="mt-5 flex flex-col gap-3 border-t border-slate-200/80 pt-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+      <div
+        className="mt-5 flex flex-col gap-3 pt-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between"
+        style={{ borderTop: "1px solid var(--line-soft)" }}
+      >
         <div className="flex flex-wrap items-center gap-2">
-          <PostMentionPopover category={category} slug={slug} post={post} onMentioned={onMentioned} />
+          <PostMentionPopover
+            category={category}
+            slug={slug}
+            post={post}
+            onMentioned={onMentioned}
+            align="left"
+          />
           <Button
-            variant="ghost"
+            variant="outline"
             size="sm"
-            className="h-8 rounded-lg px-3 text-xs font-medium text-slate-700 hover:bg-slate-100"
+            className="h-8 rounded-md px-3 text-[12px] font-semibold shadow-none hover:bg-[var(--accent-bg)] hover:text-[var(--accent)]"
+            style={{
+              background: "var(--surface-alt)",
+              border: "1px solid var(--line-strong)",
+              color: "var(--text-soft)",
+            }}
             onClick={onAIReply}
           >
             <Bot className="mr-1.5 h-3.5 w-3.5" />
@@ -916,12 +1087,15 @@ function ProposalHeroCard({
             href={githubFileUrl}
             target="_blank"
             rel="noreferrer"
-            className="text-xs font-mono text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-900"
+            className="text-[11.5px] font-mono underline underline-offset-2"
+            style={{ color: "var(--text-mute)" }}
           >
             {post.filename}
           </a>
         ) : (
-          <span className="text-xs font-mono text-slate-500">{post.filename}</span>
+          <span className="text-[11.5px] font-mono" style={{ color: "var(--text-mute)" }}>
+            {post.filename}
+          </span>
         )}
       </div>
     </article>
@@ -979,36 +1153,55 @@ function ReplyPostCard({
   };
 
   return (
-    <article className="rounded-[1.05rem] border border-slate-200/90 bg-white px-4 py-4 shadow-[0_4px_16px_rgba(15,23,42,0.025)] sm:rounded-[1.15rem] sm:px-6">
+    <article
+      className="rounded-[var(--r-md)] px-5 py-5 sm:px-6 sm:py-6"
+      style={{
+        background: "var(--surface)",
+        border: "1px solid var(--line)",
+        boxShadow: "var(--shadow-sm)",
+      }}
+    >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex items-start gap-3">
             <PostTypeBadge type={type === "reply" ? "reply" : "post"} compact />
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2 text-[12px] text-slate-500 sm:text-sm">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <span>{`第 ${postNumber} 条记录`}</span>
-                  <span>作者：</span>
-                  <span className="font-medium text-slate-900">{author}</span>
-                  {created ? <span className="text-xs text-slate-500">{formatFullDateTime(created)}</span> : null}
-                </div>
-                <CollapseHeaderAction
-                  visible={overflows && !collapsed}
-                  active={headerCollapseHint}
-                  onClick={() => toggleCollapsed("header")}
-                />
+            <div className="min-w-0 flex-1 space-y-1">
+              <div
+                className="text-[12.5px] leading-[1.55] font-meta"
+                style={{ color: "var(--text-mute)" }}
+              >
+                第 {postNumber} 条 · 作者{" "}
+                <span style={{ color: "var(--text)", fontWeight: 600 }}>{author}</span>
+                {created ? ` · ${formatFullDateTime(created)}` : null}
               </div>
               {githubFileUrl ? (
                 <a
                   href={githubFileUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="mt-1 inline-block text-xs font-mono text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-900"
+                  className="block min-w-0 max-w-full truncate text-[11px] font-mono underline underline-offset-2"
+                  style={{ color: "var(--text-mute)" }}
+                  title={post.filename}
                 >
                   {post.filename}
                 </a>
               ) : (
-                <span className="mt-1 inline-block text-xs font-mono text-slate-500">{post.filename}</span>
+                <span
+                  className="block min-w-0 max-w-full truncate text-[11px] font-mono"
+                  style={{ color: "var(--text-mute)" }}
+                  title={post.filename}
+                >
+                  {post.filename}
+                </span>
+              )}
+              {overflows && !collapsed && (
+                <div className="pt-1">
+                  <CollapseHeaderAction
+                    visible
+                    active={headerCollapseHint}
+                    onClick={() => toggleCollapsed("header")}
+                  />
+                </div>
               )}
             </div>
           </div>
@@ -1017,9 +1210,14 @@ function ReplyPostCard({
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <PostMentionPopover category={category} slug={slug} post={post} onMentioned={onMentioned} />
           <Button
-            variant="ghost"
+            variant="outline"
             size="sm"
-            className="h-8 rounded-lg px-3 text-xs font-medium text-slate-700 hover:bg-slate-100"
+            className="h-8 rounded-md px-3 text-[12px] font-semibold shadow-none hover:bg-[var(--accent-bg)] hover:text-[var(--accent)]"
+            style={{
+              background: "var(--surface-alt)",
+              border: "1px solid var(--line-strong)",
+              color: "var(--text-soft)",
+            }}
             onClick={onAIReply}
           >
             <Bot className="mr-1.5 h-3.5 w-3.5" />
@@ -1036,10 +1234,10 @@ function ReplyPostCard({
         </div>
       )}
 
-        <div
-          ref={bodyRef}
-          style={collapsed ? { maxHeight: COLLAPSE_HEIGHT, overflow: "hidden" } : undefined}
-        className="prose-pivot mt-3 max-w-none text-[13.5px] leading-7 text-slate-700 sm:text-[15px]"
+      <div
+        ref={bodyRef}
+        style={collapsed ? { maxHeight: COLLAPSE_HEIGHT, overflow: "hidden" } : undefined}
+        className="prose-pivot mt-4 max-w-none text-[14px] leading-[1.75] sm:text-[15.5px]"
       >
         <Markdown remarkPlugins={[remarkGfm]}>{post.body}</Markdown>
       </div>
@@ -1048,7 +1246,8 @@ function ReplyPostCard({
         <button
           type="button"
           onClick={() => toggleCollapsed("footer")}
-          className="mt-2 text-xs text-primary hover:underline"
+          className="mt-2 text-[12px] font-meta hover:underline"
+          style={{ color: "var(--accent)" }}
         >
           {collapsed ? "展开全文 ↓" : "收起全文 ↑"}
         </button>
@@ -1073,12 +1272,21 @@ function CollapseHeaderAction({
       aria-hidden={!visible}
       tabIndex={visible ? 0 : -1}
       className={cn(
-        "inline-flex h-7 items-center gap-1 rounded-full border px-2.5 text-[11px] font-medium transition-all duration-300 sm:text-xs",
+        "inline-flex h-6 items-center gap-1 rounded-md px-2 text-[11px] font-medium transition-all duration-300",
         visible
-          ? "pointer-events-auto translate-y-0 opacity-100 border-blue-200 bg-blue-50 text-blue-700 shadow-[0_6px_16px_rgba(37,99,235,0.12)]"
-          : "pointer-events-none -translate-y-1 opacity-0 border-transparent bg-transparent text-transparent shadow-none",
-        active && "scale-[1.04] border-blue-300 bg-blue-100 shadow-[0_10px_24px_rgba(37,99,235,0.18)]",
+          ? "pointer-events-auto translate-y-0 opacity-100"
+          : "pointer-events-none -translate-y-1 opacity-0",
+        active && "scale-[1.04]",
       )}
+      style={
+        visible
+          ? {
+              background: active ? "var(--accent)" : "var(--accent-bg)",
+              color: active ? "var(--accent-ink)" : "var(--accent)",
+              border: "1px solid var(--accent-soft)",
+            }
+          : { background: "transparent", color: "transparent", border: "1px solid transparent" }
+      }
     >
       收起全文
       <span className={cn("transition-transform duration-300", active && "-translate-y-0.5")}>↑</span>
@@ -1091,11 +1299,13 @@ function PostMentionPopover({
   slug,
   post,
   onMentioned,
+  align = "right",
 }: {
   category: string;
   slug: string;
   post: Post;
   onMentioned: () => void;
+  align?: "left" | "right";
 }) {
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionValue, setMentionValue] = useState<MentionBlock>(emptyMention());
@@ -1134,17 +1344,37 @@ function PostMentionPopover({
   return (
     <div className="relative" ref={popoverRef}>
       <Button
-        variant="ghost"
+        variant="outline"
         size="sm"
-        className="h-8 rounded-lg px-3 text-xs font-medium text-slate-700 hover:bg-slate-100"
+        className="h-8 rounded-md px-3 text-[12px] font-semibold shadow-none hover:bg-[var(--accent-bg)] hover:text-[var(--accent)]"
+        style={{
+          background: "var(--surface-alt)",
+          border: "1px solid var(--line-strong)",
+          color: "var(--text-soft)",
+        }}
         onClick={() => setMentionOpen((open) => !open)}
       >
         <AtSign className="mr-1.5 h-3.5 w-3.5" />
         提及
       </Button>
       {mentionOpen && (
-        <div className="fixed inset-x-4 top-20 z-50 rounded-xl border border-slate-200 bg-white p-4 shadow-[0_16px_40px_rgba(15,23,42,0.08)] sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 sm:w-[min(22rem,calc(100vw-2rem))]">
-          <p className="mb-3 text-xs font-semibold text-muted-foreground">提及某人</p>
+        <div
+          className={cn(
+            "fixed inset-x-4 top-20 z-[60] rounded-[var(--r-md)] p-4 sm:absolute sm:inset-x-auto sm:top-full sm:mt-2 sm:w-[min(22rem,calc(100vw-2rem))]",
+            align === "left" ? "sm:left-0" : "sm:right-0",
+          )}
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--line-strong)",
+            boxShadow: "var(--shadow-lg)",
+          }}
+        >
+          <p
+            className="mb-3 text-[10.5px] font-bold uppercase tracking-[0.18em] font-meta"
+            style={{ color: "var(--text-mute)" }}
+          >
+            提及某人
+          </p>
           <MentionField
             value={mentionValue}
             onChange={setMentionValue}
@@ -1159,10 +1389,26 @@ function PostMentionPopover({
                 setMentionValue(emptyMention());
               }}
               disabled={submitting}
+              className="h-8 rounded-[var(--r-sm)] px-3 text-[12.5px]"
+              style={{
+                background: "transparent",
+                border: "1px solid var(--line-strong)",
+                color: "var(--text-soft)",
+              }}
             >
               取消
             </Button>
-            <Button size="sm" onClick={submitMention} disabled={submitting}>
+            <Button
+              size="sm"
+              onClick={submitMention}
+              disabled={submitting}
+              className="h-8 rounded-[var(--r-sm)] px-3 text-[12.5px] font-semibold shadow-none"
+              style={{
+                background: "var(--accent)",
+                color: "var(--accent-ink)",
+                border: "1px solid var(--accent)",
+              }}
+            >
               {submitting ? "发送中…" : "发送"}
             </Button>
           </div>
@@ -1179,13 +1425,21 @@ function PostTypeBadge({
   type: "proposal" | "reply" | "post";
   compact?: boolean;
 }) {
-  const label = type === "proposal" ? "提案" : type === "reply" ? "回复" : "帖子";
+  const label = type === "proposal" ? "I. 提案" : type === "reply" ? "回复" : "帖子";
+  const isProposal = type === "proposal";
   return (
     <span
       className={cn(
-        "flex shrink-0 items-center justify-center rounded-2xl bg-blue-50 font-semibold text-blue-700 ring-1 ring-blue-200",
-        compact ? "h-8 min-w-10 px-2.5 text-xs sm:h-10 sm:min-w-12 sm:px-3 sm:text-sm" : "h-10 min-w-12 px-3 text-xs sm:h-14 sm:min-w-14 sm:px-4 sm:text-sm",
+        "flex shrink-0 items-center justify-center rounded-[var(--r-sm)] font-bold uppercase tracking-[0.08em] font-meta",
+        compact
+          ? "h-7 min-w-12 px-2 text-[10.5px]"
+          : "h-8 min-w-14 px-2.5 text-[11px] sm:h-9 sm:min-w-16 sm:px-3 sm:text-[11.5px]",
       )}
+      style={
+        isProposal
+          ? { background: "var(--accent-bg)", color: "var(--accent)" }
+          : { background: "var(--surface-alt)", color: "var(--text-soft)", border: "1px solid var(--line)" }
+      }
     >
       {label}
     </span>
@@ -1193,22 +1447,62 @@ function PostTypeBadge({
 }
 
 function MentionChip({ mention, index }: { mention: MentionEntry; index: number }) {
-  const names = mention.users.map((u) => `@${u.user}`).join("、");
   const author = mention.author_display?.trim() || "未知用户";
   const comment = mention.comments?.trim();
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-slate-200/80 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-      <div className="flex shrink-0 items-center gap-2 text-[11px] text-slate-500">
-        <span className="inline-flex h-5 items-center rounded-full bg-white px-2 font-medium text-slate-700 ring-1 ring-slate-200">
+    <div
+      className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-[var(--r-md)] px-3 py-2 text-[12.5px]"
+      style={{
+        background: "var(--surface-alt)",
+        border: "1px solid var(--line)",
+        color: "var(--text)",
+      }}
+    >
+      <div
+        className="flex shrink-0 items-center gap-2 text-[11px] font-meta"
+        style={{ color: "var(--text-mute)" }}
+      >
+        <span
+          className="inline-flex h-5 items-center rounded-full px-2 font-medium"
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--line-strong)",
+            color: "var(--text-soft)",
+          }}
+        >
           {`评论${index + 1}`}
         </span>
         {mention.time ? <span>· {relativeTime(mention.time)}</span> : null}
       </div>
-      <div className="min-w-0 break-words leading-6">
-        <span className="font-medium text-slate-900">{author}</span>
-        {names ? <span className="ml-1 text-primary">{names}</span> : null}
-        <span className="ml-1 text-slate-500">说：</span>
-        {comment ? <span>{comment}</span> : <span className="text-slate-400">未填写评论内容</span>}
+      <div className="min-w-0 break-words leading-7">
+        <span className="font-semibold" style={{ color: "var(--text)" }}>
+          {author}
+        </span>
+        {mention.users.length > 0 && (
+          <span className="ml-1 inline-flex flex-wrap gap-1 align-middle">
+            {mention.users.map((u, i) => (
+              <span
+                key={i}
+                className="inline-flex h-5 items-center rounded-full px-2 text-[11.5px] font-semibold"
+                style={{
+                  background: "var(--accent-bg)",
+                  border: "1px solid var(--accent-soft)",
+                  color: "var(--accent)",
+                }}
+              >
+                @{u.user}
+              </span>
+            ))}
+          </span>
+        )}
+        <span className="mx-1" style={{ color: "var(--text-mute)" }}>
+          说：
+        </span>
+        {comment ? (
+          <span style={{ color: "var(--text)" }}>{comment}</span>
+        ) : (
+          <span style={{ color: "var(--text-fade)" }}>未填写评论内容</span>
+        )}
       </div>
     </div>
   );
@@ -1292,9 +1586,21 @@ function ReplyForm({
 
   return (
     <form onSubmit={submit} className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+      <div
+        className="flex flex-wrap items-center justify-between gap-2 text-[11.5px] font-meta"
+        style={{ color: "var(--text-mute)" }}
+      >
         <span>{formatSaveStatus(status)}</span>
-        <span>{replyTo ? `当前将回复到：${replyTo}` : "当前将作为新的回复发布"}</span>
+        <span>
+          {replyTo ? (
+            <>
+              当前将回复到：
+              <span className="font-mono" style={{ color: "var(--text-soft)" }}>{replyTo}</span>
+            </>
+          ) : (
+            "当前将作为新的回复发布"
+          )}
+        </span>
       </div>
 
       <Textarea
@@ -1303,7 +1609,12 @@ function ReplyForm({
         rows={6}
         maxLength={50000}
         placeholder="写下你的回复，或先切到 AI 助手整理草稿…"
-        className="min-h-[8rem] rounded-2xl border-slate-300 bg-slate-50/90 font-mono text-sm sm:min-h-[9rem]"
+        className="min-h-[8rem] rounded-[var(--r-md)] font-mono text-[13px] leading-[1.6] sm:min-h-[9rem]"
+        style={{
+          background: "var(--surface-alt)",
+          border: "1px solid var(--line-strong)",
+          color: "var(--text)",
+        }}
       />
 
       <MentionField
@@ -1313,11 +1624,30 @@ function ReplyForm({
       />
 
       <div className="flex flex-wrap gap-3">
-        <Button type="submit" className="rounded-xl bg-blue-600 hover:bg-blue-700" disabled={submitting || !body.trim()}>
+        <Button
+          type="submit"
+          className="h-9 rounded-md px-4 text-[12.5px] font-semibold shadow-none"
+          style={{
+            background: "var(--accent)",
+            color: "var(--accent-ink)",
+            border: "1px solid var(--accent)",
+          }}
+          disabled={submitting || !body.trim()}
+        >
           {submitting ? "发布中…" : "发布回复"}
         </Button>
         {(draftId || body.trim()) && (
-          <Button type="button" variant="outline" className="rounded-xl" onClick={discard}>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-9 rounded-md px-4 text-[12.5px]"
+            style={{
+              background: "transparent",
+              color: "var(--text-soft)",
+              border: "1px solid var(--line-strong)",
+            }}
+            onClick={discard}
+          >
             删除草稿
           </Button>
         )}

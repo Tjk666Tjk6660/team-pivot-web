@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, NavLink, useLocation } from "react-router-dom";
-import { ChevronDown, ChevronRight, FileText, FolderTree, Plus, Star, Trash2 } from "lucide-react";
+import { NavLink, useLocation } from "react-router-dom";
+import { ChevronDown, ChevronRight, FileText, Star, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/StatusBadge";
 import { relativeTime } from "@/lib/time";
@@ -63,23 +62,21 @@ export function ThreadListPane({
   };
 
   return (
-    <div className="flex h-full flex-col bg-transparent px-3 py-3 md:px-3 md:py-4">
-      <Button asChild className="h-11 w-full justify-start rounded-xl bg-blue-600 px-4 text-sm font-medium text-white shadow-sm hover:bg-blue-700">
-        <Link to="/new">
-          <Plus className="h-4 w-4" />
-          新讨论
-        </Link>
-      </Button>
-
-      <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
+    <div className="flex h-full flex-col px-3 py-4" style={{ background: "var(--bg)" }}>
+      <div className="min-h-0 flex-1 overflow-y-auto pr-0.5">
         {threads !== null && favorites.length > 0 && (
           <Section
             sectionRef={favoritesRef}
-            title="收藏"
+            title="我收藏的"
             count={favorites.length}
             open={favoritesOpen}
             onToggle={() => setFavoritesOpen((v) => !v)}
-            icon={<Star className="h-3.5 w-3.5 shrink-0 text-amber-500" />}
+            icon={
+              <Star
+                className="h-3 w-3 shrink-0"
+                style={{ color: "var(--accent)" }}
+              />
+            }
           >
             {favoritesOpen && favorites.map((t) => (
               <ThreadRow
@@ -87,7 +84,7 @@ export function ThreadListPane({
                 to={`/t/${encodeURIComponent(t.category)}/${encodeURIComponent(t.slug)}`}
                 title={t.title}
                 status={t.status}
-                meta={`${t.category} · ${t.author_display ?? t.author ?? "unknown"} · ${t.post_count} posts${t.last_updated ? ` · ${relativeTime(t.last_updated)}` : ""}`}
+                meta={`${t.category} · ${t.author_display ?? t.author ?? "unknown"} · ${t.post_count} 帖${t.last_updated ? ` · ${relativeTime(t.last_updated)}` : ""}`}
                 unread={t.unread_count > 0 ? t.unread_count : undefined}
               />
             ))}
@@ -101,104 +98,164 @@ export function ThreadListPane({
             count={drafts.length}
             open={draftsOpen}
             onToggle={() => setDraftsOpen((v) => !v)}
-            icon={<FileText className="h-3.5 w-3.5 shrink-0 text-sky-600" />}
+            icon={
+              <FileText
+                className="h-3 w-3 shrink-0"
+                style={{ color: "var(--text-mute)" }}
+              />
+            }
           >
-            {draftsOpen && drafts.map((d) => (
-              <div
-                key={d.id}
-                className="group mx-1 flex items-start gap-2 rounded-lg border border-transparent px-2 py-1.5 transition-colors hover:bg-slate-100/80"
-              >
-                <NavLink
-                  to={
-                    d.type === "proposal"
-                      ? `/new?draft=${d.id}`
-                      : d.thread_key
-                        ? `/t/${d.thread_key}`
-                        : "#"
-                  }
-                  className="min-w-0 flex-1"
+            {draftsOpen && drafts.map((d) => {
+              const isProposal = d.type === "proposal";
+              const draftLabel = isProposal ? "NEW" : "REPLY";
+              return (
+                <div
+                  key={d.id}
+                  className="group mx-1 mb-0.5 flex items-start gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-[var(--surface-alt)]"
                 >
-                  <div className="truncate text-sm font-medium text-slate-800">
-                    {d.type === "proposal"
-                      ? (d.title?.trim() || "(untitled)")
-                      : `Reply: ${d.thread_key ?? ""}`}
-                  </div>
-                  <div className="mt-0.5 truncate text-xs text-slate-500">
-                    {d.type} · {relativeTime(new Date(d.updated_at * 1000).toISOString())}
-                  </div>
-                </NavLink>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 opacity-0 transition-opacity group-hover:opacity-100"
-                  onClick={() => onRemoveDraft(d.id)}
-                  title="删除草稿"
-                >
-                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                </Button>
-              </div>
-            ))}
+                  <NavLink
+                    to={
+                      isProposal
+                        ? `/new?draft=${d.id}`
+                        : d.thread_key
+                          ? `/t/${d.thread_key}`
+                          : "#"
+                    }
+                    className="min-w-0 flex-1"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className="rounded-[3px] px-1 py-[1px] text-[9.5px] font-bold tracking-wider font-meta"
+                        style={{
+                          background: isProposal ? "var(--status-discussing-bg)" : "var(--status-project-bg)",
+                          color: isProposal ? "var(--status-discussing-fg)" : "var(--status-project-fg)",
+                        }}
+                      >
+                        {draftLabel}
+                      </span>
+                      <span
+                        className="ml-auto text-[10.5px] font-mono"
+                        style={{ color: "var(--text-mute)" }}
+                      >
+                        {relativeTime(new Date(d.updated_at * 1000).toISOString())}
+                      </span>
+                    </div>
+                    <div
+                      className="mt-1 truncate text-[13px] font-semibold leading-snug font-serif-body"
+                      style={{ color: "var(--text)" }}
+                    >
+                      {isProposal
+                        ? (d.title?.trim() || "(未命名)")
+                        : `回复：${d.thread_key ?? ""}`}
+                    </div>
+                  </NavLink>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 opacity-0 transition-opacity group-hover:opacity-100"
+                    onClick={() => onRemoveDraft(d.id)}
+                    title="删除草稿"
+                  >
+                    <Trash2 className="h-3 w-3" style={{ color: "var(--danger-500)" }} />
+                  </Button>
+                </div>
+              );
+            })}
           </Section>
         )}
 
         <Section
           sectionRef={threadsRef}
-          title="空间"
+          title="内容空间"
           count={threads?.length ?? 0}
           open={threadsOpen}
           onToggle={() => setThreadsOpen((v) => !v)}
-          icon={<FolderTree className="h-3.5 w-3.5 shrink-0" />}
         >
           {threads === null && (
-            <div className="px-4 py-3 text-sm text-muted-foreground">Loading…</div>
+            <div className="px-3 py-3 text-[12px]" style={{ color: "var(--text-mute)" }}>
+              加载中…
+            </div>
           )}
           {threadsOpen && threads !== null && threads.length === 0 && (
-            <div className="px-4 py-3 text-sm text-muted-foreground">
-              No threads yet.
+            <div className="px-3 py-3 text-[12px]" style={{ color: "var(--text-mute)" }}>
+              还没有讨论。
             </div>
           )}
           {threadsOpen && threads !== null && grouped.length > 0 &&
             grouped.map((group) => {
               const open = !!openCategories[group.category];
+              const swatch = categorySwatch(group.category);
               return (
-                <div key={group.category} className="mx-1 border-b border-slate-200/60 py-1 last:border-b-0">
+                <div key={group.category} className="mx-1 mb-1">
                   <button
                     type="button"
                     onClick={() => toggleCategory(group.category)}
-                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-slate-100/80"
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-[var(--surface-alt)]"
                   >
                     {open ? (
-                      <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <ChevronDown
+                        className="h-3 w-3 shrink-0"
+                        style={{ color: "var(--text-mute)" }}
+                      />
                     ) : (
-                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <ChevronRight
+                        className="h-3 w-3 shrink-0"
+                        style={{ color: "var(--text-mute)" }}
+                      />
                     )}
-                    <FolderTree className="h-4 w-4 shrink-0 text-slate-400" />
+                    <span
+                      aria-hidden
+                      className="h-2 w-2 shrink-0 rounded-[2px]"
+                      style={{ background: swatch }}
+                    />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="truncate text-sm font-semibold text-slate-900 md:text-[15px]">{group.category}</span>
-                        <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
-                          {group.threads.length}
+                        <span
+                          className="truncate text-[13px] font-semibold"
+                          style={{ color: "var(--text)" }}
+                        >
+                          {group.category}
                         </span>
                       </div>
-                      <div className="mt-0.5 truncate text-[11px] text-slate-500 md:text-xs">
-                        {group.last_updated
-                          ? `最近活动 ${relativeTime(group.last_updated)}`
-                          : "暂无活动时间"}
-                      </div>
+                      {group.last_updated && (
+                        <div
+                          className="mt-0.5 truncate text-[10.5px] font-meta"
+                          style={{ color: "var(--text-mute)" }}
+                        >
+                          最近活动 {relativeTime(group.last_updated)}
+                        </div>
+                      )}
                     </div>
+                    <span
+                      className="text-[11px] font-mono"
+                      style={{ color: "var(--text-mute)" }}
+                    >
+                      {group.threads.length}
+                    </span>
                     {group.unread > 0 && (
-                      <Badge variant="red" className="shrink-0">{group.unread}</Badge>
+                      <span
+                        className="ml-1 rounded-full px-1.5 py-[1px] text-[10px] font-bold font-meta"
+                        style={{
+                          background: "var(--accent)",
+                          color: "var(--accent-ink)",
+                        }}
+                      >
+                        {group.unread}
+                      </span>
                     )}
                   </button>
                   {open && (
-                    <div className="mt-1 ml-5 border-l border-slate-200/70 bg-transparent pl-2">
+                    <div
+                      className="mt-1 ml-[14px] pl-3"
+                      style={{ borderLeft: "1px solid var(--line-soft)" }}
+                    >
                       {group.threads.map((t) => (
                         <ThreadRow
                           key={`${t.category}/${t.slug}`}
                           to={`/t/${encodeURIComponent(t.category)}/${encodeURIComponent(t.slug)}`}
                           title={t.title}
                           status={t.status}
-                          meta={`${t.author_display ?? t.author ?? "unknown"} · ${t.post_count} posts${t.last_updated ? ` · ${relativeTime(t.last_updated)}` : ""}`}
+                          meta={`${t.author_display ?? t.author ?? "unknown"} · ${t.post_count} 帖${t.last_updated ? ` · ${relativeTime(t.last_updated)}` : ""}`}
                           unread={t.unread_count > 0 ? t.unread_count : undefined}
                           nested
                         />
@@ -232,20 +289,26 @@ function Section({
   sectionRef?: React.Ref<HTMLElement>;
 }) {
   return (
-    <section className="mb-4 last:mb-0" ref={sectionRef}>
+    <section className="mb-5 last:mb-0" ref={sectionRef}>
       <button
         type="button"
         onClick={onToggle}
-        className="sticky top-0 z-10 mx-1 mt-1 flex w-[calc(100%-0.5rem)] items-center gap-2 border-b border-slate-200/70 bg-[rgba(248,250,252,0.96)] px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500 backdrop-blur md:text-[11px] md:tracking-[0.14em]"
+        className="mx-1 mt-1 mb-2 flex w-[calc(100%-0.5rem)] items-center gap-2 px-2 py-1 text-left text-[10px] font-bold uppercase tracking-[0.14em] font-meta"
+        style={{ color: "var(--text-mute)" }}
       >
         {open ? (
-          <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+          <ChevronDown className="h-3 w-3 shrink-0" />
         ) : (
-          <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+          <ChevronRight className="h-3 w-3 shrink-0" />
         )}
         {icon}
-        {title}
-        <span className="ml-auto text-muted-foreground/70">{count}</span>
+        <span>{title}</span>
+        <span
+          className="ml-auto text-[10.5px] font-mono"
+          style={{ color: "var(--text-fade)" }}
+        >
+          {count}
+        </span>
       </button>
       {children}
     </section>
@@ -272,24 +335,47 @@ function ThreadRow({
       to={to}
       className={({ isActive }) =>
         cn(
-          "mx-1 block rounded-lg border-l-2 border-transparent px-3 py-2.5 transition-colors hover:bg-slate-100/80",
-          nested && "mx-0 px-3 py-2.5 pl-4",
-          isActive && "border-blue-500 bg-blue-100/85 text-blue-950 hover:bg-blue-100/85",
+          "mx-1 mb-0.5 block rounded-md px-3 py-2 transition-colors",
+          nested && "mx-0 px-2.5 py-2",
+          isActive
+            ? "bg-[var(--accent-bg)]"
+            : "hover:bg-[var(--surface-alt)]",
         )
+      }
+      style={({ isActive }) =>
+        isActive
+          ? { borderLeft: "2px solid var(--accent)" }
+          : { borderLeft: "2px solid transparent" }
       }
     >
       {({ isActive }) => (
         <>
           <div className="flex items-center gap-2">
             {unread !== undefined && (
-              <Badge variant="red" className="shrink-0">{unread}</Badge>
+              <span
+                className="shrink-0 rounded-full px-1.5 py-[1px] text-[10px] font-bold font-meta"
+                style={{
+                  background: "var(--accent)",
+                  color: "var(--accent-ink)",
+                }}
+              >
+                {unread}
+              </span>
             )}
-            <span className="truncate text-[14px] font-medium">{title}</span>
+            <span
+              className="truncate text-[13.5px] font-semibold font-serif-body leading-snug"
+              style={{ color: isActive ? "var(--accent)" : "var(--text)" }}
+            >
+              {title}
+            </span>
             <span className="ml-auto shrink-0">
-              <StatusBadge status={status} />
+              <StatusBadge status={status} size="sm" />
             </span>
           </div>
-          <div className={cn("mt-1 truncate text-[10px] leading-5 text-slate-500 md:text-[11px]", isActive && "text-blue-800/80")}>
+          <div
+            className="mt-1 truncate text-[10.5px] font-meta leading-tight"
+            style={{ color: "var(--text-mute)" }}
+          >
             {meta}
           </div>
         </>
@@ -333,4 +419,17 @@ function groupThreadsByCategory(threads: ThreadMeta[] | null): CategoryGroup[] {
       threads: [...group.threads].sort((a, b) => (b.last_updated || "").localeCompare(a.last_updated || "")),
     }))
     .sort((a, b) => (b.last_updated || "").localeCompare(a.last_updated || ""));
+}
+
+const CATEGORY_PALETTE = [
+  "#5a3a1a", "#2854d4", "#1f7a50", "#a36a0e",
+  "#5238b8", "#2e3340", "#9e2f2f", "#0e7c66",
+];
+
+function categorySwatch(category: string): string {
+  let hash = 0;
+  for (let i = 0; i < category.length; i++) {
+    hash = (hash * 31 + category.charCodeAt(i)) >>> 0;
+  }
+  return CATEGORY_PALETTE[hash % CATEGORY_PALETTE.length];
 }

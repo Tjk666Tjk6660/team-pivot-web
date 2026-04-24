@@ -21,6 +21,19 @@ import type { AIToolUse } from "@/api";
 
 const GENERATE_TAG = "[[GENERATE_REPLY_DRAFT]]";
 
+// Rotating hints shown in the textarea placeholder while AI is streaming —
+// keeps the "等待间隙" 不空，给点 Coda/书信体气质的提示。
+const STREAMING_HINTS = [
+  "正在对齐颗粒度…",
+  "正在追溯线索…",
+  "正在校对引用…",
+  "正在编织上下文…",
+  "正在斟酌措辞…",
+  "正在权衡分歧…",
+  "正在拼装结论…",
+  "正在润色草稿…",
+];
+
 export function AIPane({
   category,
   slug,
@@ -47,6 +60,16 @@ export function AIPane({
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
+
+  const [streamingHintIdx, setStreamingHintIdx] = useState(0);
+  useEffect(() => {
+    if (!streaming) return;
+    setStreamingHintIdx(Math.floor(Math.random() * STREAMING_HINTS.length));
+    const id = window.setInterval(() => {
+      setStreamingHintIdx((i) => (i + 1) % STREAMING_HINTS.length);
+    }, 2400);
+    return () => window.clearInterval(id);
+  }, [streaming]);
 
   const activeStream = ai.activeStream;
   const blockedByOtherThread = !!activeStream && activeStream.threadKey !== threadKey;
@@ -113,13 +136,23 @@ export function AIPane({
   const generateDisabled = interactionsDisabled || streaming || noTarget || noUserMsg;
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
+    <div
+      className="flex h-full min-h-0 flex-col gap-2.5 overflow-hidden p-2 sm:gap-3 sm:p-4"
+      style={{ background: "var(--bg-alt)" }}
+    >
       {blockedByOtherThread && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+        <div
+          className="rounded-[var(--r-md)] px-4 py-3 text-[12px]"
+          style={{
+            border: "1px solid color-mix(in srgb, var(--warn-500) 35%, var(--line))",
+            background: "color-mix(in srgb, var(--warn-500) 8%, var(--surface))",
+            color: "var(--warn-600)",
+          }}
+        >
           <div className="flex items-start gap-2">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
             <div>
-              <div className="font-medium">AI 输出被其他 thread 占用</div>
+              <div className="font-semibold">AI 输出被其他 thread 占用</div>
               <div className="mt-1 leading-relaxed">
                 《{activeThreadTitle}》正在输出，请等待它完成后再尝试。
               </div>
@@ -130,13 +163,18 @@ export function AIPane({
 
       {replyTarget && (
         <div
-          className="shrink-0 rounded-xl border border-blue-200/80 bg-blue-50/80 px-3 py-2 text-xs text-blue-900"
+          className="shrink-0 rounded-[var(--r-md)] px-3 py-2 text-[11.5px]"
+          style={{
+            border: "1px solid var(--accent-soft)",
+            background: "var(--accent-bg)",
+            color: "var(--accent)",
+          }}
           title={replyTarget}
         >
           <div className="flex items-center gap-2">
-            <FileText className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-            <span className="shrink-0 font-medium">起点帖子</span>
-            <span className="truncate font-mono text-[11px] text-blue-800">
+            <FileText className="h-3.5 w-3.5 shrink-0" />
+            <span className="shrink-0 font-semibold">起点帖子</span>
+            <span className="truncate font-mono text-[11px]">
               {replyTarget.split("/").pop() ?? replyTarget}
             </span>
           </div>
@@ -145,34 +183,72 @@ export function AIPane({
 
       <div
         ref={scrollRef}
-        className="min-h-[12rem] flex-1 space-y-3 overflow-y-auto rounded-xl border border-slate-200/80 bg-white/80 px-4 py-4"
+        className="min-h-[12rem] flex-1 space-y-3 overflow-y-auto rounded-[var(--r-md)] px-2.5 py-3 sm:px-4 sm:py-4"
+        style={{
+          border: "1px solid var(--line)",
+          background: "var(--surface)",
+        }}
       >
         {loading && (
-          <p className="pt-4 text-center text-xs text-muted-foreground">加载历史记录…</p>
+          <p
+            className="pt-4 text-center text-[11.5px] font-meta"
+            style={{ color: "var(--text-mute)" }}
+          >
+            加载历史记录…
+          </p>
         )}
         {!loading && messages.length === 0 && (
-          <p className="pt-4 text-center text-xs text-muted-foreground">
+          <p
+            className="pt-4 text-center text-[11.5px] font-serif-body italic"
+            style={{ color: "var(--text-mute)" }}
+          >
             {noTarget
               ? "还未指定起点帖子。请从某条帖子卡片上点击「AI 回复」进入。"
               : "可以先提问、总结，或者让 AI 帮你生成回复草稿。"}
           </p>
         )}
-        {messages.map((m) => (
-          <AIMessageBubble key={m.id} msg={m} />
-        ))}
+        {messages.map((m, idx) => {
+          const isLastEmptyAssistant =
+            streaming &&
+            idx === messages.length - 1 &&
+            m.role === "assistant" &&
+            !m.content;
+          return (
+            <AIMessageBubble
+              key={m.id}
+              msg={m}
+              streamingHint={isLastEmptyAssistant ? STREAMING_HINTS[streamingHintIdx] : undefined}
+            />
+          );
+        })}
       </div>
 
-      <div ref={composerRef} className="shrink-0 rounded-xl border border-slate-200/80 bg-slate-50/80 p-3.5 pb-5">
+      <div
+        ref={composerRef}
+        className="shrink-0 rounded-[var(--r-md)] p-2.5 pb-3 sm:p-3.5 sm:pb-5"
+        style={{
+          border: "1px solid var(--line)",
+          background: "var(--surface-alt)",
+        }}
+      >
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
-            <Bot className="h-4 w-4 text-blue-600" />
+          <div
+            className="flex items-center gap-2 text-[13px] font-semibold font-serif-body"
+            style={{ color: "var(--text)" }}
+          >
+            <Bot className="h-4 w-4" style={{ color: "var(--accent)" }} />
             AI 助手
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
               size="sm"
               variant="default"
-              className="h-8 rounded-lg bg-blue-600 px-3 hover:bg-blue-700"
+              className="h-8 rounded-md px-3 text-[12.5px] font-semibold shadow-none"
+              style={{
+                background: generateDisabled ? "var(--surface)" : "var(--accent)",
+                color: generateDisabled ? "var(--text-fade)" : "var(--accent-ink)",
+                border: `1px solid ${generateDisabled ? "var(--line)" : "var(--accent)"}`,
+              }}
               disabled={generateDisabled}
               onClick={() => void handleGenerateDraft()}
               title={
@@ -185,7 +261,7 @@ export function AIPane({
                       : "根据当前讨论生成完整回复草稿"
               }
             >
-              <Sparkles className="mr-1.5 h-4 w-4" />
+              <Sparkles className="mr-1.5 h-3.5 w-3.5" />
               生成草稿
             </Button>
             {messages.length > 0 && (
@@ -193,7 +269,8 @@ export function AIPane({
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="h-8 rounded-lg px-3 text-xs text-slate-600"
+                className="h-8 rounded-md px-3 text-[12px]"
+                style={{ color: "var(--text-soft)" }}
                 onClick={() => void ai.clearThreadConversation(category, slug, threadKey)}
                 disabled={blockedByOtherThread || streaming}
               >
@@ -204,9 +281,14 @@ export function AIPane({
               size="sm"
               onClick={() => void handleSend()}
               disabled={sendDisabled}
-              className="h-8 rounded-lg bg-blue-600 px-3 hover:bg-blue-700"
+              className="h-8 rounded-md px-3 text-[12.5px] font-semibold shadow-none"
+              style={{
+                background: sendDisabled ? "var(--surface)" : "var(--accent)",
+                color: sendDisabled ? "var(--text-fade)" : "var(--accent-ink)",
+                border: `1px solid ${sendDisabled ? "var(--line)" : "var(--accent)"}`,
+              }}
             >
-              <Send className="mr-1.5 h-4 w-4" />
+              <Send className="mr-1.5 h-3.5 w-3.5" />
               发送
             </Button>
           </div>
@@ -237,7 +319,12 @@ export function AIPane({
             }
             rows={4}
             disabled={blockedByOtherThread || streaming || noTarget}
-            className="min-h-[9.5rem] w-full resize-none rounded-xl border-slate-300 bg-white text-sm"
+            className="min-h-[9.5rem] w-full resize-none rounded-[var(--r-md)] text-[13px]"
+            style={{
+              background: "var(--surface)",
+              border: "1px solid var(--line-strong)",
+              color: "var(--text)",
+            }}
           />
         </div>
       </div>
@@ -245,13 +332,27 @@ export function AIPane({
   );
 }
 
-function AIMessageBubble({ msg }: { msg: AIMsg }) {
+function AIMessageBubble({
+  msg,
+  streamingHint,
+}: {
+  msg: AIMsg;
+  streamingHint?: string;
+}) {
   const isUser = msg.role === "user";
   const display = isUser ? msg.content.replace(GENERATE_TAG, "🎯").trim() : msg.content;
   if (isUser) {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[88%] whitespace-pre-wrap rounded-2xl bg-slate-900 px-3.5 py-2.5 text-sm text-white">
+        <div
+          className="max-w-[88%] whitespace-pre-wrap rounded-[var(--r-md)] px-3.5 py-2.5 text-[13px] leading-[1.55]"
+          style={{
+            background: "var(--accent)",
+            color: "var(--accent-ink)",
+            border: "1px solid var(--accent)",
+            boxShadow: "var(--shadow-sm)",
+          }}
+        >
           {display}
         </div>
       </div>
@@ -260,7 +361,15 @@ function AIMessageBubble({ msg }: { msg: AIMsg }) {
   return (
     <div>
       {msg.toolUses && msg.toolUses.length > 0 && <ToolUseTimeline tools={msg.toolUses} />}
-      <div className="paper-panel prose-pivot max-w-none overflow-hidden rounded-2xl border px-4 py-3 text-sm text-slate-700">
+      <div
+        className="prose-pivot max-w-none overflow-hidden rounded-[var(--r-md)] px-4 py-3 text-[13.5px]"
+        style={{
+          background: "var(--surface)",
+          border: "1px solid var(--line)",
+          borderLeft: "3px solid var(--accent)",
+          color: "var(--text)",
+        }}
+      >
         {msg.content ? (
           <Markdown
             remarkPlugins={[remarkGfm]}
@@ -275,7 +384,13 @@ function AIMessageBubble({ msg }: { msg: AIMsg }) {
             {display}
           </Markdown>
         ) : (
-          <span className="animate-pulse text-muted-foreground">▌</span>
+          <span
+            className="inline-flex items-center gap-1.5 italic font-serif-body"
+            style={{ color: "var(--text-mute)" }}
+          >
+            {streamingHint ?? "正在等待回应…"}
+            <span className="animate-pulse" aria-hidden>▌</span>
+          </span>
         )}
       </div>
     </div>
@@ -304,29 +419,41 @@ function ToolUseTimeline({ tools }: { tools: AIToolUse[] }) {
     : `正在读 ${currentTool ? fullActionText(currentTool) : "…"}`;
 
   return (
-    <div className="mb-1.5 max-w-xl rounded-lg border border-slate-200/80 bg-slate-50/70 text-[11px] text-slate-500">
+    <div
+      className="mb-1.5 max-w-xl rounded-md text-[11px] font-meta"
+      style={{
+        border: "1px solid var(--line)",
+        background: "var(--surface-alt)",
+        color: "var(--text-mute)",
+      }}
+    >
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center justify-between gap-2 px-2.5 py-1.5 hover:bg-slate-100/70"
+        className="flex w-full items-center justify-between gap-2 px-2.5 py-1.5 hover:bg-[var(--bg-alt)]"
       >
         <span className="flex min-w-0 items-center gap-1.5">
           {allDone ? (
-            <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+            <CheckCircle2 className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--ok-500)" }} />
           ) : (
-            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-slate-400" />
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" style={{ color: "var(--text-fade)" }} />
           )}
           <span className="truncate" title={headerLabel}>{headerLabel}</span>
         </span>
         <ChevronRight
-          className={`h-3 w-3 shrink-0 text-slate-400 transition-transform ${expanded ? "rotate-90" : ""}`}
+          className={`h-3 w-3 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
+          style={{ color: "var(--text-fade)" }}
         />
       </button>
       {expanded && (
-        <ol className="relative space-y-1.5 border-t border-slate-200/80 px-3 py-2 pl-6">
+        <ol
+          className="relative space-y-1.5 px-3 py-2 pl-6"
+          style={{ borderTop: "1px solid var(--line)" }}
+        >
           <span
             aria-hidden
-            className="absolute left-[11.5px] top-4 bottom-4 border-l border-dashed border-slate-300"
+            className="absolute left-[11.5px] top-4 bottom-4 border-l border-dashed"
+            style={{ borderColor: "var(--line-strong)" }}
           />
           {tools.map((t, idx) => (
             <TimelineRow key={`${t.id}-${idx}`} tool={t} />

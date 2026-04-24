@@ -145,20 +145,20 @@ export function NewThread({ me, onLogout }: { me: Me; onLogout: () => void }) {
   return (
     <Layout me={me} onLogout={onLogout}>
       <div className="mx-auto max-w-4xl space-y-4 sm:space-y-6">
-        <Button asChild variant="ghost" size="sm" className="rounded-xl px-3 text-slate-700 hover:bg-slate-100">
+        <Button asChild variant="ghost" size="sm" className="rounded-xl px-3 text-[var(--text-soft)] hover:bg-[var(--surface-alt)]">
           <Link to="/"><ArrowLeft className="h-4 w-4" /> 返回讨论列表</Link>
         </Button>
         <div className="space-y-2">
           <div className="section-kicker">New Discussion</div>
           <div className="flex flex-wrap items-baseline gap-3">
-            <h1 className="text-2xl font-semibold tracking-[-0.03em] text-slate-950 sm:text-3xl">
+            <h1 className="text-2xl font-semibold tracking-[-0.03em] text-[var(--text)] sm:text-3xl">
               {draftId ? "编辑草稿" : "新讨论"}
             </h1>
             <span className={`text-xs ${status === "error" ? "text-destructive" : "text-muted-foreground"}`}>
               {formatSaveStatus(status)}
             </span>
           </div>
-          <p className="max-w-2xl text-sm leading-7 text-slate-600">
+          <p className="max-w-2xl text-sm leading-7 text-[var(--text-soft)]">
             这里直接进入 thread 的起草区。先确定分类和标题，再把正文写清楚；表单会自动保存草稿，不需要额外操作。
           </p>
         </div>
@@ -167,7 +167,7 @@ export function NewThread({ me, onLogout }: { me: Me; onLogout: () => void }) {
             <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
               <div className="space-y-2">
                 <div className="section-kicker">Category</div>
-                <p className="text-sm leading-6 text-slate-500">
+                <p className="text-sm leading-6 text-[var(--text-mute)]">
                   从已有分类里选择，或者当场创建一个新的分类。
                 </p>
               </div>
@@ -188,7 +188,7 @@ export function NewThread({ me, onLogout }: { me: Me; onLogout: () => void }) {
                     setCategory(next);
                   }}
                   required
-                  className="flex h-11 w-full rounded-xl border border-input bg-slate-100/90 px-3 py-2 text-sm ring-offset-background"
+                  className="flex h-11 w-full rounded-xl border border-input bg-[var(--surface-alt)] px-3 py-2 text-sm ring-offset-background"
                 >
                   {categoryOptions.map((option) => (
                     <option key={option} value={option}>{option}</option>
@@ -224,7 +224,7 @@ export function NewThread({ me, onLogout }: { me: Me; onLogout: () => void }) {
             <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
               <div className="space-y-2">
                 <div className="section-kicker">Title</div>
-                <p className="text-sm leading-6 text-slate-500">
+                <p className="text-sm leading-6 text-[var(--text-mute)]">
                   标题决定 thread 在左侧目录里的可读性，尽量写成一个完整的主题句。
                 </p>
               </div>
@@ -236,7 +236,7 @@ export function NewThread({ me, onLogout }: { me: Me; onLogout: () => void }) {
                   onChange={(e) => setTitle(e.target.value)}
                   required
                   maxLength={200}
-                  className="h-11 rounded-xl bg-slate-100/90"
+                  className="h-11 rounded-xl bg-[var(--surface-alt)]"
                 />
               </div>
             </div>
@@ -244,7 +244,7 @@ export function NewThread({ me, onLogout }: { me: Me; onLogout: () => void }) {
             <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
               <div className="space-y-2">
                 <div className="section-kicker">Body</div>
-                <p className="text-sm leading-6 text-slate-500">
+                <p className="text-sm leading-6 text-[var(--text-mute)]">
                   正文支持 Markdown，适合直接写提案、背景、判断和待讨论问题。
                 </p>
               </div>
@@ -257,7 +257,7 @@ export function NewThread({ me, onLogout }: { me: Me; onLogout: () => void }) {
                   required
                   rows={16}
                   maxLength={50000}
-                  className="min-h-[18rem] rounded-2xl border-slate-300 bg-slate-100/92 font-mono text-sm sm:min-h-[24rem]"
+                  className="min-h-[18rem] rounded-2xl border-[var(--line-strong)] bg-[var(--surface-alt)] font-mono text-sm sm:min-h-[24rem]"
                 />
                 <p className="text-xs text-muted-foreground">
                   若你没写 <code># 标题</code>，会自动以表单 title 作为 H1。
@@ -268,7 +268,7 @@ export function NewThread({ me, onLogout }: { me: Me; onLogout: () => void }) {
             <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
               <div className="space-y-2">
                 <div className="section-kicker">Mention</div>
-                <p className="text-sm leading-6 text-slate-500">
+                <p className="text-sm leading-6 text-[var(--text-mute)]">
                   如果这条讨论需要明确提及某些人，可以直接在这里补上。
                 </p>
               </div>

@@ -40,17 +40,41 @@ export function AdminPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen" style={{ background: "var(--bg)" }}>
       <Toaster position="top-center" richColors />
-      <header className="border-b bg-background/95 px-6 py-4 backdrop-blur">
+      <header
+        className="px-6 py-4 backdrop-blur"
+        style={{
+          borderBottom: "1px solid var(--line)",
+          background: "rgba(255, 253, 248, 0.94)",
+        }}
+      >
         <div className="mx-auto flex max-w-7xl items-center gap-4">
-          <Button asChild variant="ghost" size="sm">
+          <Button
+            asChild
+            variant="ghost"
+            size="sm"
+            className="h-8 rounded-md hover:bg-[var(--surface-alt)]"
+            style={{ color: "var(--text-soft)" }}
+          >
             <Link to="/"><ArrowLeft className="h-4 w-4" /> 返回</Link>
           </Button>
           <div className="min-w-0">
-            <h1 className="text-lg font-semibold">管理员设置</h1>
-            <p className="text-sm text-muted-foreground">
-              管理数据仓库、AI 助手和联系人同步。桌面端按工作流分区展示。
+            <h1
+              className="text-[16px] font-semibold"
+              style={{
+                fontFamily: "var(--font-serif)",
+                letterSpacing: "var(--letter-tight)",
+                color: "var(--text)",
+              }}
+            >
+              管理员设置
+            </h1>
+            <p
+              className="mt-0.5 text-[11.5px] font-meta"
+              style={{ color: "var(--text-mute)" }}
+            >
+              管理数据仓库 · AI 助手 · 联系人同步
             </p>
           </div>
           <div className="ml-auto hidden items-center gap-2 lg:flex">
@@ -83,7 +107,14 @@ export function AdminPage() {
 
 function InfoChip({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
-    <div className="flex items-center gap-2 rounded-full border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
+    <div
+      className="flex items-center gap-2 rounded-full px-3 py-1 text-[11.5px] font-meta tracking-wide"
+      style={{
+        background: "var(--surface-alt)",
+        border: "1px solid var(--line)",
+        color: "var(--text-mute)",
+      }}
+    >
       {icon}
       <span>{label}</span>
     </div>
@@ -92,17 +123,35 @@ function InfoChip({ icon, label }: { icon: React.ReactNode; label: string }) {
 
 function AdminIntro() {
   return (
-    <Card className="border-slate-200 bg-gradient-to-br from-slate-50 via-white to-slate-100 shadow-sm">
+    <Card
+      className="shadow-none"
+      style={{
+        background: "linear-gradient(135deg, var(--bg-alt) 0%, var(--surface) 100%)",
+        border: "1px solid var(--line)",
+      }}
+    >
       <CardContent className="grid gap-4 p-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(280px,0.6fr)] lg:items-start">
         <div>
-          <div className="mb-2 flex items-center gap-2 text-sm font-medium text-slate-700">
-            <ShieldCheck className="h-4 w-4" />
+          <div
+            className="mb-2 text-[11px] font-bold uppercase tracking-[0.18em] font-meta"
+            style={{ color: "var(--accent)" }}
+          >
             管理面板
           </div>
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-900">
-            宽屏下按职责分栏管理，不再把关键配置挤在窄列里。
+          <h2
+            className="text-[22px] font-semibold"
+            style={{
+              fontFamily: "var(--font-serif)",
+              letterSpacing: "var(--letter-tight)",
+              color: "var(--text)",
+            }}
+          >
+            这里控制"写进哪个仓库"和"AI 用什么模型"。
           </h2>
-          <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
+          <p
+            className="mt-3 max-w-3xl text-[14px] leading-[1.65]"
+            style={{ fontFamily: "var(--font-serif)", color: "var(--text-soft)" }}
+          >
             左侧处理数据仓库与同步动作，右侧集中管理 AI 助手参数。数据仓库配置保存后会同时影响服务器工作区与 VS Code 客户端 mirror。
           </p>
         </div>
@@ -118,9 +167,9 @@ function AdminIntro() {
 
 function QuickFact({ title, value }: { title: string; value: string }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white/80 p-4">
-      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{title}</div>
-      <div className="mt-1 text-sm font-semibold text-slate-900">{value}</div>
+    <div className="rounded-xl border border-[var(--line)] bg-white/80 p-4">
+      <div className="text-xs font-medium uppercase tracking-wide text-[var(--text-mute)]">{title}</div>
+      <div className="mt-1 text-sm font-semibold text-[var(--text)]">{value}</div>
     </div>
   );
 }
@@ -139,17 +188,17 @@ function AdminGate({ onUnlock }: { onUnlock: () => void }) {
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-12">
-      <Card className="overflow-hidden border-slate-200 shadow-sm">
+      <Card className="overflow-hidden border-[var(--line)] shadow-sm">
         <div className="grid lg:grid-cols-[minmax(0,1.1fr)_420px]">
           <div className="border-b bg-gradient-to-br from-slate-50 via-white to-slate-100 p-8 lg:border-b-0 lg:border-r">
-            <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-700">
+            <div className="mb-3 flex items-center gap-2 text-sm font-medium text-[var(--text-soft)]">
               <Lock className="h-4 w-4 text-amber-600" />
               需要管理员密码
             </div>
-            <h2 className="text-2xl font-semibold tracking-tight text-slate-900">
+            <h2 className="text-2xl font-semibold tracking-tight text-[var(--text)]">
               解锁管理面板
             </h2>
-            <p className="mt-3 max-w-xl text-sm leading-6 text-slate-600">
+            <p className="mt-3 max-w-xl text-sm leading-6 text-[var(--text-soft)]">
               此页面包含数据仓库连接信息、AI 配置以及联系人同步动作。每次进入本页都需要重新输入管理员密码。
             </p>
           </div>
