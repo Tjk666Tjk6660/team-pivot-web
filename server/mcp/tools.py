@@ -10,12 +10,18 @@ from server.mcp.context import (
     parse_context_url,
 )
 from server.mcp.schemas import (
+    FileContent,
+    GetMatterIn,
+    GetMatterOut,
     ListMattersIn,
     ListMattersOut,
     MatterListItem,
     MatterSnapshot,
+    ReadFilesIn,
+    ReadFilesOut,
     ResolveContextIn,
     ResolveContextOut,
+    TimelineItem,
 )
 
 log = logging.getLogger(__name__)
@@ -141,3 +147,78 @@ def tool_list_matters(payload: dict, client: MatterApiClient) -> dict:
         for it in raw_items
     ]
     return ListMattersOut(items=items).model_dump(mode="json")
+
+
+MAX_FILES_PER_READ = 5
+MAX_TOTAL_CHARS_PER_READ = 50_000
+MAX_CHARS_PER_FILE = 20_000
+
+
+def tool_get_matter(payload: dict, client: MatterApiClient) -> dict:
+    """Return matter header + timeline metadata (bodies stripped)."""
+    input_ = GetMatterIn.model_validate(payload)
+    data = client.get_matter(input_.matter_id)
+    matter = data.get("matter") or {}
+    timeline_raw = data.get("timeline") or []
+
+    timeline = []
+    for item in timeline_raw:
+        # STRIP body here — AI only needs index from this tool.
+        clean = {k: v for k, v in item.items() if k != "body"}
+        timeline.append(TimelineItem.model_validate(clean).model_dump(mode="json"))
+
+    return GetMatterOut(
+        matter=MatterSnapshot(
+            id=matter.get("id", input_.matter_id),
+            title=matter.get("title", ""),
+            current_status=matter.get("current_status", "unknown"),
+            updated_at=matter.get("updated_at", ""),
+        ),
+        timeline=timeline,
+    ).model_dump(mode="json")
+
+
+def tool_read_files(payload: dict, client: MatterApiClient) -> dict:
+    """Return bodies for the requested file paths, with hard caps."""
+    input_ = ReadFilesIn.model_validate(payload)
+    if not input_.paths:
+        raise ToolError(400, "paths must not be empty")
+    if len(input_.paths) > MAX_FILES_PER_READ:
+        raise ToolError(
+            400,
+            f"too_many_files: requested {len(input_.paths)}, max is "
+            f"{MAX_FILES_PER_READ}. Call again in batches.",
+        )
+    data = client.get_matter(input_.matter_id)
+    timeline = data.get("timeline") or []
+    by_path = {t.get("file"): t for t in timeline}
+
+    results: list[FileContent] = []
+    total_chars = 0
+    for p in input_.paths:
+        item = by_path.get(p)
+        if item is None:
+            raise ToolError(404, f"file_not_in_matter: {p}")
+        body = item.get("body") or ""
+        truncated = False
+        if len(body) > MAX_CHARS_PER_FILE:
+            body = body[:MAX_CHARS_PER_FILE]
+            truncated = True
+        total_chars += len(body)
+        if total_chars > MAX_TOTAL_CHARS_PER_READ:
+            raise ToolError(
+                400,
+                f"body_too_large: total chars would exceed "
+                f"{MAX_TOTAL_CHARS_PER_READ}. Pick fewer / smaller files, "
+                f"or request one at a time.",
+            )
+        results.append(FileContent(
+            file_path=p,
+            type=item.get("type", ""),
+            creator=item.get("creator", ""),
+            owner=item.get("owner", ""),
+            created_at=item.get("created_at", ""),
+            body=body,
+            truncated=truncated,
+        ))
+    return ReadFilesOut(files=results).model_dump(mode="json")

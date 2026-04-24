@@ -15,11 +15,13 @@ from starlette.routing import Mount
 from server.api_tokens import ApiTokenRepo
 from server.mcp.auth import McpAuthError, authenticate
 from server.mcp.runtime import current_user_token, set_user_token
-from server.mcp.schemas import ListMattersIn, ResolveContextIn
+from server.mcp.schemas import GetMatterIn, ListMattersIn, ReadFilesIn, ResolveContextIn
 from server.mcp.tools import (
     MatterApiClient,
     ToolError,
+    tool_get_matter,
     tool_list_matters,
+    tool_read_files,
     tool_resolve_context,
 )
 from server.users import UserRepo
@@ -57,6 +59,23 @@ def _register_tools(mcp_server: Server, api_base_url: str) -> None:
                 description="List matters visible to the current user. Supports status/owner/q filters.",
                 inputSchema=ListMattersIn.model_json_schema(),
             ),
+            Tool(
+                name="get_matter",
+                description=(
+                    "Return a matter's header + timeline metadata (no file bodies). "
+                    "Call read_files afterwards to fetch specific file bodies on demand."
+                ),
+                inputSchema=GetMatterIn.model_json_schema(),
+            ),
+            Tool(
+                name="read_files",
+                description=(
+                    "Fetch the full text of one or more files within a matter. "
+                    "Always call get_matter first to see which files exist. "
+                    "Hard limits: at most 5 files and 50,000 total chars per call."
+                ),
+                inputSchema=ReadFilesIn.model_json_schema(),
+            ),
         ]
 
     @mcp_server.call_tool()
@@ -68,6 +87,10 @@ def _register_tools(mcp_server: Server, api_base_url: str) -> None:
                 out = tool_resolve_context(arguments, client)
             elif name == "list_matters":
                 out = tool_list_matters(arguments, client)
+            elif name == "get_matter":
+                out = tool_get_matter(arguments, client)
+            elif name == "read_files":
+                out = tool_read_files(arguments, client)
             else:
                 raise ToolError(404, f"unknown_tool: {name}")
         except ToolError as e:

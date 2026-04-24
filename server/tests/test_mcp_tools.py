@@ -99,3 +99,91 @@ def test_list_matters_no_filters():
     client.list_matters.assert_called_once_with(
         status=None, owner=None, q=None,
     )
+
+
+from server.mcp.tools import tool_get_matter, tool_read_files
+
+
+def test_get_matter_strips_bodies():
+    client = MagicMock(spec=MatterApiClient)
+    client.get_matter.return_value = {
+        "matter": {"id": "a", "title": "T", "current_status": "x", "updated_at": ""},
+        "timeline": [
+            {"file": "001.md", "type": "think", "summary": "s1",
+             "created_at": "", "creator": "u", "owner": "u",
+             "body": "这是正文不应该出现", "refer": []},
+        ],
+    }
+    out = tool_get_matter({"matter_id": "a"}, client)
+    assert "body" not in out["timeline"][0]
+    assert out["timeline"][0]["file"] == "001.md"
+
+
+def test_read_files_returns_selected_bodies():
+    client = MagicMock(spec=MatterApiClient)
+    client.get_matter.return_value = {
+        "matter": {"id": "a", "title": "T", "current_status": "x", "updated_at": ""},
+        "timeline": [
+            {"file": "001.md", "type": "think", "summary": "s1",
+             "body": "正文1", "created_at": "", "creator": "u", "owner": "u"},
+            {"file": "002.md", "type": "act", "summary": "s2",
+             "body": "正文2", "created_at": "", "creator": "u", "owner": "u"},
+        ],
+    }
+    out = tool_read_files({"matter_id": "a", "paths": ["002.md"]}, client)
+    assert len(out["files"]) == 1
+    assert out["files"][0]["body"] == "正文2"
+    assert out["files"][0]["truncated"] is False
+
+
+def test_read_files_rejects_unknown_path():
+    client = MagicMock(spec=MatterApiClient)
+    client.get_matter.return_value = {
+        "matter": {"id": "a"}, "timeline": [],
+    }
+    with pytest.raises(ToolError) as ei:
+        tool_read_files({"matter_id": "a", "paths": ["xxx.md"]}, client)
+    assert ei.value.status == 404
+
+
+def test_read_files_truncates_long_body():
+    client = MagicMock(spec=MatterApiClient)
+    client.get_matter.return_value = {
+        "matter": {"id": "a"},
+        "timeline": [
+            {"file": "001.md", "type": "think", "summary": "",
+             "body": "x" * 30000, "created_at": "", "creator": "u", "owner": "u"},
+        ],
+    }
+    out = tool_read_files({"matter_id": "a", "paths": ["001.md"]}, client)
+    assert out["files"][0]["truncated"] is True
+    assert len(out["files"][0]["body"]) == 20000
+
+
+def test_read_files_rejects_too_many_files():
+    client = MagicMock(spec=MatterApiClient)
+    with pytest.raises(ToolError) as ei:
+        tool_read_files(
+            {"matter_id": "a", "paths": [f"{i}.md" for i in range(10)]},
+            client,
+        )
+    assert ei.value.status == 400
+    assert "too_many_files" in ei.value.detail
+
+
+def test_read_files_rejects_body_too_large():
+    client = MagicMock(spec=MatterApiClient)
+    # 5 files each 15K chars = 75K total > 50K cap
+    timeline = [
+        {"file": f"{i}.md", "type": "think", "summary": "",
+         "body": "x" * 15000, "created_at": "", "creator": "u", "owner": "u"}
+        for i in range(5)
+    ]
+    client.get_matter.return_value = {"matter": {"id": "a"}, "timeline": timeline}
+    with pytest.raises(ToolError) as ei:
+        tool_read_files(
+            {"matter_id": "a", "paths": [f"{i}.md" for i in range(5)]},
+            client,
+        )
+    assert ei.value.status == 400
+    assert "body_too_large" in ei.value.detail
