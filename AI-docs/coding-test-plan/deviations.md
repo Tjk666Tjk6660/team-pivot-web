@@ -33,9 +33,15 @@
   - 原因：前端直接使用，避免从 `matter.id` 和 `initial_timeline_item.file` 再抽一次
 
 - **P2 新增 `POST /api/matters/{matter_id}/comments` 端点**
-  - 原文档要求：`pivot-interface.md` 未列出独立评论端点
-  - 实际实现：新增 `POST /api/matters/{matter_id}/comments`，请求体 `{target_file, body, mentions?}`，挂到 timeline item 的 `comments[]`；不刷新 `matter.updated_at`；target 不存在返回 `404 comment_target_not_found`
-  - 原因：§八 示例里 `comments[]` 附着在每个 timeline item 上，需要一个独立入口追加；不新增端点就要把评论塞进 `/files` 语义，反而更混乱
+  - 原文档要求：`pivot-interface.md §Matter API 草案` 只列了 `/files` 和 `/result` 两个写入入口，未列评论端点
+  - 实际实现：新增 `POST /api/matters/{matter_id}/comments`，请求体 `{target_file, body, mentions?}`；评论挂到 `timeline[i].comments[]`；不刷新 `matter.updated_at`；target 不存在返回 `404 comment_target_not_found`
+  - 原因：`pivot-product.md §八` 示例规定 `comments[]` **嵌在每个 timeline item 下**（per-item），与 main 分支老 `POST /api/threads/{c}/{s}/mentions`（`server/api/discussions.py:199-218`）写到 thread INDEX **顶层 `timeline[]` 事件条目**的形态不兼容——
+    - 数据位置：matter 写 `timeline[i].comments[]`（嵌套），thread 写顶层 `timeline[]`（flat log）
+    - 调用时机：matter 任何时候都能给某篇文件加评论；thread `/mentions` 是"不新开帖子就 @ 别人"的特化场景
+    - 必选 @ 人：thread `/mentions` 强制至少一个 `open_ids`（`if not mention_open_ids: raise`）；matter `comments` 的 `mentions` 可选
+    - 三条都不同，无法复用老端点或老 `append_standalone_mention` 函数
+  - 兼容面：老 `POST /api/threads/{c}/{s}/mentions` 在 feat/pivot-matter 分支上**完全不动**，thread 模型仍可调；matter 评论带 `mentions` 时复用既有 `notify_standalone_mention` 方法（不新增 notifier 方法）
+  - P5 规划：`/api/threads/{c}/{s}/mentions` 属老 thread 接口，随"老 thread 接口统一下线"一并清理
 
 - **P4.6 drafts 表新增 `matter_payload_json` 列**
   - 原文档要求：`pivot-interface.md §drafts` 请求体只列 `type / title / category / body_md / thread_key / mentions / reply_to / references`；`server/db.py SCHEMA` 里 drafts 表不含 matter 专属字段
