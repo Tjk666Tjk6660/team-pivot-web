@@ -572,19 +572,36 @@ export function ThreadDetailPane() {
                 </span>
                 <ComposerTab
                   label="回复"
-                  active={mobileAiMode === "closed"}
-                  onClick={() => setMobileAiMode("closed")}
+                  active={
+                    isDesktopViewport()
+                      ? !aiOpen
+                      : mobileAiMode === "closed"
+                  }
+                  onClick={() => {
+                    if (isDesktopViewport()) {
+                      setAiOpen(false);
+                    } else {
+                      setMobileAiMode("closed");
+                    }
+                  }}
                 />
                 <ComposerTab
                   label="AI 助手"
-                  active={mobileAiMode !== "closed"}
-                  className="xl:hidden"
+                  active={
+                    isDesktopViewport()
+                      ? aiOpen
+                      : mobileAiMode !== "closed"
+                  }
                   onClick={() => {
                     if (!aiPendingReplyTarget && data.posts.length > 0) {
                       const last = data.posts[data.posts.length - 1];
                       setAiPendingReplyTarget(`${category}/${slug}/${last.filename}`);
                     }
-                    setMobileAiMode((current) => (current === "closed" ? "full" : "closed"));
+                    if (isDesktopViewport()) {
+                      setAiOpen((open) => !open);
+                    } else {
+                      setMobileAiMode((current) => (current === "closed" ? "full" : "closed"));
+                    }
                   }}
                 />
                 <div
