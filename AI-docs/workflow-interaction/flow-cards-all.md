@@ -1,13 +1,5 @@
 # 五类卡片创建/发布交互时序合集
 
-> 整体风格、participants 命名、`alt / opt / Note over` 用法、措辞习惯均**继承上一版本**单文件（`flow-think-card.md` / `flow-act-card.md` / `flow-verify-card.md` / `flow-result-card.md` / `flow-insight-card.md`）。
->
-> 合集做了一次**简化屏蔽**：把"校验 → AI 生成 summary 三段式 → POST 落盘"这条**公共发布流程**抽到文末，每张图里点 `发布` 后只留一行 Note 引用，不再展开嵌套 alt。需要看完整细节请回到对应单文件图。
->
-> AI 助手部分见 [`flow-ai-assistant.md`](./flow-ai-assistant.md)
-
----
-
 ## ① THINK 卡片
 
 ```mermaid
