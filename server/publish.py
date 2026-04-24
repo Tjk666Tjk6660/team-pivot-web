@@ -13,14 +13,14 @@ from server.index_files import (
     create_thread_index,
 )
 from server.notify import Notifier
-from server.posts import mark_indexed, read_post, write_post_pending
+from server.posts import mark_indexed, write_post_pending
 from server.threads import (
     generate_unique_hash,
     get_thread,
     next_post_number,
     sanitize_slug,
 )
-from server.users import User, UserRepo
+from server.users import User
 from server.workspace import Workspace
 
 
@@ -155,7 +155,6 @@ def add_standalone_mention(
     target_filename: str,
     mention_open_ids: list[str],
     mention_comments: str,
-    users: UserRepo,
     contacts: ContactRepo | None = None,
     notifier: Notifier | None = None,
 ) -> dict:
@@ -190,36 +189,14 @@ def add_standalone_mention(
         )
     if notifier is not None:
         thread_title = _lookup_thread_title(workspace, category, slug)
-        target_author_name = _lookup_target_author_name(target_path, users)
         notifier.notify_standalone_mention(
             category=category, slug=slug, thread_title=thread_title,
             target_filename=target_filename,
-            target_author_name=target_author_name,
             author_name=user.name,
             mention_open_ids=mention_open_ids,
             mention_comments=mention_comments,
         )
     return {"ok": True}
-
-
-def _lookup_target_author_name(target_path: Path, users: UserRepo) -> str:
-    """Resolve the target post's author to a display name (Chinese when known).
-
-    Falls back to the pinyin literal if the author never logged in, or to
-    "作者" if the file can't be read.
-    """
-    try:
-        fm = read_post(target_path).frontmatter or {}
-    except Exception:
-        log.warning("target post frontmatter read failed path=%s", target_path, exc_info=True)
-        return "作者"
-    author_pinyin = str(fm.get("author") or "").strip()
-    if not author_pinyin:
-        return "作者"
-    u = users.get_by_any_id(author_pinyin)
-    if u is not None and u.name:
-        return u.name
-    return author_pinyin
 
 
 def _resolve_mentions(

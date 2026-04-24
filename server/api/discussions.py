@@ -209,7 +209,6 @@ def build_router(
                 target_filename=body.target_filename,
                 mention_open_ids=body.mentions.open_ids,
                 mention_comments=body.mentions.comments,
-                users=users,
                 contacts=contacts,
                 notifier=notifier,
             )

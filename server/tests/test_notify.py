@@ -204,7 +204,6 @@ def test_standalone_mention_card_structure():
         thread_title="EnClaws 内容营销推广方案",
         author_name="邓柯",
         target_filename="003_daisy_reply_bac194.md",
-        target_author_name="Daisy",
         mention_open_ids=["ou_aaa", "ou_bbb", "ou_ccc"],
         mention_comments="我觉得Daisy文档里面提的问题都挺不错，欢迎大家一起来发表意见。头脑风暴",
         post_url="http://x/deep-link",
@@ -217,20 +216,23 @@ def test_standalone_mention_card_structure():
     assert '<at id="ou_ccc"></at>' in md
     assert "user_id=" not in md  # 旧 schema 1.0 写法必须全部清除
 
-    # 2. 评论行：橙色主评论人 对 蓝色被评人 进行了回复，并提及 @标签 <br> comment
+    # 2. 评论行：**评论**：<橙色邓柯> @标签 说：<br> comment
     assert "**评论**：" in md
     assert "<font color='orange'>**邓柯**</font>" in md
-    assert "<font color='blue'>**Daisy**</font>" in md
-    assert "进行了回复，并提及" in md
+    assert "说：" in md
     assert "我觉得Daisy文档里面提的问题都挺不错" in md
 
-    # 3. 评论行结构：主评论人 → 对 → 被评人 → 进行了回复，并提及 → @ 标签 → <br> → comment
+    # 3. 评论行结构：主评论人 → @ 标签 → 说：→ <br> → comment
     i_author = md.index("<font color='orange'>**邓柯**</font>")
-    i_target = md.index("<font color='blue'>**Daisy**</font>")
-    i_action = md.index("进行了回复，并提及")
     i_ats = md.index('<at id="ou_aaa"></at>')
+    i_say = md.index("说：")
     i_br = md.index("<br>")
-    assert i_author < i_target < i_action < i_ats < i_br
+    assert i_author < i_ats < i_say < i_br
+
+    # 4. 不再出现被评人相关字段（target_author_name 已从签名移除）
+    assert "<font color='blue'>" not in md
+    assert "进行了回复" not in md
+    assert "并提及" not in md
 
     # 5. 元信息块 4 个字段齐全且顺序正确：时间 → 项目 → 主题 → 被评文件
     i_time = md.index("**时间**：")
@@ -414,7 +416,6 @@ def test_feishu_notifier_standalone_mention_does_not_dm(monkeypatch):
     notifier.notify_standalone_mention(
         category="c", slug="s", thread_title="t",
         target_filename="001_a.md",
-        target_author_name="Bob",
         author_name="Alice",
         mention_open_ids=["ou_x"],
         mention_comments="hi",

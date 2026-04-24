@@ -65,7 +65,6 @@ class Notifier(Protocol):
         slug: str,
         thread_title: str,
         target_filename: str,
-        target_author_name: str,
         author_name: str,
         mention_open_ids: list[str],
         mention_comments: str,
@@ -173,7 +172,6 @@ class FeishuNotifier:
 
     def notify_standalone_mention(
         self, *, category, slug, thread_title, target_filename,
-        target_author_name,
         author_name, mention_open_ids, mention_comments,
     ) -> None:
         post_url = self._post_url(category, slug, target_filename)
@@ -183,7 +181,6 @@ class FeishuNotifier:
             thread_title=thread_title,
             author_name=author_name,
             target_filename=target_filename,
-            target_author_name=target_author_name,
             mention_open_ids=mention_open_ids,
             mention_comments=mention_comments,
             post_url=post_url,
@@ -405,7 +402,6 @@ def build_standalone_mention_card(
     thread_title: str,
     author_name: str,
     target_filename: str,
-    target_author_name: str,
     mention_open_ids: list[str],
     mention_comments: str,
     post_url: str,
@@ -413,21 +409,20 @@ def build_standalone_mention_card(
     """Standalone mention 群卡片（邮件式评论体）。
 
     评论行布局：
-      **评论**：<橙色主评论人> 对 <蓝色被评人> 进行了回复，并提及 <at><at>…<br>{comment}
+      **评论**：<橙色主评论人> <at><at>… 说：<br>{comment}
 
     每个 <at id="ou_xxx"></at> 的 content 留空，由飞书自动拉取最新中文名 + 头像，
     并触发被 @ 人的红点 + 推送（schema 2.0 markdown tag 行为）。
 
-    元信息块固定顺序：时间 → 项目 → 主题 → 被评文件。
+    元信息块固定顺序：时间 → 项目 → 主题 → 被评文件。被评人不在卡片上显式出现，
+    读者要看是谁的帖子可以看 target_filename（含作者 pinyin）或点按钮跳进 Web。
     """
     from datetime import datetime
 
     at_tags = " ".join(f'<at id="{oid}"></at>' for oid in mention_open_ids)
     comment_line = (
-        f"**评论**：<font color='orange'>**{author_name}**</font> 对 "
-        f"<font color='blue'>**{target_author_name}**</font> "
-        f"进行了回复，并提及 {at_tags}"
-        f"<br>{_oneline(mention_comments)}"
+        f"**评论**：<font color='orange'>**{author_name}**</font> "
+        f"{at_tags} 说：<br>{_oneline(mention_comments)}"
     )
 
     info_rows = [
