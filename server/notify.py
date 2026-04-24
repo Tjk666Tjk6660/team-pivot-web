@@ -413,7 +413,7 @@ def build_standalone_mention_card(
     """Standalone mention 群卡片（邮件式评论体）。
 
     评论行布局：
-      **评论**：<橙色主评论人> 对 <at><at>… 说：<蓝色被评人><br>{comment}
+      **评论**：<橙色主评论人> 对 <蓝色被评人> 进行了回复，并提及 <at><at>…<br>{comment}
 
     每个 <at id="ou_xxx"></at> 的 content 留空，由飞书自动拉取最新中文名 + 头像，
     并触发被 @ 人的红点 + 推送（schema 2.0 markdown tag 行为）。
@@ -425,7 +425,8 @@ def build_standalone_mention_card(
     at_tags = " ".join(f'<at id="{oid}"></at>' for oid in mention_open_ids)
     comment_line = (
         f"**评论**：<font color='orange'>**{author_name}**</font> 对 "
-        f"{at_tags} 说：<font color='blue'>**{target_author_name}**</font>"
+        f"<font color='blue'>**{target_author_name}**</font> "
+        f"进行了回复，并提及 {at_tags}"
         f"<br>{_oneline(mention_comments)}"
     )
 

@@ -217,24 +217,20 @@ def test_standalone_mention_card_structure():
     assert '<at id="ou_ccc"></at>' in md
     assert "user_id=" not in md  # 旧 schema 1.0 写法必须全部清除
 
-    # 2. 评论行：橙色主评论人 对 @标签 说：蓝色被评人 <br> comment
+    # 2. 评论行：橙色主评论人 对 蓝色被评人 进行了回复，并提及 @标签 <br> comment
     assert "**评论**：" in md
     assert "<font color='orange'>**邓柯**</font>" in md
     assert "<font color='blue'>**Daisy**</font>" in md
-    assert "说：" in md
+    assert "进行了回复，并提及" in md
     assert "我觉得Daisy文档里面提的问题都挺不错" in md
 
-    # 3. 评论行结构：主评论人 → 对 → @ 标签 → 说：→ 被评人 → <br> → comment
+    # 3. 评论行结构：主评论人 → 对 → 被评人 → 进行了回复，并提及 → @ 标签 → <br> → comment
     i_author = md.index("<font color='orange'>**邓柯**</font>")
-    i_ats = md.index('<at id="ou_aaa"></at>')
-    i_say = md.index("说：")
     i_target = md.index("<font color='blue'>**Daisy**</font>")
+    i_action = md.index("进行了回复，并提及")
+    i_ats = md.index('<at id="ou_aaa"></at>')
     i_br = md.index("<br>")
-    assert i_author < i_ats < i_say < i_target < i_br
-
-    # 4. 不再出现 target_type 相关的 "的回复" / "的提及"
-    assert "的回复" not in md
-    assert "的提及" not in md
+    assert i_author < i_target < i_action < i_ats < i_br
 
     # 5. 元信息块 4 个字段齐全且顺序正确：时间 → 项目 → 主题 → 被评文件
     i_time = md.index("**时间**：")
