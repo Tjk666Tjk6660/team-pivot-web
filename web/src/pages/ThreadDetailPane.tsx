@@ -874,7 +874,7 @@ function ProposalHeroCard({
         {post.mentions.length > 0 && (
           <div className="mb-4 space-y-2">
             {post.mentions.map((mention, index) => (
-              <MentionChip key={index} mention={mention} />
+              <MentionChip key={index} mention={mention} index={index} />
             ))}
           </div>
         )}
@@ -1031,7 +1031,7 @@ function ReplyPostCard({
       {post.mentions.length > 0 && (
         <div className="mt-4 space-y-2">
           {post.mentions.map((mention, index) => (
-            <MentionChip key={index} mention={mention} />
+            <MentionChip key={index} mention={mention} index={index} />
           ))}
         </div>
       )}
@@ -1192,22 +1192,23 @@ function PostTypeBadge({
   );
 }
 
-function MentionChip({ mention }: { mention: MentionEntry }) {
-  const names = mention.users.map((u) => u.user).join("、");
+function MentionChip({ mention, index }: { mention: MentionEntry; index: number }) {
+  const names = mention.users.map((u) => `@${u.user}`).join("、");
+  const author = mention.author_display?.trim() || "未知用户";
+  const comment = mention.comments?.trim();
   return (
-    <div className="flex items-start gap-2 rounded-xl border border-slate-200/70 bg-slate-100/82 px-3 py-2.5 text-xs">
-      <AtSign className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-      <div className="min-w-0">
-        <span className="font-medium text-slate-800">{names}</span>
-        {mention.comments && (
-          <span className="text-muted-foreground"> — {mention.comments}</span>
-        )}
-        {(mention.author_display || mention.time) && (
-          <span className="text-muted-foreground/70">
-            {mention.author_display && ` · by ${mention.author_display}`}
-            {mention.time && ` · ${relativeTime(mention.time)}`}
-          </span>
-        )}
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-slate-200/80 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+      <div className="flex shrink-0 items-center gap-2 text-[11px] text-slate-500">
+        <span className="inline-flex h-5 items-center rounded-full bg-white px-2 font-medium text-slate-700 ring-1 ring-slate-200">
+          {`评论${index + 1}`}
+        </span>
+        {mention.time ? <span>· {relativeTime(mention.time)}</span> : null}
+      </div>
+      <div className="min-w-0 break-words leading-6">
+        <span className="font-medium text-slate-900">{author}</span>
+        {names ? <span className="ml-1 text-primary">{names}</span> : null}
+        <span className="ml-1 text-slate-500">说：</span>
+        {comment ? <span>{comment}</span> : <span className="text-slate-400">未填写评论内容</span>}
       </div>
     </div>
   );
