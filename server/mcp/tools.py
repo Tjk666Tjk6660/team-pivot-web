@@ -7,9 +7,12 @@ import httpx
 from server.mcp.context import (
     ContextUrlError,
     build_user_facing_summary,
+    build_view_url,
     parse_context_url,
 )
 from server.mcp.schemas import (
+    CreateFileIn,
+    CreateFileOut,
     FileContent,
     GetMatterIn,
     GetMatterOut,
@@ -91,6 +94,34 @@ class MatterApiClient:
         resp.raise_for_status()
         data = resp.json()
         return data.get("items", [])
+
+    def post_file(self, matter_id: str, body: dict) -> dict:
+        """POST a new timeline item to /api/matters/{id}/files.
+
+        Returns a dict. If the backend returned 422 validation errors, the dict
+        will contain a `__validation_errors__` key with the error payload.
+        Otherwise it's the normal success response with `item` and `matter` keys.
+        """
+        resp = httpx.post(
+            f"{self._base}/api/matters/{matter_id}/files",
+            headers={**self._headers, "Content-Type": "application/json"},
+            json=body,
+            timeout=15.0,
+        )
+        if resp.status_code == 401:
+            raise ToolError(401, "invalid_token")
+        if resp.status_code == 403:
+            raise ToolError(403, "forbidden")
+        if resp.status_code == 404:
+            raise ToolError(404, "matter_not_found")
+        if resp.status_code == 409:
+            # Stale state (matter changed between prepare and submit) — surface to AI
+            raise ToolError(409, "stale_state")
+        if resp.status_code == 422:
+            # Validation failure — return as data, not exception, so AI can iterate
+            return {"__validation_errors__": resp.json()}
+        resp.raise_for_status()
+        return resp.json()
 
 
 def tool_resolve_context(
@@ -222,3 +253,59 @@ def tool_read_files(payload: dict, client: MatterApiClient) -> dict:
             truncated=truncated,
         ))
     return ReadFilesOut(files=results).model_dump(mode="json")
+
+
+def tool_create_file(
+    payload: dict,
+    client: MatterApiClient,
+    web_base_url: str,
+) -> dict:
+    """Write a new timeline item. Returns success + view_url + summary_for_ai,
+    or {errors: ...} if validation failed (so AI can retry with fixes)."""
+    input_ = CreateFileIn.model_validate(payload)
+
+    api_body: dict = {
+        "type": input_.type,
+        "summary": input_.summary,
+        "body": input_.body,
+    }
+    if input_.quote is not None:
+        api_body["quote"] = input_.quote
+    if input_.refer is not None:
+        api_body["refer"] = input_.refer
+    if input_.owner is not None:
+        api_body["owner"] = input_.owner
+    if input_.verifications is not None:
+        api_body["verifications"] = [v.model_dump() for v in input_.verifications]
+    if input_.outcome is not None:
+        api_body["outcome"] = input_.outcome
+    if input_.status_change is not None:
+        api_body["status_change"] = {
+            "from": input_.status_change.from_,
+            "to": input_.status_change.to,
+        }
+
+    resp = client.post_file(input_.matter_id, api_body)
+
+    if "__validation_errors__" in resp:
+        # Design §四 agreement: surface 422 as {errors: ...} so AI can fix & retry
+        return {"errors": resp["__validation_errors__"]}
+
+    item = resp.get("item") or {}
+    matter = resp.get("matter") or {}
+    file_path = item.get("file", "")
+    view_url = build_view_url(web_base_url, input_.matter_id, file_path)
+
+    title = matter.get("title") or input_.matter_id
+    file_count = matter.get("file_count") or "?"
+    summary_ai = (
+        f"✅ 已提交。这是 matter「{title}」的第 {file_count} 篇。"
+        f"点这里查看：{view_url}"
+    )
+
+    return CreateFileOut(
+        ok=True,
+        file_path=file_path,
+        view_url=view_url,
+        summary_for_ai=summary_ai,
+    ).model_dump(mode="json")

@@ -103,7 +103,8 @@ def create_app() -> FastAPI:
     # is a safe default. `cfg.web_dev_origin` is the *frontend* origin
     # (Vite at :5173), not the API, so it's not a suitable fallback here.
     api_base_url = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
-    mcp_app = build_mcp_app(api_tokens, users, api_base_url)
+    web_base_url = os.getenv("WEB_BASE_URL", api_base_url)
+    mcp_app = build_mcp_app(api_tokens, users, api_base_url, web_base_url)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

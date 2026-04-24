@@ -187,3 +187,84 @@ def test_read_files_rejects_body_too_large():
         )
     assert ei.value.status == 400
     assert "body_too_large" in ei.value.detail
+
+
+from server.mcp.tools import tool_create_file
+
+
+def test_create_file_success_returns_summary():
+    client = MagicMock(spec=MatterApiClient)
+    client.post_file.return_value = {
+        "item": {"file": "007_x_verify_abc.md", "type": "verify"},
+        "matter": {
+            "id": "a", "title": "Auth", "file_count": 7,
+            "current_status": "executing",
+        },
+    }
+    out = tool_create_file(
+        {
+            "matter_id": "a",
+            "type": "verify",
+            "summary": "验证 003/004",
+            "body": "# Verify",
+            "verifications": [
+                {"target": "003.md", "judgement": "passed", "comment": "ok"},
+            ],
+        },
+        client,
+        "https://pivot.enclaws.ai",
+    )
+    assert out["ok"] is True
+    assert out["file_path"].endswith(".md")
+    assert "Auth" in out["summary_for_ai"]
+    assert out["view_url"].startswith("https://pivot.enclaws.ai/m/a/f/")
+
+
+def test_create_file_validation_errors_returned_as_data():
+    client = MagicMock(spec=MatterApiClient)
+    client.post_file.return_value = {
+        "__validation_errors__": {"detail": {"code": "invalid_quote"}},
+    }
+    out = tool_create_file(
+        {
+            "matter_id": "a", "type": "verify", "summary": "x",
+            "verifications": [
+                {"target": "x", "judgement": "passed", "comment": "y"},
+            ],
+        },
+        client,
+        "https://pivot.enclaws.ai",
+    )
+    assert "errors" in out
+    assert "ok" not in out
+
+
+def test_create_file_404_raises():
+    client = MagicMock(spec=MatterApiClient)
+    client.post_file.side_effect = ToolError(404, "matter_not_found")
+    with pytest.raises(ToolError):
+        tool_create_file(
+            {"matter_id": "missing", "type": "think", "summary": "x"},
+            client,
+            "https://pivot.enclaws.ai",
+        )
+
+
+def test_create_file_serializes_status_change_from_field():
+    """StatusChangeIn uses 'from' as alias. Ensure we pass 'from' to API, not 'from_'."""
+    client = MagicMock(spec=MatterApiClient)
+    client.post_file.return_value = {
+        "item": {"file": "x.md"},
+        "matter": {"id": "a", "title": "A", "file_count": 1},
+    }
+    tool_create_file(
+        {
+            "matter_id": "a", "type": "result", "summary": "done",
+            "outcome": "finished",
+            "status_change": {"from": "executing", "to": "finished"},
+        },
+        client,
+        "https://x",
+    )
+    sent_body = client.post_file.call_args[0][1]
+    assert sent_body["status_change"] == {"from": "executing", "to": "finished"}

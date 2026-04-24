@@ -15,10 +15,17 @@ from starlette.routing import Mount
 from server.api_tokens import ApiTokenRepo
 from server.mcp.auth import McpAuthError, authenticate
 from server.mcp.runtime import current_user_token, set_user_token
-from server.mcp.schemas import GetMatterIn, ListMattersIn, ReadFilesIn, ResolveContextIn
+from server.mcp.schemas import (
+    CreateFileIn,
+    GetMatterIn,
+    ListMattersIn,
+    ReadFilesIn,
+    ResolveContextIn,
+)
 from server.mcp.tools import (
     MatterApiClient,
     ToolError,
+    tool_create_file,
     tool_get_matter,
     tool_list_matters,
     tool_read_files,
@@ -32,7 +39,7 @@ _SERVER_NAME = "pivot-mcp"
 _SERVER_VERSION = "0.1.0"
 
 
-def _register_tools(mcp_server: Server, api_base_url: str) -> None:
+def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) -> None:
     """Wire MCP list_tools / call_tool handlers onto the low-level server.
 
     The call_tool dispatch uses `current_user_token()` to build a
@@ -76,6 +83,20 @@ def _register_tools(mcp_server: Server, api_base_url: str) -> None:
                 ),
                 inputSchema=ReadFilesIn.model_json_schema(),
             ),
+            Tool(
+                name="create_file",
+                description=(
+                    "Create a new timeline item (think/act/verify/result/insight) in "
+                    "a matter. "
+                    "PROTOCOL: BEFORE calling this tool, you MUST present the draft "
+                    "content to the user in natural language in the chat and wait for "
+                    "explicit approval ('ok', 'go', etc). The tool approval dialog is "
+                    "the final confirmation. "
+                    "After success, relay the returned `summary_for_ai` message "
+                    "verbatim to the user."
+                ),
+                inputSchema=CreateFileIn.model_json_schema(),
+            ),
         ]
 
     @mcp_server.call_tool()
@@ -91,6 +112,8 @@ def _register_tools(mcp_server: Server, api_base_url: str) -> None:
                 out = tool_get_matter(arguments, client)
             elif name == "read_files":
                 out = tool_read_files(arguments, client)
+            elif name == "create_file":
+                out = tool_create_file(arguments, client, web_base_url)
             else:
                 raise ToolError(404, f"unknown_tool: {name}")
         except ToolError as e:
@@ -110,6 +133,7 @@ def build_mcp_app(
     tokens: ApiTokenRepo,
     users: UserRepo,
     api_base_url: str,
+    web_base_url: str,
 ) -> Starlette:
     """Return an ASGI app that serves MCP over Streamable HTTP at `/`.
 
@@ -129,7 +153,7 @@ def build_mcp_app(
     (When mounted at `/mcp`, external clients reach it as POST/GET `/mcp`.)
     """
     mcp_server = Server(_SERVER_NAME, version=_SERVER_VERSION)
-    _register_tools(mcp_server, api_base_url)
+    _register_tools(mcp_server, api_base_url, web_base_url)
 
     session_manager = StreamableHTTPSessionManager(
         app=mcp_server,
