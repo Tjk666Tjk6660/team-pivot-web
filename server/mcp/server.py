@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import asynccontextmanager
 
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp.types import TextContent, Tool
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -12,7 +14,9 @@ from starlette.routing import Mount
 
 from server.api_tokens import ApiTokenRepo
 from server.mcp.auth import McpAuthError, authenticate
-from server.mcp.runtime import set_user_token
+from server.mcp.runtime import current_user_token, set_user_token
+from server.mcp.schemas import ResolveContextIn
+from server.mcp.tools import MatterApiClient, ToolError, tool_resolve_context
 from server.users import UserRepo
 
 log = logging.getLogger(__name__)
@@ -21,13 +25,67 @@ _SERVER_NAME = "pivot-mcp"
 _SERVER_VERSION = "0.1.0"
 
 
-def build_mcp_app(tokens: ApiTokenRepo, users: UserRepo) -> Starlette:
+def _register_tools(mcp_server: Server, api_base_url: str) -> None:
+    """Wire MCP list_tools / call_tool handlers onto the low-level server.
+
+    The call_tool dispatch uses `current_user_token()` to build a
+    per-request `MatterApiClient`, so each tool call acts on behalf of
+    the calling user (their PAT was validated by the auth middleware and
+    stashed in a ContextVar just before this coroutine runs).
+    """
+
+    @mcp_server.list_tools()
+    async def _list_tools() -> list[Tool]:
+        return [
+            Tool(
+                name="resolve_context",
+                description=(
+                    "Resolve a Pivot URL (e.g. copied from the Web) into "
+                    "matter + file info. ALWAYS display the returned "
+                    "`user_facing_summary` to the user verbatim so they "
+                    "can confirm the correct context was loaded."
+                ),
+                inputSchema=ResolveContextIn.model_json_schema(),
+            ),
+        ]
+
+    @mcp_server.call_tool()
+    async def _call_tool(name: str, arguments: dict) -> list[TextContent]:
+        token = current_user_token()
+        client = MatterApiClient(api_base_url, token)
+        try:
+            if name == "resolve_context":
+                out = tool_resolve_context(arguments, client)
+            else:
+                raise ToolError(404, f"unknown_tool: {name}")
+        except ToolError as e:
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {"error": {"status": e.status, "detail": e.detail}},
+                        ensure_ascii=False,
+                    ),
+                )
+            ]
+        return [TextContent(type="text", text=json.dumps(out, ensure_ascii=False))]
+
+
+def build_mcp_app(
+    tokens: ApiTokenRepo,
+    users: UserRepo,
+    api_base_url: str,
+) -> Starlette:
     """Return an ASGI app that serves MCP over Streamable HTTP at `/`.
 
     Every HTTP request must carry `Authorization: Bearer pvt_...`; we verify
     the PAT against `tokens`, resolve the user via `users`, stash the
     plaintext token in a ContextVar (so tool callbacks can forward it to
     Matter API calls), and only then hand off to the session manager.
+
+    `api_base_url` is the origin of the Matter REST API the tool handlers
+    call (e.g. "http://127.0.0.1:8000" in dev). The same PAT authenticates
+    there, so MCP tools act as the user.
 
     The returned app has a lifespan that drives `session_manager.run()`.
     The parent FastAPI app must propagate this sub-app's lifespan — see
@@ -36,7 +94,7 @@ def build_mcp_app(tokens: ApiTokenRepo, users: UserRepo) -> Starlette:
     (When mounted at `/mcp`, external clients reach it as POST/GET `/mcp`.)
     """
     mcp_server = Server(_SERVER_NAME, version=_SERVER_VERSION)
-    # tools are registered elsewhere; see server/mcp/tools.py
+    _register_tools(mcp_server, api_base_url)
 
     session_manager = StreamableHTTPSessionManager(
         app=mcp_server,

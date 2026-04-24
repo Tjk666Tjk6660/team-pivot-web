@@ -97,7 +97,13 @@ def create_app() -> FastAPI:
     # sub-apps, so we enter its lifespan_context from our own lifespan below.
     # The sub-app enforces PAT bearer auth on every HTTP request using the
     # same ApiTokenRepo / UserRepo as /api/*.
-    mcp_app = build_mcp_app(api_tokens, users)
+    # TODO: make api_base_url configurable (env var) once we deploy behind a
+    # reverse proxy or to a non-local host. In dev the MCP tool handlers call
+    # back into this same uvicorn process over loopback, so 127.0.0.1:8000
+    # is a safe default. `cfg.web_dev_origin` is the *frontend* origin
+    # (Vite at :5173), not the API, so it's not a suitable fallback here.
+    api_base_url = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+    mcp_app = build_mcp_app(api_tokens, users, api_base_url)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
