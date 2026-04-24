@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -92,7 +93,16 @@ def create_app() -> FastAPI:
         notifier = NoOpNotifier()
         log.info("notifier disabled (no-op)")
 
-    app = FastAPI(title="team-pivot-web")
+    # Build MCP sub-app once; FastAPI does not propagate lifespan to mounted
+    # sub-apps, so we enter its lifespan_context from our own lifespan below.
+    mcp_app = build_mcp_app()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        async with mcp_app.router.lifespan_context(mcp_app):
+            yield
+
+    app = FastAPI(title="team-pivot-web", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[cfg.web_dev_origin],
@@ -138,7 +148,8 @@ def create_app() -> FastAPI:
 
     # MCP Streamable HTTP endpoint for external AI clients. PAT auth lives in
     # the sub-app (added in a later task); this file only wires the mount.
-    app.mount("/mcp", build_mcp_app())
+    # Lifespan propagation for mcp_app is handled in the `lifespan` above.
+    app.mount("/mcp", mcp_app)
     return app
 
 
