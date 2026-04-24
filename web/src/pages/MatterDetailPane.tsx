@@ -19,7 +19,8 @@ import { AIPane } from "@/components/AIPane";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TimelineStrip } from "@/components/matter/TimelineStrip";
 import { FileCard } from "@/components/matter/FileCard";
-import { CreateFileDialog, type CreateDialogContext } from "@/components/matter/CreateFileDialog";
+import { CreateFileDialog, CreateFileForm } from "@/components/matter/CreateFileDialog";
+import { shortFile, TYPE_VISUAL } from "@/components/matter/timeline-config";
 import { ResultConfirmDialog } from "@/components/matter/ResultConfirmDialog";
 import { STATUS_DESC } from "@/components/matter/timeline-config";
 import { HomeWelcomePane } from "@/pages/HomeWelcomePane";
@@ -36,8 +37,17 @@ export function MatterDetailPane() {
   const [data, setData] = useState<MatterDetailData | null | undefined>(undefined);
   const [sessionOpenId, setSessionOpenId] = useState<string>("");
   const [sessionName, setSessionName] = useState<string>("");
-  const [createCtx, setCreateCtx] = useState<CreateDialogContext | null>(null);
+  const [insightOpen, setInsightOpen] = useState(false);
+  const [pendingCreate, setPendingCreate] = useState<
+    { type: DocType; quote: string } | null
+  >(null);
   const [resultOpen, setResultOpen] = useState(false);
+
+  const requestCreate = (type: DocType, quote: string) => {
+    setPendingCreate((prev) =>
+      prev && prev.type === type && prev.quote === quote ? null : { type, quote },
+    );
+  };
   const [highlight, setHighlight] = useState<string | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -119,8 +129,8 @@ export function MatterDetailPane() {
     await reloadLists();
   };
 
-  const submitNewFile = async (body: NewFileIn) => {
-    if (!matter_id) return;
+  const submitNewFile = async (body: NewFileIn): Promise<boolean> => {
+    if (!matter_id) return false;
     try {
       await appendMatterFile(matter_id, body);
       toast.success(
@@ -128,10 +138,11 @@ export function MatterDetailPane() {
           ? `已发布 ${body.type} · 事项 ${body.status_change.from} → ${body.status_change.to}`
           : `已发布 ${body.type}`,
       );
-      setCreateCtx(null);
       await afterWrite();
+      return true;
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
+      return false;
     }
   };
 
@@ -269,7 +280,7 @@ export function MatterDetailPane() {
                 <Button
                   variant="outline"
                   className="h-9 rounded-xl px-3 text-xs font-semibold text-slate-700"
-                  onClick={() => setCreateCtx({ kind: "page", type: "insight" })}
+                  onClick={() => setInsightOpen(true)}
                 >
                   生成 Insight
                 </Button>
@@ -308,9 +319,12 @@ export function MatterDetailPane() {
               item={item}
               index={i}
               matterStatus={matter.current_status}
-              onCreate={(type: DocType, quote: string) =>
-                setCreateCtx({ kind: "card", type, quote })
+              activeType={
+                pendingCreate && pendingCreate.quote === item.file
+                  ? pendingCreate.type
+                  : null
               }
+              onCreate={requestCreate}
               onAddComment={(body) => submitComment(item.file, body)}
               onJump={onJump}
               registerRef={(el) => {
@@ -319,6 +333,46 @@ export function MatterDetailPane() {
               highlighted={highlight === item.file}
             />
           ))}
+          {pendingCreate && (
+            <article
+              className={cn(
+                "rounded-2xl border border-slate-200 border-l-[6px] [border-left-style:dashed] bg-white p-4 shadow-sm sm:p-5",
+                TYPE_VISUAL[pendingCreate.type].side,
+              )}
+            >
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <span
+                  className={cn(
+                    "inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ring-1",
+                    TYPE_VISUAL[pendingCreate.type].chip,
+                  )}
+                >
+                  {TYPE_VISUAL[pendingCreate.type].label}
+                </span>
+                <span className="text-[11px] text-slate-500">
+                  新增 · 基于{" "}
+                  <span className="font-mono text-slate-700">
+                    {shortFile(pendingCreate.quote)}
+                  </span>
+                </span>
+              </div>
+              <CreateFileForm
+                key={`${pendingCreate.quote}:${pendingCreate.type}`}
+                context={{
+                  kind: "card",
+                  type: pendingCreate.type,
+                  quote: pendingCreate.quote,
+                }}
+                matterStatus={matter.current_status}
+                sessionOpenId={sessionOpenId}
+                sessionName={sessionName || sessionOpenId}
+                timeline={timeline}
+                onCancel={() => setPendingCreate(null)}
+                onSubmit={submitNewFile}
+                onSuccess={() => setPendingCreate(null)}
+              />
+            </article>
+          )}
           {matter.current_status === "reviewed" && (
             <div className="rounded-xl border border-slate-200 bg-slate-100/60 p-4 text-center text-xs text-slate-500">
               事项生命周期已收口（reviewed）。原则上不再新增文件。
@@ -360,13 +414,12 @@ export function MatterDetailPane() {
       )}
 
       <CreateFileDialog
-        open={createCtx !== null}
-        context={createCtx}
+        open={insightOpen}
         matterStatus={matter.current_status}
         sessionOpenId={sessionOpenId}
         sessionName={sessionName || sessionOpenId}
         timeline={timeline}
-        onClose={() => setCreateCtx(null)}
+        onClose={() => setInsightOpen(false)}
         onSubmit={submitNewFile}
       />
 

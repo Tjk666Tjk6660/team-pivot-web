@@ -19,6 +19,7 @@ export function FileCard({
   item,
   index,
   matterStatus,
+  activeType,
   onCreate,
   onAddComment,
   onJump,
@@ -28,6 +29,7 @@ export function FileCard({
   item: TimelineItem;
   index: number;
   matterStatus: MatterStatus;
+  activeType: DocType | null;
   onCreate: (type: DocType, quote: string) => void;
   onAddComment: (body: string) => Promise<void>;
   onJump: (file: string) => void;
@@ -196,9 +198,24 @@ export function FileCard({
 
       {/* 三入口 */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3">
-        <CardAddButton label="think" disabled={!allowThink} onClick={() => onCreate("think", item.file)} />
-        <CardAddButton label="act" disabled={!allowAct} onClick={() => onCreate("act", item.file)} />
-        <CardAddButton label="verify" disabled={!allowVerify} onClick={() => onCreate("verify", item.file)} />
+        <CardAddButton
+          label="think"
+          disabled={!allowThink}
+          active={activeType === "think"}
+          onClick={() => onCreate("think", item.file)}
+        />
+        <CardAddButton
+          label="act"
+          disabled={!allowAct}
+          active={activeType === "act"}
+          onClick={() => onCreate("act", item.file)}
+        />
+        <CardAddButton
+          label="verify"
+          disabled={!allowVerify}
+          active={activeType === "verify"}
+          onClick={() => onCreate("verify", item.file)}
+        />
         <div className="ml-auto text-[10px] text-slate-400">
           点按钮 · 新文件 quote 自动写入 <span className="font-mono">{shortFile(item.file)}</span>
         </div>
@@ -210,10 +227,12 @@ export function FileCard({
 function CardAddButton({
   label,
   disabled,
+  active,
   onClick,
 }: {
   label: string;
   disabled: boolean;
+  active: boolean;
   onClick: () => void;
 }) {
   return (
@@ -226,7 +245,9 @@ function CardAddButton({
         "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
         disabled
           ? "cursor-not-allowed border-slate-200 text-slate-400"
-          : "border-slate-300 text-slate-700 hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700",
+          : active
+            ? "border-blue-400 bg-blue-50 text-blue-700"
+            : "border-slate-300 text-slate-700 hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700",
       )}
     >
       <Plus className="h-3 w-3" />

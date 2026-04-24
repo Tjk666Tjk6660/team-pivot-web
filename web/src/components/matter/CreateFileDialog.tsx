@@ -15,7 +15,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -25,10 +24,9 @@ import { cn } from "@/lib/utils";
 import { MAX_REFER, shortFile } from "./timeline-config";
 import { OwnerPicker } from "./OwnerPicker";
 
-export type CreateDialogContext =
+export type CreateFormContext =
   | { kind: "card"; type: DocType; quote: string }
   | { kind: "page"; type: "insight" };
-// Note: result uses a dedicated ResultConfirmDialog; it does not flow through here.
 
 type FormState = {
   summary: string;
@@ -37,16 +35,13 @@ type FormState = {
   ownerDisplayName: string;
   refer: string[];
   verifications: Verification[];
-  // think 专属
-  thinkChange: "none" | string; // "from->to"
-  // act 专属
+  thinkChange: "none" | string;
   actPromote: boolean;
-  // insight 专属
   insightReview: boolean;
 };
 
 function initialFormState(
-  ctx: CreateDialogContext,
+  ctx: CreateFormContext,
   sessionOpenId: string,
   sessionName: string,
   actFiles: TimelineItem[],
@@ -70,45 +65,34 @@ function initialFormState(
   };
 }
 
-export function CreateFileDialog({
-  open,
+export function CreateFileForm({
   context,
   matterStatus,
   sessionOpenId,
   sessionName,
   timeline,
-  onClose,
+  onCancel,
   onSubmit,
+  onSuccess,
 }: {
-  open: boolean;
-  context: CreateDialogContext | null;
+  context: CreateFormContext;
   matterStatus: MatterStatus;
   sessionOpenId: string;
   sessionName: string;
   timeline: TimelineItem[];
-  onClose: () => void;
-  onSubmit: (body: NewFileIn) => Promise<void>;
+  onCancel?: () => void;
+  onSubmit: (body: NewFileIn) => Promise<boolean>;
+  onSuccess?: () => void;
 }) {
   const actFiles = useMemo(
     () => timeline.filter((t) => t.type === "act"),
     [timeline],
   );
   const [form, setForm] = useState<FormState>(() =>
-    context
-      ? initialFormState(context, sessionOpenId, sessionName, actFiles)
-      : initialFormState({ kind: "page", type: "insight" }, sessionOpenId, sessionName, actFiles),
+    initialFormState(context, sessionOpenId, sessionName, actFiles),
   );
   const [submitting, setSubmitting] = useState(false);
 
-  // reset form whenever dialog re-opens with a new context
-  useMemo(() => {
-    if (open && context) {
-      setForm(initialFormState(context, sessionOpenId, sessionName, actFiles));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, context?.kind, context?.kind === "card" ? context.quote : null, context?.type]);
-
-  if (!context) return null;
   const type: DocType = context.type;
   const quote = context.kind === "card" ? context.quote : null;
 
@@ -116,24 +100,6 @@ export function CreateFileDialog({
   const isVerify = type === "verify";
   const isThink = type === "think";
   const isInsight = type === "insight";
-
-  const title =
-    context.kind === "card"
-      ? `新增 ${type} · 基于 ${shortFile(quote!)}`
-      : `生成 ${type}`;
-
-  const titleDescriptor = (() => {
-    switch (type) {
-      case "think":
-        return "记录判断、方案、暂停说明等";
-      case "act":
-        return "记录一项待推进的行动；可同时正式进入执行";
-      case "verify":
-        return "对本 matter 的 act 做通过 / 不通过判断";
-      case "insight":
-        return "复盘沉淀；可勾选同时推进到 reviewed";
-    }
-  })();
 
   const submit = async () => {
     if (!form.summary.trim()) {
@@ -184,7 +150,8 @@ export function CreateFileDialog({
 
     setSubmitting(true);
     try {
-      await onSubmit(body);
+      const ok = await onSubmit(body);
+      if (ok) onSuccess?.();
     } finally {
       setSubmitting(false);
     }
@@ -204,177 +171,202 @@ export function CreateFileDialog({
   };
 
   return (
+    <div className="space-y-3 text-sm">
+      <FieldRow label="quote" hint={quote ? "入口自动带入，只读" : "页面级动作 · 无 quote"}>
+        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-700">
+          {quote ? shortFile(quote) : "（空）"}
+        </div>
+      </FieldRow>
+
+      {(isAct || isVerify) && (
+        <FieldRow
+          label="owner"
+          required
+          hint={isAct ? "执行责任人（可 ≠ 作者）" : "对这次判断负责的人"}
+        >
+          <OwnerPicker
+            value={form.owner}
+            onChange={(openId, name) =>
+              setForm((p) => ({ ...p, owner: openId, ownerDisplayName: name }))
+            }
+            sessionOpenId={sessionOpenId}
+            sessionName={sessionName}
+            displayName={form.ownerDisplayName}
+          />
+        </FieldRow>
+      )}
+
+      <FieldRow label="summary" required hint="一句话说明目的 / 判断">
+        <Input
+          value={form.summary}
+          onChange={(e) => setForm((p) => ({ ...p, summary: e.target.value }))}
+          maxLength={200}
+          placeholder="一句话摘要"
+        />
+      </FieldRow>
+
+      <FieldRow label="body" hint="Markdown 正文（可选）">
+        <Textarea
+          rows={4}
+          value={form.body}
+          onChange={(e) => setForm((p) => ({ ...p, body: e.target.value }))}
+          placeholder={isAct ? "## Summary / What To Do / Notes …" : "写下详细内容 …"}
+        />
+      </FieldRow>
+
+      {!isVerify && (
+        <FieldRow label="refer" hint={`可选 · 多选上限 ${MAX_REFER}`}>
+          <div className="flex flex-wrap gap-1.5">
+            {timeline
+              .filter((x) => x.file !== quote)
+              .map((x) => {
+                const selected = form.refer.includes(x.file);
+                return (
+                  <button
+                    type="button"
+                    key={x.file}
+                    onClick={() => toggleRefer(x.file)}
+                    className={cn(
+                      "rounded-full border px-2 py-0.5 font-mono text-[11px]",
+                      selected
+                        ? "border-indigo-400 bg-indigo-100 text-indigo-800"
+                        : "border-slate-300 text-slate-600 hover:border-slate-400",
+                    )}
+                  >
+                    {shortFile(x.file)}
+                  </button>
+                );
+              })}
+            {timeline.length <= 1 && (
+              <span className="text-xs text-slate-400">（无其它文件）</span>
+            )}
+          </div>
+        </FieldRow>
+      )}
+
+      {isVerify && (
+        <FieldRow label="verifications" required hint="每条 target 必须是本 matter 的 act">
+          <VerificationsEditor
+            verifications={form.verifications}
+            setVerifications={(v) => setForm((p) => ({ ...p, verifications: v }))}
+            actFiles={actFiles}
+          />
+        </FieldRow>
+      )}
+
+      {isThink && (
+        <FieldRow label="附加状态迁移" hint="think 是 paused 进出的唯一触发通道（可选）">
+          <div className="flex flex-col gap-1 text-sm">
+            <RadioRow
+              checked={form.thinkChange === "none"}
+              onChange={() => setForm((p) => ({ ...p, thinkChange: "none" }))}
+              label="不切换状态"
+            />
+            {(matterStatus === "planning" || matterStatus === "executing") && (
+              <RadioRow
+                checked={form.thinkChange === `${matterStatus}->paused`}
+                onChange={() =>
+                  setForm((p) => ({ ...p, thinkChange: `${matterStatus}->paused` }))
+                }
+                label={`同时暂停（${matterStatus} → paused）`}
+              />
+            )}
+            {matterStatus === "paused" && (
+              <>
+                <RadioRow
+                  checked={form.thinkChange === "paused->planning"}
+                  onChange={() => setForm((p) => ({ ...p, thinkChange: "paused->planning" }))}
+                  label="恢复为规划（paused → planning）"
+                />
+                <RadioRow
+                  checked={form.thinkChange === "paused->executing"}
+                  onChange={() => setForm((p) => ({ ...p, thinkChange: "paused->executing" }))}
+                  label="恢复为执行（paused → executing）"
+                />
+              </>
+            )}
+          </div>
+        </FieldRow>
+      )}
+
+      {isAct && matterStatus === "planning" && (
+        <FieldRow label="附加状态迁移">
+          <label className="flex items-center gap-1.5 text-sm">
+            <input
+              type="checkbox"
+              checked={form.actPromote}
+              onChange={(e) => setForm((p) => ({ ...p, actPromote: e.target.checked }))}
+            />
+            正式进入执行（planning → executing）
+          </label>
+        </FieldRow>
+      )}
+
+      {isInsight && (
+        <FieldRow label="附加状态迁移">
+          <label className="flex items-center gap-1.5 text-sm">
+            <input
+              type="checkbox"
+              checked={form.insightReview}
+              onChange={(e) => setForm((p) => ({ ...p, insightReview: e.target.checked }))}
+            />
+            同时推进到 reviewed（{matterStatus} → reviewed）
+          </label>
+        </FieldRow>
+      )}
+
+      <div className="flex items-center justify-end gap-2 pt-2">
+        {onCancel && (
+          <Button variant="outline" size="sm" onClick={onCancel} disabled={submitting}>
+            取消
+          </Button>
+        )}
+        <Button size="sm" onClick={() => void submit()} disabled={submitting}>
+          {submitting ? "发布中…" : "发布"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+export function CreateFileDialog({
+  open,
+  matterStatus,
+  sessionOpenId,
+  sessionName,
+  timeline,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  matterStatus: MatterStatus;
+  sessionOpenId: string;
+  sessionName: string;
+  timeline: TimelineItem[];
+  onClose: () => void;
+  onSubmit: (body: NewFileIn) => Promise<boolean>;
+}) {
+  return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
+          <DialogTitle>生成 insight</DialogTitle>
           <DialogDescription>
-            类型 <span className="font-mono">{type}</span> · {titleDescriptor}
+            类型 <span className="font-mono">insight</span> · 复盘沉淀；可勾选同时推进到 reviewed
           </DialogDescription>
         </DialogHeader>
-
-        <div className="space-y-3 text-sm">
-          {/* quote (read-only) */}
-          <FieldRow label="quote" hint={quote ? "入口自动带入，只读" : "页面级动作 · 无 quote"}>
-            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-700">
-              {quote ? shortFile(quote) : "（空）"}
-            </div>
-          </FieldRow>
-
-          {/* owner */}
-          {(isAct || isVerify) && (
-            <FieldRow
-              label="owner"
-              required
-              hint={isAct ? "执行责任人（可 ≠ 作者）" : "对这次判断负责的人"}
-            >
-              <OwnerPicker
-                value={form.owner}
-                onChange={(openId, name) =>
-                  setForm((p) => ({ ...p, owner: openId, ownerDisplayName: name }))
-                }
-                sessionOpenId={sessionOpenId}
-                sessionName={sessionName}
-                displayName={form.ownerDisplayName}
-              />
-            </FieldRow>
-          )}
-
-          {/* summary */}
-          <FieldRow label="summary" required hint="一句话说明目的 / 判断">
-            <Input
-              value={form.summary}
-              onChange={(e) => setForm((p) => ({ ...p, summary: e.target.value }))}
-              maxLength={200}
-              placeholder="一句话摘要"
-            />
-          </FieldRow>
-
-          {/* body */}
-          <FieldRow label="body" hint="Markdown 正文（可选）">
-            <Textarea
-              rows={4}
-              value={form.body}
-              onChange={(e) => setForm((p) => ({ ...p, body: e.target.value }))}
-              placeholder={isAct ? "## Summary / What To Do / Notes …" : "写下详细内容 …"}
-            />
-          </FieldRow>
-
-          {/* refer —— verify 使用 verifications，不要 refer */}
-          {!isVerify && (
-            <FieldRow label="refer" hint={`可选 · 多选上限 ${MAX_REFER}`}>
-              <div className="flex flex-wrap gap-1.5">
-                {timeline
-                  .filter((x) => x.file !== quote)
-                  .map((x) => {
-                    const selected = form.refer.includes(x.file);
-                    return (
-                      <button
-                        type="button"
-                        key={x.file}
-                        onClick={() => toggleRefer(x.file)}
-                        className={cn(
-                          "rounded-full border px-2 py-0.5 font-mono text-[11px]",
-                          selected
-                            ? "border-indigo-400 bg-indigo-100 text-indigo-800"
-                            : "border-slate-300 text-slate-600 hover:border-slate-400",
-                        )}
-                      >
-                        {shortFile(x.file)}
-                      </button>
-                    );
-                  })}
-                {timeline.length <= 1 && (
-                  <span className="text-xs text-slate-400">（无其它文件）</span>
-                )}
-              </div>
-            </FieldRow>
-          )}
-
-          {/* verifications */}
-          {isVerify && (
-            <FieldRow label="verifications" required hint="每条 target 必须是本 matter 的 act">
-              <VerificationsEditor
-                verifications={form.verifications}
-                setVerifications={(v) => setForm((p) => ({ ...p, verifications: v }))}
-                actFiles={actFiles}
-              />
-            </FieldRow>
-          )}
-
-          {/* think: 附加 status_change */}
-          {isThink && (
-            <FieldRow label="附加状态迁移" hint="think 是 paused 进出的唯一触发通道（可选）">
-              <div className="flex flex-col gap-1 text-sm">
-                <RadioRow
-                  checked={form.thinkChange === "none"}
-                  onChange={() => setForm((p) => ({ ...p, thinkChange: "none" }))}
-                  label="不切换状态"
-                />
-                {(matterStatus === "planning" || matterStatus === "executing") && (
-                  <RadioRow
-                    checked={form.thinkChange === `${matterStatus}->paused`}
-                    onChange={() =>
-                      setForm((p) => ({ ...p, thinkChange: `${matterStatus}->paused` }))
-                    }
-                    label={`同时暂停（${matterStatus} → paused）`}
-                  />
-                )}
-                {matterStatus === "paused" && (
-                  <>
-                    <RadioRow
-                      checked={form.thinkChange === "paused->planning"}
-                      onChange={() => setForm((p) => ({ ...p, thinkChange: "paused->planning" }))}
-                      label="恢复为规划（paused → planning）"
-                    />
-                    <RadioRow
-                      checked={form.thinkChange === "paused->executing"}
-                      onChange={() => setForm((p) => ({ ...p, thinkChange: "paused->executing" }))}
-                      label="恢复为执行（paused → executing）"
-                    />
-                  </>
-                )}
-              </div>
-            </FieldRow>
-          )}
-
-          {/* act: 同时正式进入执行 */}
-          {isAct && matterStatus === "planning" && (
-            <FieldRow label="附加状态迁移">
-              <label className="flex items-center gap-1.5 text-sm">
-                <input
-                  type="checkbox"
-                  checked={form.actPromote}
-                  onChange={(e) => setForm((p) => ({ ...p, actPromote: e.target.checked }))}
-                />
-                正式进入执行（planning → executing）
-              </label>
-            </FieldRow>
-          )}
-
-          {/* insight: 同时推进到 reviewed */}
-          {isInsight && (
-            <FieldRow label="附加状态迁移">
-              <label className="flex items-center gap-1.5 text-sm">
-                <input
-                  type="checkbox"
-                  checked={form.insightReview}
-                  onChange={(e) => setForm((p) => ({ ...p, insightReview: e.target.checked }))}
-                />
-                同时推进到 reviewed（{matterStatus} → reviewed）
-              </label>
-            </FieldRow>
-          )}
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={submitting}>
-            取消
-          </Button>
-          <Button onClick={() => void submit()} disabled={submitting}>
-            {submitting ? "发布中…" : "发布"}
-          </Button>
-        </DialogFooter>
+        {open && (
+          <CreateFileForm
+            context={{ kind: "page", type: "insight" }}
+            matterStatus={matterStatus}
+            sessionOpenId={sessionOpenId}
+            sessionName={sessionName}
+            timeline={timeline}
+            onCancel={onClose}
+            onSubmit={onSubmit}
+            onSuccess={onClose}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );
