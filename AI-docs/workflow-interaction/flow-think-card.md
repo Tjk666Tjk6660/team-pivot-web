@@ -18,14 +18,13 @@ sequenceDiagram
   Note over FC: matter.current_status<br/>必须 ∈ planning / executing / paused<br/>finished/cancelled/reviewed 灰禁
 
   U->>FC: 点击 + think
-  alt 已存在同 quote+think 草稿
-    FC->>DC: 关闭草稿
-  else 否则
-    FC->>DC: 在下方追加草稿卡<br/>虚线框 + 蓝色左色条<br/>quote=FileCard.file 自动只读
-    DC-->>U: 渲染头部 THINK chip + 新增 基于 + AI 回复 按钮
-    DC-->>U: 渲染表单 quote / body 必填 / refer ≤4
-    Note over DC: body 必填 提示<br/>发布时 AI 将基于此生成 summary
+  FC->>DC: 在下方追加草稿卡<br/>虚线框 + 蓝色左色条<br/>quote=FileCard.file 自动只读
+  DC-->>U: 渲染头部 THINK chip + 新增 基于 + AI 回复 按钮
+  DC-->>U: 渲染表单 quote / body 必填 / refer ≤4
+  opt 命中 matterDrafts 中已存在同 (type, quote) 草稿
+    DC-->>U: 用已有草稿 draftFromPayload 回填表单
   end
+  Note over DC: body 必填 提示<br/>发布时 AI 将基于此生成 summary
 
   alt matter.current_status === planning 或 executing
     DC-->>U: 渲染附加状态迁移 单选组<br/>不切换 默认 / 同时暂停 status to paused

@@ -18,14 +18,13 @@ sequenceDiagram
   Note over PB: 仅当 matter.current_status === executing 时显示<br/>planning / paused / finished / cancelled / reviewed 不显示
 
   U->>PB: 点击 生成 Result
-  alt 已存在 RESULT 草稿
-    PB->>DC: 关闭草稿
-  else 否则
-    PB->>DC: 在页面顶部追加草稿卡<br/>虚线框 + 紫色左色条<br/>页面级 无 quote
-    DC-->>U: 渲染头部 RESULT chip + 页面级 · 无 quote + AI 助手 按钮
-    DC-->>U: 渲染表单 outcome 必填 / body 必填
-    Note over DC: outcome 单选: 完成 finished 默认 / 取消 cancelled<br/>body 必填 提示 发布时 AI 将基于此生成 summary
+  PB->>DC: 在页面顶部追加草稿卡<br/>虚线框 + 紫色左色条<br/>页面级 无 quote
+  DC-->>U: 渲染头部 RESULT chip + 页面级 · 无 quote + AI 助手 按钮
+  DC-->>U: 渲染表单 outcome 必填 / body 必填
+  opt 命中 matterDrafts 中已存在 RESULT 草稿
+    DC-->>U: 用已有草稿 draftFromPayload 回填表单
   end
+  Note over DC: outcome 单选: 完成 finished 默认 / 取消 cancelled<br/>body 必填 提示 发布时 AI 将基于此生成 summary
 
   opt 需要 AI 协助起草
     U->>DC: 点击 AI 助手

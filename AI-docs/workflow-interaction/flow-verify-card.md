@@ -25,6 +25,9 @@ sequenceDiagram
     FC->>DC: 在下方追加草稿卡<br/>虚线框 + 黄色左色条<br/>quote=FileCard.file 自动只读
     DC-->>U: 渲染头部 VERIFY chip + 新增 基于 + AI 回复 按钮
     DC-->>U: 渲染表单 quote / owner 必填 / body 必填 / verifications 必填<br/>注意 不出现 refer 字段
+    opt 命中 matterDrafts 中已存在同 (type, quote) 草稿
+      DC-->>U: 用已有草稿 draftFromPayload 回填表单
+    end
     Note over DC: body 必填 提示<br/>发布时 AI 将基于此生成 summary
 
     alt 源 FileCard.type === act 且属本 matter

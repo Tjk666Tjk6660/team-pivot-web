@@ -18,14 +18,13 @@ sequenceDiagram
   Note over PB: 仅当 matter.current_status ∈ finished / cancelled 时显示<br/>planning / executing / paused / reviewed 不显示
 
   U->>PB: 点击 生成 Insight
-  alt 已存在 INSIGHT 草稿
-    PB->>DC: 关闭草稿
-  else 否则
-    PB->>DC: 在页面顶部追加草稿卡<br/>虚线框 + 灰色左色条<br/>页面级 无 quote
-    DC-->>U: 渲染头部 INSIGHT chip + 页面级 · 无 quote + AI 助手 按钮
-    DC-->>U: 渲染表单 body 必填 / refer ≤4 / 附加状态迁移 复选
-    Note over DC: body 必填 提示 发布时 AI 将基于此生成 summary<br/>附加状态迁移: 同时推进到 reviewed (finished 或 cancelled to reviewed)
+  PB->>DC: 在页面顶部追加草稿卡<br/>虚线框 + 灰色左色条<br/>页面级 无 quote
+  DC-->>U: 渲染头部 INSIGHT chip + 页面级 · 无 quote + AI 助手 按钮
+  DC-->>U: 渲染表单 body 必填 / refer ≤4 / 附加状态迁移 复选
+  opt 命中 matterDrafts 中已存在 INSIGHT 草稿
+    DC-->>U: 用已有草稿 draftFromPayload 回填表单
   end
+  Note over DC: body 必填 提示 发布时 AI 将基于此生成 summary<br/>附加状态迁移: 同时推进到 reviewed (finished 或 cancelled to reviewed)
 
   opt 需要 AI 协助起草
     U->>DC: 点击 AI 助手
