@@ -36,25 +36,21 @@ sequenceDiagram
     U->>AP: 点击 生成草稿
     Note over AP: 自动注入 GENERATE_REPLY_DRAFT 标签<br/>要求 AI 用 draft 标签包裹整篇正文
 
-    alt 其它 matter 正在 streaming
-      AP-->>U: 按钮禁用 提示当前活跃 matter
-    else 可发起
-      AP->>AIAPI: POST /:matter_id/chat SSE
-      AIAPI-->>AP: data delta x N
-      AIAPI-->>AP: data DONE
-      AP->>AIAPI: PUT /:matter_id/conversation 持久化整段
+    AP->>AIAPI: POST /:matter_id/chat SSE
+    AIAPI-->>AP: data delta x N
+    AIAPI-->>AP: data DONE
+    AP->>AIAPI: PUT /:matter_id/conversation 持久化整段
 
-      AP->>AP: 解析 AI 输出中的 draft 标签 取正文文本
+    AP->>AP: 解析 AI 输出中的 draft 标签 取正文文本
 
-      alt 解析到非空 draft 内容
-        AP->>DC: onUseDraftAsReply(draftText)
-        DC->>DC: 回填 form.body = draftText<br/>触发 textarea 受控更新
-        DC->>DAPI: PATCH /api/drafts/:draft_id<br/>body_md = draftText<br/>(若无 draft_id 则 POST /api/drafts 新建)
-        DAPI-->>DC: ok 返回 draft 记录
-        DC-->>U: toast 已回填正文并保存草稿
-      else 未解析到 draft 标签
-        AP-->>U: toast AI 未按格式输出 请重试或手动复制
-      end
+    alt 解析到非空 draft 内容
+      AP->>DC: onUseDraftAsReply(draftText)
+      DC->>DC: 回填 form.body = draftText<br/>触发 textarea 受控更新
+      DC->>DAPI: PATCH /api/drafts/:draft_id<br/>body_md = draftText<br/>(若无 draft_id 则 POST /api/drafts 新建)
+      DAPI-->>DC: ok 返回 draft 记录
+      DC-->>U: toast 已回填正文并保存草稿
+    else 未解析到 draft 标签
+      AP-->>U: toast AI 未按格式输出 请重试或手动复制
     end
   end
 ```
