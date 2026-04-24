@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import logging
 from contextlib import asynccontextmanager
+from functools import partial
 
+import anyio
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import TextContent, Tool
@@ -101,19 +103,36 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
 
     @mcp_server.call_tool()
     async def _call_tool(name: str, arguments: dict) -> list[TextContent]:
+        # MatterApiClient uses SYNC httpx.get/post. If we ran it directly from
+        # this coroutine, the blocking call would freeze the event loop — and
+        # when api_base_url loops back to the SAME uvicorn worker serving /mcp
+        # (e.g. single-worker dev), the inbound /mcp request waits on an
+        # outbound request that cannot be scheduled → deadlock.
+        # Off-load the sync tool body to a worker thread so the event loop
+        # stays responsive and the nested HTTP call can actually be served.
         token = current_user_token()
         client = MatterApiClient(api_base_url, token)
         try:
             if name == "resolve_context":
-                out = tool_resolve_context(arguments, client)
+                out = await anyio.to_thread.run_sync(
+                    partial(tool_resolve_context, arguments, client)
+                )
             elif name == "list_matters":
-                out = tool_list_matters(arguments, client)
+                out = await anyio.to_thread.run_sync(
+                    partial(tool_list_matters, arguments, client)
+                )
             elif name == "get_matter":
-                out = tool_get_matter(arguments, client)
+                out = await anyio.to_thread.run_sync(
+                    partial(tool_get_matter, arguments, client)
+                )
             elif name == "read_files":
-                out = tool_read_files(arguments, client)
+                out = await anyio.to_thread.run_sync(
+                    partial(tool_read_files, arguments, client)
+                )
             elif name == "create_file":
-                out = tool_create_file(arguments, client, web_base_url)
+                out = await anyio.to_thread.run_sync(
+                    partial(tool_create_file, arguments, client, web_base_url)
+                )
             else:
                 raise ToolError(404, f"unknown_tool: {name}")
         except ToolError as e:

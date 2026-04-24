@@ -1,19 +1,19 @@
 """End-to-end integration test for the full MCP flow.
 
-This exercises the complete pipeline against two real uvicorn servers:
+This exercises the complete pipeline against a single real uvicorn server
+hosting both /api/matters (Matter REST API) and /mcp (MCP Streamable HTTP):
 
-    test --[MCP Streamable HTTP]--> /mcp server  (auth + tool dispatch)
-                                         |
-                                         v
-    test <---------/api/matters/--- api server   (Matter REST API)
+    test --[MCP Streamable HTTP]--> /mcp  (auth + tool dispatch)
+                                     |
+                                     v  sync httpx loopback
+    test <---------/api/matters/--- /api   (Matter REST API)
 
-Why two servers, not one? The MCP tool handlers call `httpx.get/post`
-SYNCHRONOUSLY from inside an async `call_tool` coroutine. If that request
-looped back to the same uvicorn worker serving /mcp, the event loop would
-be blocked waiting on itself, and the nested call would deadlock. Splitting
-/api and /mcp onto two separate uvicorn threads (and thus two separate
-event loops) lets the inbound /mcp handler make outbound sync HTTP calls
-to the api server and get a response.
+Why one server now? The MCP tool handlers call `httpx.get/post`
+SYNCHRONOUSLY, but `server._call_tool` off-loads them to a worker thread
+via `anyio.to_thread.run_sync`. The event loop stays free to service the
+nested loopback request, so a single uvicorn worker is enough. (Before
+that fix, a loopback call on the same worker would deadlock — which is why
+this test previously spun up two uvicorn threads.)
 
 This test picks Option C (run uvicorn in a thread, use the MCP SDK client)
 because the tool layer uses module-level `httpx.get` / `httpx.post`. A
@@ -84,34 +84,19 @@ def _pick_free_port() -> int:
         return s.getsockname()[1]
 
 
-def _build_api_only_app(db: Database, users: UserRepo,
+def _build_combined_app(db: Database, users: UserRepo,
                         api_tokens: ApiTokenRepo,
-                        workspace: _WorkspaceStub) -> FastAPI:
-    """FastAPI app with ONLY the matters router — this is the "Matter API"
-    that MCP tool handlers call into via httpx.
+                        workspace: _WorkspaceStub,
+                        base_url: str) -> FastAPI:
+    """FastAPI app that serves BOTH /api/matters and /mcp on the same uvicorn.
 
-    We run this on its own uvicorn (so sync httpx inside tool handlers does
-    NOT block the same event loop that's serving /mcp)."""
+    With the thread-pool off-load in `server._call_tool`, sync httpx calls
+    inside tool handlers no longer block the event loop, so it's safe to
+    loop back to the same worker that answered the inbound /mcp request.
+    """
     sessions = SessionStore(db)
     current_user = make_current_user(sessions, users, api_tokens)
-    app = FastAPI()
-    app.include_router(
-        build_matters_router(
-            workspace, users, ContactRepo(db), NoOpNotifier(),
-            ReadStateRepo(db), FavoriteRepo(db), current_user,
-        )
-    )
-    return app
-
-
-def _build_mcp_only_app(users: UserRepo, api_tokens: ApiTokenRepo,
-                        api_base_url: str) -> FastAPI:
-    """FastAPI app with ONLY the MCP mount, pointing at the separate API.
-
-    Two-server topology avoids a deadlock: the MCP tool handlers call httpx
-    synchronously, and the outgoing request would otherwise block the same
-    asyncio loop that's trying to answer the inbound /mcp call."""
-    mcp_app = build_mcp_app(api_tokens, users, api_base_url, api_base_url)
+    mcp_app = build_mcp_app(api_tokens, users, base_url, base_url)
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -119,6 +104,12 @@ def _build_mcp_only_app(users: UserRepo, api_tokens: ApiTokenRepo,
             yield
 
     app = FastAPI(lifespan=lifespan)
+    app.include_router(
+        build_matters_router(
+            workspace, users, ContactRepo(db), NoOpNotifier(),
+            ReadStateRepo(db), FavoriteRepo(db), current_user,
+        )
+    )
     app.mount("/mcp", mcp_app)
     return app
 
@@ -209,12 +200,13 @@ def _bypass_system_proxy(monkeypatch):
 
 @pytest.fixture
 def live_server(tmp_path) -> Iterator[dict]:
-    """Boot api-only + mcp-only uvicorn servers; mint a PAT and seed a matter.
+    """Boot a single uvicorn server that hosts both /api and /mcp; mint a
+    PAT and seed a matter.
 
     Yields a dict with:
         api_base_url (str): Matter REST API base, e.g. "http://127.0.0.1:12345"
-        mcp_base_url (str): MCP Streamable HTTP base (same shape, different port)
-        token (str): plaintext PAT authorised for both above
+        mcp_base_url (str): MCP Streamable HTTP base (same origin as api)
+        token (str): plaintext PAT authorised for both
         matter_id (str): id of a freshly-seeded matter
         initial_file (str): file path of its first timeline item
     """
@@ -231,28 +223,21 @@ def live_server(tmp_path) -> Iterator[dict]:
 
     workspace = _WorkspaceStub(tmp_path)
 
-    # Run two servers in separate threads:
-    #   api_server — serves /api/matters (Matter REST API)
-    #   mcp_server — serves /mcp (MCP Streamable HTTP)
-    # The MCP server's tool handlers do sync httpx.get against api_base_url,
-    # which MUST resolve to the api_server — if it resolved to the mcp_server,
-    # the blocking call would deadlock that server's own event loop.
-    api_port = _pick_free_port()
-    mcp_port = _pick_free_port()
-    api_base_url = f"http://127.0.0.1:{api_port}"
-    mcp_base_url = f"http://127.0.0.1:{mcp_port}"
+    # One uvicorn worker serves both /api and /mcp. This is the production
+    # single-worker dev topology, which used to deadlock when MCP tool
+    # handlers made sync httpx calls back to /api on the same event loop.
+    # Now that `_call_tool` off-loads to a thread via anyio.to_thread.run_sync,
+    # one server is sufficient — and this test proves it.
+    port = _pick_free_port()
+    base_url = f"http://127.0.0.1:{port}"
 
-    api_app = _build_api_only_app(db, users, api_tokens, workspace)
-    mcp_app = _build_mcp_only_app(users, api_tokens, api_base_url=api_base_url)
-
-    api_server = _ServerInThread(api_app, api_port, probe_path="/api/matters")
-    mcp_server = _ServerInThread(mcp_app, mcp_port, probe_path="/mcp")
-    api_server.start()
-    mcp_server.start()
+    app = _build_combined_app(db, users, api_tokens, workspace, base_url)
+    server = _ServerInThread(app, port, probe_path="/api/matters")
+    server.start()
     try:
         # Seed a matter via the REAL Matter API using the PAT.
         with httpx.Client(
-            base_url=api_base_url,
+            base_url=base_url,
             headers={"Authorization": f"Bearer {plaintext}"},
             timeout=5.0,
             trust_env=False,
@@ -274,15 +259,14 @@ def live_server(tmp_path) -> Iterator[dict]:
             initial_file = data["initial_timeline_item"]["file"]
 
         yield {
-            "api_base_url": api_base_url,
-            "mcp_base_url": mcp_base_url,
+            "api_base_url": base_url,
+            "mcp_base_url": base_url,
             "token": plaintext,
             "matter_id": matter_id,
             "initial_file": initial_file,
         }
     finally:
-        mcp_server.stop()
-        api_server.stop()
+        server.stop()
 
 
 # ---- the actual E2E test ----------------------------------------------------
