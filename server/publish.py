@@ -465,12 +465,19 @@ def publish_matter_append(
         )
         sc = item.get("status_change")
         if sc:
+            # P4.5 G 补遗：matter 的 status_change 天然由一篇具体文件触发
+            # （act / result / insight / think），把这篇文件的 type + summary
+            # + filename 带进卡片，让通知有"为什么变的"信息。
+            item_filename = (item.get("file") or "").rsplit("/", 1)[-1] or None
             notifier.notify_status_change(
                 category=category, slug=matter_id, thread_title=matter_title,
                 from_state=sc.get("from") or "",
                 to_state=sc.get("to") or "",
                 author_name=user.name,
                 reason=None,
+                trigger_type=item.get("type"),
+                trigger_summary=item.get("summary"),
+                trigger_filename=item_filename,
             )
 
     return {

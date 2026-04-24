@@ -56,6 +56,12 @@ class Notifier(Protocol):
         to_state: str,
         author_name: str,
         reason: str | None,
+        # P4.5 G 补遗：matter 路径把"触发文件"三件套透传进来，
+        # 渲染端据此拼出"触发：<type> — <summary>"行、生成 matter URL。
+        # 老 thread 调用方不传，行为不变。
+        trigger_type: str | None = None,
+        trigger_summary: str | None = None,
+        trigger_filename: str | None = None,
     ) -> None: ...
 
     def notify_standalone_mention(
@@ -202,14 +208,27 @@ class FeishuNotifier:
 
     def notify_status_change(
         self, *, category, slug, thread_title, from_state, to_state, author_name, reason,
+        trigger_type: str | None = None,
+        trigger_summary: str | None = None,
+        trigger_filename: str | None = None,
     ) -> None:
+        # matter 路径的触发三件套齐全时，按 matter URL 指回详情页；否则走老
+        # thread URL（同事 P3 已不用，但保留兼容 PAT / VS Code 客户端调用）。
+        is_matter = trigger_filename is not None
+        detail_url = (
+            self._matter_url(slug)
+            if is_matter
+            else self._thread_url(category, slug)
+        )
         card = build_status_change_card(
             thread_title=thread_title,
             author_name=author_name,
             from_state=from_state,
             to_state=to_state,
             reason=reason,
-            thread_url=self._thread_url(category, slug),
+            thread_url=detail_url,
+            trigger_type=trigger_type,
+            trigger_summary=trigger_summary,
         )
         self._broadcast(card, event=f"status_change slug={slug} {from_state}->{to_state}")
 
@@ -217,6 +236,14 @@ class FeishuNotifier:
         from urllib.parse import urlencode
 
         next_path = f"/t/{category}/{slug}"
+        return f"{self._web_base_url}/auth/entry?{urlencode({'next': next_path})}"
+
+    def _matter_url(self, matter_id: str) -> str:
+        """P4.5 G 补遗：前端 matter 详情页路由为 /m/:matter_id，
+        通知卡片的跳转按钮在 matter 场景下用这个 URL。"""
+        from urllib.parse import urlencode
+
+        next_path = f"/m/{matter_id}"
         return f"{self._web_base_url}/auth/entry?{urlencode({'next': next_path})}"
 
     def _post_url(self, category: str, slug: str, filename: str) -> str:
@@ -384,19 +411,29 @@ def build_reply_card(
 
 
 _STATUS_LABEL = {
-    "open": "讨论中", "concluded": "已达成结论", "produced": "已转为项目",
-    "closed": "已关闭", "pending": "暂时搁置",
+    "planning": "计划中",
+    "executing": "执行中",
+    "paused": "已暂停",
+    "finished": "已完成",
+    "cancelled": "已取消",
+    "reviewed": "已复盘",
 }
 
 
 def build_status_change_card(
     *, thread_title, author_name, from_state, to_state, reason, thread_url,
+    trigger_type: str | None = None,
+    trigger_summary: str | None = None,
 ) -> dict:
     md_parts = [
         f"**操作**：{author_name}",
         f"**状态**：{_STATUS_LABEL.get(from_state, from_state)} → "
         f"{_STATUS_LABEL.get(to_state, to_state)}",
     ]
+    # matter 场景：触发文件 type + summary 给出"为什么"——比老 thread
+    # 的 reason 字段密度更高，也更忠于 matter "文件承载事实" 的设计。
+    if trigger_type and trigger_summary:
+        md_parts.append(f"**触发**：{trigger_type} — {trigger_summary}")
     if reason:
         md_parts.append(f"**原因**：{reason}")
     return _card_shell(

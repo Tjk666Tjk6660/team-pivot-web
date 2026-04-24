@@ -554,6 +554,13 @@ def test_notifier_is_called_on_append_and_status_change(db, users, tmp_path):
     assert "status_change" in topics, topics
     assert "standalone_mention" in topics, topics
 
+    # P4.5 G 补遗：matter 路径的 status_change 必须带"触发三件套"
+    status_kwargs = next(kw for t, kw in calls if t == "status_change")
+    assert status_kwargs.get("trigger_type") == "act"
+    assert status_kwargs.get("trigger_summary") == "go"
+    tf = status_kwargs.get("trigger_filename") or ""
+    assert tf.endswith(".md") and "act" in tf, f"unexpected trigger_filename: {tf!r}"
+
 
 def test_full_lifecycle_planning_to_reviewed(client):
     r = client.post("/api/matters", json={

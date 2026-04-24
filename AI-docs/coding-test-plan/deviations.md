@@ -48,3 +48,12 @@
   - 实际实现：matter 迁移后，该接口**只服务 matter 发布路径**。`matter_payload` 为空直接 `400 matter_payload_required`，不再回落到 `publish_proposal / publish_reply`；`matter_payload` 非空按 `type=proposal|reply` 分发到 `publish_matter_create / publish_matter_append`
   - 原因：index 数据迁移后，老 `{slug}-discuss.index.yaml` 已不存在，继续走老分发会写半路废弃格式，造成新老割裂。历史 legacy 草稿由用户 PATCH 补全 `matter_payload` 后再重试
   - 兼容面：`POST /api/threads` / `POST /api/threads/{c}/{s}/posts` 直发接口不动，旧调用方仍可绕过草稿发老 thread（P5 再清理）；`pivot-interface.md` 已补错误码与新响应 shape 说明
+
+- **P4.5 G 补遗：`_STATUS_LABEL` 替换为 matter 6 态 + `notify_status_change` 扩触发文件字段**
+  - 原文档要求：P4.5 G 项目标是"复用现有 4 个 notifier 方法，补齐 matter 路径调用点"，当时没明确触发文件信息是否进卡片；`_STATUS_LABEL` 里还留着老 thread 5 态
+  - 实际实现：
+    1. `server/notify.py::_STATUS_LABEL` **替换**为 matter 6 态映射（`planning / executing / paused / finished / cancelled / reviewed` → 中文）。老 thread 5 态通过 `.get(k, k)` fallback 到原英文字符串（上线后老 thread 路径不会再调用，fallback 只是防御）
+    2. `Notifier.notify_status_change` 协议扩可选参数 `trigger_type / trigger_summary / trigger_filename`；`FeishuNotifier` 在 matter 场景（`trigger_filename` 非空）下：正文多一行 `**触发**：<type> — <summary>`，按钮链接切到 `_matter_url(matter_id)` 走 `/m/<matter_id>`；老 thread 路径不传新参数，行为不变
+    3. `publish.py::publish_matter_append` 在 status_change 触发时把 `item.type / item.summary / item.file` 透传
+  - 原因：matter 的状态迁移本就由特定文件触发（`pivot-product.md §三 / §九`），触发文件的 type + summary 比老 thread 的 `reason` 字段密度高；老 `_STATUS_LABEL` 只覆盖 5 老态会让卡片显示半英文
+  - 前端路由：P3 已用 `/m/:matter_id`（`web/src/App.tsx:33`），原 `_thread_url` 的 `/t/...` 路径在前端是 catch-all 归一到首页，matter 通知按钮必须走新 URL
