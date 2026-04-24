@@ -121,6 +121,10 @@ class CaseRunner:
             resp = self.client.get(step.path)
         elif method == "POST":
             resp = self.client.post(step.path, json=step.body or {})
+        elif method == "PATCH":
+            resp = self.client.patch(step.path, json=step.body or {})
+        elif method == "DELETE":
+            resp = self.client.delete(step.path)
         else:
             raise ValueError(method)
         return self._record(step, resp)
@@ -792,6 +796,109 @@ def case_e3_categories_aggregation(client, workspace_path) -> list[str]:
     return r.failures
 
 
+def case_f1_matter_via_drafts_publish(client, workspace_path) -> list[str]:
+    """P4.6 · matter 走 draft autosave + publish 规范路径。
+
+    对齐 main 分支原有流程：
+      POST /api/drafts  (带 matter_payload) →
+      PATCH /api/drafts/{id}  (autosave 模拟) →
+      POST /api/drafts/{id}/publish  →
+      GET /api/matters/{id} 验证落盘
+    追加一个文件同样走 type=reply + matter_payload。
+    """
+    r = CaseRunner("F1-matter-via-drafts-publish", client)
+    title = _title("IntegTest-F1-ViaDrafts")
+
+    # 1. 创建 matter 首篇草稿
+    create_resp = r.do(Step(
+        "create-draft-proposal", "POST", "/api/drafts",
+        body={
+            "type": "proposal",
+            "title": title,
+            "category": "IntegTest",
+            "body_md": "# Summary\n\n首篇（via drafts）\n",
+            "matter_payload": {
+                "doc_type": "think",
+                "summary": "首篇 via drafts",
+                "owner": "dengke",
+            },
+        },
+    ))
+    draft_id = create_resp["id"]
+    r.expect(create_resp.get("matter_payload", {}).get("doc_type") == "think",
+             "draft response echoes matter_payload")
+
+    # 2. autosave 模拟：PATCH 一次
+    r.do(Step(
+        "autosave-patch", "PATCH", f"/api/drafts/{draft_id}",
+        body={
+            "body_md": "# Summary\n\n首篇（via drafts, autosave 后）\n",
+            "matter_payload": {
+                "doc_type": "think",
+                "summary": "首篇 via drafts（更新）",
+                "owner": "dengke",
+            },
+        },
+    ))
+
+    # 3. 发布
+    publish_resp = r.do(Step(
+        "publish-draft", "POST", f"/api/drafts/{draft_id}/publish",
+    ))
+    published = publish_resp.get("published") or {}
+    matter_id = published.get("matter_id")
+    r.expect(bool(matter_id), f"publish response must include matter_id; got {published!r}")
+    r.expect("slug" not in published or published.get("slug") == matter_id,
+             "when matter path is taken, response shape is matter (no thread slug)")
+
+    # 4. 草稿已被清掉
+    detail_after = r.do(Step(
+        "get-draft-after-publish", "GET", f"/api/drafts/{draft_id}",
+        expect_status=404,
+    ))
+
+    # 5. GET /api/matters/{id} 读得到
+    if matter_id:
+        detail = r.do(Step("verify-matter-read", "GET", _url_matter(matter_id)))
+        r.expect(detail["matter"]["current_status"] == "planning",
+                 "new matter should be in planning")
+        r.expect(len(detail["timeline"]) == 1,
+                 "timeline should have the single initial item")
+        r.expect(detail["timeline"][0]["type"] == "think", "initial type=think")
+        r.expect(detail["timeline"][0]["summary"] == "首篇 via drafts（更新）",
+                 "summary reflects the autosaved payload")
+
+        # 6. 追加一个 act，同样走 drafts publish 路径
+        append_create = r.do(Step(
+            "create-draft-reply", "POST", "/api/drafts",
+            body={
+                "type": "reply",
+                "thread_key": matter_id,
+                "body_md": "# What To Do\n\nstart work\n",
+                "matter_payload": {
+                    "doc_type": "act",
+                    "summary": "开始行动",
+                    "owner": "dengke",
+                    "status_change": {"from": "planning", "to": "executing"},
+                },
+            },
+        ))
+        append_draft_id = append_create["id"]
+        r.do(Step("publish-append-draft", "POST",
+                  f"/api/drafts/{append_draft_id}/publish"))
+
+        detail2 = r.do(Step("verify-matter-append", "GET", _url_matter(matter_id)))
+        r.expect(detail2["matter"]["current_status"] == "executing",
+                 "act triggered planning→executing")
+        r.expect(len(detail2["timeline"]) == 2, "timeline has 2 items after append")
+        r.expect(detail2["timeline"][1]["type"] == "act",
+                 "second item should be act")
+
+        r.save_final_index(matter_id, workspace_path)
+
+    return r.failures
+
+
 def case_c1_comment_with_mention(client, workspace_path) -> list[str]:
     """Exercise /comments endpoint + mention, using TEST_MY_OPENID as the @target."""
     r = CaseRunner("C1-comment-with-mention", client)
@@ -893,6 +1000,7 @@ def main() -> int:
         case_e1_favorite_and_read_cycle,
         case_e2_name_resolution,
         case_e3_categories_aggregation,
+        case_f1_matter_via_drafts_publish,
     ]
 
     summary: list[str] = []

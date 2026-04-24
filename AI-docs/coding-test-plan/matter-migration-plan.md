@@ -206,7 +206,7 @@
 - 通知方法：**不新增，全部复用现有 4 个**（`notify_new_thread / notify_new_reply / notify_status_change / notify_standalone_mention`）；卡片文案可按 matter 语境微调但方法签名不动
 - SQLite 表（`favorites / read_state / ai_conversations`）：**不动 schema**；thread_key 列存 `category/slug`（matter_id 就是 slug，键自然唯一）
 - 名字解析字段命名：沿用老 thread 的 `<field>_display` / `<field>_avatar_url` 并列风格
-- **matter 草稿**：drafts 表**完全不改**。草稿只承接 `type=proposal|reply + body_md` 的通用部分；matter 专属结构化字段（`doc_type / summary / owner / quote / refer / verifications / outcome / status_change`）**不 autosave**，由前端在用户点"发布"那一刻从表单取出，组装完整 body 后**直接调** `POST /api/matters/` 或 `POST /api/matters/{matter_id}/files`，然后 `DELETE /api/drafts/{id}` 清草稿。**不走** `POST /api/drafts/{id}/publish`（那条路径继续服务老 thread 草稿）。显式接受 trade-off：matter 表单字段刷新 / 换端会丢，如需兜底由前端用 localStorage 处理，属纯前端内部事。
+- **matter 草稿**（P4.6 最终口径）：drafts 表新增一列 `matter_payload_json TEXT`（幂等 `ALTER TABLE ADD COLUMN`，不 rebuild），用于承载 matter 专属结构化字段（`doc_type / summary / owner / quote / refer / verifications / outcome / status_change`）；`type` 列保持 `proposal | reply` 不动，matter 首篇 = `proposal`、matter 追加 = `reply`。前端**复用** main 分支原有规范：`useDraftAutosave` + `PATCH /api/drafts/{id}` autosave → `saveNow()` → `publishDraft(id)` 调 `POST /api/drafts/{id}/publish`。`publish_draft` 只认 `matter_payload` 非空的草稿——缺了直接 `400 matter_payload_required`，历史 legacy 草稿由用户 `PATCH` 补全后重试。老 `publish_proposal / publish_reply` 分发分支已从 `publish_draft` 移除；想走老 thread 发布的仍可用 `POST /api/threads` 直发（不经草稿，P5 清理范围）。
 
 ### 从 P4.5 移除、后续独立立项
 
@@ -219,6 +219,96 @@
 - 集成测试真后端全过
 - 旧 `/api/threads/*` 全部接口依然可用、行为不变
 - `uv run pytest -q` 全绿
+
+---
+
+## P4.6 · matter 草稿接入 autosave + publishDraft 规范（已实施）
+
+**目标**：把 matter 发布拉回 main 分支原有的 `useDraftAutosave → publishDraft` 规范路径，复用 `/api/drafts/*` 这套既有通道，不重复造轮子。drafts 表按最小侵入扩一列承载 matter 结构化字段。
+
+### 实施完成的改动
+
+**后端（本人）**
+
+- `server/db.py::_migrate`：幂等新增列
+  ```python
+  if "matter_payload_json" not in cols:
+      conn.execute("ALTER TABLE drafts ADD COLUMN matter_payload_json TEXT")
+  ```
+  **单条 ALTER，无表 rebuild**。老 drafts 行该列保持 `NULL`。`type` 的 `CHECK(proposal|reply)` 不动。
+- `server/drafts.py`：`Draft` dataclass 增加 `matter_payload_json: str | None`；`DraftRepo.create / update / _row` SQL 读写新列。
+- `server/api/drafts.py`：
+  - `CreateDraftBody` / `UpdateDraftBody` 新增可选字段 `matter_payload: dict | None`
+  - `_to_dict` 输出 `matter_payload`
+  - **`publish_draft` 契约收紧**：
+    - `matter_payload_json IS NULL` → `400 {code: "matter_payload_required"}`（**不再** fallback 到 `publish_proposal / publish_reply`）
+    - `matter_payload` 非空 + `type=proposal` → `publish_matter_create`（matter 首篇；需 category + title）
+    - `matter_payload` 非空 + `type=reply` → `publish_matter_append`（matter 追加；`thread_key` 最后一段作 `matter_id`）
+  - 新增 `_publish_matter_from_draft` 辅助函数，包含 validator preflight（matter_payload 通过校验才进写路径）
+
+**测试（单元 + 集成）**
+
+- `server/tests/test_drafts_api.py`：重写 `test_publish_without_matter_payload_rejected`；新增 `test_matter_draft_crud_roundtrip / test_matter_draft_publish_creates_matter / test_matter_draft_publish_appends_file / test_matter_draft_publish_requires_doc_type / test_matter_draft_publish_requires_summary / test_matter_draft_publish_validator_rejects_bad_type / test_legacy_draft_rejected_without_matter_payload / test_legacy_draft_upgradable_via_patch`
+- `server/tests/run_matter_integration.py`：新增 `case_f1_matter_via_drafts_publish`——真后端完整走 `POST /api/drafts → PATCH → POST /api/drafts/{id}/publish → GET /api/matters/{id}`，并校验追加路径
+
+### 前端接口变化清单（P3 同事对接）
+
+对照 `main` 分支 `NewThread.tsx` / `ThreadDetailPane.tsx` 的规范流程，matter UI 应当对齐。下面是后端已经落地的契约增量：
+
+| 接口 | 变化 | 前端对应改动 |
+|---|---|---|
+| `POST /api/drafts` | 请求体可选新增 `matter_payload: object` | `createDraft()` wrapper 支持传 `matter_payload` |
+| `PATCH /api/drafts/{id}` | 请求体可选新增 `matter_payload: object` | `updateDraft()` wrapper 支持传 `matter_payload`；`useDraftAutosave` 的 `payload()` 回调返回值里带上它 |
+| `GET /api/drafts` / `GET /api/drafts/{id}` | 响应体新增字段 `matter_payload: object \| null`（老 thread 草稿恒为 null） | `Draft` 类型补字段 |
+| `POST /api/drafts/{id}/publish` | **契约收紧**：`matter_payload` 为空直接 `400 {detail: {code: "matter_payload_required", message: ...}}`；非空则分发到 matter 路径 | 前端发起发布前确保 `saveNow()` 已落 matter_payload；收到 `matter_payload_required` 时提示用户"补全 matter 字段" |
+| `POST /api/drafts/{id}/publish` 响应体 | matter 分支下返回 `{published: {matter_id, category, slug, filename, file, matter, item}, draft_id}`；老 thread 分支返回 `{published: {category, slug, filename}, draft_id}`。**目前 `publish_draft` 只会走 matter 分支，老响应形态仅出现在 `POST /api/threads` 直发上** | 跳转逻辑改用 `r.published.matter_id` 进 matter 详情页路径 |
+
+**`matter_payload` 字段形态**（前端组装，JSON）：
+
+```json
+{
+  "doc_type": "think|act|verify|result|insight",
+  "summary": "...",
+  "owner": "...",
+  "quote": "discussions/<cat>/<slug>/<filename>",
+  "refer": ["...", "..."],
+  "verifications": [
+    {"target": "...", "judgement": "passed|failed|cancelled", "comment": "..."}
+  ],
+  "outcome": "finished|cancelled",
+  "status_change": {"from": "executing", "to": "finished"}
+}
+```
+
+- `doc_type + summary` 必填；其余按 type 语义选填
+- `verifications` 仅 verify 类型需要
+- `outcome + status_change` 仅 result 类型的完整发布需要
+- `quote / refer` 任意 type 都可选
+- `owner` 不传默认 = creator（当前用户 pinyin）
+
+### 前端最小改造点（P3 同事负责）
+
+`web/src/api.ts`：
+- `createDraft`、`updateDraft` 的 body 类型加可选 `matter_payload?: Record<string, unknown>`
+- `Draft` 类型加 `matter_payload: Record<string, unknown> | null`
+- `publishDraft` 响应类型：matter 场景下包含 `matter_id / file / matter / item`
+
+`web/src/hooks/useDraftAutosave.ts`：
+- `payload()` 回调签名可返回包含 `matter_payload` 字段的对象；现有 `updateDraft` 参数接收即可
+
+`web/src/pages/NewMatter.tsx` 按 `main:NewThread.tsx:80-130` 的模板改写：
+- 表单状态 → `useDraftAutosave({ type: "proposal", payload: () => ({ title, category, body_md, matter_payload: { doc_type, summary, owner } }) })`
+- `submit()` 用 `await saveNow()` → `await publishDraft(id)` → `navigate(/m/${r.published.matter_id})`
+
+`web/src/pages/MatterDetailPane.tsx` 按 `main:ThreadDetailPane.tsx:1168-1190` 模板：
+- 追加文件表单 → `useDraftAutosave({ type: "reply", payload: () => ({ thread_key: matter_id, body_md, matter_payload: { doc_type, summary, quote, refer, verifications, outcome, status_change } }) })`
+
+### 验收
+
+- `uv run pytest -q` 329 passed + 1 Windows parked
+- 集成真后端：18 case + MD index_state sweep 全过（含 `case_f1_matter_via_drafts_publish`）
+- 老 thread 直发路径 `POST /api/threads` 不动，现有回归测试绿
+- `POST /api/drafts/{id}/publish` 在无 `matter_payload` 时返回 `400 matter_payload_required`（前端按此提示用户补全）
 
 ---
 

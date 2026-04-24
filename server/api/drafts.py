@@ -11,8 +11,15 @@ import json as _json
 from server.auth.deps import require_profile
 from server.contacts import ContactRepo
 from server.drafts import Draft, DraftRepo
+from server.matter_validator import validate_append
 from server.notify import Notifier
-from server.publish import PublishError, publish_proposal, publish_reply
+from server.publish import (
+    MatterAlreadyExistsError,
+    MatterNotFoundError,
+    PublishError,
+    publish_matter_append,
+    publish_matter_create,
+)
 from server.users import User
 from server.workspace import Workspace
 
@@ -38,6 +45,9 @@ class CreateDraftBody(BaseModel):
     mentions: DraftMentions | None = None
     reply_to: str | None = Field(default=None, max_length=200)
     references: list[str] = Field(default_factory=list, max_length=10)
+    # P4.6: matter 草稿在 type=proposal|reply 的基础上，用这一块 payload 承载
+    # matter 专属结构化字段。payload 为 None 即回落到老 thread 路径。
+    matter_payload: dict | None = None
 
 
 class UpdateDraftBody(BaseModel):
@@ -53,6 +63,7 @@ class UpdateDraftBody(BaseModel):
     mentions: DraftMentions | None = None
     reply_to: str | None = Field(default=None, max_length=200)
     references: list[str] | None = Field(default=None, max_length=10)
+    matter_payload: dict | None = None
 
 
 def build_router(
@@ -79,7 +90,10 @@ def build_router(
     @router.post("")
     def create_draft(body: CreateDraftBody, user: User = Depends(current_user)):
         require_profile(user)
-        log.debug("draft create user=%s type=%s", user.open_id, body.type)
+        log.debug(
+            "draft create user=%s type=%s matter=%s",
+            user.open_id, body.type, body.matter_payload is not None,
+        )
         d = drafts.create(
             user_open_id=user.open_id,
             type_=body.type,
@@ -90,6 +104,9 @@ def build_router(
             mentions_json=_json.dumps(body.mentions.model_dump()) if body.mentions else None,
             reply_to=body.reply_to,
             references_json=_json.dumps(body.references),
+            matter_payload_json=(
+                _json.dumps(body.matter_payload) if body.matter_payload is not None else None
+            ),
         )
         return _to_dict(d)
 
@@ -116,6 +133,9 @@ def build_router(
             mentions_json=_json.dumps(body.mentions.model_dump()) if body.mentions else None,
             reply_to=body.reply_to,
             references_json=_json.dumps(body.references) if body.references is not None else None,
+            matter_payload_json=(
+                _json.dumps(body.matter_payload) if body.matter_payload is not None else None
+            ),
         )
         assert d is not None
         return _to_dict(d)
@@ -131,43 +151,33 @@ def build_router(
     def publish_draft(draft_id: str, user: User = Depends(current_user)):
         require_profile(user)
         d = _require_owner(drafts.get(draft_id), user)
-        log.info("draft publish start id=%s user=%s type=%s", draft_id, user.open_id, d.type)
+        matter_payload = _parse_matter_payload(d.matter_payload_json)
+
+        # P4.6: matter 迁移完成后，`/api/drafts/{id}/publish` 是 matter 发布的唯一
+        # 草稿路径，不再回落到老 `publish_proposal / publish_reply`——那条路径
+        # 数据层面已随 index 迁移废弃，历史草稿必须补全 matter 字段后才能发布。
+        # （想直发老 thread 的调用方仍可走 `POST /api/threads`，那是 P5 清理范围。）
+        if matter_payload is None:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "matter_payload_required",
+                    "message": (
+                        "草稿缺少 matter 字段，请补全 matter_payload"
+                        "（doc_type / summary / ...）后再发布"
+                    ),
+                },
+            )
+
+        log.info(
+            "draft publish start id=%s user=%s type=%s",
+            draft_id, user.open_id, d.type,
+        )
         try:
-            if d.type == "proposal":
-                if not d.title or not d.category:
-                    raise HTTPException(
-                        status_code=400, detail="proposal needs title and category"
-                    )
-                if not d.body_md.strip():
-                    raise HTTPException(status_code=400, detail="body is empty")
-                m = _parse_mentions(d.mentions_json)
-                result = publish_proposal(
-                    workspace, user,
-                    category=d.category, title=d.title, body=d.body_md,
-                    mention_open_ids=(m and m.get("open_ids")) or None,
-                    mention_comments=(m and m.get("comments")) or None,
-                    contacts=contacts,
-                    notifier=notifier,
-                )
-            else:
-                if not d.thread_key or "/" not in d.thread_key:
-                    raise HTTPException(
-                        status_code=400, detail="reply needs thread_key as '<category>/<slug>'"
-                    )
-                if not d.body_md.strip():
-                    raise HTTPException(status_code=400, detail="body is empty")
-                cat, slug = d.thread_key.split("/", 1)
-                m = _parse_mentions(d.mentions_json)
-                refs = _parse_references(d.references_json)
-                result = publish_reply(
-                    workspace, user, category=cat, slug=slug, body=d.body_md,
-                    mention_open_ids=(m and m.get("open_ids")) or None,
-                    mention_comments=(m and m.get("comments")) or None,
-                    contacts=contacts,
-                    notifier=notifier,
-                    reply_to=d.reply_to,
-                    references=refs,
-                )
+            result = _publish_matter_from_draft(
+                workspace, user, d, matter_payload,
+                contacts=contacts, notifier=notifier,
+            )
         except PublishError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -192,6 +202,7 @@ def _to_dict(d: Draft) -> dict:
         "mentions": _parse_mentions(d.mentions_json),
         "reply_to": d.reply_to,
         "references": _parse_references(d.references_json),
+        "matter_payload": _parse_matter_payload(d.matter_payload_json),
         "created_at": d.created_at,
         "updated_at": d.updated_at,
     }
@@ -219,3 +230,120 @@ def _parse_references(s: str | None) -> list[str]:
     except Exception:
         pass
     return []
+
+
+def _parse_matter_payload(s: str | None) -> dict | None:
+    if not s:
+        return None
+    try:
+        data = _json.loads(s)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return None
+
+
+def _publish_matter_from_draft(
+    workspace: Workspace,
+    user: User,
+    d: Draft,
+    payload: dict,
+    *,
+    contacts: ContactRepo,
+    notifier: Notifier,
+) -> dict:
+    """P4.6: matter 草稿分支。
+
+    draft.type 沿用 proposal|reply 语义：
+      - proposal: matter 首篇 → publish_matter_create（需 category + title + initial_file）
+      - reply: matter 追加 → publish_matter_append（需 thread_key=matter_id 或 category/matter_id）
+
+    matter item 的结构化字段从 payload 里取：doc_type / summary / owner / quote /
+    refer / verifications / outcome / status_change。
+    """
+    doc_type = str(payload.get("doc_type") or "").strip()
+    summary = str(payload.get("summary") or "").strip()
+    if not doc_type:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "matter_doc_type_required"},
+        )
+    if not summary:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "matter_summary_required"},
+        )
+
+    common_fields: dict = {
+        "type": doc_type,
+        "summary": summary,
+        "body": d.body_md,
+    }
+    if payload.get("owner"):
+        common_fields["owner"] = payload["owner"]
+    for key in ("quote", "refer", "verifications", "outcome", "status_change"):
+        if payload.get(key) is not None:
+            common_fields[key] = payload[key]
+
+    if d.type == "proposal":
+        if not d.category:
+            raise HTTPException(
+                status_code=400, detail="matter proposal draft needs category"
+            )
+        if not d.title:
+            raise HTTPException(
+                status_code=400, detail="matter proposal draft needs title"
+            )
+        # Pre-flight validator against a fresh planning matter so we get a
+        # precise 422 rather than a generic ValidationError from the writer.
+        fake_index = {
+            "matter": {"current_status": "planning"},
+            "timeline": [],
+        }
+        r = validate_append(fake_index, common_fields)
+        if not r.ok:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": r.code, "field": r.field, "message": r.message},
+            )
+        try:
+            result = publish_matter_create(
+                workspace, user,
+                category=d.category,
+                title=d.title,
+                initial_item=common_fields,
+                contacts=contacts,
+                notifier=notifier,
+            )
+        except MatterAlreadyExistsError as e:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "matter_already_exists", "message": str(e)},
+            ) from e
+        return result
+
+    # d.type == "reply": matter 追加
+    if not d.thread_key:
+        raise HTTPException(
+            status_code=400, detail="matter reply draft needs thread_key"
+        )
+    # thread_key 可以是 "matter_id" 或 "category/matter_id"；取最后一段作 matter_id。
+    matter_id = d.thread_key.split("/")[-1]
+    if not matter_id:
+        raise HTTPException(
+            status_code=400, detail="matter reply draft has empty matter_id"
+        )
+    try:
+        result = publish_matter_append(
+            workspace, user,
+            matter_id=matter_id,
+            item_body=common_fields,
+            contacts=contacts,
+            notifier=notifier,
+        )
+    except MatterNotFoundError as e:
+        raise HTTPException(
+            status_code=404, detail={"code": "matter_not_found", "message": str(e)}
+        ) from e
+    return result

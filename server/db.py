@@ -92,6 +92,11 @@ def _migrate(conn) -> None:
         conn.execute(
             "ALTER TABLE drafts ADD COLUMN references_json TEXT NOT NULL DEFAULT '[]'"
         )
+    if "matter_payload_json" not in cols:
+        # P4.6: matter 草稿复用 drafts 表，type 仍为 proposal|reply；
+        # matter 专属结构化字段（doc_type/summary/owner/quote/refer/
+        # verifications/outcome/status_change）统一落在这一列里。
+        conn.execute("ALTER TABLE drafts ADD COLUMN matter_payload_json TEXT")
     cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
     if "user_access_token" not in cols:
         conn.execute("ALTER TABLE sessions ADD COLUMN user_access_token TEXT")

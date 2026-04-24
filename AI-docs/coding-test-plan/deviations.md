@@ -36,3 +36,15 @@
   - 原文档要求：`pivot-interface.md` 未列出独立评论端点
   - 实际实现：新增 `POST /api/matters/{matter_id}/comments`，请求体 `{target_file, body, mentions?}`，挂到 timeline item 的 `comments[]`；不刷新 `matter.updated_at`；target 不存在返回 `404 comment_target_not_found`
   - 原因：§八 示例里 `comments[]` 附着在每个 timeline item 上，需要一个独立入口追加；不新增端点就要把评论塞进 `/files` 语义，反而更混乱
+
+- **P4.6 drafts 表新增 `matter_payload_json` 列**
+  - 原文档要求：`pivot-interface.md §drafts` 请求体只列 `type / title / category / body_md / thread_key / mentions / reply_to / references`；`server/db.py SCHEMA` 里 drafts 表不含 matter 专属字段
+  - 实际实现：`server/db.py::_migrate` 加一条幂等 `ALTER TABLE drafts ADD COLUMN matter_payload_json TEXT`；`Draft` / `DraftRepo` / `CreateDraftBody` / `UpdateDraftBody` / `_to_dict` 同步贯通；`pivot-interface.md` 已补接口字段
+  - 原因：matter UI 要复用 main 分支的 autosave + publishDraft 规范，而 matter 结构化字段（`doc_type / summary / owner / quote / refer / verifications / outcome / status_change`）无处安放。选择单列 JSON：`type` 枚举不动（CHECK 不 drop、表不 rebuild、老数据零迁移）；矩阵查询路径不碰 JSON 内字段，索引效率无影响
+  - 口径：`type` 仍 `proposal | reply`（语义：首篇 / 追加），matter 与老 thread 草稿共用 drafts 表，靠 `matter_payload_json` 是否非空判定
+
+- **P4.6 `POST /api/drafts/{id}/publish` 契约收紧**
+  - 原文档要求：`pivot-interface.md §POST /api/drafts/{id}/publish` 只说"发布草稿为正式 proposal 或 reply"
+  - 实际实现：matter 迁移后，该接口**只服务 matter 发布路径**。`matter_payload` 为空直接 `400 matter_payload_required`，不再回落到 `publish_proposal / publish_reply`；`matter_payload` 非空按 `type=proposal|reply` 分发到 `publish_matter_create / publish_matter_append`
+  - 原因：index 数据迁移后，老 `{slug}-discuss.index.yaml` 已不存在，继续走老分发会写半路废弃格式，造成新老割裂。历史 legacy 草稿由用户 PATCH 补全 `matter_payload` 后再重试
+  - 兼容面：`POST /api/threads` / `POST /api/threads/{c}/{s}/posts` 直发接口不动，旧调用方仍可绕过草稿发老 thread（P5 再清理）；`pivot-interface.md` 已补错误码与新响应 shape 说明
