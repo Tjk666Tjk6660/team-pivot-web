@@ -1,5 +1,32 @@
 # 五类卡片创建/发布交互时序合集
 
+## 速览：文档类型 × matter 状态
+
+**5 类文档**：
+
+| type | 作用 |
+|---|---|
+| `think`   | 分析、澄清、方案推演、暂停说明 |
+| `act`     | 行动方案、执行记录 |
+| `verify`  | 对一组 act 的验证判断 |
+| `result`  | matter 最终正式结果（finished / cancelled） |
+| `insight` | 复盘、经验、可复用认知 |
+
+**6 个 matter 状态 + 各自允许的文档类型**：
+
+| current_status | 含义 | 允许新增 |
+|---|---|---|
+| `planning`  | 计划中 | think / act / verify |
+| `executing` | 执行中 | think / act / verify (+ result) |
+| `paused`    | 暂挂 | **只允许 think** |
+| `finished`  | 完成 | 只允许 insight |
+| `cancelled` | 取消 | 只允许 insight |
+| `reviewed`  | 复盘收口 | — 终态，不再新增 |
+
+主链：`planning → executing → finished | cancelled → reviewed`；`think` 是 `paused` 进出的唯一通道。
+
+---
+
 ## ① THINK 卡片
 
 ```mermaid
