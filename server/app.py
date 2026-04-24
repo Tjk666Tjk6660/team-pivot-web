@@ -28,6 +28,7 @@ from server.feishu_contacts import FeishuContactSyncer
 from server.feishu_token import FeishuTokenManager
 from server.favorites import FavoriteRepo
 from server.logging_setup import configure_logging
+from server.mcp.server import build_mcp_app
 from server.notify import FeishuNotifier, NoOpNotifier, Notifier
 from server.ai_conversations import AIConversationRepo
 from server.read_state import ReadStateRepo
@@ -134,6 +135,10 @@ def create_app() -> FastAPI:
     ))
     app.include_router(build_app_home_router(workspace, current_user_dep))
     app.include_router(build_tokens_router(api_tokens, current_user_cookie_dep))
+
+    # MCP Streamable HTTP endpoint for external AI clients. PAT auth lives in
+    # the sub-app (added in a later task); this file only wires the mount.
+    app.mount("/mcp", build_mcp_app())
     return app
 
 
