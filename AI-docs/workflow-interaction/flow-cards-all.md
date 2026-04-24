@@ -43,6 +43,15 @@ sequenceDiagram
   DC->>API: POST /api/matters/:id/files<br/>type=think + AI summary + body + quote + refer + status_change
 ```
 
+> [!IMPORTANT]
+> **⚠️ 特别提醒 · 触发状态变更的参数：状态迁移单选组**
+> - `不切换状态` (默认) → matter 状态不变
+> - `同时暂停` → planning / executing → **paused**
+> - `恢复为 planning` → paused → **planning**
+> - `恢复为 executing` → paused → **executing**
+>
+> （think 是 paused 进出的唯一通道）
+
 ---
 
 ## ② ACT 卡片
@@ -79,6 +88,11 @@ sequenceDiagram
   Note over DC,API: 走公共发布流程（见末尾）
   DC->>API: POST /api/matters/:id/files<br/>type=act + AI summary + body + owner + quote + refer + status_change
 ```
+
+> [!IMPORTANT]
+> **⚠️ 特别提醒 · 触发状态变更的参数：复选 `正式进入执行`**（仅 planning 状态时显示）
+> - 勾选 → planning → **executing**
+> - 不勾 → matter 状态不变
 
 ---
 
@@ -122,6 +136,9 @@ sequenceDiagram
   DC->>API: POST /api/matters/:id/files<br/>type=verify + AI summary + body + owner + quote + verifications
 ```
 
+> [!NOTE]
+> **状态变更说明**：verify 不携带 status_change，**任何参数都不会触发状态变更**，matter 状态保持 executing。
+
 ---
 
 ## ④ RESULT 卡片（页面级）
@@ -153,6 +170,13 @@ sequenceDiagram
   DC->>API: POST /api/matters/:id/result<br/>outcome + AI summary + body<br/>(后端隐式追加 status_change)
 ```
 
+> [!WARNING]
+> **⚠️ 特别提醒 · 触发状态变更的参数：`outcome` 单选**（必填 · **发布即必然触发**）
+> - `finished` → executing → **finished**
+> - `cancelled` → executing → **cancelled**
+>
+> status_change 由后端 `append_result` 隐式追加，前端不组装；result 是 matter 收口动作，落盘后不可撤回。
+
 ---
 
 ## ⑤ INSIGHT 卡片（页面级）
@@ -183,6 +207,11 @@ sequenceDiagram
   Note over DC,API: 走公共发布流程（见末尾）<br/>reply_target = 空 (无 quote)<br/>若勾 reviewed 额外校验状态 ∈ finished / cancelled
   DC->>API: POST /api/matters/:id/files<br/>type=insight + AI summary + body + refer + status_change (若勾)
 ```
+
+> [!WARNING]
+> **⚠️ 特别提醒 · 触发状态变更的参数：复选 `同时推进到 reviewed`**
+> - 勾选 → finished / cancelled → **reviewed**（终态，**不可逆**）
+> - 不勾 → matter 状态不变
 
 ---
 
