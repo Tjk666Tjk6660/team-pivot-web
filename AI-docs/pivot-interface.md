@@ -351,7 +351,7 @@
       "comments": [],
       "status_change": null,
       "expanded": false,
-      "body": "# Summary\\n\\n梳理当前登录链路的问题和目标边界。"
+      "body": "梳理当前登录链路的问题和目标边界。"
     },
     {
       "file": "discussions/auth-redesign/006_liuyu_verify_f6g7.md",
@@ -377,7 +377,7 @@
       "comments": [],
       "status_change": null,
       "expanded": false,
-      "body": "# Verifications\\n\\n- 003_dengke_act_a1b2.md\\n  - judgement: passed\\n  - comment: 主链路完成，质量一般，但结果可接受"
+      "body": "本次验证覆盖 003 与 004 两个行动。003 已可接受，004 当前不可接受。"
     }
   ]
 }
@@ -423,6 +423,7 @@
   - `body`
     - 可选
     - 用于写入 Markdown 正文
+    - 第一版不对正文段落结构做硬约束
   - `quote`
     - 可选
     - 表示新文件主要基于哪篇已有文件继续长出来
@@ -435,6 +436,17 @@
   - `comments`
     - 可选
     - 轻量评论流和圈人，不是正文主内容
+- 正文说明：
+  - `body` 是内容层，不是结构化真相来源
+  - 文件类型、状态迁移、验证结果、最终结果等结构化信息，应以 `index` 字段为准
+  - 前端或 AI 可以提供推荐模板，但服务端不应强制要求特定段落名
+  - 服务端不应依赖解析 `body` 去反推出 `verifications / outcome / status_change` 这类关键结构字段
+  - 正确的主流程应当是：客户端显式提交结构化字段，服务端再用这份结构化数据同步写入 `index` 与 MD
+- AI 助理的调用角色：
+  - AI 可以先帮助用户撰写正文
+  - 也可以把正文中的关键信息整理成结构化请求体
+  - 在真正提交 API 之前，应把将要写入的结构化字段展示给用户确认
+  - 用户确认后，再由客户端调用 API 完成写入
 - 类型专属请求体：
   - `think`
     - 允许字段：
@@ -499,7 +511,7 @@
 {
   "type": "think",
   "summary": "说明当前事项需要暂停，等待外部依赖确认",
-  "body": "# Summary\n\n当前事项需要暂停。\n",
+  "body": "当前事项需要暂停，等待外部依赖确认。当前卡点在外部依赖，待确认后再决定恢复到 planning 还是 executing。",
   "quote": "discussions/auth-redesign/004_liuyu_act_b2c3.md",
   "owner": "liuyu",
   "status_change": {
@@ -515,7 +527,7 @@
 {
   "type": "act",
   "summary": "按修正后的登录链路继续推进实现",
-  "body": "# Summary\n\n按修正后的登录链路继续推进实现。\n",
+  "body": "按修正后的登录链路继续推进实现。重点覆盖登录回跳、cookie 持久化和端内场景。",
   "quote": "discussions/auth-redesign/002_liuyu_think_c3d4.md",
   "owner": "liuyu",
   "comments": [
@@ -533,7 +545,7 @@
 {
   "type": "verify",
   "summary": "003 行动通过；004 行动未通过",
-  "body": "# Verifications\n",
+  "body": "本次验证覆盖 003 与 004 两个行动。003 已可接受，004 当前不可接受。",
   "quote": "discussions/auth-redesign/004_liuyu_act_b2c3.md",
   "owner": "dengke",
   "verifications": [
@@ -573,7 +585,7 @@
 {
   "type": "insight",
   "summary": "这次执行暴露出需求澄清和验收节奏的几个问题",
-  "body": "# Summary\n\n这次执行暴露出需求澄清和验收节奏的几个问题。\n",
+  "body": "这次执行暴露出需求澄清和验收节奏的几个问题，尤其是在前期边界确认和后期验证收口上。",
   "owner": "dengke"
 }
 ```
