@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { MermaidBlock } from "@/components/MermaidBlock";
 import { ArrowDown, ArrowUp, AtSign, Bot, ChevronLeft, FileText, Maximize2, Minimize2, Sparkles, Star, X } from "lucide-react";
 import {
   addMention,
@@ -34,6 +35,23 @@ import { useDashboard } from "@/pages/Dashboard";
 import { HomeWelcomePane } from "@/pages/HomeWelcomePane";
 
 const COLLAPSE_HEIGHT = 208;
+
+const POST_MARKDOWN_COMPONENTS = {
+  code(props: { className?: string; children?: React.ReactNode; inline?: boolean }) {
+    const { className, children, inline, ...rest } = props;
+    const match = /language-([\w-]+)/.exec(className ?? "");
+    const lang = match?.[1];
+    const raw = Array.isArray(children) ? children.join("") : String(children ?? "");
+    if (!inline && lang === "mermaid") {
+      return <MermaidBlock code={raw.replace(/\n$/, "")} />;
+    }
+    return (
+      <code className={className} {...rest}>
+        {children}
+      </code>
+    );
+  },
+};
 
 function postAnchorId(filename: string): string {
   const base = filename.endsWith(".md") ? filename.slice(0, -3) : filename;
@@ -1057,7 +1075,9 @@ function ProposalHeroCard({
           style={collapsed ? { maxHeight: COLLAPSE_HEIGHT, overflow: "hidden" } : undefined}
           className="prose-pivot max-w-none text-[14.5px] leading-[1.75] sm:text-[16px]"
         >
-          <Markdown remarkPlugins={[remarkGfm]}>{post.body}</Markdown>
+          <Markdown remarkPlugins={[remarkGfm]} components={POST_MARKDOWN_COMPONENTS}>
+            {post.body}
+          </Markdown>
         </div>
 
         {overflows && (
@@ -1256,7 +1276,9 @@ function ReplyPostCard({
         style={collapsed ? { maxHeight: COLLAPSE_HEIGHT, overflow: "hidden" } : undefined}
         className="prose-pivot mt-4 max-w-none text-[14px] leading-[1.75] sm:text-[15.5px]"
       >
-        <Markdown remarkPlugins={[remarkGfm]}>{post.body}</Markdown>
+        <Markdown remarkPlugins={[remarkGfm]} components={POST_MARKDOWN_COMPONENTS}>
+          {post.body}
+        </Markdown>
       </div>
 
       {overflows && (
