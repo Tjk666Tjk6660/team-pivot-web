@@ -95,7 +95,9 @@ def create_app() -> FastAPI:
 
     # Build MCP sub-app once; FastAPI does not propagate lifespan to mounted
     # sub-apps, so we enter its lifespan_context from our own lifespan below.
-    mcp_app = build_mcp_app()
+    # The sub-app enforces PAT bearer auth on every HTTP request using the
+    # same ApiTokenRepo / UserRepo as /api/*.
+    mcp_app = build_mcp_app(api_tokens, users)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -146,8 +148,8 @@ def create_app() -> FastAPI:
     app.include_router(build_app_home_router(workspace, current_user_dep))
     app.include_router(build_tokens_router(api_tokens, current_user_cookie_dep))
 
-    # MCP Streamable HTTP endpoint for external AI clients. PAT auth lives in
-    # the sub-app (added in a later task); this file only wires the mount.
+    # MCP Streamable HTTP endpoint for external AI clients. PAT auth is
+    # enforced inside the sub-app; this file only wires the mount.
     # Lifespan propagation for mcp_app is handled in the `lifespan` above.
     app.mount("/mcp", mcp_app)
     return app
