@@ -2,7 +2,7 @@
 
 凡后端 P1 / P2 / P4 与前端 P3 的实现过程中，**非核心实现细节**未完全按 `pivot-product.md` / `pivot-interface.md` 落地的，按下格式登记。
 
-核心变更（见 `matter-migration-plan.md` "核心变更评审门"）必须先评审后动手，不在此处记录。
+核心变更（见 `matter-implementation-plan.md` "核心变更评审门"）必须先评审后动手，不在此处记录。
 
 ## 格式
 
