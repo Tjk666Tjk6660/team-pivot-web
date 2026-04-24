@@ -206,6 +206,7 @@
 - 通知方法：**不新增，全部复用现有 4 个**（`notify_new_thread / notify_new_reply / notify_status_change / notify_standalone_mention`）；卡片文案可按 matter 语境微调但方法签名不动
 - SQLite 表（`favorites / read_state / ai_conversations`）：**不动 schema**；thread_key 列存 `category/slug`（matter_id 就是 slug，键自然唯一）
 - 名字解析字段命名：沿用老 thread 的 `<field>_display` / `<field>_avatar_url` 并列风格
+- **matter 草稿**：drafts 表**完全不改**。草稿只承接 `type=proposal|reply + body_md` 的通用部分；matter 专属结构化字段（`doc_type / summary / owner / quote / refer / verifications / outcome / status_change`）**不 autosave**，由前端在用户点"发布"那一刻从表单取出，组装完整 body 后**直接调** `POST /api/matters/` 或 `POST /api/matters/{matter_id}/files`，然后 `DELETE /api/drafts/{id}` 清草稿。**不走** `POST /api/drafts/{id}/publish`（那条路径继续服务老 thread 草稿）。显式接受 trade-off：matter 表单字段刷新 / 换端会丢，如需兜底由前端用 localStorage 处理，属纯前端内部事。
 
 ### 从 P4.5 移除、后续独立立项
 
@@ -218,59 +219,6 @@
 - 集成测试真后端全过
 - 旧 `/api/threads/*` 全部接口依然可用、行为不变
 - `uv run pytest -q` 全绿
-
----
-
-## P4.6 · drafts 扩展 matter（核心变更，需评审后动工）
-
-**目标**：drafts 表支持 matter 类型草稿。前端编写 matter 文件时能 autosave 到后端；publish 按 type 分发到 `publish_matter_create` / `publish_matter_append`。不再需要前端 localStorage 方案兜底。
-
-### 为什么单独立项
-
-P4.5 明确把这块剔出来——drafts 改造必然触及 **SQLite schema**（drop `CHECK(type IN ('proposal','reply'))` + 新增 `matter_payload_json` 列），属核心变更评审门范围，走独立评审。
-
-### 任务拆解
-
-1. **DB 迁移**（`server/db.py::_migrate`）
-   - SQLite 不支持直接 DROP CONSTRAINT，需 rebuild：`CREATE TABLE drafts_new(...)` 无 CHECK 约束、含 `matter_payload_json TEXT` → `INSERT INTO drafts_new SELECT … FROM drafts` → `DROP drafts` → `ALTER RENAME drafts_new TO drafts` → 重建索引
-   - 包在事务里；失败全回滚
-2. **`server/drafts.py`**：`type` 扩成 `proposal | reply | think | act | verify | result | insight` 联合；`Draft` dataclass 和 SQL 读写加 `matter_payload_json`
-3. **`server/api/drafts.py`**：
-   - POST / PATCH 接受 matter 类型 + `matter_payload_json`
-   - `POST /api/drafts/{id}/publish`：按 `type` 分发
-     - `proposal / reply` → `publish_proposal / publish_reply`（旧路径不变）
-     - `think / act / verify / result / insight` → `publish_matter_create`（首篇，当 `thread_key` 为空）或 `publish_matter_append`（追加，当 `thread_key` 为 `category/matter_id`）
-4. **前端适配**（同事在 P3 或后续完成）：autosave 带上 `matter_payload_json` 结构化字段
-5. **测试**：
-   - 单元：迁移幂等（重复跑不炸）、matter 类型草稿 CRUD、publish 分发路径
-   - 集成：真后端跑 "create draft → autosave → publish → matter index 正确落盘"
-
-### 预审事项（核心）
-
-评审时需要对齐这几条决策：
-
-- `matter_payload_json` 的 shape：承载 `summary / owner / quote / refer / verifications / outcome / status_change` 还是更少？（目前 `drafts` 已有 `title / body_md / thread_key / mentions_json / reply_to / references_json` 列；前后端要明确哪些字段走老列、哪些走新 JSON）
-- `type` 的 CHECK 约束：rebuild 后是否重新加 7 值的枚举约束，还是去掉约束靠 Python 层校验
-- 迁移的原子性与 rollback 策略：失败时是否保留 `drafts` 原表、如何提示运维
-- 旧 `proposal / reply` 草稿：本次迁移**只扩 schema、不改语义**——老 draft 发布路径保持不动
-
-### 交付物
-
-- `server/db.py` 迁移代码 + 迁移单测
-- `server/drafts.py` / `server/api/drafts.py` 扩展
-- 对应单元测试 + 集成测试扩充
-
-### 验收
-
-- 迁移后所有已有 drafts 仍可读写（老 proposal/reply draft 照常）
-- 新建 matter 类型 draft → PATCH → publish → matter index 正确落盘（带 quote/refer/verifications/status_change 等结构化字段）
-- `uv run pytest -q` 全绿
-- 集成脚本 `run_matter_integration.py` 新增 drafts-matter 相关 case
-
-### 前置依赖
-
-- P4.5 合入
-- 评审门对齐 4 条预审事项
 
 ---
 
