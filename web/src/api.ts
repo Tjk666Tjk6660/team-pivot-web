@@ -457,6 +457,7 @@ export type Draft = {
   mentions: MentionBlock | null;
   reply_to: string | null;
   references: string[];
+  matter_payload: Record<string, unknown> | null;
   created_at: number;
   updated_at: number;
 };
@@ -505,6 +506,7 @@ export async function createDraft(body: {
   thread_key?: string | null;
   reply_to?: string | null;
   references?: string[];
+  matter_payload?: Record<string, unknown> | null;
 }): Promise<Draft> {
   const r = await fetch("/api/drafts", {
     method: "POST",
@@ -528,6 +530,7 @@ export async function updateDraft(
     thread_key?: string | null;
     reply_to?: string | null;
     references?: string[];
+    matter_payload?: Record<string, unknown> | null;
   },
 ): Promise<Draft> {
   const r = await fetch(`/api/drafts/${id}`, {

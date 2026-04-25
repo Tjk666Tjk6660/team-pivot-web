@@ -29,7 +29,7 @@ export function AIPane({
 }) {
   const { ai } = useDashboard();
   const state = ai.getThreadState(threadKey);
-  const { messages, replyTarget, input, streaming, loading } = state;
+  const { messages, replyTarget, input, streaming, loading, loaded } = state;
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -44,11 +44,11 @@ export function AIPane({
   }, [ai, category, slug, threadKey]);
 
   useEffect(() => {
-    if (!pendingReplyTarget || loading) return;
+    if (!pendingReplyTarget || !loaded) return;
     ai.setReplyTarget(category, slug, threadKey, pendingReplyTarget);
     onPendingReplyTargetConsumed?.();
     setTimeout(() => inputRef.current?.focus(), 50);
-  }, [ai, category, slug, threadKey, pendingReplyTarget, onPendingReplyTargetConsumed, loading]);
+  }, [ai, category, slug, threadKey, pendingReplyTarget, onPendingReplyTargetConsumed, loaded]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });

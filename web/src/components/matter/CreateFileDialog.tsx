@@ -6,6 +6,7 @@ import type {
   Judgement,
   MatterStatus,
   NewFileIn,
+  Outcome,
   StatusChange,
   TimelineItem,
   Verification,
@@ -26,7 +27,7 @@ import { OwnerPicker } from "./OwnerPicker";
 
 export type CreateFormContext =
   | { kind: "card"; type: DocType; quote: string }
-  | { kind: "page"; type: "insight" };
+  | { kind: "page"; type: "insight" | "result" };
 
 type FormState = {
   summary: string;
@@ -38,6 +39,18 @@ type FormState = {
   thinkChange: "none" | string;
   actPromote: boolean;
   insightReview: boolean;
+  outcome: Outcome;
+};
+
+export type FormSnapshot = {
+  summary: string;
+  body: string;
+  owner: string;
+  ownerDisplayName: string;
+  refer: string[];
+  verifications: Verification[];
+  status_change?: StatusChange;
+  outcome?: Outcome;
 };
 
 function initialFormState(
@@ -45,23 +58,37 @@ function initialFormState(
   sessionOpenId: string,
   sessionName: string,
   actFiles: TimelineItem[],
+  initial?: Partial<FormSnapshot>,
 ): FormState {
-  const verifications: Verification[] =
+  const defaultVerifications: Verification[] =
     ctx.kind === "card" &&
     ctx.type === "verify" &&
     actFiles.some((a) => a.file === ctx.quote)
       ? [{ target: ctx.quote, judgement: "passed", comment: "" }]
       : [];
+  const thinkChange = (() => {
+    if (ctx.type !== "think") return "none";
+    const sc = initial?.status_change;
+    if (!sc) return "none";
+    return `${sc.from}->${sc.to}`;
+  })();
+  const actPromote =
+    ctx.type === "act" &&
+    initial?.status_change?.from === "planning" &&
+    initial?.status_change?.to === "executing";
+  const insightReview =
+    ctx.type === "insight" && initial?.status_change?.to === "reviewed";
   return {
-    summary: "",
-    body: "",
-    owner: sessionOpenId,
-    ownerDisplayName: sessionName,
-    refer: [],
-    verifications,
-    thinkChange: "none",
-    actPromote: false,
-    insightReview: false,
+    summary: initial?.summary ?? "",
+    body: initial?.body ?? "",
+    owner: initial?.owner ?? sessionOpenId,
+    ownerDisplayName: initial?.ownerDisplayName ?? sessionName,
+    refer: initial?.refer ?? [],
+    verifications: initial?.verifications ?? defaultVerifications,
+    thinkChange,
+    actPromote,
+    insightReview,
+    outcome: initial?.outcome ?? "finished",
   };
 }
 
@@ -74,6 +101,10 @@ export function CreateFileForm({
   onCancel,
   onSubmit,
   onSuccess,
+  onGenerateSummary,
+  onFormBlur,
+  onDeleteDraft,
+  initial,
 }: {
   context: CreateFormContext;
   matterStatus: MatterStatus;
@@ -83,15 +114,24 @@ export function CreateFileForm({
   onCancel?: () => void;
   onSubmit: (body: NewFileIn) => Promise<boolean>;
   onSuccess?: () => void;
+  onGenerateSummary?: (draft: {
+    type: DocType;
+    body: string;
+    quote: string | null;
+  }) => Promise<string>;
+  onFormBlur?: (snapshot: FormSnapshot) => void | Promise<void>;
+  onDeleteDraft?: () => void | Promise<void>;
+  initial?: Partial<FormSnapshot>;
 }) {
   const actFiles = useMemo(
     () => timeline.filter((t) => t.type === "act"),
     [timeline],
   );
   const [form, setForm] = useState<FormState>(() =>
-    initialFormState(context, sessionOpenId, sessionName, actFiles),
+    initialFormState(context, sessionOpenId, sessionName, actFiles, initial),
   );
-  const [submitting, setSubmitting] = useState(false);
+  const [stage, setStage] = useState<"idle" | "generating" | "publishing">("idle");
+  const submitting = stage !== "idle";
 
   const type: DocType = context.type;
   const quote = context.kind === "card" ? context.quote : null;
@@ -100,10 +140,51 @@ export function CreateFileForm({
   const isVerify = type === "verify";
   const isThink = type === "think";
   const isInsight = type === "insight";
+  const isResult = type === "result";
+
+  const computeStatusChange = (): StatusChange | undefined => {
+    if (isThink && form.thinkChange !== "none") {
+      const [from, to] = form.thinkChange.split("->") as [MatterStatus, MatterStatus];
+      return { from, to };
+    }
+    if (isAct && form.actPromote) {
+      return { from: "planning", to: "executing" };
+    }
+    if (isInsight && form.insightReview) {
+      if (matterStatus !== "finished" && matterStatus !== "cancelled") return undefined;
+      return { from: matterStatus, to: "reviewed" };
+    }
+    if (isResult) {
+      return { from: "executing", to: form.outcome };
+    }
+    return undefined;
+  };
+
+  const snapshot = (): FormSnapshot => ({
+    summary: form.summary,
+    body: form.body,
+    owner: form.owner,
+    ownerDisplayName: form.ownerDisplayName,
+    refer: form.refer,
+    verifications: form.verifications,
+    status_change: computeStatusChange(),
+    outcome: isResult ? form.outcome : undefined,
+  });
+
+  const handleContainerBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+    if (!onFormBlur) return;
+    const next = e.relatedTarget as Node | null;
+    if (next && e.currentTarget.contains(next)) return;
+    void onFormBlur(snapshot());
+  };
 
   const submit = async () => {
-    if (!form.summary.trim()) {
+    if (!onGenerateSummary && !form.summary.trim()) {
       toast.error("summary 必填");
+      return;
+    }
+    if (onGenerateSummary && !form.body.trim()) {
+      toast.error("正文必填（AI 将根据正文生成 summary）");
       return;
     }
     if (isVerify) {
@@ -119,27 +200,48 @@ export function CreateFileForm({
       }
     }
 
-    let status_change: StatusChange | undefined;
-    if (isThink && form.thinkChange !== "none") {
-      const [from, to] = form.thinkChange.split("->") as [MatterStatus, MatterStatus];
-      status_change = { from, to };
-    } else if (isAct && form.actPromote) {
-      status_change = { from: "planning", to: "executing" };
-    } else if (isInsight && form.insightReview) {
-      if (matterStatus !== "finished" && matterStatus !== "cancelled") {
-        toast.error("推进到 reviewed 前置必须是 finished / cancelled");
-        return;
-      }
-      status_change = { from: matterStatus, to: "reviewed" };
+    if (
+      isInsight &&
+      form.insightReview &&
+      matterStatus !== "finished" &&
+      matterStatus !== "cancelled"
+    ) {
+      toast.error("推进到 reviewed 前置必须是 finished / cancelled");
+      return;
     }
+    const status_change = computeStatusChange();
 
     if ((isAct || isVerify) && !form.owner.trim()) {
       toast.error("owner 必填");
       return;
     }
+
+    let summary = form.summary.trim();
+    if (onGenerateSummary) {
+      setStage("generating");
+      try {
+        summary = (
+          await onGenerateSummary({
+            type,
+            body: form.body.trim(),
+            quote,
+          })
+        ).trim();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "生成 summary 失败");
+        setStage("idle");
+        return;
+      }
+      if (!summary) {
+        toast.error("AI 生成的 summary 为空");
+        setStage("idle");
+        return;
+      }
+    }
+
     const body: NewFileIn = {
       type,
-      summary: form.summary.trim(),
+      summary,
       body: form.body.trim() || undefined,
       owner: isAct || isVerify ? form.owner : undefined,
       quote: quote ?? undefined,
@@ -147,13 +249,14 @@ export function CreateFileForm({
       status_change,
     };
     if (isVerify) body.verifications = form.verifications;
+    if (isResult) body.outcome = form.outcome;
 
-    setSubmitting(true);
+    setStage("publishing");
     try {
       const ok = await onSubmit(body);
       if (ok) onSuccess?.();
     } finally {
-      setSubmitting(false);
+      setStage("idle");
     }
   };
 
@@ -171,12 +274,37 @@ export function CreateFileForm({
   };
 
   return (
-    <div className="space-y-3 text-sm">
-      <FieldRow label="quote" hint={quote ? "入口自动带入，只读" : "页面级动作 · 无 quote"}>
-        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-700">
-          {quote ? shortFile(quote) : "（空）"}
-        </div>
-      </FieldRow>
+    <div className="space-y-3 text-sm" onBlur={handleContainerBlur}>
+      {quote && (
+        <FieldRow label="quote" hint="入口自动带入，只读">
+          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-700">
+            {shortFile(quote)}
+          </div>
+        </FieldRow>
+      )}
+
+      {isResult && (
+        <FieldRow label="outcome" required hint="事项最终客观结果；发布后 executing → outcome">
+          <div className="flex gap-5 text-sm">
+            <label className="flex items-center gap-1.5">
+              <input
+                type="radio"
+                checked={form.outcome === "finished"}
+                onChange={() => setForm((p) => ({ ...p, outcome: "finished" }))}
+              />
+              完成（finished）
+            </label>
+            <label className="flex items-center gap-1.5">
+              <input
+                type="radio"
+                checked={form.outcome === "cancelled"}
+                onChange={() => setForm((p) => ({ ...p, outcome: "cancelled" }))}
+              />
+              取消（cancelled）
+            </label>
+          </div>
+        </FieldRow>
+      )}
 
       {(isAct || isVerify) && (
         <FieldRow
@@ -196,16 +324,26 @@ export function CreateFileForm({
         </FieldRow>
       )}
 
-      <FieldRow label="summary" required hint="一句话说明目的 / 判断">
-        <Input
-          value={form.summary}
-          onChange={(e) => setForm((p) => ({ ...p, summary: e.target.value }))}
-          maxLength={200}
-          placeholder="一句话摘要"
-        />
-      </FieldRow>
+      {!onGenerateSummary && (
+        <FieldRow label="summary" required hint="一句话说明目的 / 判断">
+          <Input
+            value={form.summary}
+            onChange={(e) => setForm((p) => ({ ...p, summary: e.target.value }))}
+            maxLength={200}
+            placeholder="一句话摘要"
+          />
+        </FieldRow>
+      )}
 
-      <FieldRow label="body" hint="Markdown 正文（可选）">
+      <FieldRow
+        label="body"
+        required={!!onGenerateSummary}
+        hint={
+          onGenerateSummary
+            ? "Markdown 正文 · 发布时 AI 将基于此生成 summary"
+            : "Markdown 正文（可选）"
+        }
+      >
         <Textarea
           rows={4}
           value={form.body}
@@ -214,7 +352,7 @@ export function CreateFileForm({
         />
       </FieldRow>
 
-      {!isVerify && (
+      {!isVerify && !isResult && (
         <FieldRow label="refer" hint={`可选 · 多选上限 ${MAX_REFER}`}>
           <div className="flex flex-wrap gap-1.5">
             {timeline
@@ -322,8 +460,23 @@ export function CreateFileForm({
           </Button>
         )}
         <Button size="sm" onClick={() => void submit()} disabled={submitting}>
-          {submitting ? "发布中…" : "发布"}
+          {stage === "generating"
+            ? "生成摘要中…"
+            : stage === "publishing"
+              ? "发布中…"
+              : "发布"}
         </Button>
+        {onDeleteDraft && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+            onClick={() => void onDeleteDraft()}
+            disabled={submitting}
+          >
+            删除草稿
+          </Button>
+        )}
       </div>
     </div>
   );

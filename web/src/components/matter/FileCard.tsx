@@ -1,6 +1,8 @@
 import { useState } from "react";
 import Markdown from "react-markdown";
+import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { MermaidBlock } from "./MermaidBlock";
 import { MessageSquare, Plus } from "lucide-react";
 import type { DocType, Judgement, MatterStatus, TimelineItem } from "@/api";
 import { Button } from "@/components/ui/button";
@@ -14,6 +16,31 @@ import {
 } from "./timeline-config";
 
 const COLLAPSE_HEIGHT = 208;
+
+const markdownComponents: Components = {
+  code({ className, children, ...rest }) {
+    if (className === "language-mermaid") {
+      return <MermaidBlock code={String(children).replace(/\n$/, "")} />;
+    }
+    return (
+      <code className={className} {...rest}>
+        {children}
+      </code>
+    );
+  },
+  pre({ children, ...rest }) {
+    const only = Array.isArray(children) ? children[0] : children;
+    if (
+      typeof only === "object" &&
+      only !== null &&
+      "type" in only &&
+      (only as { type?: unknown }).type === MermaidBlock
+    ) {
+      return <>{children}</>;
+    }
+    return <pre {...rest}>{children}</pre>;
+  },
+};
 
 export function FileCard({
   item,
@@ -175,7 +202,9 @@ export function FileCard({
             style={expanded ? undefined : { maxHeight: COLLAPSE_HEIGHT, overflow: "hidden" }}
             className="prose-pivot mt-3 max-w-none text-[13.5px] leading-7 text-slate-700"
           >
-            <Markdown remarkPlugins={[remarkGfm]}>{item.body}</Markdown>
+            <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+              {item.body}
+            </Markdown>
           </div>
           <button
             type="button"
