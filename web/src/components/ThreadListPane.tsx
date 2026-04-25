@@ -132,7 +132,13 @@ export function ThreadListPane({
                   className="group mx-1 flex items-start gap-2 rounded-lg border border-transparent px-2 py-1.5 transition-colors hover:bg-slate-100/80"
                 >
                   <NavLink
-                    to={d.type === "proposal" ? `/new?draft=${d.id}` : "#"}
+                    to={
+                      d.type === "proposal"
+                        ? `/new?draft=${encodeURIComponent(d.id)}`
+                        : d.thread_key
+                          ? `/m/${encodeURIComponent(d.thread_key)}?draft=${encodeURIComponent(d.id)}`
+                          : "#"
+                    }
                     className="min-w-0 flex-1"
                   >
                     <div className="truncate text-sm font-medium text-slate-800">

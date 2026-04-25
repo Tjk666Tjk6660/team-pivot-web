@@ -5,6 +5,7 @@ import { ArrowLeft } from "lucide-react";
 import {
   createMatter,
   fetchMatters,
+  streamAIChat,
   type DocType,
   type Me,
 } from "@/api";
@@ -26,10 +27,10 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [availableCategories, setAvailableCategories] = useState<string[]>([]);
   const [title, setTitle] = useState("");
   const [initialType, setInitialType] = useState<DocType>("think");
-  const [summary, setSummary] = useState("");
   const [body, setBody] = useState("");
   const [owner, setOwner] = useState<string>(me.pinyin ?? "");
-  const [submitting, setSubmitting] = useState(false);
+  const [stage, setStage] = useState<"idle" | "generating" | "submitting">("idle");
+  const submitting = stage !== "idle";
 
   useEffect(() => {
     // categories come from existing matters for discovery; fall back to empty
@@ -82,16 +83,58 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) return toast.error("title 必填");
-    if (!summary.trim()) return toast.error("initial_file.summary 必填");
-    setSubmitting(true);
+    if (!body.trim()) return toast.error("正文必填（AI 将基于此生成 summary）");
+
+    setStage("generating");
+    let summary = "";
+    try {
+      const userMsg = [
+        `请为下面这篇新增的 ${initialType} 文件生成一句不超过 80 字的中文 summary。`,
+        `要求：`,
+        `- 直接输出这一句话本身，不要加引号，也不要任何前后解释。`,
+        `- 用最精简的语言概括这篇文件推进 / 判断 / 结论了什么。`,
+        ``,
+        `事项标题：${title.trim()}`,
+        ``,
+        `新文件正文：`,
+        "```",
+        body.trim(),
+        "```",
+      ].join("\n");
+      // 复用现有 chat 端点：服务端只校验 reply_target 非空，文件不存在时静默
+      // 降级为空 file context；streamAIChat 不走 sendMessage，故不会落
+      // ai_conversations 表。
+      let acc = "";
+      for await (const delta of streamAIChat(
+        category.trim() || "general",
+        "_new_matter_",
+        [{ role: "user", content: userMsg }],
+        "_new_matter_summary_",
+        [],
+      )) {
+        acc += delta;
+      }
+      summary = acc.trim();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "生成 summary 失败");
+      setStage("idle");
+      return;
+    }
+    if (!summary) {
+      toast.error("AI 生成的 summary 为空");
+      setStage("idle");
+      return;
+    }
+
+    setStage("submitting");
     try {
       const r = await createMatter({
         category: category.trim(),
         title: title.trim(),
         initial_file: {
           type: initialType,
-          summary: summary.trim(),
-          body: body.trim() || undefined,
+          summary,
+          body: body.trim(),
           owner: owner.trim() || undefined,
         },
       });
@@ -99,7 +142,7 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
     } finally {
-      setSubmitting(false);
+      setStage("idle");
     }
   };
 
@@ -240,24 +283,17 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
                   </label>
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="summary">
-                    Summary<span className="text-red-500"> *</span>
+                  <Label htmlFor="body">
+                    Body（markdown）<span className="text-red-500"> *</span>
                   </Label>
-                  <Input
-                    id="summary"
-                    value={summary}
-                    onChange={(e) => setSummary(e.target.value)}
-                    required
-                    maxLength={200}
-                    placeholder="一句话摘要"
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="body">Body（markdown，可选）</Label>
+                  <p className="text-xs text-slate-500">
+                    创建时 AI 将基于正文生成 summary，无需手填。
+                  </p>
                   <Textarea
                     id="body"
                     value={body}
                     onChange={(e) => setBody(e.target.value)}
+                    required
                     rows={10}
                     maxLength={50000}
                     className="min-h-[14rem] rounded-2xl border-slate-300 bg-slate-100/92 font-mono text-sm"
@@ -282,9 +318,13 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
               <Button
                 type="submit"
                 className="rounded-xl px-5"
-                disabled={submitting || !title.trim() || !summary.trim()}
+                disabled={submitting || !title.trim() || !body.trim()}
               >
-                {submitting ? "创建中…" : "创建 Matter"}
+                {stage === "generating"
+                  ? "生成摘要中…"
+                  : stage === "submitting"
+                    ? "创建中…"
+                    : "创建 Matter"}
               </Button>
             </div>
           </form>
