@@ -312,6 +312,238 @@
 
 ---
 
+## P4.7 · Verify 反写 Index（已设计，待评审）
+
+**Context**：dengke 019 reply 1 —— verify 创建时强制关联 act，并将判断结果反写到对应 act 的 timeline item 上。AI 只读 act 节点即可拿到该 act 的完整验证轨迹（被验证次数、首次时间、失败原因、最终通过时间、判断责任人），无需扫整条 timeline。
+
+### 数据结构
+
+#### 新增字段：`verifications_received`（仅 act item 出现）
+
+```yaml
+- file: discussions/<cat>/<slug>/<NNN>_<author>_act_<hash>.md
+  ...
+  type: act
+  ...
+  verifications_received:
+    - verify_file: discussions/<cat>/<slug>/<NNN>_<author>_verify_<hash>.md
+      verified_at: '2026-04-24T14:12:16+08:00'
+      verified_by: huangshengli
+      judgement: passed | failed | cancelled
+      comment: 主链路通过，质量可接受
+```
+
+#### 子字段语义与来源（全部由后端派生，客户端不传）
+
+| 子字段 | 来源 |
+|---|---|
+| `verify_file` | 触发反写的 verify item 的 `file` |
+| `verified_at` | 该 verify item 的 `created_at` |
+| `verified_by` | 该 verify item 的 `owner`（`pivot-product.md §九.2` 判断责任人）；缺省回退 `creator` |
+| `judgement` | verify.verifications[i].judgement |
+| `comment` | verify.verifications[i].comment |
+
+#### 字段顺序
+
+加入 `_ITEM_KEY_ORDER`（`server/matter_index.py`）：
+```
+file → created_at → creator → owner → type → summary →
+quote → refer → verifications → verifications_received → outcome → comments → status_change
+```
+
+`verifications`（verify 上）和 `verifications_received`（act 上）永远不在同一个 item 上共存。
+
+### 不变量（显式约束）
+
+| # | 不变量 |
+|---|---|
+| I1 | `verifications[]` **仅**出现在 `type=verify` 的 timeline item |
+| I2 | `verifications_received[]` **仅**出现在 `type=act` 的 timeline item |
+| I3 | 客户端**不能**传 `verifications_received`；validator 拒绝（错误码 `field_not_writable`） |
+| I4 | verify.verifications[i].target **必须**指向 `type=act` 的 item（已由现有 validator 强制，见 `_validate_verify_shape`） |
+| I5 | 反写发生在写入 verify 的**同一次原子写**里（`_atomic_write_yaml` 整文件 tmp+rename），不会出现"verify 写了、act 没反写"的中间态 |
+| I6 | `verifications_received[]` **append-only**，按 verify 写入时间顺序累积；不去重、不删除既有条目 |
+| I7 | 跨 matter verify（target 不在本 timeline、只在当前 verify 的 `refer[]` 白名单里）**静默跳过反写**；target act 在另一个 matter 里，本 index 无处可挂。登记 `deviations.md` |
+
+### 写入触发与逻辑
+
+**触发点**：`server/matter_index.py::append_file_item` 在 `_apply_status_change(data, normalized)` 之后、`_atomic_write_yaml` 之前。
+
+```python
+def _reverse_write_verifications(index_data, verify_item):
+    if verify_item.get("type") != "verify":
+        return
+    by_file = {
+        it.get("file"): it
+        for it in index_data.get("timeline") or []
+        if it.get("file")
+    }
+    for v in verify_item.get("verifications") or []:
+        target_item = by_file.get(v.get("target"))
+        if target_item is None or target_item.get("type") != "act":
+            continue   # 跨 matter (I7) 或不应发生的非 act target (I4 已拦)
+        target_item.setdefault("verifications_received", []).append({
+            "verify_file": verify_item["file"],
+            "verified_at": verify_item["created_at"],
+            "verified_by": verify_item.get("owner") or verify_item.get("creator"),
+            "judgement": v.get("judgement"),
+            "comment": v.get("comment"),
+        })
+```
+
+**与 drafts 表的关系**：零关系。`verifications_received` 是后端在写 index 时派生，前端 / `matter_payload_json` / publish 链路完全不感知。drafts 表 schema 不动。
+
+### 实施改动清单
+
+**后端代码**
+
+| 文件 | 改动 |
+|---|---|
+| `server/matter_index.py` | `_ITEM_KEY_ORDER` 加 `verifications_received`；新增 `_reverse_write_verifications`；`append_file_item` 内部调用 |
+| `server/matter_validator.py` | `validate_append` 拒绝带 `verifications_received` 字段的客户端输入（I3） |
+
+**文档**
+
+| 文件 | 改动 |
+|---|---|
+| `AI-docs/pivot-product.md` §八.3 | 新增 `verifications_received` 字段说明，明确"仅 act 出现 / 后端派生 / append-only" |
+| `AI-docs/pivot-product.md` §九.4 | 在 verify 段落补一段"反写到对应 act"的说明 |
+| `AI-docs/pivot-interface.md` | `GET /api/matters/{id}` 响应示例展示 act 上的反写字段 |
+| `AI-docs/coding-test-plan/deviations.md` | 登记 I7（跨 matter verify 不反写） |
+
+**数据迁移**
+
+不需要。matter 模型仍在 `feat/pivot-matter` 分支开发中，生产上没有 matter 数据；现有测试数据可直接重跑生成。`scripts/migrate_index_schema.py` 处理的老 thread 索引按 `index-migration-plan.md §2` 全部映射为 `type=think`，不会出现 verify item，与本字段无关。
+
+**测试**
+
+| 用例 | 验证 |
+|---|---|
+| 单 verify 单 target | act 上有 1 条 received |
+| 单 verify 多 target | 多个 act 各 1 条 |
+| 多 verify 同 target | 同 act 累积多条，顺序按 verify 写入时间 |
+| 跨 matter target（I7） | 本 matter 内任何 act 都无反写残留 |
+| 客户端尝试传 `verifications_received`（I3） | 422 `field_not_writable` |
+| think / result / insight 上不出现该字段（I2） | 端到端冒烟断言 |
+| 写入原子性（I5） | crash 注入测试，verify 写盘失败时 act 上无半截反写 |
+
+**不需要改的**
+
+| 文件 | 理由 |
+|---|---|
+| `server/db.py`（drafts schema） | 反写不经过草稿，前端不传该字段 |
+| `server/api/drafts.py` | 同上 |
+| `server/api/matters.py::_render_item` | 反写字段会自动随 timeline item 输出；后续若需把 `verified_by` 解析成显示名，再加一处和 `creator_display` 同样的解析 |
+
+### 完整示例（act#004 经历两轮验证）
+
+```yaml
+version: 1
+matter:
+  id: auth-redesign
+  title: Authentication Redesign
+  current_status: executing
+  created_at: '2026-04-24T14:11:33+08:00'
+  updated_at: '2026-04-24T16:00:00+08:00'
+timeline:
+  - file: discussions/Pivot/auth-redesign/001_huangshengli_think_9e52e4.md
+    created_at: '2026-04-24T14:11:33+08:00'
+    creator: huangshengli
+    owner: huangshengli
+    type: think
+    summary: 拆子任务
+
+  - file: discussions/Pivot/auth-redesign/002_huangshengli_act_908001.md
+    created_at: '2026-04-24T14:11:44+08:00'
+    creator: huangshengli
+    owner: liuyu
+    type: act
+    summary: 子任务 A：回跳链路
+    quote: discussions/Pivot/auth-redesign/001_huangshengli_think_9e52e4.md
+    verifications_received:
+      - verify_file: discussions/Pivot/auth-redesign/005_huangshengli_verify_920bf2.md
+        verified_at: '2026-04-24T14:12:16+08:00'
+        verified_by: huangshengli
+        judgement: passed
+        comment: 主链路通过，质量可接受
+    status_change:
+      from: planning
+      to: executing
+
+  - file: discussions/Pivot/auth-redesign/004_huangshengli_act_e7980c.md
+    created_at: '2026-04-24T14:12:08+08:00'
+    creator: huangshengli
+    owner: dengke
+    type: act
+    summary: 子任务 B：cookie 持久化
+    quote: discussions/Pivot/auth-redesign/003_huangshengli_think_5ca3cc.md
+    verifications_received:
+      - verify_file: discussions/Pivot/auth-redesign/005_huangshengli_verify_920bf2.md
+        verified_at: '2026-04-24T14:12:16+08:00'
+        verified_by: huangshengli
+        judgement: failed
+        comment: cookie 跨域场景未覆盖，需返工
+      - verify_file: discussions/Pivot/auth-redesign/008_huangshengli_verify_7a3b1c.md
+        verified_at: '2026-04-24T16:00:00+08:00'
+        verified_by: huangshengli
+        judgement: passed
+        comment: cookie 跨域场景已补齐，通过
+
+  - file: discussions/Pivot/auth-redesign/005_huangshengli_verify_920bf2.md
+    created_at: '2026-04-24T14:12:16+08:00'
+    creator: huangshengli
+    owner: huangshengli
+    type: verify
+    summary: 两条行动汇总判断
+    quote: discussions/Pivot/auth-redesign/004_huangshengli_act_e7980c.md
+    verifications:
+      - target: discussions/Pivot/auth-redesign/002_huangshengli_act_908001.md
+        judgement: passed
+        comment: 主链路通过，质量可接受
+      - target: discussions/Pivot/auth-redesign/004_huangshengli_act_e7980c.md
+        judgement: failed
+        comment: cookie 跨域场景未覆盖，需返工
+
+  - file: discussions/Pivot/auth-redesign/008_huangshengli_verify_7a3b1c.md
+    created_at: '2026-04-24T16:00:00+08:00'
+    creator: huangshengli
+    owner: huangshengli
+    type: verify
+    summary: 子任务 B 修复后复验
+    quote: discussions/Pivot/auth-redesign/004_huangshengli_act_e7980c.md
+    verifications:
+      - target: discussions/Pivot/auth-redesign/004_huangshengli_act_e7980c.md
+        judgement: passed
+        comment: cookie 跨域场景已补齐，通过
+```
+
+只读 `act#004` 这一个节点，AI 立即能回答 dengke 019 帖里列出的 5 个问题（被验证次数、首次时间、失败原因、最终通过时间、判断责任人）。
+
+### 预审事项（核心）
+
+按本计划开头"核心变更评审门"清单，本阶段触发：
+
+- ✅ `matter_index` on-disk schema 字段集（新增 `verifications_received`）
+- ✅ writer 层约束（verify 触发 act 反写）
+
+不触发：
+
+- ❌ 6 态状态机 / `status × type` 矩阵（不变）
+- ❌ Matter API 对外形状（响应里多个字段属于派生展示，不算契约破坏）
+- ❌ drafts schema（不动）
+- ❌ `write_session` 锁行为 / `workspace.recover()` 顺序（写盘流程不变）
+
+**正式实施前需 dengke 过这一稿**；`pivot-product.md §八.3 / §九.4` 的字段补充也归 dengke。
+
+### 验收
+
+- `uv run pytest -q` 全绿（含上方 7 类用例）
+- 状态机与允许矩阵单测无退化
+- 端到端冒烟：在 D2 类多 act 多 verify 场景下，act 上反写顺序与 verify 时间序一致
+- `pivot-product.md` / `pivot-interface.md` / `deviations.md` 同步更新
+
+---
+
 # 前端部分（同事承担）
 
 ## P3 · Matter 详情页（前端主导）
