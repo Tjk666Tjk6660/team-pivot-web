@@ -64,6 +64,16 @@
   - 原因：matter 的状态迁移本就由特定文件触发（`pivot-product.md §三 / §九`），触发文件的 type + summary 比老 thread 的 `reason` 字段密度高；老 `_STATUS_LABEL` 只覆盖 5 老态会让卡片显示半英文
   - 前端路由：P3 已用 `/m/:matter_id`（`web/src/App.tsx:33`），原 `_thread_url` 的 `/t/...` 路径在前端是 catch-all 归一到首页，matter 通知按钮必须走新 URL
 
+- **matter index `comments[].mentions` 字段格式：注册用户 pinyin / 未注册 open_id 兜底**
+  - 原文档要求：`pivot-product.md §八.2` 示例里 `mentions: [liuyu]` —— 列在评论里的 mention 用 pinyin 形式
+  - 实际实现：评论入 index 时 `_resolve_mentions_for_index` 把前端传入的 open_id 列表逐项解析：注册用户（`users` 表里有 pinyin）落 pinyin，与同文件里 `creator / owner` 同格式；解析不到 pinyin（仅在 contacts 表里、还未登录 Pivot 的飞书联系人）则保留 open_id 兜底。通知发送一侧仍用原始 open_id 调飞书 API，不受影响
+  - 原因：spec 示例隐含"全员都有 pinyin"的简化前提；真实数据里 mention 目标可能是飞书通讯录里没登录过 Pivot 的人，他们没有 pinyin 可用，硬转换会丢身份。"已注册转 pinyin、未注册留 open_id" 是把"事实身份"诚实落到 yaml 上的折中——多数情况 AI 直读 pinyin 可读，少数兜底 open_id 不丢人
+
+- **matter index `comments[].author` 字段在实现里有，spec §八.3 未列**
+  - 原文档要求：`pivot-product.md §八.3` 评论字段说明只列 `created_at / body / mentions`
+  - 实际实现：`matter_index._canonical_comment` 写入时把 `author = user.pinyin` 也落到每条评论上（C1 集成测试产物可见）
+  - 原因：多人系统里评论必须可追溯到作者，spec 例子里隐含的"作者由上下文推断"在多人场景成立不了。`author` 由后端按当前登录用户兜底写入，前端无需传——属于 spec 文档疏漏，实现走的是事实上的正确路径。建议邓柯在 §八.3 补字段说明而非删字段
+
 - **P4 `verify.verifications[].target` 跨 matter refer[] 白名单 fallback**
   - 原文档要求：`pivot-product.md §九.4` 规定 "verify 验证和评价行动"、每个 `act` 给出判断结果——即 target 语义上是"本事项内被验证的 act"；文档**未明示** target 可以跨 matter
   - 实际实现：`server/matter_validator.py::_validate_verify_shape` 对每条 `verifications[].target` 走两级判定——

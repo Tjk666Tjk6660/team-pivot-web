@@ -434,6 +434,79 @@ def test_append_comment_ok(client, event_bucket):
     assert any(e.topic == "matter.comment_appended" for e in event_bucket)
 
 
+def test_comment_mentions_resolve_open_id_to_pinyin(client, users):
+    """注册用户的 open_id 写入 index 时转换为 pinyin，与 creator/owner 同格式。"""
+    users.upsert_from_feishu(open_id="ou_2", union_id=None, name="刘昱", avatar_url="")
+    users.update_profile("ou_2", pinyin="liuyu")
+
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+    target = r.json()["initial_timeline_item"]["file"]
+
+    r2 = client.post(f"/api/matters/{matter_id}/comments", json={
+        "target_file": target,
+        "body": "请确认",
+        "mentions": ["ou_2"],
+    })
+    assert r2.status_code == 200, r2.text
+
+    # 直读磁盘 yaml，避免 GET 渲染层做了二次解析掩盖真实写入形态
+    from server.matter_index import read_matter_index, matter_index_path
+    raw = read_matter_index(matter_index_path(client.workspace.index_dir, matter_id))
+    on_disk_mentions = raw["timeline"][0]["comments"][0]["mentions"]
+    assert on_disk_mentions == ["liuyu"], on_disk_mentions
+
+
+def test_comment_mentions_keep_open_id_for_unregistered(client):
+    """未注册（无 pinyin）的 open_id 写入 index 时保留 open_id 原文。"""
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+    target = r.json()["initial_timeline_item"]["file"]
+
+    unregistered = "ou_unregistered_0000000000000001"
+    r2 = client.post(f"/api/matters/{matter_id}/comments", json={
+        "target_file": target,
+        "body": "FYI",
+        "mentions": [unregistered],
+    })
+    assert r2.status_code == 200, r2.text
+
+    from server.matter_index import read_matter_index, matter_index_path
+    raw = read_matter_index(matter_index_path(client.workspace.index_dir, matter_id))
+    on_disk_mentions = raw["timeline"][0]["comments"][0]["mentions"]
+    assert on_disk_mentions == [unregistered], on_disk_mentions
+
+
+def test_append_file_comments_mentions_resolved(client, users):
+    """append_file 路径里 comments[].mentions 同样要走 open_id → pinyin 转换。"""
+    users.upsert_from_feishu(open_id="ou_3", union_id=None, name="唐昆", avatar_url="")
+    users.update_profile("ou_3", pinyin="tangkun")
+
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {"type": "act", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+
+    r2 = client.post(f"/api/matters/{matter_id}/files", json={
+        "type": "act", "summary": "go",
+        "status_change": {"from": "planning", "to": "executing"},
+        "comments": [{"body": "请看一下", "mentions": ["ou_3"]}],
+    })
+    assert r2.status_code == 200, r2.text
+
+    from server.matter_index import read_matter_index, matter_index_path
+    raw = read_matter_index(matter_index_path(client.workspace.index_dir, matter_id))
+    appended = raw["timeline"][1]
+    assert appended["comments"][0]["mentions"] == ["tangkun"]
+
+
 def test_append_comment_target_not_found(client):
     r = client.post("/api/matters", json={
         "category": "Pivot", "title": "T",
