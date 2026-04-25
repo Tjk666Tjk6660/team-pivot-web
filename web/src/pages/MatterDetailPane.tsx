@@ -154,6 +154,20 @@ export function MatterDetailPane() {
   }, [matter_id]);
 
   useEffect(() => {
+    // 切换 matter 时同步清掉上一个 matter 的本地 state，避免在 fetch 回来前
+    // 把 A 的草稿 / pendingCreate / 起点帖子 等渲染到 B 上。
+    setData(undefined);
+    setMatterDrafts([]);
+    setPendingCreate(null);
+    setPendingDraftId(null);
+    setPendingInitial(null);
+    setConfirmDeleteOpen(false);
+    setResultConfirmOpen(false);
+    setPendingAIOrigin(null);
+    setHighlight(null);
+  }, [matter_id]);
+
+  useEffect(() => {
     load();
   }, [load]);
 

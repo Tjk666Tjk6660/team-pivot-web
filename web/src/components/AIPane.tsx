@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AlertCircle, Bot, Send, Sparkles } from "lucide-react";
+import { AlertCircle, Bot, Send, Sparkles, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useDashboard } from "@/pages/Dashboard";
@@ -81,6 +81,11 @@ export function AIPane({
     });
   };
 
+  const handleClear = async () => {
+    if (blockedByOtherThread || streaming || loading) return;
+    await ai.clearThreadConversation(category, slug, threadKey);
+  };
+
   const handleGenerateDraft = async () => {
     if (blockedByOtherThread) return;
     const targetHint = replyTarget
@@ -101,6 +106,8 @@ export function AIPane({
   const interactionsDisabled = blockedByOtherThread || loading;
   const sendDisabled = interactionsDisabled || streaming || !input.trim();
   const generateDisabled = interactionsDisabled || streaming || noUserMsg;
+  const clearDisabled = interactionsDisabled || streaming;
+  const showClear = messages.length > 0;
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
@@ -177,6 +184,19 @@ export function AIPane({
               <Sparkles className="mr-1.5 h-4 w-4" />
               生成草稿
             </Button>
+            {showClear && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void handleClear()}
+                disabled={clearDisabled}
+                title="清空对话并删除服务端会话记录"
+                className="h-8 rounded-lg px-3 text-slate-600 hover:bg-slate-100"
+              >
+                <Trash2 className="mr-1.5 h-4 w-4" />
+                清空对话
+              </Button>
+            )}
             <Button
               size="sm"
               onClick={() => void handleSend()}
