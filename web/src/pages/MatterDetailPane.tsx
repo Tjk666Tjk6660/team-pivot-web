@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Bot, ChevronRight, Sparkles, Star, X } from "lucide-react";
 import {
@@ -48,6 +48,8 @@ export function MatterDetailEmpty() {
 
 export function MatterDetailPane() {
   const { matter_id } = useParams<{ matter_id: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const draftIdFromUrl = searchParams.get("draft");
   const { reloadLists, toggleMatterFavorite, ai } = useDashboard();
   const [data, setData] = useState<MatterDetailData | null | undefined>(undefined);
   const [sessionOpenId, setSessionOpenId] = useState<string>("");
@@ -170,6 +172,23 @@ export function MatterDetailPane() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // 从 sidebar 跳过来：URL 带 ?draft={id}，等 matterDrafts 拉到后命中并展开
+  useEffect(() => {
+    if (!draftIdFromUrl || matterDrafts.length === 0) return;
+    const found = matterDrafts.find((d) => d.id === draftIdFromUrl);
+    if (!found) return;
+    const mp = (found.matter_payload ?? {}) as Record<string, unknown>;
+    const docType = typeof mp.doc_type === "string" ? (mp.doc_type as DocType) : null;
+    if (!docType) return;
+    const quote = typeof mp.quote === "string" && mp.quote ? mp.quote : null;
+    setPendingCreate({ type: docType, quote });
+    setPendingDraftId(found.id);
+    setPendingInitial(draftFromPayload(found));
+    // 消费完清掉 URL 参数，避免后续刷新 / 反复触发
+    searchParams.delete("draft");
+    setSearchParams(searchParams, { replace: true });
+  }, [draftIdFromUrl, matterDrafts, searchParams, setSearchParams]);
 
   // Mark read once per opened matter, then refresh sidebar unread badges.
   // Isolated from `load` so the reloadLists identity churn doesn't loop.
@@ -351,7 +370,8 @@ export function MatterDetailPane() {
     }
     setPendingDraftId(null);
     setPendingInitial(null);
-    setPendingCreate(null);
+    // 保留 pendingCreate，仅把 CreateFileForm 重挂载回默认初始状态
+    setAiFillToken((v) => v + 1);
     setConfirmDeleteOpen(false);
   };
 
