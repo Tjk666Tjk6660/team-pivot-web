@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AlertCircle, Bot, Send, Sparkles, Trash2 } from "lucide-react";
@@ -7,6 +7,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { useDashboard } from "@/pages/Dashboard";
 
 const GENERATE_TAG = "[[GENERATE_REPLY_DRAFT]]";
+
+const STREAMING_HINTS = [
+  "正在对齐颗粒度…",
+  "正在追溯线索…",
+  "正在校对引用…",
+  "正在编织上下文…",
+  "正在斟酌措辞…",
+  "正在权衡分歧…",
+  "正在拼装结论…",
+  "正在润色草稿…",
+];
 
 export function AIPane({
   category,
@@ -34,6 +45,16 @@ export function AIPane({
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
+
+  const [streamingHintIdx, setStreamingHintIdx] = useState(0);
+  useEffect(() => {
+    if (!streaming) return;
+    setStreamingHintIdx(Math.floor(Math.random() * STREAMING_HINTS.length));
+    const id = window.setInterval(() => {
+      setStreamingHintIdx((i) => (i + 1) % STREAMING_HINTS.length);
+    }, 2400);
+    return () => window.clearInterval(id);
+  }, [streaming]);
 
   const activeStream = ai.activeStream;
   const blockedByOtherThread = !!activeStream && activeStream.threadKey !== threadKey;
@@ -137,9 +158,14 @@ export function AIPane({
             可以先提问、总结，或者让 AI 帮你生成回复草稿。
           </p>
         )}
-        {messages.map((m) => {
+        {messages.map((m, idx) => {
           const isUser = m.role === "user";
           const display = isUser ? m.content.replace(GENERATE_TAG, "🎯").trim() : m.content;
+          const isLastEmptyAssistant =
+            streaming &&
+            idx === messages.length - 1 &&
+            m.role === "assistant" &&
+            !m.content;
           return (
             <div key={m.id} className={isUser ? "flex justify-end" : ""}>
               {isUser ? (
@@ -151,7 +177,12 @@ export function AIPane({
                   {m.content ? (
                     <Markdown remarkPlugins={[remarkGfm]}>{display}</Markdown>
                   ) : (
-                    <span className="animate-pulse text-muted-foreground">▌</span>
+                    <span className="inline-flex items-center gap-1.5 italic text-muted-foreground">
+                      {isLastEmptyAssistant
+                        ? STREAMING_HINTS[streamingHintIdx]
+                        : "正在等待回应…"}
+                      <span className="animate-pulse" aria-hidden>▌</span>
+                    </span>
                   )}
                 </div>
               )}
