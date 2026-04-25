@@ -82,3 +82,9 @@
     3. 否则拒绝（`verification_target_not_found` / `verification_target_not_act`）
   - 原因：支持"matter B 的 verify 覆盖 matter A 里某个 act 的完成情况"这类跨事项协作场景；`pivot-product.md §八.3` 的 `refer` 字段本身是"其他补充参考文件"的泛语义，并未排除 act；跨 matter 类型校验靠 refer[] 白名单交给客户端显式声明是合适的安全阀
   - 兼容面：本 matter 内的 verify 行为完全按 `pivot-product.md §九.4` 落；跨 matter 用法是严格受限的扩展路径——必须先把目标路径放进同一 item 的 `refer[]` 才能引用
+
+- **P4.7 verify 反写 `verifications_received` 跨 matter 静默跳过（不变量 I7）**
+  - 原文档要求：`matter-implementation-plan.md §P4.7` 规定 verify 创建时必须把每条 `verifications[i]` 反向写到对应 act 的 `verifications_received[]`；spec 完整示例里假设 target act 与 verify 共处同一 matter index
+  - 实际实现：`server/matter_index.py::_reverse_write_verifications` 在跨 matter target（target 不在本 timeline、仅通过当前 verify 的 `refer[]` 白名单进来）的情况下，**静默跳过反写**；不抛错、不告警、不在通知端做任何处理。`test_reverse_write_skipped_for_cross_matter_target` 端到端断言此行为
+  - 原因：跨 matter target 的 act item 在另一个 matter 的 index 文件里，本次写盘只能原子操作当前 index，无法在同一事务里同时写另一个 matter；硬要做就破坏 `_atomic_write_yaml` 的单文件原子性。spec §"完整示例" 隐含的"target 与 verify 同 index"前提是反写设计的边界，跨 matter 走的是 `pivot-product.md §九.4` "refer 白名单"扩展路径，本身就是受限场景，反写信息缺失可接受
+  - 兼容面：本 matter 内的 verify 反写完全按 spec 落；跨 matter verify 的判断结果仍然权威保存在 verify item 的 `verifications[]` 里（AI 想拿到这条信息可以扫该 matter 的 verify 节点），只是不在 target act 名下镜像

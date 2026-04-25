@@ -43,6 +43,15 @@ def validate_append(
     index_data is the YAML-loaded shape: {"matter": {...}, "timeline": [...]}.
     item is the proposed new timeline entry in the same shape.
     """
+    # P4.7 I3: `verifications_received` is server-derived (mirrored from verify
+    # items into the target act). Clients must never author it directly.
+    if "verifications_received" in item:
+        return _fail(
+            "field_not_writable",
+            "verifications_received",
+            "verifications_received is server-derived; clients cannot set it",
+        )
+
     matter = index_data.get("matter") or {}
     current_status = matter.get("current_status")
     if current_status not in VALID_STATES:

@@ -24,6 +24,7 @@ _ITEM_KEY_ORDER = (
     "quote",
     "refer",
     "verifications",
+    "verifications_received",
     "outcome",
     "comments",
     "status_change",
@@ -164,6 +165,10 @@ def append_file_item(
 
     Calls `validate_append` as a second gate (API layer is expected to have
     already called it to produce 422 errors with precise field codes).
+
+    For verify items, also reverse-writes each verifications[i] back onto the
+    target act's `verifications_received[]` (P4.7). Both writes happen inside
+    the same atomic tmp+rename below, so the reverse-write is all-or-nothing.
     """
     p = Path(path)
     data = read_matter_index(p)
@@ -175,6 +180,7 @@ def append_file_item(
         raise ValidationError(result)
     data.setdefault("timeline", []).append(normalized)
     _apply_status_change(data, normalized)
+    _reverse_write_verifications(data, normalized)
     data.setdefault("matter", {})["updated_at"] = now_iso
     _atomic_write_yaml(p, data)
 
@@ -244,6 +250,41 @@ def _apply_status_change(index: dict[str, Any], item: dict[str, Any]) -> None:
     to = sc.get("to")
     if to:
         index.setdefault("matter", {})["current_status"] = to
+
+
+def _reverse_write_verifications(
+    index: dict[str, Any], verify_item: dict[str, Any]
+) -> None:
+    """For a freshly-appended verify item, mirror each verifications[i] onto
+    the target act's `verifications_received[]` (P4.7).
+
+    Cross-matter targets (target sits in another matter, only listed in the
+    verify's `refer[]` whitelist) are silently skipped — there is no act
+    timeline item in the current index to attach to. Targets of unexpected
+    type are also skipped; the validator already enforces target.type == act,
+    so this is a defensive belt.
+    """
+    if verify_item.get("type") != "verify":
+        return
+    by_file: dict[str, dict[str, Any]] = {}
+    for it in index.get("timeline") or []:
+        f = it.get("file")
+        if f:
+            by_file[f] = it
+    verify_file = verify_item.get("file")
+    verified_at = verify_item.get("created_at")
+    verified_by = verify_item.get("owner") or verify_item.get("creator")
+    for v in verify_item.get("verifications") or []:
+        target_item = by_file.get(v.get("target"))
+        if target_item is None or target_item.get("type") != "act":
+            continue
+        target_item.setdefault("verifications_received", []).append({
+            "verify_file": verify_file,
+            "verified_at": verified_at,
+            "verified_by": verified_by,
+            "judgement": v.get("judgement"),
+            "comment": v.get("comment"),
+        })
 
 
 def _atomic_write_yaml(path: Path, data: dict[str, Any]) -> None:
