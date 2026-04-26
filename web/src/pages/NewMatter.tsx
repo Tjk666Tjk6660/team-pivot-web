@@ -33,21 +33,16 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const submitting = stage !== "idle";
 
   useEffect(() => {
-    // categories come from existing matters for discovery; fall back to empty
+    // /api/matters 返回里已经带 category,直接从已存在 matter 推断当前
+    // workspace 用过哪些 category;失败/为空时下拉框留空,用户可手填新建。
     fetchMatters()
       .then((items) => {
-        // 当前 /api/matters 返回没有 category，但后端目录仍然按 category 分组。
-        // 第一版先允许用户手填，初始值留一个 general，不从服务端猜测。
-        void items;
-      })
-      .catch(() => {});
-    // best-effort: look up categories from threads list if available
-    fetch("/api/threads")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (!data?.items) return;
         const cats = Array.from(
-          new Set((data.items as { category: string }[]).map((x) => x.category).filter(Boolean)),
+          new Set(
+            items
+              .map((m) => m.category)
+              .filter((c): c is string => typeof c === "string" && c.length > 0),
+          ),
         );
         setAvailableCategories(cats);
       })
