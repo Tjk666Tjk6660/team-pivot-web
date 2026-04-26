@@ -126,6 +126,28 @@ export function MatterDetailPane() {
     setAiOpen(true);
   };
 
+  // 对齐 master ThreadDetailPane.openThreadAIAssistant：自动 seed 第一个
+  // timeline 文件为 reply_target,预填提示词到 input,打开 AIPane,不自动 send。
+  // 提示词结构沿用 master 4 句,把 read_thread_index 换成 matter 专用的
+  // read_matter_index（服务端 tools.py 已加,文件名规则 {matter_id}.index.yaml）。
+  const openMatterAIAssistant = () => {
+    if (!matter_id || !data || data.timeline.length === 0) return;
+    const { matter: m, timeline: tl } = data;
+    const tk = m.category ? `${m.category}/${m.id}` : m.id;
+    const firstFile = tl[0].file;
+    setPendingAIOrigin(firstFile);
+    ai.setInput(
+      tk,
+      [
+        "请按文件的时间顺序完整阅读这个主题中的全部文件（可调用 read_matter_index 查目录，再逐个 read_post）。",
+        "先逐个概括每个文件分别讲了什么、推进了什么、回应了什么。",
+        "然后基于时间线总结这些文件之间最主要的关系，包括：谁在回应谁、哪些内容是在延续、补充、反驳或收敛前面的讨论。",
+        "最后用清晰的结构总结这个主题的整体讨论逻辑走线，以及目前形成了哪些结论、分歧和待解决问题。",
+      ].join("\n"),
+    );
+    setAiOpen(true);
+  };
+
   // Keep reloadLists in a ref so callbacks/effects depending on matter_id
   // don't re-run when the Dashboard re-renders and hands down a new reference.
   const reloadListsRef = useRef(reloadLists);
@@ -500,7 +522,21 @@ export function MatterDetailPane() {
               "h-9 shrink-0 rounded-xl px-3.5 text-xs font-semibold",
               !aiOpen && "bg-blue-600 text-white shadow-[0_8px_22px_rgba(37,99,235,0.24)] hover:bg-blue-700",
             )}
-            onClick={() => setAiOpen((o) => !o)}
+            onClick={() => {
+              if (aiOpen) {
+                setAiOpen(false);
+              } else {
+                openMatterAIAssistant();
+              }
+            }}
+            disabled={timeline.length === 0}
+            title={
+              timeline.length === 0
+                ? "时间线为空，无法生成总结"
+                : aiOpen
+                  ? "关闭 AI 助手"
+                  : "自动选起点 + 预填总结提示词，等你点【发送】"
+            }
           >
             <Sparkles className="mr-1.5 h-3.5 w-3.5" />
             AI 总结

@@ -110,11 +110,38 @@ class AITools:
             {
                 "type": "function",
                 "function": {
+                    "name": "read_matter_index",
+                    "description": (
+                        "读取某个 matter（事项）的 index YAML 全文。"
+                        "matter index 包含 matter 元信息（status / owner）和"
+                        "时间线（按时间顺序排列的全部文件 + summary + 类型 + 状态变更等）,"
+                        "是了解 matter 全貌的最佳入口。"
+                        "matter_id 通常可从 starting_post 的 path 字段 "
+                        "discussions/<category>/<matter_id>/... 中提取。"
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "matter_id": {
+                                "type": "string",
+                                "description": (
+                                    "matter 的 ID（也是 index 文件名前缀,"
+                                    "实际文件名为 {matter_id}.index.yaml）。"
+                                ),
+                            }
+                        },
+                        "required": ["matter_id"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "read_post",
                     "description": (
                         "读取某篇帖子（.md 文件）的正文。"
-                        "path 必须是某个 index 里已经挂过号的路径，例如通过 "
-                        "read_thread_index 先了解到这篇文件存在。"
+                        "path 必须是某个 index 里已经挂过号的路径,例如通过 "
+                        "read_thread_index 或 read_matter_index 先了解到这篇文件存在。"
                         "路径形如 'discussions/<category>/<slug>/<filename>.md'。"
                     ),
                     "parameters": {
@@ -141,6 +168,8 @@ class AITools:
                 return self._search_indexes(str(arguments.get("keyword") or "").strip())
             if name == "read_thread_index":
                 return self._read_thread_index(str(arguments.get("thread_slug") or "").strip())
+            if name == "read_matter_index":
+                return self._read_matter_index(str(arguments.get("matter_id") or "").strip())
             if name == "read_post":
                 return self._read_post(str(arguments.get("path") or "").strip())
             raise ToolError(f"未知工具：{name}")
@@ -214,6 +243,23 @@ class AITools:
             raise ToolError(f"读取失败：{e}") from e
         if len(text) > MAX_INDEX_BYTES:
             text = text[:MAX_INDEX_BYTES] + f"\n...（已截断，原文 {len(text)} 字节）"
+        return text
+
+    def _read_matter_index(self, matter_id: str) -> str:
+        if not matter_id:
+            raise ToolError("read_matter_index 需要非空 matter_id")
+        path = self._index_dir / f"{matter_id}.index.yaml"
+        resolved = path.resolve()
+        if self._index_dir not in resolved.parents and resolved != self._index_dir:
+            raise ToolError("非法路径（越权）")
+        if not resolved.is_file():
+            raise ToolError(f"未找到 matter「{matter_id}」的 index")
+        try:
+            text = resolved.read_text(encoding="utf-8")
+        except OSError as e:
+            raise ToolError(f"读取失败：{e}") from e
+        if len(text) > MAX_INDEX_BYTES:
+            text = text[:MAX_INDEX_BYTES] + f"\n...（已截断,原文 {len(text)} 字节）"
         return text
 
     def _read_post(self, path: str) -> str:

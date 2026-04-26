@@ -105,6 +105,48 @@ def test_read_thread_index_unknown_slug_errors(tmp_path):
     assert result.startswith("[tool error]")
 
 
+def test_read_matter_index_returns_yaml(tmp_path):
+    discussions, index = _setup_workspace(tmp_path)
+    # matter index 命名是 {matter_id}.index.yaml,不带 -discuss 后缀
+    _write(
+        index / "matter-001.index.yaml",
+        "matter:\n"
+        "  id: matter-001\n"
+        "  title: 你好\n"
+        "  current_status: planning\n"
+        "timeline:\n"
+        "- file: discussions/general/matter-001/001_x_think_aaa.md\n"
+        "  type: think\n"
+        "  summary: 起点\n",
+    )
+    tools = AITools(discussions, index)
+
+    result = tools.dispatch("read_matter_index", {"matter_id": "matter-001"})
+
+    assert "matter-001" in result
+    assert "current_status: planning" in result
+    assert "timeline:" in result
+
+
+def test_read_matter_index_unknown_id_errors(tmp_path):
+    discussions, index = _setup_workspace(tmp_path)
+    tools = AITools(discussions, index)
+
+    result = tools.dispatch("read_matter_index", {"matter_id": "nonexistent"})
+
+    assert result.startswith("[tool error]")
+
+
+def test_read_matter_index_empty_id_errors(tmp_path):
+    discussions, index = _setup_workspace(tmp_path)
+    tools = AITools(discussions, index)
+
+    assert tools.dispatch("read_matter_index", {"matter_id": ""}).startswith(
+        "[tool error]"
+    )
+    assert tools.dispatch("read_matter_index", {}).startswith("[tool error]")
+
+
 def test_read_post_happy_path_returns_body(tmp_path):
     discussions, index = _setup_workspace(tmp_path)
     tools = AITools(discussions, index)
@@ -181,7 +223,7 @@ def test_unknown_tool_name_errors(tmp_path):
     assert result.startswith("[tool error]")
 
 
-def test_specs_include_all_four_tools(tmp_path):
+def test_specs_include_all_five_tools(tmp_path):
     discussions, index = _setup_workspace(tmp_path)
     tools = AITools(discussions, index)
 
@@ -191,5 +233,6 @@ def test_specs_include_all_four_tools(tmp_path):
         "list_thread_titles",
         "search_indexes",
         "read_thread_index",
+        "read_matter_index",
         "read_post",
     }
