@@ -470,11 +470,16 @@ export function MatterDetailPane() {
   const handleUseDraftAsReply = async (
     content: string,
     replyTo: string,
+    summary?: string,
   ): Promise<boolean> => {
     if (!matter_id || !pendingCreate) return false;
+    // 跟着 body 一起覆盖 summary（如果 AI 这次返回了 <summary> 块）。
+    // 没返回时保留旧 summary（一般也是空,fallback 到发布时的 onGenerateSummary）。
+    const trimmedSummary = summary?.trim();
     const nextInitial: Partial<FormSnapshot> = {
       ...(pendingInitial ?? {}),
       body: content,
+      ...(trimmedSummary ? { summary: trimmedSummary } : {}),
     };
     const matter_payload = buildMatterPayload(
       pendingCreate.type,

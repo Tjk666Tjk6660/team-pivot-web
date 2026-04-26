@@ -75,7 +75,7 @@ type DashboardContext = {
       threadTitle: string;
       rawText: string;
       hasReplyDraft: boolean;
-      onUseDraftAsReply: (content: string, replyTo: string) => Promise<boolean>;
+      onUseDraftAsReply: (content: string, replyTo: string, summary?: string) => Promise<boolean>;
     }) => Promise<void>;
   };
 };
@@ -95,16 +95,27 @@ function emptyAIThreadState(): AIThreadState {
 // Matches `<draft>...</draft>` with an optional `type="..."` attribute.
 // The captured type (or "think" when omitted) drives future doc-type branches.
 const DRAFT_RE = /<draft(?:\s+type="([^"]*)")?\s*>([\s\S]*?)<\/draft>/i;
+// Optional `<summary>...</summary>` produced by the same AI call so the
+// publish step doesn't need a second AI round-trip to summarise.
+const SUMMARY_RE = /<summary>([\s\S]*?)<\/summary>/i;
 
 function extractDraft(
   text: string,
-): { draft: string; rest: string; type: string } | null {
+): { draft: string; rest: string; type: string; summary?: string } | null {
   const m = text.match(DRAFT_RE);
   if (!m) return null;
+  const summaryMatch = text.match(SUMMARY_RE);
+  // Strip both blocks from `rest` so the user-facing AI message doesn't
+  // show the raw <draft>/<summary> tags after streaming completes.
+  const rest = text
+    .replace(DRAFT_RE, "")
+    .replace(SUMMARY_RE, "")
+    .trim();
   return {
     draft: m[2].trim(),
-    rest: text.replace(DRAFT_RE, "").trim(),
+    rest,
     type: (m[1] || "think").toLowerCase(),
+    summary: summaryMatch ? summaryMatch[1].trim() || undefined : undefined,
   };
 }
 
@@ -289,7 +300,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     threadTitle: string;
     rawText: string;
     hasReplyDraft: boolean;
-    onUseDraftAsReply: (content: string, replyTo: string) => Promise<boolean>;
+    onUseDraftAsReply: (content: string, replyTo: string, summary?: string) => Promise<boolean>;
   }) => {
     const trimmed = rawText.trim();
     if (!trimmed) return;
@@ -401,7 +412,11 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
             proceed = window.confirm("你已修改 Reply 框内容，是否用 AI 新草稿覆盖？");
           }
           if (proceed) {
-            const ok = await onUseDraftAsReply(extracted.draft, currentReplyTarget);
+            const ok = await onUseDraftAsReply(
+              extracted.draft,
+              currentReplyTarget,
+              extracted.summary,
+            );
             finalContent = extracted.rest
               ? `${extracted.rest}\n\n_${ok ? "✅" : "⚠️"} ${ok ? "草稿已填入回复框" : "填入草稿失败"}_`
               : `_${ok ? "✅ 草稿已填入回复框" : "⚠️ 填入草稿失败"}_`;

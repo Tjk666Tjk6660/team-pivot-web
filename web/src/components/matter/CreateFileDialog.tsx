@@ -286,7 +286,10 @@ export function CreateFileForm({
     }
 
     let summary = form.summary.trim();
-    if (onGenerateSummary) {
+    // form.summary 已有值时直接用——通常由 AIPane【生成草稿】流程在回填 body
+    // 时同步回填 summary,跳过这次 AI 调用,免去发布时再等一次。
+    // 仅当 summary 为空且有 onGenerateSummary 兜底(手动填卡片场景)才再调一次 AI。
+    if (!summary && onGenerateSummary) {
       setStage("generating");
       try {
         summary = (

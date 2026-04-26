@@ -48,7 +48,7 @@ export function AIPane({
   slug: string;
   threadKey: string;
   threadTitle: string;
-  onUseDraftAsReply: (content: string, replyTo: string) => Promise<boolean>;
+  onUseDraftAsReply: (content: string, replyTo: string, summary?: string) => Promise<boolean>;
   pendingReplyTarget?: string | null;
   onPendingReplyTargetConsumed?: () => void;
   hasReplyDraft: boolean;
@@ -123,7 +123,7 @@ export function AIPane({
       slug,
       threadKey,
       threadTitle,
-      rawText: `${GENERATE_TAG} 请根据以上对话，生成针对「${target}」的完整回复正文，整个正文必须用 <draft type="think">...</draft> 标签包裹。`,
+      rawText: `${GENERATE_TAG} 请根据以上对话，生成针对「${target}」的完整回复正文，整个正文必须用 <draft type="think">...</draft> 标签包裹；同时额外用 <summary>...</summary> 标签包一句不超过 80 字的中文 summary（用最精简的语言概括这篇文件推进 / 判断 / 结论了什么，不要加引号也不要前后解释）。`,
       hasReplyDraft,
       onUseDraftAsReply,
     });
