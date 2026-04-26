@@ -2,86 +2,223 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  :root {
-    --background: 210 24% 97%;
-    --foreground: 222 28% 16%;
-    --card: 0 0% 100%;
-    --card-foreground: 222 28% 16%;
-    --primary: 205 70% 34%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 24% 95%;
-    --secondary-foreground: 222 28% 16%;
-    --muted: 210 22% 95%;
-    --muted-foreground: 215 16% 38%;
-    --accent: 204 32% 90%;
-    --accent-foreground: 222 28% 16%;
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214 19% 84%;
-    --input: 214 19% 84%;
-    --ring: 205 70% 34%;
-    --radius: 0.65rem;
-  }
+/* ============================================================
+   Pivot · Direction A — JOURNAL (书信体 / Coda-克制)
+   Imported design tokens. Tailwind utilities + arbitrary-value
+   classes (e.g. text-[var(--accent)]) reach these throughout.
+   ============================================================ */
+:root {
+  /* Warm paper neutrals */
+  --paper-50:  #faf8f3;
+  --paper-100: #f4f1e8;
+  --paper-200: #ebe6d8;
+  --paper-300: #d8d2c0;
+  --paper-400: #b8b1a0;
+  --paper-500: #8a8572;
+  --paper-700: #4a4637;
+  --paper-900: #1f1d17;
 
+  /* Semantic tones */
+  --ok-500: #2f9e6a;
+  --ok-600: #1f7a50;
+  --warn-500: #c98a1a;
+  --warn-600: #a36a0e;
+  --info-500: #3a6bf5;
+  --info-600: #2854d4;
+  --danger-500: #c74545;
+  --danger-600: #9e2f2f;
+  --violet-500: #6c52d9;
+  --violet-600: #5238b8;
+
+  /* Journal palette */
+  --bg:          #faf8f3;
+  --bg-alt:      #f4f1e8;
+  --surface:     #ffffff;
+  --surface-alt: #faf8f3;
+  --line:        #ebe6d8;
+  --line-soft:   #f4f1e8;
+  --line-strong: #d8d2c0;
+
+  --text:        #1f1d17;
+  --text-soft:   #4a4637;
+  --text-mute:   #8a8572;
+  --text-fade:   #b8b1a0;
+
+  --accent:      #5a3a1a;        /* sepia brown */
+  --accent-soft: #e8dcc4;
+  --accent-bg:   #f3ead8;
+  --accent-ink:  #ffffff;
+
+  --r-xs: 3px; --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-xl: 20px;
+  --shadow-sm: 0 1px 0 rgba(31, 29, 23, 0.04);
+  --shadow-md: 0 1px 2px rgba(31, 29, 23, 0.06), 0 2px 8px rgba(31, 29, 23, 0.04);
+  --shadow-lg: 0 4px 16px -2px rgba(31, 29, 23, 0.08), 0 12px 40px -8px rgba(31, 29, 23, 0.12);
+
+  /* One unified sans stack for all UI + body copy; mono stays separate for
+     code and filenames. All semantic aliases below point to the same stack
+     so the whole app renders in one typeface family. */
+  --font-sans:  "Inter", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  --font-mono:  "JetBrains Mono", "SF Mono", "IBM Plex Mono", Menlo, monospace;
+  --font-serif: var(--font-sans);
+  --font-body:  var(--font-sans);
+  --font-ui:    var(--font-sans);
+  --font-meta:  var(--font-sans);
+
+  --letter-tight:  -0.01em;
+  --letter-normal: 0;
+  --letter-wide:   0.02em;
+
+  /* Status semantic */
+  --status-discussing-fg: var(--info-500);
+  --status-discussing-bg: color-mix(in srgb, var(--info-500) 12%, transparent);
+  --status-concluded-fg:  var(--ok-500);
+  --status-concluded-bg:  color-mix(in srgb, var(--ok-500) 12%, transparent);
+  --status-archived-fg:   var(--text-mute);
+  --status-archived-bg:   color-mix(in srgb, var(--text-mute) 15%, transparent);
+  --status-project-fg:    var(--violet-500);
+  --status-project-bg:    color-mix(in srgb, var(--violet-500) 14%, transparent);
+  --status-paused-fg:     var(--warn-500);
+  --status-paused-bg:     color-mix(in srgb, var(--warn-500) 14%, transparent);
+
+  /* shadcn-friendly aliases (HSL approximations of journal palette) */
+  --background: 41 35% 96%;
+  --foreground: 40 14% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 40 14% 11%;
+  --primary: 28 56% 23%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 41 35% 92%;
+  --secondary-foreground: 40 14% 11%;
+  --muted: 41 35% 92%;
+  --muted-foreground: 40 8% 49%;
+  --accent-foreground: 28 56% 23%;
+  --destructive: 0 56% 53%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 41 38% 88%;
+  --input: 41 38% 88%;
+  --ring: 28 56% 23%;
+  --radius: 0.625rem;
+}
+
+@layer base {
   * { @apply border-border; }
   html {
-    font-feature-settings: "ss01" 1, "cv02" 1, "cv03" 1;
+    font-feature-settings: "ss01" 1, "cv11" 1;
   }
   body {
-    @apply text-foreground;
-    background:
-      radial-gradient(circle at top left, rgba(226, 234, 245, 0.42), transparent 34%),
-      linear-gradient(180deg, rgba(246, 248, 252, 0.99), rgba(239, 243, 248, 0.99));
-    background-size: auto, auto;
-    background-position: 0 0, 0 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
+  ::selection { background: var(--accent-bg); color: var(--text); }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 999px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-fade); }
+  ::-webkit-scrollbar-track { background: transparent; }
 }
 
+/* prose-pivot: serif body text used inside markdown blocks (posts, AI replies) */
 .prose-pivot {
-  @apply text-sm leading-relaxed;
+  @apply text-[15px] leading-[1.7];
+  font-family: var(--font-body);
+  color: var(--text);
 }
 .prose-pivot p { @apply my-2; }
-.prose-pivot h1 { @apply text-lg font-semibold mt-4 mb-2; }
-.prose-pivot h2 { @apply text-base font-semibold mt-3 mb-2; }
-.prose-pivot h3 { @apply text-sm font-semibold mt-3 mb-1; }
-.prose-pivot ul { @apply list-disc pl-5 my-2; }
-.prose-pivot ol { @apply list-decimal pl-5 my-2; }
-.prose-pivot code { @apply bg-muted px-1 py-0.5 rounded text-xs; }
-.prose-pivot pre { @apply bg-muted p-3 rounded my-2 overflow-x-auto; }
-.prose-pivot pre code { @apply bg-transparent p-0; }
-.prose-pivot blockquote { @apply border-l-4 border-muted pl-3 my-2 text-muted-foreground; }
-.prose-pivot a { @apply text-primary underline underline-offset-2; }
-.prose-pivot table { @apply my-3 w-full border-collapse text-sm; }
-.prose-pivot th { @apply border border-border bg-muted px-3 py-1.5 text-left font-semibold; }
-.prose-pivot td { @apply border border-border px-3 py-1.5; }
-.prose-pivot tr:nth-child(even) td { @apply bg-muted/30; }
+.prose-pivot h1 { @apply text-xl font-semibold mt-5 mb-2; font-family: var(--font-body); letter-spacing: var(--letter-tight); }
+.prose-pivot h2 { @apply text-lg font-semibold mt-4 mb-2; font-family: var(--font-body); letter-spacing: var(--letter-tight); }
+.prose-pivot h3 { @apply text-base font-semibold mt-3 mb-1; font-family: var(--font-body); }
+.prose-pivot ul { @apply list-disc pl-6 my-2; }
+.prose-pivot ol { @apply list-decimal pl-6 my-2; }
+.prose-pivot li { @apply my-1; }
+.prose-pivot code {
+  background: var(--surface-alt);
+  border: 1px solid var(--line);
+  font-family: var(--font-mono);
+  @apply px-1.5 py-0.5 rounded text-[12.5px];
+}
+.prose-pivot pre {
+  background: var(--surface-alt);
+  border: 1px solid var(--line);
+  @apply p-3 rounded my-2 overflow-x-auto;
+}
+.prose-pivot pre code { background: transparent; border: none; @apply p-0; }
+.prose-pivot blockquote {
+  border-left: 3px solid var(--accent-soft);
+  color: var(--text-soft);
+  @apply pl-4 my-3 italic;
+}
+.prose-pivot a { color: var(--accent); @apply underline underline-offset-2; }
+.prose-pivot strong { color: var(--text); font-weight: 600; }
+.prose-pivot .table-scroll { @apply my-3 overflow-x-auto; }
+.prose-pivot table { @apply w-full border-collapse text-sm; }
+.prose-pivot th {
+  background: var(--surface-alt); border: 1px solid var(--line);
+  @apply px-3 py-1.5 text-left font-semibold;
+  word-break: break-word;
+}
+.prose-pivot td {
+  border: 1px solid var(--line);
+  @apply px-3 py-1.5 align-top;
+  word-break: break-word;
+}
+.prose-pivot tr:nth-child(even) td { background: rgba(244, 241, 232, 0.4); }
 .prose-pivot input[type="checkbox"] { @apply mr-1.5 align-middle; }
 
 @layer utilities {
-  .workbench-panel {
-    background: rgba(255, 255, 255, 0.8);
-    backdrop-filter: blur(10px);
-    border-color: rgba(203, 213, 225, 0.72);
-    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
+  .font-serif-body { font-family: var(--font-body); }
+  .font-ui { font-family: var(--font-ui); }
+  .font-meta { font-family: var(--font-meta); }
+  .font-pivot-mono { font-family: var(--font-mono); }
+
+  .paper-panel {
+    background: var(--surface);
+    border-color: var(--line);
+    box-shadow: var(--shadow-sm);
   }
 
   .ink-panel {
-    background: rgba(247, 249, 252, 0.95);
-    border-color: rgba(203, 213, 225, 0.66);
+    background: var(--surface-alt);
+    border-color: var(--line);
   }
 
-  .paper-panel {
-    background: rgba(255, 255, 255, 0.9);
-    border-color: rgba(203, 213, 225, 0.76);
-    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.035);
+  .workbench-panel {
+    background: var(--surface);
+    border-color: var(--line);
+    box-shadow: var(--shadow-md);
   }
 
+  /* Editorial section kicker — small caps / wide letterspacing */
   .section-kicker {
-    @apply text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500;
+    font-family: var(--font-meta);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: var(--letter-wide);
+    text-transform: uppercase;
+    color: var(--text-mute);
+  }
+  .section-kicker--accent {
+    color: var(--accent);
+  }
+
+  /* Editorial display — serif headlines */
+  .editorial-title {
+    font-family: var(--font-body);
+    letter-spacing: var(--letter-tight);
+    line-height: 1.25;
+    color: var(--text);
   }
 
   .editor-divider {
-    border-color: rgba(148, 163, 184, 0.2);
+    border-color: var(--line);
+  }
+
+  .journal-divider {
+    border-top: 1px solid var(--line);
   }
 }
+
+/* Caret blink for editable previews / placeholders */
+@keyframes journal-caret { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
+.animate-journal-caret { animation: journal-caret 1s steps(1) infinite; }

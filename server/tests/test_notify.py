@@ -200,30 +200,63 @@ def test_reply_card_body_preview_truncates_at_200():
 
 def test_standalone_mention_card_structure():
     card = build_standalone_mention_card(
-        category="general",
+        category="enclaws",
         thread_slug="hello",
-        thread_title="Hello",
-        author_name="Alice",
-        target_filename="002_bob_reply_zzz.md",
-        mention_open_ids=["ou_aaa", "ou_bbb"],
-        mention_comments="请看一下",
-        post_excerpt="这是 bob 的回复正文",
+        thread_title="EnClaws 内容营销推广方案",
+        author_name="邓柯",
+        target_filename="003_daisy_reply_bac194.md",
+        mention_open_ids=["ou_aaa", "ou_bbb", "ou_ccc"],
+        mention_comments="我觉得Daisy文档里面提的问题都挺不错，欢迎大家一起来发表意见。头脑风暴",
         post_url="http://x/deep-link",
     )
     md = card["body"]["elements"][0]["content"]
-    # 必须展示: 圈谁 / 哪个 thread / 哪条 post / mention 内容 / 相关内容
-    assert '<at user_id="ou_aaa"' in md
-    assert '<at user_id="ou_bbb"' in md
-    assert "**{} ".format("Alice") in md or "Alice" in md
-    assert "**项目**：general" in md
-    assert "**主题**：Hello" in md
-    assert "**帖子**：002_bob_reply_zzz.md" in md
-    assert "**说明**：请看一下" in md
-    assert "**相关内容**：" in md
-    # 按钮必须 deep-link 到 post 级
+
+    # 1. 真 @ 语法：schema 2.0 用 id=，content 留空
+    assert '<at id="ou_aaa"></at>' in md
+    assert '<at id="ou_bbb"></at>' in md
+    assert '<at id="ou_ccc"></at>' in md
+    assert "user_id=" not in md  # 旧 schema 1.0 写法必须全部清除
+
+    # 2. 评论行：**评论**：<橙色邓柯> @标签 说：<br> comment
+    assert "**评论**：" in md
+    assert "<font color='orange'>**邓柯**</font>" in md
+    assert "说：" in md
+    assert "我觉得Daisy文档里面提的问题都挺不错" in md
+
+    # 3. 评论行结构：主评论人 → @ 标签 → 说：→ <br> → comment
+    i_author = md.index("<font color='orange'>**邓柯**</font>")
+    i_ats = md.index('<at id="ou_aaa"></at>')
+    i_say = md.index("说：")
+    i_br = md.index("<br>")
+    assert i_author < i_ats < i_say < i_br
+
+    # 4. 不再出现被评人相关字段（target_author_name 已从签名移除）
+    assert "<font color='blue'>" not in md
+    assert "进行了回复" not in md
+    assert "并提及" not in md
+
+    # 5. 元信息块 4 个字段齐全且顺序正确：时间 → 项目 → 主题 → 被评文件
+    i_time = md.index("**时间**：")
+    i_proj = md.index("**项目**：enclaws")
+    i_topic = md.index("**主题**：EnClaws 内容营销推广方案")
+    i_file = md.index("**被评文件**：003_daisy_reply_bac194.md")
+    assert i_time < i_proj < i_topic < i_file
+
+    # 6. 已去掉的字段/短语
+    assert "提及了以上成员" not in md
+    assert "**说明**：" not in md   # 合并进评论行
+    assert "**帖子**：" not in md   # 改叫"被评文件"
+    assert "**相关内容**：" not in md  # post_excerpt 段已废弃
+
+    # 7. 按钮保持 post 级深链
     button = card["body"]["elements"][-1]
+    assert button["tag"] == "button"
     assert button["multi_url"]["url"] == "http://x/deep-link"
     assert button["text"]["content"] == "查看该帖子"
+
+    # 8. header 和模板
+    assert card["header"]["template"] == "orange"
+    assert "📣 提及：EnClaws 内容营销推广方案" in card["header"]["title"]["content"]
 
 
 def test_mention_dm_card_structure():
@@ -363,7 +396,6 @@ def test_noop_notifier_silent():
     n.notify_standalone_mention(
         category="c", slug="s", thread_title="t", target_filename="f.md",
         author_name="a", mention_open_ids=["ou_x"], mention_comments="hi",
-        post_excerpt="body",
     )
 
 
@@ -483,3 +515,30 @@ def _extract_button_url(card: dict) -> str:
     import json as _json
     raw = _json.dumps(card, ensure_ascii=False)
     return raw
+
+
+def test_feishu_notifier_standalone_mention_does_not_dm(monkeypatch):
+    """群卡片里 <at id=…> 已能触发推送，不再额外发 DM（避免双通知）。"""
+    notifier = FeishuNotifier(tokens=None, web_base_url="https://x")  # type: ignore[arg-type]
+
+    calls: dict[str, int] = {"broadcast": 0, "dm": 0}
+
+    def fake_broadcast(self, card, *, event):
+        calls["broadcast"] += 1
+
+    def fake_dm_many(self, open_ids, card, *, event):
+        calls["dm"] += 1
+
+    monkeypatch.setattr(FeishuNotifier, "_broadcast", fake_broadcast)
+    monkeypatch.setattr(FeishuNotifier, "_dm_many", fake_dm_many)
+
+    notifier.notify_standalone_mention(
+        category="c", slug="s", thread_title="t",
+        target_filename="001_a.md",
+        author_name="Alice",
+        mention_open_ids=["ou_x"],
+        mention_comments="hi",
+    )
+
+    assert calls["broadcast"] == 1
+    assert calls["dm"] == 0

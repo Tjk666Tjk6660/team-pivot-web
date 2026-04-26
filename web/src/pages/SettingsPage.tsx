@@ -23,14 +23,35 @@ import { Label } from "@/components/ui/label";
 
 export function SettingsPage() {
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen" style={{ background: "var(--bg)" }}>
       <Toaster position="top-center" richColors />
-      <header className="border-b px-6 py-3">
+      <header
+        className="px-6 py-3"
+        style={{
+          borderBottom: "1px solid var(--line)",
+          background: "var(--surface)",
+        }}
+      >
         <div className="mx-auto flex max-w-3xl items-center gap-3">
-          <Button asChild variant="ghost" size="sm">
+          <Button
+            asChild
+            variant="ghost"
+            size="sm"
+            className="h-8 rounded-md hover:bg-[var(--surface-alt)]"
+            style={{ color: "var(--text-soft)" }}
+          >
             <Link to="/"><ArrowLeft className="h-4 w-4" /> 返回</Link>
           </Button>
-          <h1 className="text-lg font-semibold">个人设置</h1>
+          <h1
+            className="text-[16px] font-semibold"
+            style={{
+              fontFamily: "var(--font-serif)",
+              letterSpacing: "var(--letter-tight)",
+              color: "var(--text)",
+            }}
+          >
+            个人设置
+          </h1>
         </div>
       </header>
       <main className="mx-auto max-w-3xl space-y-8 px-6 py-8">
@@ -70,9 +91,35 @@ function ApiTokensSection() {
 
   return (
     <section>
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold">API Token（个人访问令牌）</h2>
-        <Button size="sm" onClick={() => setCreating(true)}>
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <h2
+            className="text-[20px] font-semibold"
+            style={{
+              fontFamily: "var(--font-serif)",
+              letterSpacing: "var(--letter-tight)",
+              color: "var(--text)",
+            }}
+          >
+            API Token
+          </h2>
+          <p
+            className="mt-1 text-[13px] leading-[1.6]"
+            style={{ fontFamily: "var(--font-serif)", color: "var(--text-soft)" }}
+          >
+            个人访问令牌。给脚本或 CLI 用。撤销后即刻失效。
+          </p>
+        </div>
+        <Button
+          size="sm"
+          onClick={() => setCreating(true)}
+          className="h-8 rounded-md px-3 text-[12.5px] font-semibold shadow-none"
+          style={{
+            background: "var(--accent)",
+            color: "var(--accent-ink)",
+            border: "1px solid var(--accent)",
+          }}
+        >
           <Plus className="mr-1 h-3.5 w-3.5" />
           新建 Token
         </Button>

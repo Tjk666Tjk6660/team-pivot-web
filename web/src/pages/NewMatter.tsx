@@ -101,18 +101,17 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
         body.trim(),
         "```",
       ].join("\n");
-      // 复用现有 chat 端点：服务端只校验 reply_target 非空，文件不存在时静默
-      // 降级为空 file context；streamAIChat 不走 sendMessage，故不会落
-      // ai_conversations 表。
+      // 复用现有 chat 端点：NewMatter 还没有真实文件作起点帖子，传一个占位
+      // 字符串。后端 build_starting_post_block 对路径不合法 / 文件不存在的情况
+      // 静默降级为空 starting block，AI 仅基于下面 userMsg 里的 body 总结。
       let acc = "";
-      for await (const delta of streamAIChat(
+      for await (const ev of streamAIChat(
         category.trim() || "general",
         "_new_matter_",
         [{ role: "user", content: userMsg }],
         "_new_matter_summary_",
-        [],
       )) {
-        acc += delta;
+        if (ev.kind === "delta") acc += ev.delta;
       }
       summary = acc.trim();
     } catch (err) {

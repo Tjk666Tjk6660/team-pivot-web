@@ -2,11 +2,8 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ArrowUpRight, BookOpenText, Rocket, ShieldCheck, Sparkles } from "lucide-react";
+import { Plus, ShieldCheck, User } from "lucide-react";
 import { fetchAppHome, type AppHomePayload } from "@/api";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 export function HomeWelcomePane() {
   const [data, setData] = useState<AppHomePayload | null | undefined>(undefined);
@@ -19,22 +16,23 @@ export function HomeWelcomePane() {
 
   if (data === undefined) {
     return (
-      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-        <Card>
-          <CardContent className="p-6 text-sm text-muted-foreground">Loading…</CardContent>
-        </Card>
+      <div
+        className="grid h-full place-items-center"
+        style={{ color: "var(--text-mute)", fontFamily: "var(--font-meta)" }}
+      >
+        加载中…
       </div>
     );
   }
 
   if (data === null) {
     return (
-      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-        <Card>
-          <CardContent className="p-6 text-sm text-muted-foreground">
-            首页信息暂时不可用。你可以直接从左侧选择讨论，或点击顶部 `新讨论` 开始工作。
-          </CardContent>
-        </Card>
+      <div
+        className="grid h-full place-items-center px-6 text-center text-[14px] leading-[1.7]"
+        style={{ color: "var(--text-mute)", fontFamily: "var(--font-serif)" }}
+      >
+        首页信息暂时不可用。<br />
+        从左侧目录选择一个讨论，或点顶栏的「+ 新讨论」开始一个。
       </div>
     );
   }
@@ -42,183 +40,314 @@ export function HomeWelcomePane() {
   const latest = data.latest_release;
 
   return (
-    <div className="mx-auto max-w-6xl px-0 py-4 sm:px-6 sm:py-8 lg:px-10 lg:py-10">
-      <div className="grid gap-4 sm:gap-8 xl:grid-cols-[minmax(0,1.7fr)_minmax(320px,0.82fr)]">
-        <div className="space-y-6">
-          <section className="workbench-panel overflow-hidden rounded-[1.2rem] border sm:rounded-[1.75rem]">
-            <div className="grid gap-6 px-4 py-5 sm:gap-10 sm:px-8 sm:py-10 xl:grid-cols-[minmax(0,1.45fr)_minmax(250px,0.72fr)]">
-              <div className="space-y-6 sm:space-y-8">
-                <div className="flex flex-wrap items-center gap-3">
-                  <Badge variant="green">Pivot {data.app.version}</Badge>
-                  {data.app.head && <Badge variant="outline">HEAD {data.app.head}</Badge>}
-                </div>
-                <div className="space-y-4">
-                  <div className="section-kicker">Knowledge Workbench</div>
-                  <h1 className="max-w-4xl text-3xl font-semibold tracking-[-0.03em] text-slate-950 sm:text-5xl">
-                    {data.welcome.title}
-                  </h1>
-                  <p className="max-w-3xl text-[15px] leading-8 text-slate-600">
-                    这里是团队进入 Pivot 后的工作入口。讨论、结论、上下文和更新记录都在同一块工作台里展开，不需要先穿过一个仪表盘再去找内容。
-                  </p>
-                </div>
-                <div className="grid gap-4 sm:grid-cols-3">
-                  <div className="paper-panel rounded-2xl border p-4">
-                    <div className="section-kicker">工作方式</div>
-                    <div className="mt-2 text-lg font-semibold text-slate-900">先读上下文，再行动</div>
-                    <p className="mt-2 text-sm leading-6 text-slate-600">
-                      左侧按分类和 thread 组织，右侧是阅读与回复区，适合连续推进讨论。
-                    </p>
-                  </div>
-                  <div className="paper-panel rounded-2xl border p-4">
-                    <div className="section-kicker">内容来源</div>
-                    <div className="mt-2 text-lg font-semibold text-slate-900">仓库即事实源</div>
-                    <p className="mt-2 text-sm leading-6 text-slate-600">
-                      首页说明、版本记录和讨论内容都直接来自仓库，方便追溯和沉淀。
-                    </p>
-                  </div>
-                  <div className="paper-panel rounded-2xl border p-4">
-                    <div className="section-kicker">下一步</div>
-                    <div className="mt-2 text-lg font-semibold text-slate-900">从 thread 开始</div>
-                    <p className="mt-2 text-sm leading-6 text-slate-600">
-                      你可以从左侧继续已有讨论，也可以直接发起一个新的提案 thread。
-                    </p>
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-3">
-                  <Button asChild size="lg" className="h-11 rounded-xl px-5">
-                    <Link to="/new">
-                      <Rocket className="h-4 w-4" />
-                      发起新讨论
-                    </Link>
-                  </Button>
-                  <Button asChild variant="outline" size="lg" className="h-11 rounded-xl border-slate-300 bg-slate-100/85 px-5">
-                    <Link to="/admin">
-                      <ShieldCheck className="h-4 w-4" />
-                      管理员设置
-                    </Link>
-                  </Button>
-                </div>
+    <div className="mx-auto w-full max-w-[1240px] px-6 py-10 sm:px-2 sm:py-12">
+      {/* Top badges row */}
+      <div className="mb-5 flex flex-wrap items-center gap-2">
+        <span
+          className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-bold tracking-[0.04em] font-meta"
+          style={{
+            background: "var(--status-concluded-bg)",
+            color: "var(--status-concluded-fg)",
+          }}
+        >
+          Pivot {data.app.version}
+        </span>
+        {data.app.head && (
+          <span
+            className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-mono"
+            style={{
+              border: "1px solid var(--line)",
+              color: "var(--text-mute)",
+            }}
+          >
+            HEAD {data.app.head}
+          </span>
+        )}
+        <span
+          className="ml-auto text-[11px] font-meta tracking-[0.04em]"
+          style={{ color: "var(--text-mute)" }}
+        >
+          Workspace · {data.app.name}
+        </span>
+      </div>
+
+      {/* Editorial kicker */}
+      <div
+        className="mb-3 text-[10.5px] font-bold uppercase tracking-[0.22em] font-meta"
+        style={{ color: "var(--accent)" }}
+      >
+        Knowledge Workbench
+      </div>
+
+      {/* Headline */}
+      <h1
+        className="m-0 text-[34px] sm:text-[44px]"
+        style={{
+          fontFamily: "var(--font-serif)",
+          fontWeight: 500,
+          letterSpacing: "var(--letter-tight)",
+          lineHeight: 1.15,
+          color: "var(--text)",
+        }}
+      >
+        {data.welcome.title}
+      </h1>
+
+      {/* Hero lead — short static intro per high-fidelity design. The full
+          HOME.md content is rendered further down in a dedicated section. */}
+      <p
+        className="mt-5 max-w-[680px] text-[15px] leading-[1.75]"
+        style={{ fontFamily: "var(--font-serif)", color: "var(--text-soft)" }}
+      >
+        团队进入 Pivot 后的工作入口。讨论、结论、上下文、更新记录都在同一块工作台里展开；
+        左侧按分类和 thread 组织，右侧是阅读与回复区。
+      </p>
+
+      {/* 3 guide cards */}
+      <div className="mt-8 grid gap-4 sm:grid-cols-3">
+        <GuideCard
+          kicker="工作方式"
+          title="先读上下文，再行动"
+          body="左侧按分类和 thread 组织，右侧是阅读与回复区。"
+        />
+        <GuideCard
+          kicker="内容来源"
+          title="仓库即事实源"
+          body="首页说明、版本记录、讨论内容都直接来自仓库。"
+        />
+        <GuideCard
+          kicker="下一步"
+          title="从一个 thread 开始"
+          body="从左侧继续已有讨论，或者直接发起一个新的提案。"
+        />
+      </div>
+
+      {/* Latest release + Quick actions */}
+      <div className="mt-8 grid gap-5 lg:grid-cols-[1.5fr_1fr]">
+        <section
+          className="rounded-[var(--r-lg)] p-6"
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--line)",
+            boxShadow: "var(--shadow-sm)",
+          }}
+        >
+          {latest ? (
+            <>
+              <div className="flex items-baseline gap-3">
+                <h2
+                  className="m-0 text-[20px]"
+                  style={{
+                    fontFamily: "var(--font-serif)",
+                    fontWeight: 600,
+                    letterSpacing: "var(--letter-tight)",
+                    color: "var(--text)",
+                  }}
+                >
+                  最新发布 · {latest.version}
+                </h2>
+                <span
+                  className="text-[11.5px] font-meta tracking-[0.04em]"
+                  style={{ color: "var(--text-mute)" }}
+                >
+                  {latest.date}
+                </span>
               </div>
-              <div className="space-y-4">
-                <div className="ink-panel rounded-[1.25rem] border p-4 sm:rounded-[1.5rem] sm:p-5">
-                  <div className="section-kicker">当前实例</div>
-                  <div className="mt-4 space-y-4 text-sm">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-slate-500">Version</span>
-                      <span className="font-semibold text-slate-900">{data.app.version}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-slate-500">Git HEAD</span>
-                      <span className="font-mono text-xs text-slate-700">{data.app.head || "N/A"}</span>
-                    </div>
-                    <div className="editor-divider border-t pt-4 text-sm leading-6 text-slate-600">
-                      当前实例的欢迎信息、变更记录和使用说明都来自仓库内容本身，适合拿它当工作环境的入口说明。
-                    </div>
-                  </div>
-                </div>
-                <div className="paper-panel rounded-[1.25rem] border p-4 sm:rounded-[1.5rem] sm:p-5">
-                  <div className="section-kicker">进入方式</div>
-                  <div className="mt-3 space-y-3 text-sm text-slate-600">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="font-medium text-slate-900">继续一个 thread</div>
-                        <div className="mt-1 leading-6">从左侧分类树进入上下文，适合连续推进已有讨论。</div>
-                      </div>
-                      <ArrowUpRight className="mt-0.5 h-4 w-4 text-slate-400" />
-                    </div>
-                    <div className="editor-divider border-t pt-3" />
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="font-medium text-slate-900">发起新的提案</div>
-                        <div className="mt-1 leading-6">直接进入右侧表单页，从标题、分类和正文开始。</div>
-                      </div>
-                      <ArrowUpRight className="mt-0.5 h-4 w-4 text-slate-400" />
-                    </div>
-                  </div>
-                </div>
+              <div
+                className="mt-1 text-[15px]"
+                style={{
+                  fontFamily: "var(--font-serif)",
+                  fontWeight: 600,
+                  color: "var(--text)",
+                }}
+              >
+                {latest.title}
               </div>
+              <div className="prose-pivot mt-3 text-[14px] leading-[1.75]">
+                <Markdown remarkPlugins={[remarkGfm]}>{latest.body_md}</Markdown>
+              </div>
+            </>
+          ) : (
+            <div className="text-[13.5px]" style={{ color: "var(--text-mute)" }}>
+              CHANGELOG.md 还没有可展示的版本节。
             </div>
-          </section>
+          )}
+        </section>
 
-          <Card className="paper-panel rounded-[1.25rem] border bg-slate-100/80 sm:rounded-[1.5rem]">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <BookOpenText className="h-5 w-5" />
-                使用指南
-              </CardTitle>
-              <CardDescription>来自仓库根目录的 HOME.md</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="prose-pivot text-sm">
-                <Markdown remarkPlugins={[remarkGfm]}>{data.welcome.body_md}</Markdown>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+        <aside
+          className="rounded-[var(--r-lg)] p-6"
+          style={{
+            background: "var(--surface-alt)",
+            border: "1px dashed var(--line-strong)",
+          }}
+        >
+          <div
+            className="mb-3 text-[10.5px] font-bold uppercase tracking-[0.22em] font-meta"
+            style={{ color: "var(--text-mute)" }}
+          >
+            快速入口
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <QuickLink to="/new" label="发起新讨论" icon={<Plus className="h-3.5 w-3.5" />} />
+            <QuickLink
+              to="/admin"
+              label="管理员设置"
+              icon={<ShieldCheck className="h-3.5 w-3.5" />}
+            />
+            <QuickLink
+              to="/settings"
+              label="个人设置"
+              icon={<User className="h-3.5 w-3.5" />}
+            />
+          </div>
 
-        <div className="space-y-6">
-          <Card className="paper-panel rounded-[1.25rem] border bg-slate-100/80 sm:rounded-[1.5rem]">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Sparkles className="h-5 w-5" />
-                当前版本
-              </CardTitle>
-              <CardDescription>当前登录实例的产品版本信息</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Version</span>
-                <span className="font-semibold">{data.app.version}</span>
+          {data.recent_releases.length > 0 && (
+            <>
+              <div
+                className="mt-6 mb-3 text-[10.5px] font-bold uppercase tracking-[0.22em] font-meta"
+                style={{ color: "var(--text-mute)" }}
+              >
+                最近版本
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Git HEAD</span>
-                <span className="font-mono text-xs">{data.app.head || "N/A"}</span>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="paper-panel rounded-[1.25rem] border bg-slate-100/80 sm:rounded-[1.5rem]">
-            <CardHeader>
-              <CardTitle>最新更新</CardTitle>
-              <CardDescription>
-                {latest ? `${latest.version} · ${latest.date}` : "暂无更新记录"}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {latest ? (
-                <>
-                  <div className="text-base font-semibold text-slate-900">{latest.title}</div>
-                  <div className="prose-pivot text-sm">
-                    <Markdown remarkPlugins={[remarkGfm]}>{latest.body_md}</Markdown>
+              <div className="flex flex-col gap-1">
+                {data.recent_releases.map((r) => (
+                  <div
+                    key={`${r.version}-${r.date}`}
+                    className="flex items-baseline gap-2 rounded-[var(--r-sm)] px-2 py-1.5"
+                  >
+                    <span
+                      className="font-mono text-[11px]"
+                      style={{ color: "var(--text-mute)" }}
+                    >
+                      {r.version}
+                    </span>
+                    <span
+                      className="truncate text-[12.5px]"
+                      style={{
+                        fontFamily: "var(--font-serif)",
+                        color: "var(--text)",
+                      }}
+                    >
+                      {r.title}
+                    </span>
+                    <span
+                      className="ml-auto shrink-0 text-[10.5px] font-meta"
+                      style={{ color: "var(--text-fade)" }}
+                    >
+                      {r.date}
+                    </span>
                   </div>
-                </>
-              ) : (
-                <div className="text-sm text-muted-foreground">CHANGELOG.md 还没有可展示的版本节。</div>
-              )}
-            </CardContent>
-          </Card>
+                ))}
+              </div>
+            </>
+          )}
+        </aside>
+      </div>
 
-          <Card className="paper-panel rounded-[1.5rem] border bg-slate-100/80">
-            <CardHeader>
-              <CardTitle>最近版本</CardTitle>
-              <CardDescription>用于快速了解近期功能演进</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {data.recent_releases.length > 0 ? data.recent_releases.map((release) => (
-                <div key={`${release.version}-${release.date}`} className="rounded-lg border border-slate-200/80 bg-slate-100/75 p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="font-medium text-slate-900">{release.title}</div>
-                    <Badge variant="secondary">{release.version}</Badge>
-                  </div>
-                  <div className="mt-1 text-xs text-muted-foreground">{release.date}</div>
-                </div>
-              )) : (
-                <div className="text-sm text-muted-foreground">暂无版本记录。</div>
-              )}
-            </CardContent>
-          </Card>
+      {/* HOME.md full guide — moved here from the hero per design */}
+      <section className="mt-10">
+        <div className="mb-3 flex items-baseline gap-3">
+          <span
+            className="text-[10.5px] font-bold uppercase tracking-[0.22em] font-meta"
+            style={{ color: "var(--accent)" }}
+          >
+            使用指南
+          </span>
+          <span
+            className="text-[11px] font-meta tracking-[0.04em]"
+            style={{ color: "var(--text-mute)" }}
+          >
+            来自仓库根目录的 HOME.md
+          </span>
         </div>
+        <div
+          className="rounded-[var(--r-lg)] px-7 py-6 sm:px-9 sm:py-8"
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--line)",
+            boxShadow: "var(--shadow-sm)",
+          }}
+        >
+          <div className="prose-pivot max-w-[680px]">
+            <Markdown
+              remarkPlugins={[remarkGfm]}
+              components={{ h1: () => null }}
+            >
+              {data.welcome.body_md}
+            </Markdown>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function GuideCard({
+  kicker,
+  title,
+  body,
+}: {
+  kicker: string;
+  title: string;
+  body: string;
+}) {
+  return (
+    <div
+      className="rounded-[var(--r-lg)] p-5"
+      style={{
+        background: "var(--surface)",
+        border: "1px solid var(--line)",
+        boxShadow: "var(--shadow-sm)",
+      }}
+    >
+      <div
+        className="mb-2 text-[10.5px] font-bold uppercase tracking-[0.18em] font-meta"
+        style={{ color: "var(--text-mute)" }}
+      >
+        {kicker}
+      </div>
+      <div
+        className="mb-2 text-[16px]"
+        style={{
+          fontFamily: "var(--font-serif)",
+          fontWeight: 600,
+          letterSpacing: "var(--letter-tight)",
+          color: "var(--text)",
+        }}
+      >
+        {title}
+      </div>
+      <div
+        className="text-[13px] leading-[1.6]"
+        style={{ fontFamily: "var(--font-serif)", color: "var(--text-soft)" }}
+      >
+        {body}
       </div>
     </div>
+  );
+}
+
+function QuickLink({
+  to,
+  label,
+  icon,
+}: {
+  to: string;
+  label: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <Link
+      to={to}
+      className="flex items-center gap-2.5 rounded-[var(--r-sm)] px-3 py-2.5 text-[13px] font-medium transition-colors hover:bg-[var(--surface)]"
+      style={{
+        background: "var(--surface)",
+        border: "1px solid var(--line)",
+        color: "var(--text)",
+      }}
+    >
+      <span style={{ color: "var(--accent)" }}>{icon}</span>
+      <span className="flex-1">{label}</span>
+    </Link>
   );
 }

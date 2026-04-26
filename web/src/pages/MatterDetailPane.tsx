@@ -295,14 +295,13 @@ export function MatterDetailPane() {
     ].join("\n");
 
     let accumulated = "";
-    for await (const delta of streamAIChat(
+    for await (const ev of streamAIChat(
       matter.category ?? "",
       matter.id,
       [{ role: "user", content: userMsg }],
       replyTarget,
-      [],
     )) {
-      accumulated += delta;
+      if (ev.kind === "delta") accumulated += ev.delta;
     }
     return accumulated;
   };
