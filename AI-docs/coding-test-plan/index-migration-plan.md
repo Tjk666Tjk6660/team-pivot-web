@@ -46,8 +46,9 @@ timeline:
 ### 能复用的现有工具
 
 - `server/threads.py::_thread_meta` — 从首个 `type: proposal` 帖子取 title（frontmatter.title → body H1 → slug fallback）
-- `server/posts.py::read_post` — 读 MD frontmatter
+- `server/posts.py::read_post` / `write_post` — 读 / 写 MD frontmatter（写时保留 body 字节不变）
 - `server/matter_index.py::atomic_write_yaml`（需补导出；_atomic_write_yaml 是私有）— 原子 tmp+rename YAML 写入
+- `server/publish.py::_resolve_mentions_for_index` — open_id → pinyin 解析（注册用户落 pinyin，未注册兜底 open_id；commit f3ce04c 已确立的口径），mention → comments 路径直接复用
 - `server/workspace.py::write_session` — 统一 pull→commit→push 包装器
 - `server/doc_types.py` / `server/matter_validator.py` — 迁移出的 matter item 需过一遍 validator 保证合法
 
@@ -59,17 +60,63 @@ timeline:
 |---|---|---|
 | `open` | `planning` | 老"讨论中"对应新"事项仍在计划中" |
 | `pending` | `planning` | 老写入中状态，同 open |
-| `concluded` | `finished` | 老"已达成结论"视为事项已收口；迁移后只能追加 `insight` 推进到 reviewed，无法再新增 act/verify/result（符合 matter 终态语义） |
+| `concluded` | `executing` | 老"已达成结论"=plan 阶段已收口，转入执行阶段；通过将该 thread **最后一条有效 reply 改写为 act** 承载 `status_change: {from: planning, to: executing}`，保留后续 append act/verify/result 的推进能力 |
 | `closed` | `cancelled` | 老"已关闭"=事项到此为止 |
-| `produced` | `finished` | 老"已转为项目"=结果已正式产出 |
+| `produced` | `executing` | 老"已转为项目"=已开始执行；处理同 concluded |
 
-**语义影响（concluded→finished 的副作用）**：matter 状态机规定 finished 态下**只允许**追加 `insight` 文件，且 insight 必然触发 `finished→reviewed`。也就是说被映射为 finished 的历史 matter，**不能再做实质推进**（不能再 append act/verify/result）——要么加一篇 insight 做复盘然后封存，要么就这样放着。这是 concluded→finished 的强决策面后果，用户已确认接受。
+**`concluded`/`produced` → `executing` 的具体落地**：迁移脚本在生成新 matter timeline 时，对来源为 `concluded`/`produced` 的 thread，按 §2 的 `Rule [pivot 选取]` 选定一篇 post 作为 pivot，把它改写为 `act`，并挂 `status_change: {from: planning, to: executing}`；matter 顶层 `current_status = executing`。其余 post 维持默认 `think`。
+
+边界（无 reply 的 thread）：若 thread 仅有 proposal、无任何 reply，`pivot = proposal`——proposal 自身改写为 act 承载 status_change。这是受用户决策的处理口径，不再降级为 `planning`。
 
 ### 2. 文档类型映射
 
-所有 legacy 帖子 frontmatter 的 `type = proposal | reply | comment` → matter `type = think`。
+老 thread 的 `status` 是**索引级**字段（在 `discussions[0].status` 上，不在任何单篇 MD frontmatter 上），`type` 是**文件级**字段（在每篇 MD frontmatter 上）。迁移脚本必须先看 `status` 决定整个 thread 的处理路径，再针对每篇 MD 写 `type`：
 
-**不保留 `legacy_type` 附加字段**（产品文档 §八.4 明确排除任何非 §八.3 列出的字段，保留会违反 schema 单一事实源原则）。MD frontmatter 的老 type 字段**不改**（只改 INDEX），运维/AI 如需溯源可回看 MD frontmatter。
+```
+Rule [thread → matter type 映射]：
+
+  case status ∈ {open, pending}:
+    matter.current_status = planning
+    所有 MD frontmatter.type = think
+    timeline 中所有 item.type = think
+
+  case status == closed:
+    matter.current_status = cancelled
+    所有 MD frontmatter.type = think
+    timeline 中所有 item.type = think
+    （不注入 status_change，matter 直接以 cancelled 终态产出）
+
+  case status ∈ {concluded, produced}:
+    matter.current_status = executing
+    pivot = thread 内序号最大的 reply MD（按文件名前缀 NNN 取 max）
+    IF pivot 不存在（thread 仅有 proposal）:
+        pivot = proposal MD
+    pivot 的 frontmatter.type = act
+    pivot 对应的 timeline item:
+        type = act
+        status_change = { from: planning, to: executing }
+    其余 MD frontmatter.type = think
+    其余 timeline item.type = think
+```
+
+字段值映射对照（独立看 type 一列，不含 status_change）：
+
+| 老 frontmatter type | 新 frontmatter / timeline type | 触发条件 |
+|---|---|---|
+| `proposal` | `think` | 默认 |
+| `proposal` | `act` | 仅当该 thread `status ∈ {concluded, produced}` 且 thread 无任何 reply（pivot 退化为 proposal） |
+| `reply` | `think` | 默认 |
+| `reply` | `act` | 仅当该 reply 是 `status ∈ {concluded, produced}` thread 的最大序号 reply（即 pivot） |
+| `comment` | `think` | 防御性映射；实际数据中无 `type=comment` 文件（grep `pivot-mirror` + `tests/test_output/git/test-discuss` 均 0 命中） |
+
+**MD frontmatter 改写口径**：
+- **MD frontmatter 仅改 `type` 字段值**（按上表对应到新 type）
+- 其他 frontmatter 字段（`author` / `created` / `index_state` 等）**全部保持原样**
+- MD body 与文件名 **完全不改**
+
+理由：产品设计文档没有定义"新版 frontmatter schema"，index timeline item 已承载完整 `creator` / `owner` / `created_at` 信息，frontmatter 不需要重复存储。`type` 字段必须改写，是为了让 read 路径（`posts.py::read_post` / `_thread_meta` 等）拿到的 frontmatter 与 index timeline item 类型一致，规避双重映射。
+
+**不保留 `legacy_type` 附加字段**（产品文档 §八.4 明确排除任何非 §八.3 列出的字段，保留会违反 schema 单一事实源原则）。如需溯源原始 type，回看 git history。
 
 ### 3. timeline item 字段映射
 
@@ -86,11 +133,35 @@ timeline:
 
 老 `timeline[]` 是 flat event log，不直接塞进 matter timeline（matter 的 timeline 是文件流）。逐事件处理：
 
-- `"X created thread"`、`"X replied"`：**丢弃**（文件本身的存在就代表这些事件）
-- `"X mentioned" + file + mention{users, comments}`：定位对应 `timeline[i]`（按 file 路径精确匹配），追加到该 item 的 `comments[]`：`{created_at: 老 time, body: mention.comments, mentions: [user.open_id, ...], author: 从 event 前缀提取}`
-- 状态变更事件（`"X 状态变更 A->B" / "X 从 ... 状态重新打开，原因：..."`）：**不合成 `status_change`** 到 timeline item（没法定位哪篇文件触发）；老的中间态丢弃，只保留 matter 顶层 `current_status` = 映射后的终态
+- **`"X created thread"` / `"X replied"` 事件 → 丢弃**
+  理由：这些事件的所有信息（file 路径、creator、created_at）已经被新 timeline 的 file item 完整承载——file item 由迁移脚本通过 `discussions[0].files[i]` 直接生成，留事件等于双写同一事实。
 
-定位失败的 mention（file 不在新 timeline 中）：丢弃 + 迁移报告记录 warning，不阻断。
+- **`"X mentioned"` 事件 → 转为对应 file item 的 `comments[]`**
+  按下方 `Rule [mention → comments]` 执行。
+
+- **状态变更事件（`"X 状态变更 A->B"` / `"X 从 ... 状态重新打开，原因：..."`）→ 丢弃**
+  理由：老事件没有"由哪份文件触发"的字段，无法重建到新 schema 的 `status_change`（它必须挂在具体 timeline item 上）。老中间态丢弃，只保留 matter 顶层 `current_status` = §1 映射后的终态；当映射结果为 `executing`（来源 concluded/produced），由 §1 落地步骤选定的 act item 单独承载 `status_change: {from: planning, to: executing}`。
+
+```
+Rule [mention → comments]：对老 timeline 中 event 含 "mentioned" 的事件：
+
+  1. event.file 缺失 → 记 warning，丢弃，不阻断
+  2. 按 event.file 在新 matter timeline 找 timeline[i]：
+     - 找不到（file 已被删/重命名）→ 记 warning，丢弃，不阻断
+     - 找到 → 进入 step 3
+  3. 追加到 timeline[i].comments[]：
+     {
+       created_at: event.time,
+       body:       event.mention.comments,
+       mentions:   _resolve_mentions_for_index([open_id, ...]),
+                   # 复用 server/publish.py::_resolve_mentions_for_index
+                   # 注册用户落 pinyin，未注册兜底 open_id（commit f3ce04c 已确立的口径）
+       author:     event.event 字符串前缀（如 "huangshengli mentioned" 取 "huangshengli"）
+     }
+  4. 同一 file 上多条 mention 按 event.time 升序追加，保持原时序
+```
+
+实测依据：扫了 pivot-mirror 全部老 index，共 19 条 mention 事件，**100% 带 file 字段**，父级定位天然可达。
 
 ### 5. matter header 字段
 
@@ -103,10 +174,36 @@ timeline:
 ### 6. 边界约束
 
 - **幂等**：若 `{slug}.index.yaml` 已存在（和老 `{slug}-discuss.index.yaml` 共存），比较内容：一致 → 跳过；不一致 → 报错停止（防止误覆盖真实 matter 数据）
-- **MD 文件不动**：MD 内容、frontmatter、文件名均不改（产品文档 §八原则：原始事实不动）
+- **MD body 与文件名不动**：MD body 内容、文件名严格保留；frontmatter **仅改 `type` 字段值**（按 §2 表格映射），其他 frontmatter 字段（`author` / `created` / `index_state` 等）原样保留。产品文档 §八原则"原始事实不动"的实施口径：body 与文件名是事实，严格保留；`type` 改写是为了让 frontmatter 与新 timeline item type 对齐，规避 read 路径双重映射
 - **un-indexed 前置清理**：迁移前先跑一次 `workspace.recover()`（已有逻辑能处理 legacy 和 matter 两类 un-indexed MD），避免遗漏文件
 - **写入后删除旧文件**：`{slug}.index.yaml` 写成功 + fsync 后，再 `os.remove({slug}-discuss.index.yaml)`
-- **单次 git commit**：整个迁移一次提交，message `chore: migrate legacy thread indexes to matter format`，committer = `team-pivot-web`，author 可以用迁移者账号
+- **单次 git commit**：整个迁移一次提交，message `chore: migrate legacy thread indexes to matter format`，committer = `team-pivot-web`，author 可以用迁移者账号（备份与回滚详细机制见下方独立段）
+
+## 备份与回滚
+
+迁移本质是一次磁盘改写（写新 index、删老 index、改少量 MD frontmatter 的 type 字段）。备份与回滚靠以下三道防线，**不写代码层面的 `.bak` 备份文件**——git 自身就是备份：
+
+**第一道：git 是天然备份**
+- 迁移脚本运行时改动直接落在工作目录里，全部呈现为 working-tree diff
+- 跑完整个迁移后用一次 `git commit` 落地（message: `chore: migrate legacy thread indexes to matter format`）
+- 在 `git push` 之前所有改动都是本地 reversible 的：review 不通过 → `git reset --hard HEAD~1` 直接回滚到迁移前
+- 成功后再 `git push`，远端历史清晰可追溯（含 commit message 标记是迁移产生）
+
+**第二道：脚本运行前置检查**
+- 脚本启动时检查 `git status` 必须 clean（无未提交改动），否则拒绝运行——避免迁移产物和无关 wip 改动混进同一个 commit
+- 检查工作目录在 `main` 分支，且与 `origin/main` 同步（避免迁移到错误分支或基于过时副本）
+- 检查通过后才进入实际写盘
+
+**第三道：生产实例的独立离线快照**
+- 上线前在生产服务器执行 `git bundle create var/backup/pre-migration-<UTC时间戳>.bundle --all`，导出全仓快照（含所有 ref + 完整 history）
+- bundle 文件存档至独立位置（运维 ops 库或对象存储），作为 git 仓库本身受损时的最终兜底
+- 这一步只在生产实例做，测试实例不需要
+
+**中间态崩溃的处理**：
+- `_atomic_write_yaml` 与 `posts.write_post` 内部都走 tmp+rename，保证**单文件**写原子，不会出现"半写完"的 yaml 或 frontmatter
+- 跨文件层面（写完新 yaml 还没删老 yaml / 改完 index 还没改 MD frontmatter）**不强制原子**；脚本崩溃后磁盘可能处于"部分迁移"状态
+- 重新跑 `--apply`：幂等检查会跳过已迁移完的 thread（新旧 yaml 内容一致 → skip），处理剩下的；不需要专门的 recovery 工具
+- 真无法靠重跑恢复时：`git reset --hard <pre-migration-commit>` 直接回到迁移前状态，fork 一份新副本重跑
 
 ## 实施
 
@@ -133,14 +230,31 @@ uv run python scripts/migrate_index_schema.py --workspace <path> [--apply] [--sl
 
 ```python
 # scripts/migrate_index_schema.py
-def migrate_one(workspace, legacy_index_path) -> (new_data: dict, warnings: list[str])
-    """纯函数：读老 yaml + 对应 MD 文件 → 返回新 yaml dict + 警告列表。"""
+
+@dataclass
+class MigrationItem:
+    new_index_data: dict                          # 待写入 {slug}.index.yaml
+    md_frontmatter_updates: list[tuple[Path, str]]  # [(md 路径, 新 type 值)]，仅改 type 字段
+    warnings: list[str]
+
+def migrate_one(workspace, legacy_index_path) -> MigrationItem
+    """纯函数：读老 yaml + 对应 MD frontmatter → 返回新 yaml dict、
+    待改写的 MD type 值清单、警告列表。不做 IO 写入。"""
 
 def discover_legacy(index_dir: Path) -> list[Path]
     """找出所有 *-discuss.index.yaml（忽略 *.index.yaml 新格式）。"""
 
+def preflight_checks(workspace) -> list[str]
+    """运行前置检查（详见"备份与回滚"段第二道）：
+    - `git status` 必须 clean
+    - 当前分支必须是 `main` 且与 `origin/main` 同步
+    返回失败原因列表（空列表 = 通过）。`--apply` 模式下任一项失败即拒绝执行。"""
+
 def apply_migration(workspace, legacy_paths, *, dry_run: bool) -> MigrationReport
-    """串联 recover → migrate_one (对每条) → atomic write → delete legacy → 生成 report。"""
+    """串联 preflight_checks → recover → migrate_one(对每条) → 原子写新
+    index yaml → 原子改写指定 MD frontmatter 的 type 字段（body 不动）→
+    删除老 yaml → 生成 report。dry_run=True 时跳过写入与前置检查的"clean
+    工作树"硬约束（让用户能在 wip 状态下预演），仅产出 report。"""
 
 def main() -> int
     """CLI entry。"""
@@ -151,17 +265,19 @@ def main() -> int
 `server/tests/test_migrate_index_schema.py`（纯函数单测 + 集成）：
 
 - **纯函数 `migrate_one` 单测**（不走 IO）：
-  - 典型 proposal+多 reply 老 index → 正确新 shape，`type=think`，creator/owner 一致，quote 链通
-  - status 映射全 5 值
-  - mention 事件挂到对应 file item 的 comments[]
+  - 典型 proposal + 多 reply（status=open）老 index → 正确新 shape，proposal 与 reply 默认映射 `type=think`，creator/owner 一致，quote 链通
+  - status 映射全 5 值（open/pending → planning；concluded/produced → executing；closed → cancelled）
+  - **concluded/produced 路径**：最后一条 reply 改写为 `act`，timeline item 上挂 `status_change: {planning, executing}`；matter `current_status=executing`
+  - **concluded/produced 但无 reply**：降级为 `current_status=planning` + warning
+  - mention 事件挂到对应 file item 的 `comments[]`，mentions 用 `_resolve_mentions_for_index` 解析为 pinyin（注册用户）/ open_id（兜底）
   - 多 `type:from` refs → 取第一条 + warning
-  - 孤立 mention（file 不在 timeline） → 丢弃 + warning
+  - 孤立 mention（file 不在 timeline）→ 丢弃 + warning
   - 帖子 frontmatter 缺失 author/created → fallback
-  
+
 - **集成 `apply_migration`**（临时目录）：
-  - 造 2-3 份真实形态 legacy 文件（含 mention / reopen / concluded status）
+  - 造 3-4 份真实形态 legacy 文件（含 open/concluded/closed 三种 status，含 mention / reopen 事件）
   - `--dry-run`：断言没写任何文件、报告里字段正确
-  - `--apply`：断言新 yaml 写成、老文件被删、report 记录全部 case
+  - `--apply`：断言新 yaml 写成、老 `*-discuss.index.yaml` 被删、report 记录全部 case；并断言 concluded 来源 thread 的最后一条 reply MD 的 frontmatter `type` 已被改写为 `act`，body 字节级未变
   - 幂等：再跑一次 `--apply` 不炸（发现无 legacy 文件后退出）
   - 冲突：预置 `{slug}.index.yaml` 和 `{slug}-discuss.index.yaml` 共存且内容不一致 → 报错停止
 
@@ -169,17 +285,23 @@ def main() -> int
 
 上线前：
 
-1. 独立实例 clone production workspace 的只读副本
-2. 在独立实例跑 `--dry-run`，检查 migration report 里每条 warning 是否可接受
-3. 确认无误后在独立实例跑 `--apply`，人工 verify 新 matter 能通过 `/api/matters/{id}` 正常读
-4. 主实例停服（或临时 read-only），同步最新 workspace，跑 `--apply`
-5. `git push`，启服
+1. **准备独立部署的 Pivot 测试实例**：fork 一份 production workspace（含完整 git history 与 `index/`）作为该实例的工作目录；独立部署后端 + 前端，确保 `/api/matters/*` 与 UI 端到端可用。"独立实例"是一个完整的运行中 Pivot 服务，不是只跑迁移脚本的工作目录副本。
+2. 在测试实例跑 `--dry-run`，检查 migration report 里每条 warning 是否可接受。
+3. 确认无误后在测试实例跑 `--apply`，**完成 4 项人工核对**：
+   1. matter 状态机跳转正确（`planning → executing` 仅出现在 `concluded`/`produced` 来源的 thread 上，且挂在被改写为 act 的最后一条 reply 上）
+   2. timeline 已过滤冗余 `created/replied/mention/状态变更` 事件，只保留 file item 与其 `comments[]`
+   3. MD frontmatter `type` 已映射到新文件类型，body 字节级未变，文件名未变
+   4. mention → comments 转换完整：`comment.mentions` 形如 pinyin（注册用户）/ open_id（未注册兜底），author 字段已填
+4. 主实例停服（或临时 read-only），同步最新 workspace，跑 `--apply`。
+5. `git push`，启服。
 
 ## 验收
 
 - `uv run python scripts/migrate_index_schema.py --workspace ./tmp-copy` 默认 dry-run 零 error 跑完，输出 report
 - `--apply` 后 `tmp-copy/index/` 里无 `*-discuss.index.yaml`，仅 `*.index.yaml`
 - 迁移产物 YAML 通过结构性检查（`matter` header 字段齐全、`timeline[].type ∈ VALID_DOC_TYPES`、必填字段非空）。**注意**：不跑 `validate_append`，因为它按"当前 current_status 允许什么类型"来校验，而历史文件写在 matter 不同阶段，无法逐条反向校验；结构性 sanity 足够
+- 来源为 `concluded`/`produced` 的 matter：`current_status=executing`；timeline 中存在恰好一条 `type=act` 且 `status_change={planning, executing}` 的 item，对应 MD 的 frontmatter `type=act`
+- MD body 字节级未变（迁移前后 `git diff -- discussions/**.md` 仅显示 frontmatter `type` 行变化）
 - `GET /api/matters/{id}` 对迁移后的 matter 能返回正确 timeline，含 mention 转成的 comments
 - 单测 `uv run pytest server/tests/test_migrate_index_schema.py -q` 全绿
 
@@ -193,4 +315,4 @@ def main() -> int
 
 - 前端对迁移后 matter 的自动拉取 UI 变更（无需：前端已是 matter 模型驱动）
 - 老 `/api/threads/*` 接口的下线（留给 P5）
-- concluded 人工审查流程（按上面 §1 规则自动映射为 `finished`，如个别 matter 判定不妥，运维在迁移后手动调整 `current_status` 字段；不做强制 per-matter 审查门）
+- concluded/produced 来源 matter 的人工审查流程：默认按 §1 自动映射为 `executing`（最后一条 reply 改写为 act 承载 status_change）。若个别 matter 判定其实已无后续推进，运维在迁移后手动追加一篇 `result` 文件触发 `executing → finished/cancelled`（走正常 matter 工作流，迁移脚本不做特殊处理）
