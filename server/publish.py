@@ -265,14 +265,21 @@ def _resolve_mentions_for_index(
 def _resolve_comments_mentions(
     comments: list[dict] | None,
     users: UserRepo | None,
+    *,
+    author: str,
 ) -> list[dict] | None:
-    """Walk a comments[] payload and resolve each comment's mentions[]
-    via _resolve_mentions_for_index. Returns a new list; does not mutate input."""
+    """Normalize a comments[] payload for index storage:
+    - inject `author` (the file's creator — embedded comments are always
+      authored by the same user posting the file; CommentIn schema does not
+      accept author from clients);
+    - resolve each comment's mentions[] via _resolve_mentions_for_index.
+    Returns a new list; does not mutate input."""
     if not comments:
         return comments
     out: list[dict] = []
     for c in comments:
         cc = dict(c)
+        cc["author"] = author
         if cc.get("mentions"):
             cc["mentions"] = _resolve_mentions_for_index(cc["mentions"], users)
         out.append(cc)
@@ -361,7 +368,7 @@ def publish_matter_create(
     item_input = dict(initial_item)
     if item_input.get("comments"):
         item_input["comments"] = _resolve_comments_mentions(
-            item_input["comments"], users,
+            item_input["comments"], users, author=user.pinyin,
         )
 
     item = _build_timeline_item(
@@ -470,7 +477,7 @@ def publish_matter_append(
     item_input = dict(item_body)
     if item_input.get("comments"):
         item_input["comments"] = _resolve_comments_mentions(
-            item_input["comments"], users,
+            item_input["comments"], users, author=user.pinyin,
         )
 
     item = _build_timeline_item(

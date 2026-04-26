@@ -430,6 +430,7 @@ def test_append_comment_ok(client, event_bucket):
     assert len(comments) == 1
     assert comments[0]["body"] == "同意"
     assert comments[0]["mentions"] == ["liuyu"]
+    assert comments[0]["author"] == "dengke"
 
     assert any(e.topic == "matter.comment_appended" for e in event_bucket)
 
@@ -505,6 +506,32 @@ def test_append_file_comments_mentions_resolved(client, users):
     raw = read_matter_index(matter_index_path(client.workspace.index_dir, matter_id))
     appended = raw["timeline"][1]
     assert appended["comments"][0]["mentions"] == ["tangkun"]
+
+
+def test_append_file_comments_have_author(client):
+    """嵌入评论(随 POST /files 一起提交)写入 index 时必须带 author=发文者pinyin，
+    与独立 POST /comments 路径一致。回归 2026-04-26 报告的 author 缺失 bug。"""
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {
+            "type": "act", "summary": "s", "body": "",
+            "comments": [{"body": "顺便说一句"}],
+        },
+    })
+    assert r.status_code == 200, r.text
+    matter_id = r.json()["matter_id"]
+
+    r2 = client.post(f"/api/matters/{matter_id}/files", json={
+        "type": "act", "summary": "go",
+        "status_change": {"from": "planning", "to": "executing"},
+        "comments": [{"body": "请跟进"}],
+    })
+    assert r2.status_code == 200, r2.text
+
+    from server.matter_index import read_matter_index, matter_index_path
+    raw = read_matter_index(matter_index_path(client.workspace.index_dir, matter_id))
+    assert raw["timeline"][0]["comments"][0]["author"] == "dengke"
+    assert raw["timeline"][1]["comments"][0]["author"] == "dengke"
 
 
 def test_append_comment_target_not_found(client):
