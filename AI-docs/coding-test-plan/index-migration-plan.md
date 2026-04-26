@@ -109,25 +109,36 @@ Rule [thread → matter type 映射]：
 | `reply` | `act` | 仅当该 reply 是 `status ∈ {concluded, produced}` thread 的最大序号 reply（即 pivot） |
 | `comment` | `think` | 防御性映射；实际数据中无 `type=comment` 文件（grep `pivot-mirror` + `tests/test_output/git/test-discuss` 均 0 命中） |
 
-**MD frontmatter 改写口径**：
-- **MD frontmatter 仅改 `type` 字段值**（按上表对应到新 type）
-- 其他 frontmatter 字段（`author` / `created` / `index_state` 等）**全部保持原样**
-- MD body 与文件名 **完全不改**
+**MD 改写口径**：
+- **MD frontmatter 改 `type` 字段值**（按上表对应到新 type）；其他 frontmatter 字段（`author` / `created` / `index_state` 等）**全部保持原样**
+- **MD 文件名同步改 `type` 段**（按上表对应到新 type）：`NNN_<author>_<old_type>_<hash>.md` → `NNN_<author>_<new_type>_<hash>.md`；`NNN` / `author` / `hash` 段**保持原值**
+- **MD body 完全不改**
 
-理由：产品设计文档没有定义"新版 frontmatter schema"，index timeline item 已承载完整 `creator` / `owner` / `created_at` 信息，frontmatter 不需要重复存储。`type` 字段必须改写，是为了让 read 路径（`posts.py::read_post` / `_thread_meta` 等）拿到的 frontmatter 与 index timeline item 类型一致，规避双重映射。
+文件名改写示例：
+```
+旧:  001_dengke_proposal_e8a253.md     →  新:  001_dengke_think_e8a253.md
+旧:  010_dengke_reply_d07514.md        →  新:  010_dengke_think_d07514.md（默认）
+旧:  010_dengke_reply_d07514.md        →  新:  010_dengke_act_d07514.md（仅当此为 pivot）
+```
 
-**不保留 `legacy_type` 附加字段**（产品文档 §八.4 明确排除任何非 §八.3 列出的字段，保留会违反 schema 单一事实源原则）。如需溯源原始 type，回看 git history。
+理由：产品设计文档没有定义"新版 frontmatter schema"，index timeline item 已承载完整 `creator` / `owner` / `created_at` 信息，frontmatter 不需要重复存储。`type` 在 frontmatter 与文件名两处必须同步改写：frontmatter 是 read 路径取 type 的真值源（`posts.py::read_post` / `recovery.py::_repair_post` 等），filename 与 frontmatter 一致是 014 帖明确的"高度一致"原则要求，不一致会让目录在视觉与 grep 层都长成混合体。
+
+**已知代价（团队接受后才改名）**：
+- 系统**外部**对老路径的引用（飞书 bot 已推送的卡片链接、私聊里贴过的文件 URL、PR 描述里手写的 filename 等）一律 404。Pivot 内部所有引用（`timeline.file` / `quote` / `refer` / `verifications.target`）由迁移脚本同步换成新文件名，不丢
+- git 历史靠 git 自身的 rename detection 跨过——内容相似度 = body 100% + frontmatter 改一行，远超默认阈值，正常情况下 `git log --follow` 与 `git blame` 能完整溯源；不依赖额外的 rename 元数据
+
+**不保留 `legacy_type` 附加字段**（产品文档 §八.4 明确排除任何非 §八.3 列出的字段，保留会违反 schema 单一事实源原则）。如需溯源原始 type，回看 git history（rename detection 让旧 filename 在 history 里仍然可见）。
 
 ### 3. timeline item 字段映射
 
 | 老字段 | 新字段 | 备注 |
 |---|---|---|
-| `discussions[0].files[i].path` | `timeline[i].file` | 前缀补 `discussions/<category>/<slug>/` |
+| `discussions[0].files[i].path` | `timeline[i].file` | 前缀补 `discussions/<category>/<slug>/`，**filename 段使用新 type 段（按 §2 改名规则）** |
 | `discussions[0].files[i].summary` | `timeline[i].summary` | 为空时保留 `""`，不自动填充（writer 层不强制非空） |
 | 帖子 frontmatter `author` | `timeline[i].creator` 和 `timeline[i].owner` | 老数据无 owner 概念，默认两字段同值 |
 | 帖子 frontmatter `created` | `timeline[i].created_at` | 缺失用 INDEX 顶层 `created` |
-| `refs[{type:from, path}]` | `timeline[i].quote` | 取第一条；多于一条记警告 |
-| `refs[{type:refer, path}]` | `timeline[i].refer` | 保留顺序；去掉 `type:from` |
+| `refs[{type:from, path}]` | `timeline[i].quote` | 取第一条；多于一条记警告。**path 中的 filename 段同样换为新文件名** |
+| `refs[{type:refer, path}]` | `timeline[i].refer` | 保留顺序；去掉 `type:from`。**path 中的 filename 段同样换为新文件名** |
 
 ### 4. 事件流迁移
 
@@ -146,8 +157,9 @@ Rule [thread → matter type 映射]：
 Rule [mention → comments]：对老 timeline 中 event 含 "mentioned" 的事件：
 
   1. event.file 缺失 → 记 warning，丢弃，不阻断
-  2. 按 event.file 在新 matter timeline 找 timeline[i]：
-     - 找不到（file 已被删/重命名）→ 记 warning，丢弃，不阻断
+  2. 把 event.file 用本次迁移的 rename 映射换成新文件名（filename 的 type 段从老 type 改为新 type，按 §2 表）；
+     按换算后的新路径在新 matter timeline 找 timeline[i]：
+     - 找不到（迁移脚本本次未处理该文件，或老路径在迁移前就已被改名/删除）→ 记 warning，丢弃，不阻断
      - 找到 → 进入 step 3
   3. 追加到 timeline[i].comments[]：
      {
@@ -174,7 +186,7 @@ Rule [mention → comments]：对老 timeline 中 event 含 "mentioned" 的事�
 ### 6. 边界约束
 
 - **幂等**：若 `{slug}.index.yaml` 已存在（和老 `{slug}-discuss.index.yaml` 共存），比较内容：一致 → 跳过；不一致 → 报错停止（防止误覆盖真实 matter 数据）
-- **MD body 与文件名不动**：MD body 内容、文件名严格保留；frontmatter **仅改 `type` 字段值**（按 §2 表格映射），其他 frontmatter 字段（`author` / `created` / `index_state` 等）原样保留。产品文档 §八原则"原始事实不动"的实施口径：body 与文件名是事实，严格保留；`type` 改写是为了让 frontmatter 与新 timeline item type 对齐，规避 read 路径双重映射
+- **MD body 不动；filename 与 frontmatter type 同步改写**：MD body 内容严格保留；frontmatter `type` 字段值与文件名 type 段**同步**按 §2 改写到新 type 值（其他 frontmatter 字段、NNN 段、author 段、hash 段保持原样）。产品文档 §八原则"原始事实不动"的实施口径：body 是事实，严格保留；filename 与 frontmatter 的 type 表达层语义和新 timeline item 对齐，避免目录视觉与 grep 层的混合体。系统外部对老路径的引用（飞书 bot 卡片、私聊链接等）失效是已接受的代价；git history 靠 rename detection 跨过
 - **un-indexed 前置清理**：迁移前先跑一次 `workspace.recover()`（已有逻辑能处理 legacy 和 matter 两类 un-indexed MD），避免遗漏文件
 - **写入后删除旧文件**：`{slug}.index.yaml` 写成功 + fsync 后，再 `os.remove({slug}-discuss.index.yaml)`
 - **单次 git commit**：整个迁移一次提交，message `chore: migrate legacy thread indexes to matter format`，committer = `team-pivot-web`，author 可以用迁移者账号（备份与回滚详细机制见下方独立段）
@@ -184,8 +196,9 @@ Rule [mention → comments]：对老 timeline 中 event 含 "mentioned" 的事�
 迁移本质是一次磁盘改写（写新 index、删老 index、改少量 MD frontmatter 的 type 字段）。备份与回滚靠以下三道防线，**不写代码层面的 `.bak` 备份文件**——git 自身就是备份：
 
 **第一道：git 是天然备份**
-- 迁移脚本运行时改动直接落在工作目录里，全部呈现为 working-tree diff
+- 迁移脚本运行时改动直接落在工作目录里，全部呈现为 working-tree diff（含新建/删除 yaml + MD rename + frontmatter 改一行）
 - 跑完整个迁移后用一次 `git commit` 落地（message: `chore: migrate legacy thread indexes to matter format`）
+- MD rename 由 `git add -A` 触发 git 内置 rename detection 自动识别（body 100% 保留 + frontmatter 改一行，相似度远超默认阈值 50%），commit 里以 `R` 状态出现，`git log --follow` / `git blame` 能完整溯源
 - 在 `git push` 之前所有改动都是本地 reversible 的：review 不通过 → `git reset --hard HEAD~1` 直接回滚到迁移前
 - 成功后再 `git push`，远端历史清晰可追溯（含 commit message 标记是迁移产生）
 
@@ -233,13 +246,16 @@ uv run python scripts/migrate_index_schema.py --workspace <path> [--apply] [--sl
 
 @dataclass
 class MigrationItem:
-    new_index_data: dict                          # 待写入 {slug}.index.yaml
-    md_frontmatter_updates: list[tuple[Path, str]]  # [(md 路径, 新 type 值)]，仅改 type 字段
+    new_index_data: dict                            # 待写入 {slug}.index.yaml
+    md_renames: list[tuple[Path, Path]]             # [(老 MD 路径, 新 MD 路径)]，filename type 段改写
+    md_frontmatter_updates: list[tuple[Path, str]]  # [(新 MD 路径, 新 type 值)]，仅改 type 字段
     warnings: list[str]
 
 def migrate_one(workspace, legacy_index_path) -> MigrationItem
     """纯函数：读老 yaml + 对应 MD frontmatter → 返回新 yaml dict、
-    待改写的 MD type 值清单、警告列表。不做 IO 写入。"""
+    待执行的 MD 改名清单、待改写的 MD type 值清单、警告列表。不做 IO 写入。
+    md_frontmatter_updates 里的路径是 md_renames 之后的新路径——执行时先 rename，
+    再按新路径写 frontmatter。"""
 
 def discover_legacy(index_dir: Path) -> list[Path]
     """找出所有 *-discuss.index.yaml（忽略 *.index.yaml 新格式）。"""
@@ -251,10 +267,12 @@ def preflight_checks(workspace) -> list[str]
     返回失败原因列表（空列表 = 通过）。`--apply` 模式下任一项失败即拒绝执行。"""
 
 def apply_migration(workspace, legacy_paths, *, dry_run: bool) -> MigrationReport
-    """串联 preflight_checks → recover → migrate_one(对每条) → 原子写新
-    index yaml → 原子改写指定 MD frontmatter 的 type 字段（body 不动）→
-    删除老 yaml → 生成 report。dry_run=True 时跳过写入与前置检查的"clean
-    工作树"硬约束（让用户能在 wip 状态下预演），仅产出 report。"""
+    """串联 preflight_checks → recover → migrate_one(对每条) → 重命名 MD
+    （`os.rename` 老路径 → 新路径，git add -A 时由 git 自动识别为 rename）→
+    原子写新 index yaml（其内 file/quote/refer/verifications.target 全部使用新文件名）→
+    原子改写已重命名 MD 的 frontmatter type（body 不动）→ 删除老 yaml →
+    生成 report。dry_run=True 时跳过所有写入与前置检查的"clean 工作树"硬约束
+    （让用户能在 wip 状态下预演），仅产出 report。"""
 
 def main() -> int
     """CLI entry。"""
@@ -267,41 +285,147 @@ def main() -> int
 - **纯函数 `migrate_one` 单测**（不走 IO）：
   - 典型 proposal + 多 reply（status=open）老 index → 正确新 shape，proposal 与 reply 默认映射 `type=think`，creator/owner 一致，quote 链通
   - status 映射全 5 值（open/pending → planning；concluded/produced → executing；closed → cancelled）
-  - **concluded/produced 路径**：最后一条 reply 改写为 `act`，timeline item 上挂 `status_change: {planning, executing}`；matter `current_status=executing`
-  - **concluded/produced 但无 reply**：降级为 `current_status=planning` + warning
+  - **concluded/produced 路径**：pivot reply 改写为 `act`，timeline item 上挂 `status_change: {planning, executing}`；matter `current_status=executing`
+  - **concluded/produced 但无 reply**：proposal 改写为 `act`（pivot 退化），同样挂 status_change
+  - **filename 改写**：所有 MD 都生成对应 `md_renames` 条目，新文件名仅 type 段变化；NNN/author/hash 不变
+  - **filename 与 frontmatter 同步**：`md_frontmatter_updates` 路径必须等于 `md_renames` 中的目标路径（rename 后 写 frontmatter）；type 值与 filename type 段一致
   - mention 事件挂到对应 file item 的 `comments[]`，mentions 用 `_resolve_mentions_for_index` 解析为 pinyin（注册用户）/ open_id（兜底）
+  - mention.event.file 在新 timeline 里通过 rename 映射换算后定位，断言 timeline 里全部用新 filename
   - 多 `type:from` refs → 取第一条 + warning
   - 孤立 mention（file 不在 timeline）→ 丢弃 + warning
   - 帖子 frontmatter 缺失 author/created → fallback
 
 - **集成 `apply_migration`**（临时目录）：
   - 造 3-4 份真实形态 legacy 文件（含 open/concluded/closed 三种 status，含 mention / reopen 事件）
-  - `--dry-run`：断言没写任何文件、报告里字段正确
-  - `--apply`：断言新 yaml 写成、老 `*-discuss.index.yaml` 被删、report 记录全部 case；并断言 concluded 来源 thread 的最后一条 reply MD 的 frontmatter `type` 已被改写为 `act`，body 字节级未变
+  - `--dry-run`：断言没写任何文件、报告里字段正确（含 rename 清单）
+  - `--apply`：断言新 yaml 写成、老 `*-discuss.index.yaml` 被删、所有 MD 已按新 type 段重命名（老文件名在磁盘上不再存在）、frontmatter `type` 已改写、body 字节级未变；report 记录全部 case
+  - **git rename detection 验证**：在临时 git 仓库里跑 `--apply`，断言 `git status --short` 对所有 MD 显示 `R` 而非 `D + A`
   - 幂等：再跑一次 `--apply` 不炸（发现无 legacy 文件后退出）
   - 冲突：预置 `{slug}.index.yaml` 和 `{slug}-discuss.index.yaml` 共存且内容不一致 → 报错停止
+  - 改名目标占位冲突：预置 `001_x_proposal_xxx.md` 和 `001_x_think_xxx.md` 同时存在 → 报错停止（防覆盖）
 
 ### 运行节奏
 
 上线前：
 
-1. **准备独立部署的 Pivot 测试实例**：fork 一份 production workspace（含完整 git history 与 `index/`）作为该实例的工作目录；独立部署后端 + 前端，确保 `/api/matters/*` 与 UI 端到端可用。"独立实例"是一个完整的运行中 Pivot 服务，不是只跑迁移脚本的工作目录副本。
+1. **准备独立部署的 Pivot 测试实例**：fork 一份 production workspace（含完整 git history 与 `index/`）作为该实例的工作目录；独立部署后端 + 前端，确保 `/api/matters/*` 与 UI 端到端可用。"独立实例"是一个完整的运行中 Pivot 服务，不是只跑迁移脚本的工作目录副本。具体操作见下方 **§step 1 操作展开**。
 2. 在测试实例跑 `--dry-run`，检查 migration report 里每条 warning 是否可接受。
 3. 确认无误后在测试实例跑 `--apply`，**完成 4 项人工核对**：
    1. matter 状态机跳转正确（`planning → executing` 仅出现在 `concluded`/`produced` 来源的 thread 上，且挂在被改写为 act 的最后一条 reply 上）
    2. timeline 已过滤冗余 `created/replied/mention/状态变更` 事件，只保留 file item 与其 `comments[]`
-   3. MD frontmatter `type` 已映射到新文件类型，body 字节级未变，文件名未变
+   3. MD frontmatter `type` 已映射到新文件类型，filename `_<type>_` 段同步改写，body 字节级未变
    4. mention → comments 转换完整：`comment.mentions` 形如 pinyin（注册用户）/ open_id（未注册兜底），author 字段已填
 4. 主实例停服（或临时 read-only），同步最新 workspace，跑 `--apply`。
 5. `git push`，启服。
+
+#### step 1 操作展开（fork 生产库 → 跑通测试 Pivot 实例）
+
+**目标**：在 GitHub 新建一个**独立的测试仓库**，用 `git clone --bare` + `git push --mirror` 把生产仓库的完整 history 镜像过去；启动独立部署的测试 Pivot 服务指向该测试仓库。**生产仓库全程只读，无任何路径能被本流程修改**。
+
+**前置**：
+- 一台独立测试机（物理机 / VM / 容器都行，**不要和生产实例共享磁盘或 SQLite**）
+- 测试机已装：`uv` / `python 3.12` / `git` / `node` / `npm`，team-pivot-web 代码 checkout 到含本次迁移脚本的分支
+- 一份生产仓库的**只读 token**（仅 `repo:read`）和测试仓库的**写 token**（用于 push --mirror 与测试 Pivot 后续业务写盘）
+
+**子步骤 1.1：在 GitHub 新建空测试仓库**
+
+网页上 Create new repository：
+- 名字：`<prod-repo>-migration-test`（明示用途）
+- visibility：private
+- **不要**勾选任何 init template / README / gitignore / license——保持完全空仓库；否则下一步 `push --mirror` 会和初始 commit 冲突
+
+记下完整 URL：`https://github.com/<org>/<prod-repo>-migration-test.git`。
+
+**子步骤 1.2：把生产仓库镜像到测试仓库（不丢 history）**
+
+```bash
+# 在任何能访问 GitHub 的机器上跑（测试机即可）
+git clone --bare \
+    "https://<readonly_token>@github.com/<org>/<prod-repo>.git" \
+    /tmp/prod-mirror.git
+cd /tmp/prod-mirror.git
+
+# 推全部 refs（branches / tags / notes 等）到测试仓库
+git remote add migration-test \
+    "https://<write_token>@github.com/<org>/<prod-repo>-migration-test.git"
+git push --mirror migration-test
+
+# 校验：
+#   - 测试仓库的 commits / branches / tags / commit hash 应全部和生产 1:1 对应
+#   - GitHub 网页打开测试仓库，最新 commit hash 应等于生产 main 的 head
+```
+
+`--bare` + `--mirror` 的语义：克隆只含 `.git` 内容（无工作树），推送时把所有 refs 一并复制。结果是测试仓库 `.git` 字节级镜像生产仓库，git history、commit hash、blame 信息全部 1:1 保留。
+
+**子步骤 1.3：启动独立 Pivot 测试服务并指向测试仓库**
+
+测试 Pivot 用独立 `.env` 与独立 `DATA_DIR`，确保 SQLite / session / log 都和生产隔离：
+
+```bash
+cd ~/team-pivot-web    # 测试机上的代码副本
+cp .env.example .env-migration-test
+# 编辑 .env-migration-test：
+#   FEISHU_APP_ID / FEISHU_APP_SECRET / SESSION_SECRET / WEB_DEV_ORIGIN  正常填
+#   DATA_DIR=./var-migration-test
+#   LOG_LEVEL=DEBUG
+
+# 起后端（端口避开生产）
+PIVOT_ENV_FILE=.env-migration-test \
+    uv run uvicorn --factory server.app:create_app --port 8001 \
+    2>&1 | tee var-migration-test/log/pivot.log
+
+# 起前端（在另一终端）
+cd web && PIVOT_BACKEND_URL=http://localhost:8001 npm run dev
+```
+
+打开测试 Pivot 前端 → `/admin` → 输入管理员密码 → **数据仓库配置**：
+- `repo_url`：填**测试仓库** URL（`<prod-repo>-migration-test`，**不是**生产 repo URL）
+- `visibility`：`private`
+- `write_token` / `readonly_token`：都填测试仓库的写 token——测试仓库可读可写无副作用
+- 保存后后端会自动 clone 测试仓库到 `var-migration-test/git/<prod-repo>-migration-test/`
+- 调 `/api/workspace/status` 确认 `ready: true`
+
+**子步骤 1.4：隔离原则**
+
+- 测试 Pivot 配的 workspace URL 是**测试仓库**，与生产仓库物理隔离——任何业务写盘（含迁移脚本的 git commit）都只能落到测试仓库，**没有路径**能误推生产
+- 测试期间正常发帖、@mention、跑迁移都可以，commit 落到测试仓库自己的 main 上
+- 想多次重跑迁移：直接 `git reset --hard origin/main`（指 mirror push 后的初始 head）回滚测试仓库，再重跑
+
+**子步骤 1.5：上线前再同步一次最新生产 history 到测试仓库**
+
+测试通过后到真正上线之间，生产仓库可能有新 commit。上线**前一刻**重跑 mirror：
+
+```bash
+# 复用 /tmp/prod-mirror.git
+cd /tmp/prod-mirror.git
+git fetch origin                              # 拿生产最新
+git push --mirror migration-test              # 强制覆盖测试仓库到生产最新
+
+# 测试 Pivot 实例工作目录也要跟着同步
+cd ~/team-pivot-web/var-migration-test/git/<prod-repo>-migration-test
+git fetch origin
+git reset --hard origin/main
+```
+
+然后重跑 `--dry-run` 检查 report 是否仍无 error；通过后才能进 step 4 生产上线。
+
+**子步骤 1.6：测试结束销毁**
+
+上线完成后：
+- 在 GitHub 网页删除测试仓库 `<prod-repo>-migration-test`（Settings → Danger Zone → Delete repository）
+- 测试机本地清理：`rm -rf var-migration-test/ /tmp/prod-mirror.git`
+- 测试 Pivot SQLite 也跟着清掉（已包含在 `var-migration-test/`）
 
 ## 验收
 
 - `uv run python scripts/migrate_index_schema.py --workspace ./tmp-copy` 默认 dry-run 零 error 跑完，输出 report
 - `--apply` 后 `tmp-copy/index/` 里无 `*-discuss.index.yaml`，仅 `*.index.yaml`
 - 迁移产物 YAML 通过结构性检查（`matter` header 字段齐全、`timeline[].type ∈ VALID_DOC_TYPES`、必填字段非空）。**注意**：不跑 `validate_append`，因为它按"当前 current_status 允许什么类型"来校验，而历史文件写在 matter 不同阶段，无法逐条反向校验；结构性 sanity 足够
-- 来源为 `concluded`/`produced` 的 matter：`current_status=executing`；timeline 中存在恰好一条 `type=act` 且 `status_change={planning, executing}` 的 item，对应 MD 的 frontmatter `type=act`
-- MD body 字节级未变（迁移前后 `git diff -- discussions/**.md` 仅显示 frontmatter `type` 行变化）
+- 来源为 `concluded`/`produced` 的 matter：`current_status=executing`；timeline 中存在恰好一条 `type=act` 且 `status_change={planning, executing}` 的 item，对应 MD 的 frontmatter `type=act` 且 filename 包含 `_act_`
+- 所有迁移后的 MD 文件名 type 段 ∈ `{think, act}`（`comment` 不会出现因为实测数据无该类型；`verify/result/insight` 不会出现因为老数据全部映射到 think 或 act）
+- 老命名 token（`_proposal_` / `_reply_`）在 `discussions/<category>/<slug>/` 下**完全消失**
+- MD body 字节级未变（迁移前后内容 diff 仅限 frontmatter `type` 行 + filename 改名）
+- `git status --short` 显示所有 MD 改动以 `R`（rename）出现，不是 `D` + `?`/`A`（删除 + 新建）；`git log --follow` 能跨 rename 追溯
 - `GET /api/matters/{id}` 对迁移后的 matter 能返回正确 timeline，含 mention 转成的 comments
 - 单测 `uv run pytest server/tests/test_migrate_index_schema.py -q` 全绿
 
