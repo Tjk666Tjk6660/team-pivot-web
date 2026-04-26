@@ -107,16 +107,7 @@ export function FileCard({
         </div>
       </div>
 
-      {/* summary + AI 摘要候选 slot */}
-      <div className="mt-3 flex flex-wrap items-start gap-2">
-        <p className="min-w-0 flex-1 text-[14px] font-medium text-slate-900">{item.summary}</p>
-        <span
-          className="shrink-0 rounded border border-dashed border-slate-300 bg-slate-50/70 px-1.5 py-0.5 text-[10px] text-slate-500"
-          title="AI 摘要候选（Phase 3 占位）"
-        >
-          AI 摘要候选
-        </span>
-      </div>
+      <p className="mt-3 text-[14px] font-medium text-slate-900">{item.summary}</p>
 
       {/* quote / refer / status_change chips */}
       {(item.quote || (item.refer && item.refer.length > 0) || item.status_change) && (
@@ -218,12 +209,6 @@ export function FileCard({
 
       {/* comments */}
       <CommentsBlock item={item} onAddComment={onAddComment} />
-
-      {/* AI 建议 slot */}
-      <div className="mt-3 rounded-lg border border-dashed border-slate-300 bg-slate-50/50 px-3 py-2 text-[11px] text-slate-500">
-        <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-600">AI</span>
-        <span className="ml-2">AI 建议（Phase 3 占位）· 将针对这篇 {cfg.label} 给出后续判断</span>
-      </div>
 
       {/* 三入口 */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3">

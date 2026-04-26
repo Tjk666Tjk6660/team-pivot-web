@@ -661,10 +661,6 @@ export function MatterDetailPane() {
             <span className="font-semibold text-slate-700">状态语义：</span>
             {allowed}
           </div>
-
-          {/* AI observe / next 占位条 */}
-          <AIPlaceholderBar kind="observe" />
-          <AIPlaceholderBar kind="next" />
         </header>
 
         {/* ==== 时间轴 ==== */}
@@ -958,18 +954,3 @@ export function MatterDetailPane() {
   );
 }
 
-function AIPlaceholderBar({ kind }: { kind: "observe" | "next" }) {
-  const cfg =
-    kind === "observe"
-      ? { label: "AI 观察 / 巡视", hint: "AI 会在此持续巡视事项进展（占位）" }
-      : { label: "AI 下一步建议", hint: "AI 会在此基于上下文给出下一步建议（占位）" };
-  return (
-    <div className="mt-3 flex items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50/50 px-3 py-2 text-[11px] text-slate-500">
-      <span className="flex h-4 w-4 items-center justify-center rounded-full bg-slate-200 text-[10px] font-medium text-slate-600">
-        <Sparkles className="h-2.5 w-2.5" />
-      </span>
-      <span className="font-medium text-slate-600">{cfg.label}</span>
-      <span className="text-slate-400">· {cfg.hint}</span>
-    </div>
-  );
-}
