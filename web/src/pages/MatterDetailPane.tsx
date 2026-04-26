@@ -55,7 +55,7 @@ export function MatterDetailPane() {
   const [sessionOpenId, setSessionOpenId] = useState<string>("");
   const [sessionName, setSessionName] = useState<string>("");
   const [pendingCreate, setPendingCreate] = useState<
-    { type: DocType; quote: string | null } | null
+    { type: DocType; quote: string | null; reviewedTransition?: boolean } | null
   >(null);
   const [matterDrafts, setMatterDrafts] = useState<Draft[]>([]);
   const [pendingDraftId, setPendingDraftId] = useState<string | null>(null);
@@ -64,6 +64,9 @@ export function MatterDetailPane() {
   );
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [resultConfirmOpen, setResultConfirmOpen] = useState(false);
+  const [reviewedConfirmOpen, setReviewedConfirmOpen] = useState(false);
+  // 草稿卡片出现时滚到它,让用户知道新卡片落在哪。
+  const pendingArticleRef = useRef<HTMLElement | null>(null);
 
   const draftFromPayload = (d: Draft): Partial<FormSnapshot> => {
     const mp = (d.matter_payload ?? {}) as Record<string, unknown>;
@@ -86,6 +89,7 @@ export function MatterDetailPane() {
     drafts: Draft[],
     type: DocType,
     quote: string | null,
+    reviewedTransition: boolean = false,
   ): Draft | null => {
     for (const d of drafts) {
       const mp = d.matter_payload;
@@ -96,20 +100,34 @@ export function MatterDetailPane() {
         quote === null
           ? mpQuote == null || mpQuote === ""
           : mpQuote === quote;
-      if (sameType && sameQuote) return d;
+      // 区分"纯 insight"草稿和"insight + 推进 reviewed"草稿,避免互相覆盖。
+      const draftIsReviewed =
+        ((mp as { status_change?: { to?: unknown } }).status_change?.to) ===
+        "reviewed";
+      if (sameType && sameQuote && draftIsReviewed === reviewedTransition) return d;
     }
     return null;
   };
 
-  const openPending = (type: DocType, quote: string | null) => {
-    if (pendingCreate && pendingCreate.type === type && pendingCreate.quote === quote) {
+  const openPending = (
+    type: DocType,
+    quote: string | null,
+    opts?: { reviewedTransition?: boolean },
+  ) => {
+    const reviewedTransition = opts?.reviewedTransition === true;
+    if (
+      pendingCreate &&
+      pendingCreate.type === type &&
+      pendingCreate.quote === quote &&
+      (pendingCreate.reviewedTransition ?? false) === reviewedTransition
+    ) {
       setPendingCreate(null);
       setPendingDraftId(null);
       setPendingInitial(null);
       return;
     }
-    const existing = findDraft(matterDrafts, type, quote);
-    setPendingCreate({ type, quote });
+    const existing = findDraft(matterDrafts, type, quote, reviewedTransition);
+    setPendingCreate({ type, quote, reviewedTransition: reviewedTransition || undefined });
     setPendingDraftId(existing?.id ?? null);
     setPendingInitial(existing ? draftFromPayload(existing) : null);
   };
@@ -187,6 +205,7 @@ export function MatterDetailPane() {
     setPendingInitial(null);
     setConfirmDeleteOpen(false);
     setResultConfirmOpen(false);
+    setReviewedConfirmOpen(false);
     setPendingAIOrigin(null);
     setHighlight(null);
   }, [matter_id]);
@@ -265,6 +284,12 @@ export function MatterDetailPane() {
     setHighlight(file);
     window.setTimeout(() => setHighlight(null), 1600);
   };
+
+  // pendingCreate 草稿卡片出现时,滚动让它进视野(它总是渲染在 timeline 最末尾)。
+  useEffect(() => {
+    if (!pendingCreate) return;
+    pendingArticleRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [pendingCreate]);
 
   if (data === undefined) {
     return (
@@ -620,6 +645,15 @@ export function MatterDetailPane() {
                   生成 Insight
                 </Button>
               )}
+              {canGenerateInsight && (
+                <Button
+                  className="h-9 rounded-xl bg-red-600 px-3 text-xs font-semibold text-white hover:bg-red-700"
+                  onClick={() => setReviewedConfirmOpen(true)}
+                  title="事项归档收口（不可逆）"
+                >
+                  推进到 Reviewed
+                </Button>
+              )}
             </div>
           </div>
 
@@ -670,6 +704,7 @@ export function MatterDetailPane() {
           ))}
           {pendingCreate && (
             <article
+              ref={pendingArticleRef}
               className={cn(
                 "rounded-2xl border border-slate-200 border-l-[6px] [border-left-style:dashed] bg-white p-4 shadow-sm sm:p-5",
                 TYPE_VISUAL[pendingCreate.type].side,
@@ -684,6 +719,11 @@ export function MatterDetailPane() {
                 >
                   {TYPE_VISUAL[pendingCreate.type].label}
                 </span>
+                {pendingCreate.reviewedTransition && (
+                  <span className="inline-flex items-center rounded-md bg-red-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-red-700 ring-1 ring-red-200">
+                    → reviewed
+                  </span>
+                )}
                 <span className="text-[11px] text-slate-500">
                   {pendingCreate.quote ? (
                     <>
@@ -715,7 +755,7 @@ export function MatterDetailPane() {
                 </Button>
               </div>
               <CreateFileForm
-                key={`${pendingCreate.quote ?? "__page__"}:${pendingCreate.type}:${aiFillToken}`}
+                key={`${pendingCreate.quote ?? "__page__"}:${pendingCreate.type}:${pendingCreate.reviewedTransition ? "rev" : "norm"}:${aiFillToken}`}
                 context={
                   pendingCreate.quote
                     ? {
@@ -726,6 +766,7 @@ export function MatterDetailPane() {
                     : {
                         kind: "page",
                         type: pendingCreate.type as "insight" | "result",
+                        reviewedTransition: pendingCreate.reviewedTransition,
                       }
                 }
                 matterStatus={matter.current_status}
@@ -851,6 +892,39 @@ export function MatterDetailPane() {
               onClick={() => {
                 setResultConfirmOpen(false);
                 openPending("result", null);
+              }}
+            >
+              继续生成
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={reviewedConfirmOpen} onOpenChange={setReviewedConfirmOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>⚠ 推进到 Reviewed 是事项最终归档</DialogTitle>
+            <DialogDescription className="text-xs">
+              推进后：
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="list-disc space-y-0.5 pl-5 text-xs text-slate-600">
+            <li>
+              matter 状态变更为 <span className="font-mono">reviewed</span>，生命周期收口
+            </li>
+            <li>不再允许新增任何文件（think / act / verify / result / insight）</li>
+            <li>已发布的所有文件 / AI 助手会话 / 草稿仍可查阅</li>
+            <li>此操作不可撤销</li>
+          </ul>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReviewedConfirmOpen(false)}>
+              取消
+            </Button>
+            <Button
+              className="bg-red-600 text-white hover:bg-red-700"
+              onClick={() => {
+                setReviewedConfirmOpen(false);
+                openPending("insight", null, { reviewedTransition: true });
               }}
             >
               继续生成

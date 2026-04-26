@@ -27,7 +27,7 @@ import { OwnerPicker } from "./OwnerPicker";
 
 export type CreateFormContext =
   | { kind: "card"; type: DocType; quote: string }
-  | { kind: "page"; type: "insight" | "result" };
+  | { kind: "page"; type: "insight" | "result"; reviewedTransition?: boolean };
 
 type FormState = {
   summary: string;
@@ -38,7 +38,6 @@ type FormState = {
   verifications: Verification[];
   thinkChange: "none" | string;
   actPromote: boolean;
-  insightReview: boolean;
   outcome: Outcome;
 };
 
@@ -76,8 +75,6 @@ function initialFormState(
     ctx.type === "act" &&
     initial?.status_change?.from === "planning" &&
     initial?.status_change?.to === "executing";
-  const insightReview =
-    ctx.type === "insight" && initial?.status_change?.to === "reviewed";
   return {
     summary: initial?.summary ?? "",
     body: initial?.body ?? "",
@@ -87,7 +84,6 @@ function initialFormState(
     verifications: initial?.verifications ?? defaultVerifications,
     thinkChange,
     actPromote,
-    insightReview,
     outcome: initial?.outcome ?? "finished",
   };
 }
@@ -141,6 +137,10 @@ export function CreateFileForm({
   const isThink = type === "think";
   const isInsight = type === "insight";
   const isResult = type === "result";
+  // 推进到 reviewed:由调用方通过 context.reviewedTransition 显式声明；
+  // 表单内部不再让用户勾选,避免"insight 发布"和"reviewed 状态迁移"耦合。
+  const reviewedTransition =
+    context.kind === "page" && context.reviewedTransition === true && isInsight;
 
   const computeStatusChange = (): StatusChange | undefined => {
     if (isThink && form.thinkChange !== "none") {
@@ -150,7 +150,7 @@ export function CreateFileForm({
     if (isAct && form.actPromote) {
       return { from: "planning", to: "executing" };
     }
-    if (isInsight && form.insightReview) {
+    if (reviewedTransition) {
       if (matterStatus !== "finished" && matterStatus !== "cancelled") return undefined;
       return { from: matterStatus, to: "reviewed" };
     }
@@ -201,8 +201,7 @@ export function CreateFileForm({
     }
 
     if (
-      isInsight &&
-      form.insightReview &&
+      reviewedTransition &&
       matterStatus !== "finished" &&
       matterStatus !== "cancelled"
     ) {
@@ -440,17 +439,19 @@ export function CreateFileForm({
         </FieldRow>
       )}
 
-      {isInsight && (
-        <FieldRow label="附加状态迁移">
-          <label className="flex items-center gap-1.5 text-sm">
-            <input
-              type="checkbox"
-              checked={form.insightReview}
-              onChange={(e) => setForm((p) => ({ ...p, insightReview: e.target.checked }))}
-            />
-            同时推进到 reviewed（{matterStatus} → reviewed）
-          </label>
-        </FieldRow>
+      {reviewedTransition && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          ⚠ 这条 insight 提交后会推进事项到 <span className="font-mono">reviewed</span>
+          （{matterStatus} → reviewed）。归档后不再允许新增任何文件，操作不可撤销。
+        </div>
+      )}
+
+      {isResult && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          ⚠ 这条 result 提交后会收口事项
+          （<span className="font-mono">executing</span> → <span className="font-mono">{form.outcome}</span>）。
+          收口后不再允许新增 act / verify / 执行性 think，只剩 insight 可追加，操作不可撤销。
+        </div>
       )}
 
       <div className="flex items-center justify-end gap-2 pt-2">
@@ -505,7 +506,7 @@ export function CreateFileDialog({
         <DialogHeader>
           <DialogTitle>生成 insight</DialogTitle>
           <DialogDescription>
-            类型 <span className="font-mono">insight</span> · 复盘沉淀；可勾选同时推进到 reviewed
+            类型 <span className="font-mono">insight</span> · 复盘沉淀。如需推进到 reviewed 归档，请用主页的【推进到 Reviewed】按钮。
           </DialogDescription>
         </DialogHeader>
         {open && (
