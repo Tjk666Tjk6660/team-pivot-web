@@ -12,7 +12,6 @@ import {
   emptyMention,
   isMentionValid,
 } from "@/components/MentionField";
-import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { relativeTime, formatFullDateTime } from "@/lib/time";
 import {
@@ -215,8 +214,8 @@ export function FileCard({
         </>
       )}
 
-      {/* comments */}
-      <CommentsBlock item={item} onAddComment={onAddComment} />
+      {/* comments (read-only; "添加评论" was removed — use the @ 提及 button at the top to leave a note instead) */}
+      <CommentsBlock item={item} />
 
       {/* 三入口 */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3">
@@ -395,42 +394,8 @@ function JudgementChip({ judgement }: { judgement: Judgement }) {
   );
 }
 
-function CommentsBlock({
-  item,
-  onAddComment,
-}: {
-  item: TimelineItem;
-  onAddComment: (body: string, mentions?: string[]) => Promise<void>;
-}) {
-  const [draft, setDraft] = useState("");
-  const [open, setOpen] = useState(item.comments.length > 0);
-  const [submitting, setSubmitting] = useState(false);
-
-  if (item.comments.length === 0 && !open) {
-    return (
-      <div className="mt-3">
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-700"
-        >
-          <MessageSquare className="h-3 w-3" />
-          添加评论
-        </button>
-      </div>
-    );
-  }
-
-  const submit = async () => {
-    if (!draft.trim()) return;
-    setSubmitting(true);
-    try {
-      await onAddComment(draft);
-      setDraft("");
-    } finally {
-      setSubmitting(false);
-    }
-  };
+function CommentsBlock({ item }: { item: TimelineItem }) {
+  if (item.comments.length === 0) return null;
 
   return (
     <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
@@ -438,64 +403,39 @@ function CommentsBlock({
         <MessageSquare className="h-3 w-3" />
         comments · {item.comments.length}
       </div>
-      {item.comments.length > 0 && (
-        <ul className="mt-2 space-y-2">
-          {item.comments.map((c, i) => {
-            const author = ((c.author_display || c.author) ?? "").trim() || "未知用户";
-            const mentionNames = c.mentions_display ?? c.mentions ?? [];
-            const body = c.body?.trim();
-            return (
-              <li
-                key={i}
-                className="rounded-md border border-slate-200 bg-white px-3 py-2 text-[12.5px] text-slate-700"
+      <ul className="mt-2 space-y-2">
+        {item.comments.map((c, i) => {
+          const author = ((c.author_display || c.author) ?? "").trim() || "未知用户";
+          const mentionNames = c.mentions_display ?? c.mentions ?? [];
+          const body = c.body?.trim();
+          return (
+            <li
+              key={i}
+              className="rounded-md border border-slate-200 bg-white px-3 py-2 text-[12.5px] text-slate-700"
+            >
+              <span className="text-slate-500">评论{i + 1}</span>
+              <span
+                className="ml-1 text-slate-400"
+                title={formatFullDateTime(c.created_at)}
               >
-                <span className="text-slate-500">评论{i + 1}</span>
-                <span
-                  className="ml-1 text-slate-400"
-                  title={formatFullDateTime(c.created_at)}
-                >
-                  · {relativeTime(c.created_at)}
+                · {relativeTime(c.created_at)}
+              </span>
+              <span className="ml-2 font-semibold text-slate-900">{author}</span>
+              {mentionNames.map((name, mi) => (
+                <span key={mi} className="ml-1 text-blue-600">
+                  @{name}
                 </span>
-                <span className="ml-2 font-semibold text-slate-900">{author}</span>
-                {mentionNames.map((name, mi) => (
-                  <span key={mi} className="ml-1 text-blue-600">
-                    @{name}
-                  </span>
-                ))}
-                <span className="ml-1 text-slate-500">说:</span>
-                {body ? (
-                  <span className="ml-0.5">{body}</span>
-                ) : (
-                  <span className="ml-0.5 text-slate-400">未填写评论内容</span>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      <div className="mt-2 flex items-center gap-1.5">
-        <Input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder="写条评论 …"
-          className="h-7 flex-1 text-xs"
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              void submit();
-            }
-          }}
-        />
-        <Button
-          type="button"
-          size="sm"
-          className="h-7 px-3 text-[11px]"
-          onClick={() => void submit()}
-          disabled={!draft.trim() || submitting}
-        >
-          {submitting ? "…" : "发送"}
-        </Button>
-      </div>
+              ))}
+              <span className="ml-1 text-slate-500">说:</span>
+              {body ? (
+                <span className="ml-0.5">{body}</span>
+              ) : (
+                <span className="ml-0.5 text-slate-400">未填写评论内容</span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

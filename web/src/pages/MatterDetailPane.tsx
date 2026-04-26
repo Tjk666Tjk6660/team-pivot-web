@@ -518,7 +518,20 @@ export function MatterDetailPane() {
     replyTo: string,
     summary?: string,
   ): Promise<boolean> => {
-    if (!matter_id || !pendingCreate) return false;
+    if (!matter_id) return false;
+    if (!pendingCreate) {
+      const status = matter.current_status;
+      const hint =
+        status === "planning"  ? "可在任意卡片底部点击「+ think / + act / + verify」新建草稿" :
+        status === "executing" ? "可在任意卡片底部点击「+ think / + act / + verify」，或顶部「生成 Result」新建草稿" :
+        status === "paused"    ? "matter 已暂停（paused），仅允许新建「+ think」草稿" :
+        status === "finished"  ? "matter 已完成（finished），请点击顶部「生成 Insight」新建草稿" :
+        status === "cancelled" ? "matter 已取消（cancelled），请点击顶部「生成 Insight」新建草稿" :
+        status === "reviewed"  ? "matter 已 reviewed，不再允许新增文件，AI 草稿无法填入" :
+        "请先在合适的卡片上新建草稿";
+      toast.error(`未找到对应草稿卡片：${hint}`);
+      return false;
+    }
     // 跟着 body 一起覆盖 summary（如果 AI 这次返回了 <summary> 块）。
     // 没返回时保留旧 summary（一般也是空,fallback 到发布时的 onGenerateSummary）。
     const trimmedSummary = summary?.trim();
