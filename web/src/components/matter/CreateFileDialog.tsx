@@ -142,9 +142,26 @@ export function CreateFileForm({
   const reviewedTransition =
     context.kind === "page" && context.reviewedTransition === true && isInsight;
 
+  // matter 是否曾经进入过 executing 状态——通过扫 timeline 上的
+  // status_change.to / from 判断。如果没有,paused → executing 这条恢复路径
+  // 不该出现(matter 都没启动过执行,何来"恢复执行")。
+  const everExecuted = useMemo(
+    () =>
+      timeline.some(
+        (t) =>
+          t.status_change?.to === "executing" ||
+          t.status_change?.from === "executing",
+      ),
+    [timeline],
+  );
+
   const computeStatusChange = (): StatusChange | undefined => {
     if (isThink && form.thinkChange !== "none") {
       const [from, to] = form.thinkChange.split("->") as [MatterStatus, MatterStatus];
+      // matter 未经过 executing 时屏蔽 paused → executing,跟 UI 一致。
+      if (from === "paused" && to === "executing" && !everExecuted) {
+        return undefined;
+      }
       return { from, to };
     }
     if (isAct && form.actPromote) {
@@ -206,6 +223,14 @@ export function CreateFileForm({
       matterStatus !== "cancelled"
     ) {
       toast.error("推进到 reviewed 前置必须是 finished / cancelled");
+      return;
+    }
+    if (
+      isThink &&
+      form.thinkChange === "paused->executing" &&
+      !everExecuted
+    ) {
+      toast.error("matter 未经过 executing,不能从 paused 直接切换为 executing(请选恢复为规划)");
       return;
     }
     const status_change = computeStatusChange();
@@ -415,11 +440,13 @@ export function CreateFileForm({
                   onChange={() => setForm((p) => ({ ...p, thinkChange: "paused->planning" }))}
                   label="恢复为规划（paused → planning）"
                 />
-                <RadioRow
-                  checked={form.thinkChange === "paused->executing"}
-                  onChange={() => setForm((p) => ({ ...p, thinkChange: "paused->executing" }))}
-                  label="恢复为执行（paused → executing）"
-                />
+                {everExecuted && (
+                  <RadioRow
+                    checked={form.thinkChange === "paused->executing"}
+                    onChange={() => setForm((p) => ({ ...p, thinkChange: "paused->executing" }))}
+                    label="恢复为执行（paused → executing）"
+                  />
+                )}
               </>
             )}
           </div>
