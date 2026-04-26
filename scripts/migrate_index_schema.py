@@ -796,18 +796,25 @@ def _commit_migration(workspace: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _build_users_repo() -> object | None:
-    """Try to construct a UserRepo against the running Pivot's SQLite. Returns
-    None if DB isn't reachable (mention pinyin resolution falls back to
-    open_id literals — acceptable degraded behavior)."""
+def _build_users_repo(db_path: Path | None = None) -> object | None:
+    """Construct a UserRepo for mention pinyin resolution.
+
+    When `db_path` is given, use it directly (typical for test rehearsal where
+    operator copies a production data.db readonly snapshot to the test machine).
+    Otherwise fall back to `.env`'s `DATA_DIR`/data.db (production runs).
+
+    Returns None on any failure — mention resolution then falls back to open_id
+    literals, an acceptable degraded mode.
+    """
     try:
-        from server.config import load_config  # local import (avoids hard dep)
         from server.db import Database
         from server.users import UserRepo
+        if db_path is not None:
+            return UserRepo(Database(db_path))
+        from server.config import load_config  # local import (avoids hard dep)
         cfg = load_config()
         data_dir = Path(cfg.data_dir).resolve()
-        db = Database(data_dir / "data.db")
-        return UserRepo(db)
+        return UserRepo(Database(data_dir / "data.db"))
     except Exception:
         return None
 
@@ -837,6 +844,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Skip loading UserRepo for pinyin resolution; mentions fall back "
              "to open_id literals.",
     )
+    parser.add_argument(
+        "--db-path", default=None, type=Path,
+        help="Explicit path to the Pivot SQLite (data.db). Overrides .env's "
+             "DATA_DIR-derived default. Use this when running rehearsal on a "
+             "machine whose .env doesn't point at production data; copy a "
+             "read-only snapshot of production data.db over and pass it here.",
+    )
     args = parser.parse_args(argv)
 
     workspace = args.workspace.resolve()
@@ -864,7 +878,7 @@ def main(argv: list[str] | None = None) -> int:
         print("no legacy index files found; nothing to migrate.")
         return 0
 
-    users_repo = None if args.no_users_db else _build_users_repo()
+    users_repo = None if args.no_users_db else _build_users_repo(args.db_path)
 
     report = apply_migration(
         workspace, legacy_paths, dry_run=not args.apply, users_repo=users_repo,

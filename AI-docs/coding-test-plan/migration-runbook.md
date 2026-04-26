@@ -97,6 +97,20 @@ uv run python scripts/migrate_index_schema.py \
     --report var-migration-test/migration-report-dryrun.json
 ```
 
+> ⚠️ **mention pinyin 解析的前提**:脚本默认从 `.env` 的 `DATA_DIR` 找 SQLite,该 SQLite 必须含真实 `users` 表(由生产 OAuth 登录写入)。在测试机上跑演练时,本地 `data.db` 通常**没有真实用户**,会导致 `comments[].mentions` 全部兜底为 open_id(`ou_xxx`)。要完整验证 pinyin 转换链路,先把生产 `data.db` 复制只读副本过来,然后用 `--db-path` 显式指向:
+>
+> ```bash
+> # 生产服务器上(只读复制,不动原文件)
+> scp prod-server:/pivot/var/data.db /tmp/prod-data-readonly.db
+>
+> uv run python scripts/migrate_index_schema.py \
+>     --workspace "$WS" \
+>     --db-path /tmp/prod-data-readonly.db \
+>     --report var-migration-test/migration-report-dryrun.json
+> ```
+>
+> 演练完成后清理副本:`rm /tmp/prod-data-readonly.db`。
+
 **预期输出**:
 
 ```
@@ -189,6 +203,13 @@ git bundle create \
 把 bundle 文件**额外复制到独立位置**(运维 ops 库 / 对象存储),作为 git 仓库本身受损时的最终兜底。
 
 ### C.4 生产 dry-run
+
+> ⚠️ **跑前必查**:`cat .env | grep DATA_DIR` 确认 `DATA_DIR` 指向**生产 SQLite 所在目录**(里面的 `data.db` 含真实 users 表)。如果跑错了 SQLite,mention pinyin 解析会跌回 open_id 兜底分支——index 里 `comments[].mentions` 会显示为 `ou_xxx` 而非人名,**不是数据致命错,但运维 / AI 阅读体验会下降**。
+>
+> 替代方案:用 `--db-path` 显式指定 SQLite 路径,绕开 .env 探测。例如在测试机上跑生产数据演练时,把生产 `data.db` 复制只读副本过来,然后:
+> ```bash
+> --db-path /tmp/prod-data-readonly.db
+> ```
 
 ```bash
 cd ~/team-pivot-web   # 生产服务器上的 Pivot 代码副本
