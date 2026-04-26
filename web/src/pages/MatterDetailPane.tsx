@@ -71,6 +71,16 @@ export function MatterDetailPane() {
   const draftFromPayload = (d: Draft): Partial<FormSnapshot> => {
     const mp = (d.matter_payload ?? {}) as Record<string, unknown>;
     const sc = mp.status_change as FormSnapshot["status_change"] | undefined;
+    const rawMentions = mp.mentions as { open_ids?: unknown; comments?: unknown } | undefined;
+    const mentions =
+      rawMentions &&
+      Array.isArray(rawMentions.open_ids) &&
+      typeof rawMentions.comments === "string"
+        ? {
+            open_ids: rawMentions.open_ids as string[],
+            comments: rawMentions.comments,
+          }
+        : undefined;
     return {
       body: d.body_md,
       summary: typeof mp.summary === "string" ? mp.summary : "",
@@ -82,6 +92,7 @@ export function MatterDetailPane() {
         ? (mp.verifications as FormSnapshot["verifications"])
         : [],
       status_change: sc,
+      mentions,
     };
   };
 
@@ -369,6 +380,9 @@ export function MatterDetailPane() {
     if (snap.verifications.length > 0) payload.verifications = snap.verifications;
     if (snap.status_change) payload.status_change = snap.status_change;
     if (snap.outcome) payload.outcome = snap.outcome;
+    if (snap.mentions && snap.mentions.open_ids.length > 0) {
+      payload.mentions = snap.mentions;
+    }
     return payload;
   };
 
@@ -474,6 +488,7 @@ export function MatterDetailPane() {
         verifications: nextInitial.verifications ?? [],
         status_change: nextInitial.status_change,
         outcome: nextInitial.outcome,
+        mentions: nextInitial.mentions,
       },
     );
     try {
@@ -504,10 +519,18 @@ export function MatterDetailPane() {
     return true;
   };
 
-  const submitComment = async (targetFile: string, body: string) => {
+  const submitComment = async (
+    targetFile: string,
+    body: string,
+    mentions?: string[],
+  ) => {
     if (!matter_id) return;
     try {
-      await appendMatterComment(matter_id, { target_file: targetFile, body });
+      await appendMatterComment(matter_id, {
+        target_file: targetFile,
+        body,
+        mentions: mentions && mentions.length > 0 ? mentions : undefined,
+      });
       toast.success("已追加评论");
       await afterWrite();
     } catch (e) {
@@ -690,7 +713,7 @@ export function MatterDetailPane() {
                   : null
               }
               onCreate={requestCreate}
-              onAddComment={(body) => submitComment(item.file, body)}
+              onAddComment={(body, mentions) => submitComment(item.file, body, mentions)}
               onJump={onJump}
               registerRef={(el) => {
                 cardRefs.current[item.file] = el;

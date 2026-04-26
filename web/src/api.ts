@@ -76,9 +76,11 @@ export type Verification = {
 
 export type TimelineComment = {
   author: string;
+  author_display?: string;
   created_at: string;
   body: string;
   mentions?: string[];
+  mentions_display?: string[];
 };
 
 export type TimelineItem = {

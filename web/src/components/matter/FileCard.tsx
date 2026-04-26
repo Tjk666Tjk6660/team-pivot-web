@@ -1,11 +1,17 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { MermaidBlock } from "./MermaidBlock";
 import { MessageSquare, Plus } from "lucide-react";
-import type { DocType, Judgement, MatterStatus, TimelineItem } from "@/api";
+import { toast } from "sonner";
+import type { DocType, Judgement, MatterStatus, MentionBlock, TimelineItem } from "@/api";
 import { Button } from "@/components/ui/button";
+import {
+  MentionField,
+  emptyMention,
+  isMentionValid,
+} from "@/components/MentionField";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { relativeTime, formatFullDateTime } from "@/lib/time";
@@ -58,7 +64,7 @@ export function FileCard({
   matterStatus: MatterStatus;
   activeType: DocType | null;
   onCreate: (type: DocType, quote: string) => void;
-  onAddComment: (body: string) => Promise<void>;
+  onAddComment: (body: string, mentions?: string[]) => Promise<void>;
   onJump: (file: string) => void;
   registerRef?: (el: HTMLDivElement | null) => void;
   highlighted?: boolean;
@@ -81,7 +87,7 @@ export function FileCard({
     >
       {/* header */}
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 text-[11px] text-slate-500">
           <span
             className={cn(
               "inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ring-1",
@@ -90,10 +96,8 @@ export function FileCard({
           >
             {cfg.label}
           </span>
-          <span className="font-mono text-xs text-slate-700">{shortFile(item.file)}</span>
-          <span className="text-[11px] text-slate-400">#{index + 1}</span>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+          <span>第 {index + 1} 条</span>
+          <span>·</span>
           <span>
             作者 <span className="font-medium text-slate-700">{item.creator}</span>
           </span>
@@ -105,6 +109,10 @@ export function FileCard({
           <span>·</span>
           <span title={formatFullDateTime(item.created_at)}>{relativeTime(item.created_at)}</span>
         </div>
+        <MentionPopover onSubmit={onAddComment} align="right" />
+      </div>
+      <div className="mt-1 font-mono text-xs text-slate-700 break-all">
+        {shortFile(item.file)}
       </div>
 
       <p className="mt-3 text-[14px] font-medium text-slate-900">{item.summary}</p>
@@ -238,6 +246,110 @@ export function FileCard({
   );
 }
 
+// 对应 master ThreadDetailPane.PostMentionPopover 的形态:点开按钮弹一个 popover,
+// 选人 + 留一句话,提交后调 onSubmit(body, open_ids)。本质走的是
+// appendMatterComment 通道——matter 的"提及"实现就是给文件追加一条带 mentions
+// 的评论。
+function MentionPopover({
+  onSubmit,
+  align = "left",
+}: {
+  onSubmit: (body: string, mentions: string[]) => Promise<void>;
+  align?: "left" | "right";
+}) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState<MentionBlock>(emptyMention());
+  const resolvedNames = useRef<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const submit = async () => {
+    if (value.open_ids.length === 0) {
+      toast.error("至少选一个人");
+      return;
+    }
+    if (!isMentionValid(value)) {
+      toast.error("圈人后必须填一句话");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await onSubmit(value.comments.trim(), value.open_ids);
+      setOpen(false);
+      setValue(emptyMention());
+      toast.success("已发送提及");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="relative" ref={popoverRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        title="圈人留言（追加为本文件的一条带 mention 的评论）"
+        className="inline-flex items-center rounded-md border border-blue-200 bg-white px-2 py-1 text-[11px] font-semibold text-blue-700 hover:border-blue-300 hover:bg-blue-50"
+      >
+        @ 提及
+      </button>
+      {open && (
+        <div
+          className={cn(
+            "absolute top-full z-50 mt-2 w-[22rem] rounded-md border border-slate-200 bg-white p-3 shadow-lg",
+            align === "right" ? "right-0" : "left-0",
+          )}
+        >
+          <p className="mb-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-500">
+            提及某人
+          </p>
+          <MentionField
+            value={value}
+            onChange={setValue}
+            resolvedNames={resolvedNames.current}
+          />
+          <div className="mt-3 flex justify-end gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setOpen(false);
+                setValue(emptyMention());
+              }}
+              disabled={submitting}
+            >
+              取消
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => void submit()}
+              disabled={submitting}
+              className="bg-blue-600 text-white hover:bg-blue-700"
+            >
+              {submitting ? "发送中…" : "发送"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CardAddButton({
   label,
   disabled,
@@ -288,7 +400,7 @@ function CommentsBlock({
   onAddComment,
 }: {
   item: TimelineItem;
-  onAddComment: (body: string) => Promise<void>;
+  onAddComment: (body: string, mentions?: string[]) => Promise<void>;
 }) {
   const [draft, setDraft] = useState("");
   const [open, setOpen] = useState(item.comments.length > 0);
@@ -328,16 +440,37 @@ function CommentsBlock({
       </div>
       {item.comments.length > 0 && (
         <ul className="mt-2 space-y-2">
-          {item.comments.map((c, i) => (
-            <li key={i} className="text-xs">
-              <div className="flex items-center gap-2 text-[11px] text-slate-500">
-                <span className="font-medium text-slate-700">{c.author}</span>
-                <span>·</span>
-                <span>{relativeTime(c.created_at)}</span>
-              </div>
-              <div className="mt-0.5 text-slate-700">{c.body}</div>
-            </li>
-          ))}
+          {item.comments.map((c, i) => {
+            const author = ((c.author_display || c.author) ?? "").trim() || "未知用户";
+            const mentionNames = c.mentions_display ?? c.mentions ?? [];
+            const body = c.body?.trim();
+            return (
+              <li
+                key={i}
+                className="rounded-md border border-slate-200 bg-white px-3 py-2 text-[12.5px] text-slate-700"
+              >
+                <span className="text-slate-500">评论{i + 1}</span>
+                <span
+                  className="ml-1 text-slate-400"
+                  title={formatFullDateTime(c.created_at)}
+                >
+                  · {relativeTime(c.created_at)}
+                </span>
+                <span className="ml-2 font-semibold text-slate-900">{author}</span>
+                {mentionNames.map((name, mi) => (
+                  <span key={mi} className="ml-1 text-blue-600">
+                    @{name}
+                  </span>
+                ))}
+                <span className="ml-1 text-slate-500">说:</span>
+                {body ? (
+                  <span className="ml-0.5">{body}</span>
+                ) : (
+                  <span className="ml-0.5 text-slate-400">未填写评论内容</span>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
       <div className="mt-2 flex items-center gap-1.5">

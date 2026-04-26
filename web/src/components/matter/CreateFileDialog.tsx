@@ -1,15 +1,17 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Plus } from "lucide-react";
-import type {
-  DocType,
-  Judgement,
-  MatterStatus,
-  NewFileIn,
-  Outcome,
-  StatusChange,
-  TimelineItem,
-  Verification,
+import {
+  searchContacts,
+  type DocType,
+  type Judgement,
+  type MatterStatus,
+  type MentionBlock,
+  type NewFileIn,
+  type Outcome,
+  type StatusChange,
+  type TimelineItem,
+  type Verification,
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,6 +26,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { MAX_REFER, shortFile } from "./timeline-config";
 import { OwnerPicker } from "./OwnerPicker";
+import {
+  MentionField,
+  emptyMention,
+  isMentionValid,
+} from "@/components/MentionField";
 
 export type CreateFormContext =
   | { kind: "card"; type: DocType; quote: string }
@@ -39,6 +46,7 @@ type FormState = {
   thinkChange: "none" | string;
   actPromote: boolean;
   outcome: Outcome;
+  mentions: MentionBlock;
 };
 
 export type FormSnapshot = {
@@ -50,6 +58,7 @@ export type FormSnapshot = {
   verifications: Verification[];
   status_change?: StatusChange;
   outcome?: Outcome;
+  mentions?: MentionBlock;
 };
 
 function initialFormState(
@@ -85,6 +94,7 @@ function initialFormState(
     thinkChange,
     actPromote,
     outcome: initial?.outcome ?? "finished",
+    mentions: initial?.mentions ?? emptyMention(),
   };
 }
 
@@ -128,6 +138,36 @@ export function CreateFileForm({
   );
   const [stage, setStage] = useState<"idle" | "generating" | "publishing">("idle");
   const submitting = stage !== "idle";
+
+  // 圈人选中后用人名显示而不是 open_id slice。MentionField 在用户从下拉
+  // 选人时会直接 mutate 这个对象(master 自带行为);从草稿恢复进来的
+  // open_ids 没人名,下面 effect 调 searchContacts(oid) 批量补齐。
+  const [resolvedNames, setResolvedNames] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const missing = form.mentions.open_ids.filter((oid) => !(oid in resolvedNames));
+    if (missing.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const fresh: Record<string, string> = {};
+      for (const oid of missing) {
+        try {
+          const results = await searchContacts(oid);
+          const found = results.find((c) => c.open_id === oid);
+          if (found) fresh[oid] = found.name;
+        } catch {
+          /* 单个失败不阻塞整体 */
+        }
+      }
+      if (cancelled || Object.keys(fresh).length === 0) return;
+      setResolvedNames((prev) => ({ ...prev, ...fresh }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // 仅依赖 open_ids;resolvedNames 由 setState 自然驱动下一轮,加入 deps
+    // 会形成无害但啰嗦的循环。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.mentions.open_ids]);
 
   const type: DocType = context.type;
   const quote = context.kind === "card" ? context.quote : null;
@@ -186,6 +226,7 @@ export function CreateFileForm({
     verifications: form.verifications,
     status_change: computeStatusChange(),
     outcome: isResult ? form.outcome : undefined,
+    mentions: form.mentions.open_ids.length > 0 ? form.mentions : undefined,
   });
 
   const handleContainerBlur = (e: React.FocusEvent<HTMLDivElement>) => {
@@ -239,6 +280,10 @@ export function CreateFileForm({
       toast.error("owner 必填");
       return;
     }
+    if (!isMentionValid(form.mentions)) {
+      toast.error("圈人后必须填一句话");
+      return;
+    }
 
     let summary = form.summary.trim();
     if (onGenerateSummary) {
@@ -274,6 +319,16 @@ export function CreateFileForm({
     };
     if (isVerify) body.verifications = form.verifications;
     if (isResult) body.outcome = form.outcome;
+    // 圈人 + 留言:matter 没有"顶级 mention"概念,挂在 comments[0] 上
+    // (server CommentIn 接 mentions: list[str])。零服务端改动。
+    if (form.mentions.open_ids.length > 0) {
+      body.comments = [
+        {
+          body: form.mentions.comments.trim(),
+          mentions: form.mentions.open_ids,
+        },
+      ];
+    }
 
     setStage("publishing");
     try {
@@ -375,6 +430,12 @@ export function CreateFileForm({
           placeholder={isAct ? "## Summary / What To Do / Notes …" : "写下详细内容 …"}
         />
       </FieldRow>
+
+      <MentionField
+        value={form.mentions}
+        onChange={(v) => setForm((p) => ({ ...p, mentions: v }))}
+        resolvedNames={resolvedNames}
+      />
 
       {!isVerify && !isResult && (
         <FieldRow label="refer" hint={`可选 · 多选上限 ${MAX_REFER}`}>
