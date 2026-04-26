@@ -33,6 +33,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { ThreadListPane } from "@/components/ThreadListPane";
 import { cn } from "@/lib/utils";
+import { useMatterEvents } from "@/events/MatterEventsProvider";
+import { scheduleRefresh } from "@/events/scheduleRefresh";
 
 export type AIMsg = ChatMessage & { id: number; toolUses?: AIToolUse[] };
 
@@ -123,6 +125,33 @@ export function useDashboard() {
   return useOutletContext<DashboardContext>();
 }
 
+// Stable shallow compare: identical lengths + per-id fingerprints over fields
+// that the list view actually reads. Returning true makes the silent refresh
+// path a no-op so list rows do not re-commit.
+function sameMatters(
+  prev: MatterSummary[] | null,
+  next: MatterSummary[],
+): boolean {
+  if (prev === null) return false;
+  if (prev.length !== next.length) return false;
+  for (let i = 0; i < prev.length; i++) {
+    const a = prev[i];
+    const b = next[i];
+    if (
+      a.id !== b.id ||
+      a.updated_at !== b.updated_at ||
+      a.unread_count !== b.unread_count ||
+      a.file_count !== b.file_count ||
+      a.favorite !== b.favorite ||
+      a.current_status !== b.current_status ||
+      a.title !== b.title
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const location = useLocation();
   const [matters, setMatters] = useState<MatterSummary[] | null>(null);
@@ -151,9 +180,23 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       const [m, w, d] = await Promise.all([
         fetchMatters(), fetchWorkspaceStatus(), fetchDrafts(),
       ]);
-      setMatters(m); setWorkspace(w); setDrafts(d);
+      setMatters((prev) => (sameMatters(prev, m) ? prev : m));
+      setWorkspace(w);
+      setDrafts(d);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  // Silent refresh path: only the matters list, no workspace/drafts. Skips
+  // toast on failure (the user did not ask for it) and avoids touching state
+  // when the list is byte-equivalent so list rows don't re-render.
+  const refreshMattersSilently = useCallback(async () => {
+    try {
+      const next = await fetchMatters();
+      setMatters((prev) => (sameMatters(prev, next) ? prev : next));
+    } catch {
+      // swallow; resume / next event will retry
     }
   }, []);
 
@@ -471,6 +514,16 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   };
 
   useEffect(() => { void load(); }, [load]);
+
+  // Subscribe to SSE matter events + visibility/reconnect resume signals.
+  // Both list-mutating events and resume should converge on a single debounced
+  // refetch keyed by "matters-list" so a burst of events triggers one network
+  // call.
+  useMatterEvents(useCallback((evt) => {
+    // resume / matter.created / matter.updated all warrant a list refresh.
+    if (evt.type !== "resume" && !evt.matter_id) return;
+    scheduleRefresh("matters-list", refreshMattersSilently);
+  }, [refreshMattersSilently]));
 
   const onRefresh = async () => {
     setRefreshing(true);

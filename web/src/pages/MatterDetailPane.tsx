@@ -41,9 +41,47 @@ import { STATUS_DESC } from "@/components/matter/timeline-config";
 import { HomeWelcomePane } from "@/pages/HomeWelcomePane";
 import { useDashboard } from "@/pages/Dashboard";
 import { cn } from "@/lib/utils";
+import { useMatterEvents } from "@/events/MatterEventsProvider";
+import { scheduleRefresh } from "@/events/scheduleRefresh";
 
 export function MatterDetailEmpty() {
   return <HomeWelcomePane />;
+}
+
+// Stable compare for MatterDetail — returns true when nothing the view reads
+// has changed, so the silent refresh path can no-op and avoid re-rendering
+// the timeline (which would otherwise reset card-level UI like highlights).
+function sameDetail(
+  prev: MatterDetailData | null | undefined,
+  next: MatterDetailData,
+): boolean {
+  if (!prev) return false;
+  const a = prev.matter;
+  const b = next.matter;
+  if (
+    a.id !== b.id ||
+    a.updated_at !== b.updated_at ||
+    a.file_count !== b.file_count ||
+    a.unread_count !== b.unread_count ||
+    a.favorite !== b.favorite ||
+    a.current_status !== b.current_status ||
+    a.title !== b.title
+  ) {
+    return false;
+  }
+  if (prev.timeline.length !== next.timeline.length) return false;
+  for (let i = 0; i < prev.timeline.length; i++) {
+    const x = prev.timeline[i];
+    const y = next.timeline[i];
+    if (
+      x.file !== y.file ||
+      x.comments.length !== y.comments.length ||
+      (x.status_change?.to ?? null) !== (y.status_change?.to ?? null)
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export function MatterDetailPane() {
@@ -187,7 +225,7 @@ export function MatterDetailPane() {
   const load = useCallback(() => {
     if (!matter_id) return;
     fetchMatter(matter_id)
-      .then(setData)
+      .then((next) => setData((prev) => (sameDetail(prev, next) ? prev : next)))
       .catch((e) => {
         toast.error(e instanceof Error ? e.message : String(e));
         setData(null);
@@ -204,6 +242,19 @@ export function MatterDetailPane() {
         ),
       )
       .catch(() => setMatterDrafts([]));
+  }, [matter_id]);
+
+  // Silent refresh: only the matter detail (drafts are per-user state and
+  // don't change as a result of SSE events from other actors). Skips toast
+  // on failure so background event noise stays out of the user's face.
+  const refreshDetailSilently = useCallback(async () => {
+    if (!matter_id) return;
+    try {
+      const next = await fetchMatter(matter_id);
+      setData((prev) => (sameDetail(prev, next) ? prev : next));
+    } catch {
+      // swallow; the next event or visibility resume will retry
+    }
   }, [matter_id]);
 
   useEffect(() => {
@@ -251,30 +302,25 @@ export function MatterDetailPane() {
       .catch(() => {});
   }, [matter_id]);
 
-  // 兜底：SSE 推送在移动端浏览器 / 飞书 WebView 切到后台时会被挂起，
-  // 页面回到前台 / bfcache 恢复 / tab 重新聚焦时主动补拉一次，保证最终一致。
-  useEffect(() => {
+  // SSE-driven silent refresh + visibility resume. The MatterEventsProvider
+  // upstream emits both the wire events (matter.created / matter.updated) and
+  // resume signals (visibilitychange / pageshow / EventSource reconnect), so
+  // the local visibility listener that used to live here was removed.
+  useMatterEvents(useCallback((evt) => {
     if (!matter_id) return;
-    const lastRefreshRef = { current: 0 };
-    const refresh = () => {
-      if (document.visibilityState !== "visible") return;
-      const now = Date.now();
-      if (now - lastRefreshRef.current < 800) return;
-      lastRefreshRef.current = now;
-      load();
-      markMatterRead(matter_id)
-        .then(() => reloadListsRef.current())
-        .catch(() => {});
-    };
-    document.addEventListener("visibilitychange", refresh);
-    window.addEventListener("pageshow", refresh);
-    window.addEventListener("focus", refresh);
-    return () => {
-      document.removeEventListener("visibilitychange", refresh);
-      window.removeEventListener("pageshow", refresh);
-      window.removeEventListener("focus", refresh);
-    };
-  }, [matter_id, load]);
+    if (evt.type !== "resume" && evt.matter_id !== matter_id) return;
+    scheduleRefresh(`detail:${matter_id}`, async () => {
+      await refreshDetailSilently();
+      // Mark-read + sidebar refresh only when the user is actually looking
+      // at the page; otherwise we'd silently zero unread counts in the
+      // background.
+      if (document.visibilityState === "visible") {
+        markMatterRead(matter_id)
+          .then(() => reloadListsRef.current())
+          .catch(() => {});
+      }
+    });
+  }, [matter_id, refreshDetailSilently]));
 
   useEffect(() => {
     fetchMe()
