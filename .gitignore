@@ -31,5 +31,6 @@ CLAUDE.md
 web/package-lock.json
 web/tsconfig.tsbuildinfo
 
-# migration test secrets (env.init has GH_TOKEN)
+# migration test/prod env files (test has GH_TOKEN; prod has machine-local paths)
 scripts/migration-test/env.init
+scripts/migration-prod/env.init
