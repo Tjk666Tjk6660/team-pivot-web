@@ -19,12 +19,12 @@ CHANGELOG_PATH = PROJECT_ROOT / "CHANGELOG.md"
 DEFAULT_HOME_MD = """# 欢迎使用 Pivot
 
 ## 它是做什么的
-Pivot 是一个以 Markdown 和 Git 为核心的数据协作工作台。
+Pivot 是一个以 Markdown 和 Git 为中心的团队讨论工作台。每个讨论主题都可以沉淀想法、行动、验证、洞察和结果。
 
 ## 快速开始
-1. 点击顶部 `新讨论`
-2. 在讨论中回复、提及和补充信息
-3. 逐步把讨论沉淀成正式结论
+1. 点击顶部 `新讨论`，创建一个新的讨论主题。
+2. 在讨论里持续追加 `think / act / verify / insight / result` 文件。
+3. 通过状态流转标记进度，并用 `result` 收口讨论。
 """
 
 CHANGELOG_HEADER_RE = re.compile(r"^##\s+([^\s]+)\s*-\s*(.+?)\s*$")

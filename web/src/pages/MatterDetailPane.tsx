@@ -564,7 +564,7 @@ export function MatterDetailPane() {
       }
       toast.success(
         body.status_change
-          ? `已发布 ${body.type} · 事项 ${body.status_change.from} → ${body.status_change.to}`
+          ? `已发布 ${body.type} · 讨论 ${body.status_change.from} → ${body.status_change.to}`
           : `已发布 ${body.type}`,
       );
       if (pendingDraftId) {
@@ -834,7 +834,7 @@ export function MatterDetailPane() {
                   <Button
                     className="h-9 rounded-[var(--r-sm)] bg-[var(--danger-600)] px-3 text-xs font-semibold text-white hover:opacity-90"
                     onClick={() => setReviewedConfirmOpen(true)}
-                    title="事项归档收口（不可逆）"
+                    title="讨论归档收口（不可逆）"
                   >
                     推进到 Reviewed
                   </Button>
@@ -976,7 +976,7 @@ export function MatterDetailPane() {
             )}
             {matter.current_status === "reviewed" && (
               <div className="rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface-alt)] p-4 text-center text-xs text-[var(--text-mute)]">
-                事项生命周期已收口（reviewed）。原则上不再新增文件。
+                讨论生命周期已收口（reviewed）。原则上不再新增文件。
               </div>
             )}
           </section>
@@ -1094,7 +1094,7 @@ export function MatterDetailPane() {
       <Dialog open={resultConfirmOpen} onOpenChange={setResultConfirmOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>⚠ 生成 Result 是事项正式收口</DialogTitle>
+            <DialogTitle>⚠ 生成 Result 是讨论正式收口</DialogTitle>
             <DialogDescription className="text-xs">
               发布 Result 后：
             </DialogDescription>
@@ -1132,7 +1132,7 @@ export function MatterDetailPane() {
       <Dialog open={reviewedConfirmOpen} onOpenChange={setReviewedConfirmOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>⚠ 推进到 Reviewed 是事项最终归档</DialogTitle>
+            <DialogTitle>⚠ 推进到 Reviewed 是讨论最终归档</DialogTitle>
             <DialogDescription className="text-xs">推进后：</DialogDescription>
           </DialogHeader>
           <ul className="list-disc space-y-0.5 pl-5 text-xs text-[var(--text-soft)]">

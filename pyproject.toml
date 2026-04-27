@@ -1,7 +1,7 @@
 [project]
 name = "team-pivot-web"
-version = "0.1.0"
-description = "Team discussion Web client with Feishu OAuth"
+version = "0.2.0"
+description = "Team matter workspace Web client with Feishu OAuth"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

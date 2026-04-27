@@ -148,7 +148,7 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
         `- 直接输出这一句话本身，不要加引号，也不要任何前后解释。`,
         `- 用最精简的语言概括这篇文件推进 / 判断 / 结论了什么。`,
         ``,
-        `事项标题：${title.trim()}`,
+        `讨论标题：${title.trim()}`,
         ``,
         `新文件正文：`,
         "```",
