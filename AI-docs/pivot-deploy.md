@@ -311,6 +311,9 @@ systemctl status team-pivot-web --no-pager
     handle /me/* {
         reverse_proxy localhost:8000
     }
+    handle /mcp/* {
+        reverse_proxy localhost:8000
+    }
     handle {
         root * /opt/team-pivot-web/web/dist
         try_files {path} /index.html
@@ -321,8 +324,17 @@ systemctl status team-pivot-web --no-pager
 
 说明：
 
-- `/login`、`/auth/*`、`/me`、`/api/*` 必须优先走后端
+- `/login`、`/auth/*`、`/me`、`/api/*`、`/mcp/*` 必须优先走后端
 - 不能让 SPA fallback 把这些路由吞掉
+- `/mcp/*` 是外部 AI 客户端（Claude Code / Codex / Cursor 等）的 Streamable HTTP 端点；漏配会让 MCP 客户端拿到 SPA 的 index.html 而非 401 鉴权握手，表现为"加了但调不动"
+
+验证 `/mcp` 路由生效：
+
+```bash
+curl -i https://<your-domain>/mcp -H "Accept: application/json, text/event-stream"
+# 期望：401 + {"detail":"missing_bearer_token"}（请求打到了后端，鉴权中间件正常拦截）
+# 异常：返回 HTML 页面（被 SPA fallback 吃掉，handle /mcp/* 没生效或顺序写错了）
+```
 
 重载：
 

@@ -8,6 +8,7 @@ export default defineConfig({
     alias: { "@": path.resolve(__dirname, "./src") },
   },
   server: {
+    host: true,
     port: 5173,
     proxy: {
       "/login": "http://127.0.0.1:8000",
@@ -15,6 +16,7 @@ export default defineConfig({
       "/me": "http://127.0.0.1:8000",
       "/logout": "http://127.0.0.1:8000",
       "/api": "http://127.0.0.1:8000",
+      "/mcp": "http://127.0.0.1:8000",
     },
   },
 });
