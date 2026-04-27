@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ArrowLeft } from "lucide-react";
 import {
@@ -25,6 +25,8 @@ const CATEGORY_PATTERN = /^[^/\\:*?"<>|\t\n\r]{1,20}$/;
 
 export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const draftIdFromUrl = searchParams.get("draft");
   const [category, setCategory] = useState("");
   const [newCategory, setNewCategory] = useState("");
   const [categoryMode, setCategoryMode] = useState<"select" | "create">("select");
@@ -44,8 +46,9 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
   useEffect(() => {
     // /api/matters 返回里已经带 category,直接从已存在 matter 推断当前
     // workspace 用过哪些 category;空 workspace 时直接进入 create 模式,
-    // 让用户当场新建第一个分类。同时拉一遍 drafts,把上次没发布完的
-    // matter 草稿(type=proposal && thread_key==null)恢复到表单。
+    // 让用户当场新建第一个分类。同时拉一遍 drafts:
+    //   - URL 带 ?draft=<id> 时优先精确恢复那条(sidebar"草稿"列表跳过来)
+    //   - 否则回落到最近一条 type=proposal && thread_key==null 的草稿
     Promise.all([fetchMatters(), fetchDrafts()])
       .then(([items, drafts]) => {
         const cats = Array.from(
@@ -57,9 +60,12 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
         );
         setAvailableCategories(cats);
 
-        const candidate = drafts
-          .filter((d) => d.type === "proposal" && !d.thread_key)
-          .sort((a, b) => b.updated_at - a.updated_at)[0];
+        const proposalDrafts = drafts.filter(
+          (d) => d.type === "proposal" && !d.thread_key,
+        );
+        const candidate = draftIdFromUrl
+          ? (proposalDrafts.find((d) => d.id === draftIdFromUrl) ?? null)
+          : (proposalDrafts.sort((a, b) => b.updated_at - a.updated_at)[0] ?? null);
 
         if (candidate) {
           setDraftId(candidate.id);
