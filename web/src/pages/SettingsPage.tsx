@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Copy, KeyRound, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronRight, Copy, KeyRound, Plus, Trash2 } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import {
   createApiToken,
@@ -55,9 +55,34 @@ export function SettingsPage() {
         </div>
       </header>
       <main className="mx-auto max-w-3xl space-y-8 px-6 py-8">
+        <ExternalAILinkSection />
         <ApiTokensSection />
       </main>
     </div>
+  );
+}
+
+// ── External AI Link ─────────────────────────────────────────────────────────
+
+function ExternalAILinkSection() {
+  return (
+    <section>
+      <h2 className="mb-3 text-sm font-semibold">外部 AI 接入</h2>
+      <Card className="p-0">
+        <Link
+          to="/settings/external-ai"
+          className="flex items-center justify-between px-6 py-4 text-sm hover:bg-accent/50"
+        >
+          <div>
+            <div className="font-medium">连接 Claude Code / Cursor / Codex / Claude Desktop</div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              让外部 AI 客户端通过 MCP 读写 Pivot 内容
+            </p>
+          </div>
+          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+        </Link>
+      </Card>
+    </section>
   );
 }
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,6 +30,7 @@ from server.feishu_contacts import FeishuContactSyncer
 from server.feishu_token import FeishuTokenManager
 from server.favorites import FavoriteRepo
 from server.logging_setup import configure_logging
+from server.mcp.server import build_mcp_app
 from server.notify import FeishuNotifier, NoOpNotifier, Notifier
 from server.ai_conversations import AIConversationRepo
 from server.read_state import ReadStateRepo
@@ -92,7 +94,21 @@ def create_app() -> FastAPI:
         notifier = NoOpNotifier()
         log.info("notifier disabled (no-op)")
 
-    app = FastAPI(title="team-pivot-web")
+    # Build MCP sub-app once; FastAPI does not propagate lifespan to mounted
+    # sub-apps, so we enter its lifespan_context from our own lifespan below.
+    # The sub-app enforces PAT bearer auth on every HTTP request using the
+    # same ApiTokenRepo / UserRepo as /api/*.
+    # api_base_url: where MCP tool handlers loopback to call /api/matters.
+    # Stays on 127.0.0.1 even in prod (same uvicorn worker).
+    api_base_url = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+    mcp_app = build_mcp_app(api_tokens, users, api_base_url, cfg.web_dev_origin)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        async with mcp_app.router.lifespan_context(mcp_app):
+            yield
+
+    app = FastAPI(title="team-pivot-web", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[cfg.web_dev_origin],
@@ -139,6 +155,11 @@ def create_app() -> FastAPI:
     ))
     app.include_router(build_app_home_router(workspace, current_user_dep))
     app.include_router(build_tokens_router(api_tokens, current_user_cookie_dep))
+
+    # MCP Streamable HTTP endpoint for external AI clients. PAT auth is
+    # enforced inside the sub-app; this file only wires the mount.
+    # Lifespan propagation for mcp_app is handled in the `lifespan` above.
+    app.mount("/mcp", mcp_app)
     return app
 
 

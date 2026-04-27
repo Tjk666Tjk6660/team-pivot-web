@@ -31,6 +31,7 @@ import {
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import { AIPane } from "@/components/AIPane";
+import { CopyForAIButton } from "@/components/CopyForAIButton";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TimelineStrip } from "@/components/matter/TimelineStrip";
 import { FileCard } from "@/components/matter/FileCard";
@@ -766,6 +767,7 @@ export function MatterDetailPane() {
                   status={matter.current_status}
                   className="h-7 px-3"
                 />
+                <CopyForAIButton matterId={matter.id} />
                 {matter_id && (
                   <Button
                     variant="ghost"
@@ -865,6 +867,7 @@ export function MatterDetailPane() {
                 key={item.file}
                 item={item}
                 index={i}
+                matterId={matter.id}
                 matterStatus={matter.current_status}
                 activeType={
                   pendingCreate && pendingCreate.quote === item.file
