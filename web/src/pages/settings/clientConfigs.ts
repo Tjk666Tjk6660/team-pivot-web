@@ -27,7 +27,7 @@ export function claudeCodePrompt(token: string): string {
     ``,
     `请修改 ~/.claude.json 或项目 .mcp.json，对应的 JSON 形如：`,
     `  {"mcpServers":{"pivot":{"type":"http","url":"${MCP_URL}","headers":{"Authorization":"Bearer ${token}"}}}}`,
-    `改完后告诉我完成了。`,
+    `改完后告诉我完成了，并提醒我：要让新配置生效需要重启 Claude Code；如果当前会话仍在运行，可输入 /mcp 查看 pivot 是否已连接。`,
   ].join("\n");
 }
 
