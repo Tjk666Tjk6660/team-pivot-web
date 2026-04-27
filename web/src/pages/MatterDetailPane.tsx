@@ -45,7 +45,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { shortFile, TYPE_VISUAL } from "@/components/matter/timeline-config";
+import {
+  shortFile,
+  STATUS_DESC,
+  TYPE_VISUAL,
+} from "@/components/matter/timeline-config";
 import { HomeWelcomePane } from "@/pages/HomeWelcomePane";
 import { useDashboard } from "@/pages/Dashboard";
 import { cn } from "@/lib/utils";
@@ -428,6 +432,7 @@ export function MatterDetailPane() {
   }
 
   const { matter, timeline } = data;
+  const allowed = STATUS_DESC[matter.current_status];
   const canGenerateResult = matter.current_status === "executing";
   const canGenerateInsight =
     matter.current_status === "finished" ||
