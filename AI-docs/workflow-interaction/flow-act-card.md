@@ -12,20 +12,18 @@ sequenceDiagram
   participant FC as FileCard 001_xxx_think
   participant DC as 草稿卡 ACT
   participant AP as 右侧 AIPane
-  participant CHAT as 后端 streamAIChat<br/>/api/ai/threads/:cat/:matter_id/chat
-  participant API as 后端 /api/matters/:id
+  participant API as 后端 API
 
   Note over FC: matter.current_status<br/>必须 ∈ planning / executing<br/>paused/finished/cancelled/reviewed 灰禁
 
   U->>FC: 点击 + act
-  alt 已存在同 quote+act 草稿
-    FC->>DC: 关闭草稿
-  else 否则
-    FC->>DC: 在下方追加草稿卡<br/>虚线框 + 绿色左色条<br/>quote=FileCard.file 自动只读
-    DC-->>U: 渲染头部 ACT chip + 新增 基于 + AI 回复 按钮
-    DC-->>U: 渲染表单 quote / owner 必填 / body 必填 / refer ≤4
-    Note over DC: body 必填 提示<br/>发布时 AI 将基于此生成 summary
+  FC->>DC: 在下方追加草稿卡<br/>虚线框 + 绿色左色条<br/>quote=FileCard.file 自动只读
+  DC-->>U: 渲染头部 ACT chip + 新增 基于 + AI 回复 按钮
+  DC-->>U: 渲染表单 quote / owner 必填 / body 必填 / refer ≤4
+  opt 命中 matterDrafts 中已存在同 (type, quote) 草稿
+    DC-->>U: 用已有草稿 draftFromPayload 回填表单
   end
+  Note over DC: body 必填 提示<br/>发布时 AI 将基于此生成 summary
 
   alt matter.current_status === planning
     DC-->>U: 渲染附加状态迁移 复选 正式进入执行 planning to executing
@@ -36,7 +34,7 @@ sequenceDiagram
   opt 需要 AI 协助起草
     U->>DC: 点击 AI 回复
     DC->>AP: setAiOpen(true) 见 flow-ai-assistant
-    U->>DC: 复制 AI 输出回填 body
+    U->>AP: 点击 生成草稿 按钮<br/>AI 输出 draft 自动回填卡片body body<br/>详见 flow-ai-assistant 的 生成草稿 分支
   end
 
   U->>DC: 填 owner / body / refer / 是否勾 promote
@@ -44,17 +42,17 @@ sequenceDiagram
 
   DC->>DC: 校验 body 必填 owner 必填
   alt 校验失败
-    DC-->>U: toast 正文必填 / owner 必填
+    DC-->>U: toast body必填 / owner 必填
   else 校验通过
     DC->>DC: stage=generating 按钮 AI 生成中
 
-    DC->>CHAT: streamAIChat<br/>messages = 内置提示词 + body<br/>reply_target = quote
+    DC->>API: POST /api/ai/matters/:matter_id/chat (SSE)<br/>streamAIChat · messages = 内置提示词 + body<br/>reply_target = quote
     alt 流出错或超时
-      CHAT-->>DC: error
+      API-->>DC: error
       DC->>DC: stage=idle
       DC-->>U: toast 生成 summary 失败
     else 流成功
-      CHAT-->>DC: SSE delta delta delta
+      API-->>DC: SSE delta delta delta
       DC->>DC: 累加得到 summary
 
       alt summary 为空
@@ -62,7 +60,7 @@ sequenceDiagram
         DC-->>U: toast AI 生成的 summary 为空
       else summary 有效
         DC->>DC: stage=publishing 按钮 发布中
-        DC->>API: POST /files NewFileIn<br/>type=act + AI summary + body + owner + quote + refer + status_change
+        DC->>API: POST /api/matters/:id/files NewFileIn<br/>type=act + AI summary + body + owner + quote + refer + status_change
       end
     end
   end

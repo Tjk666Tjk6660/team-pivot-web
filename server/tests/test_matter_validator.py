@@ -310,3 +310,51 @@ def test_result_cancelled_ok():
         "status_change": {"from": "executing", "to": "cancelled"},
     }
     assert validate_append(_matter("executing"), item) == OK
+
+
+# ---------- P4.7 verifications_received: client cannot author ----------
+
+
+def test_client_cannot_set_verifications_received_on_act():
+    """I3: clients must never write verifications_received directly. The
+    field is server-derived from verify items writing back to acts."""
+    item = {
+        "type": "act",
+        "summary": "x",
+        "verifications_received": [
+            {
+                "verify_file": "discussions/m/003_u_verify.md",
+                "verified_at": "2026-04-23T11:00:00+08:00",
+                "verified_by": "u",
+                "judgement": "passed",
+                "comment": "fake",
+            }
+        ],
+    }
+    r = validate_append(_matter("planning"), item)
+    assert not r.ok
+    assert r.code == "field_not_writable"
+    assert r.field == "verifications_received"
+
+
+def test_client_cannot_set_verifications_received_on_any_type():
+    """I2/I3: even if the type would normally allow the field semantically,
+    the validator rejects it because reverse-write is server-side only."""
+    for doc_type in ("think", "act", "verify", "insight"):
+        item: dict = {
+            "type": doc_type,
+            "summary": "x",
+            "verifications_received": [],
+        }
+        if doc_type == "verify":
+            item["verifications"] = [
+                {"target": "discussions/m/001_u_act_a.md",
+                 "judgement": "passed", "comment": ""}
+            ]
+            item["refer"] = ["discussions/m/001_u_act_a.md"]
+        status = "planning" if doc_type != "insight" else "finished"
+        r = validate_append(_matter(status), item)
+        assert not r.ok and r.code == "field_not_writable", (
+            f"type={doc_type} should be rejected for verifications_received, "
+            f"got {r}"
+        )

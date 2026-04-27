@@ -14,6 +14,7 @@ from server.api.discussions import build_router as build_discussions_router
 from server.api.drafts import build_router as build_drafts_router
 from server.api.inbox import build_router as build_inbox_router
 from server.api.matters import build_router as build_matters_router
+from server.api.matters_events import build_router as build_matters_events_router
 from server.api.tokens import build_router as build_tokens_router
 from server.api.workspace import build_router as build_workspace_router
 from server.api_tokens import ApiTokenRepo
@@ -133,6 +134,10 @@ def create_app() -> FastAPI:
     app.include_router(build_discussions_router(
         workspace, users, contacts, notifier, read_states, favorites, current_user_dep,
     ))
+    # The events stream MUST be registered before the matters router,
+    # otherwise GET /api/matters/{matter_id} matches first and treats
+    # "events" as a matter_id (returning 404 matter_not_found).
+    app.include_router(build_matters_events_router(current_user_dep))
     app.include_router(build_matters_router(
         workspace, users, contacts, notifier,
         read_states, favorites, current_user_dep,

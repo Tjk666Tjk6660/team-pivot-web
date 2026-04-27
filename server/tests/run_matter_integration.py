@@ -920,11 +920,228 @@ def case_c1_comment_with_mention(client, workspace_path) -> list[str]:
     comments = idx["timeline"][0].get("comments") or []
     r.expect(len(comments) == 1, "one comment on first item")
     if TEST_MY_OPENID:
-        r.expect(comments[0].get("mentions") == [TEST_MY_OPENID],
-                 "mention open_id preserved")
+        # mentions 在 fix(matter): resolve mention open_ids to pinyin 之后,
+        # 已注册用户的 open_id 会被转换为 pinyin（与 creator/owner 同格式),
+        # 未注册联系人才保留 open_id。PAT 持有者必然已注册（PAT 创建要求 pinyin)
+        # ,所以 TEST_MY_OPENID 在 mentions 里应当落成一个非 ou_ 开头的字符串。
+        mentions = comments[0].get("mentions") or []
+        r.expect(len(mentions) == 1,
+                 f"mentions should have 1 entry, got {mentions!r}")
+        if mentions:
+            r.expect(not mentions[0].startswith("ou_"),
+                     f"registered TEST_MY_OPENID should be resolved to pinyin, "
+                     f"got {mentions[0]!r}")
+            r.expect(mentions[0] != TEST_MY_OPENID,
+                     f"open_id should not be stored verbatim for registered user, "
+                     f"got {mentions[0]!r}")
     # matter.updated_at must NOT advance past created_at (comments don't bump progress).
     r.expect(idx["matter"]["updated_at"] == idx["matter"]["created_at"],
              "comment should not bump matter.updated_at")
+    return r.failures
+
+
+# ---------- P4.7 verifications_received reverse-write ----------
+
+
+def case_g1_verify_reverse_write_basic(client, workspace_path) -> list[str]:
+    """P4.7 happy path: 单 verify 单 target 触发 act 上的反写。
+
+    形态:
+      think → act(planning→executing) → verify(target=act, passed)
+    断言:
+      - act 上 verifications_received 长度 1
+      - 字段全部正确(verify_file/verified_at/verified_by/judgement/comment)
+      - 同一份 yaml 里 verify.verifications[0] 与 act.verifications_received[0] 数据一致
+      - think 上 没有 verifications_received
+    """
+    r = CaseRunner("G1-verify-reverse-write-basic", client)
+    title = _title("IntegTest-G1-RWBasic")
+    created = r.do(Step("create-matter", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {"type": "think", "summary": "起手", "body": "# Summary\n\n起手\n"},
+    }))
+    matter_id = created["matter_id"]
+    think_file = created["file"]
+
+    act_resp = r.do(Step("act-enter-executing", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "act",
+        "summary": "推进实现",
+        "body": "# What To Do\n\n做事\n",
+        "quote": think_file,
+        "status_change": {"from": "planning", "to": "executing"},
+    }))
+    act_file = act_resp["item"]["file"]
+
+    verify_resp = r.do(Step("verify-the-act", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "verify",
+        "summary": "验收通过",
+        "body": "# Verifications\n",
+        "quote": act_file,
+        "verifications": [
+            {"target": act_file, "judgement": "passed", "comment": "结果可接受"},
+        ],
+    }))
+    verify_file = verify_resp["item"]["file"]
+
+    idx = r.save_final_index(matter_id, workspace_path)
+    timeline = idx.get("timeline", [])
+    think_item = next(it for it in timeline if it["file"] == think_file)
+    act_item = next(it for it in timeline if it["file"] == act_file)
+    verify_item = next(it for it in timeline if it["file"] == verify_file)
+
+    received = act_item.get("verifications_received") or []
+    r.expect(len(received) == 1,
+             f"act should have 1 verifications_received entry, got {len(received)}")
+    if received:
+        e = received[0]
+        r.expect(e.get("verify_file") == verify_file,
+                 f"verify_file mismatch: {e.get('verify_file')} != {verify_file}")
+        r.expect(e.get("verified_at") == verify_item.get("created_at"),
+                 "verified_at should equal verify item.created_at")
+        r.expect(e.get("verified_by") == verify_item.get("owner"),
+                 "verified_by should equal verify.owner")
+        r.expect(e.get("judgement") == "passed", "judgement passthrough")
+        r.expect(e.get("comment") == "结果可接受", "comment passthrough")
+        # mirror consistency
+        src = verify_item["verifications"][0]
+        r.expect(e["judgement"] == src["judgement"], "judgement mirror consistent")
+        r.expect(e["comment"] == src["comment"], "comment mirror consistent")
+    r.expect("verifications_received" not in think_item,
+             "think item should never carry verifications_received")
+    return r.failures
+
+
+def case_g2_verify_reverse_write_accumulate(client, workspace_path) -> list[str]:
+    """P4.7 I6: 多 verify 同 target 在 act 上按 verify 写入时间累积。
+
+    形态:
+      think → act → verify1(failed) → verify2(passed)
+    断言:
+      - act 上 verifications_received 长度 2
+      - 顺序与 verify 写入时间序一致(verify1 先,verify2 后)
+      - 每条对应到正确的 verify_file
+    """
+    r = CaseRunner("G2-verify-reverse-write-accumulate", client)
+    title = _title("IntegTest-G2-RWAccumulate")
+    created = r.do(Step("create-matter", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {"type": "think", "summary": "起手", "body": ""},
+    }))
+    matter_id = created["matter_id"]
+    think_file = created["file"]
+
+    act_resp = r.do(Step("act-go", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "act", "summary": "做事", "body": "",
+        "quote": think_file,
+        "status_change": {"from": "planning", "to": "executing"},
+    }))
+    act_file = act_resp["item"]["file"]
+
+    v1_resp = r.do(Step("verify-1-failed", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "verify",
+        "summary": "首轮失败",
+        "verifications": [{"target": act_file, "judgement": "failed",
+                           "comment": "边界遗漏"}],
+    }))
+    v1_file = v1_resp["item"]["file"]
+    v1_at = v1_resp["item"]["created_at"]
+
+    v2_resp = r.do(Step("verify-2-passed", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "verify",
+        "summary": "复验通过",
+        "verifications": [{"target": act_file, "judgement": "passed",
+                           "comment": "已修复"}],
+    }))
+    v2_file = v2_resp["item"]["file"]
+    v2_at = v2_resp["item"]["created_at"]
+
+    idx = r.save_final_index(matter_id, workspace_path)
+    act_item = next(it for it in idx["timeline"] if it["file"] == act_file)
+    received = act_item.get("verifications_received") or []
+    r.expect(len(received) == 2,
+             f"act should have 2 verifications_received entries, got {len(received)}")
+    if len(received) == 2:
+        r.expect(received[0]["verify_file"] == v1_file,
+                 f"first entry should point to v1: {received[0]['verify_file']}")
+        r.expect(received[0]["judgement"] == "failed",
+                 "first entry judgement should be failed")
+        r.expect(received[0]["verified_at"] == v1_at,
+                 "first entry verified_at should match v1.created_at")
+        r.expect(received[1]["verify_file"] == v2_file,
+                 f"second entry should point to v2: {received[1]['verify_file']}")
+        r.expect(received[1]["judgement"] == "passed",
+                 "second entry judgement should be passed")
+        r.expect(received[1]["verified_at"] == v2_at,
+                 "second entry verified_at should match v2.created_at")
+        # I6 chronological order
+        r.expect(received[0]["verified_at"] <= received[1]["verified_at"],
+                 "entries must be in chronological order by verified_at")
+    return r.failures
+
+
+def case_g3_verify_cross_matter_no_reverse_write(client, workspace_path) -> list[str]:
+    """P4.7 I7: 跨 matter verify(target 在另一个 matter)静默跳过反写。
+
+    形态:
+      Matter X: think → act(executing)              (target 留在 X)
+      Matter Y: think → verify(refer=[X.act], target=X.act, passed)
+    断言:
+      - Matter X 的 act item 上 没有 verifications_received(I7 静默跳过)
+      - Matter Y 的 verify item 上 verifications[] 完整保留 target / judgement / comment
+        (权威源数据不丢)
+    """
+    r = CaseRunner("G3-verify-cross-matter-no-reverse-write", client)
+
+    # Matter X (target 所在)
+    x_title = _title("IntegTest-G3-XSrc")
+    x_created = r.do(Step("create-matter-x", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": x_title,
+        "initial_file": {"type": "think", "summary": "x-init", "body": ""},
+    }))
+    x_id = x_created["matter_id"]
+    x_act_resp = r.do(Step("x-act-go", "POST", _url_matter(x_id, "/files"), body={
+        "type": "act", "summary": "x-do",
+        "status_change": {"from": "planning", "to": "executing"},
+    }))
+    x_act_file = x_act_resp["item"]["file"]
+
+    # Matter Y (verify 所在,跨 matter 引用 X 的 act)
+    y_title = _title("IntegTest-G3-YDst")
+    y_created = r.do(Step("create-matter-y", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": y_title,
+        "initial_file": {"type": "think", "summary": "y-init", "body": ""},
+    }))
+    y_id = y_created["matter_id"]
+    r.do(Step("y-verify-cross-matter", "POST", _url_matter(y_id, "/files"), body={
+        "type": "verify",
+        "summary": "跨 matter 验证 X 的 act",
+        "refer": [x_act_file],
+        "verifications": [
+            {"target": x_act_file, "judgement": "passed",
+             "comment": "在 X 那边的 act 看着没问题"},
+        ],
+    }))
+
+    # X 的 act 不应有反写
+    x_idx = r.save_final_index(x_id, workspace_path)
+    x_act = next(it for it in x_idx["timeline"] if it["file"] == x_act_file)
+    r.expect("verifications_received" not in x_act,
+             "I7: cross-matter verify should NOT reverse-write to target act in another matter")
+
+    # Y 的 verify 数据保留
+    y_idx = r.save_final_index(y_id, workspace_path)
+    y_verify = next(it for it in y_idx["timeline"] if it["type"] == "verify")
+    r.expect(len(y_verify.get("verifications", [])) == 1,
+             "Y verify should have its verifications[] intact")
+    if y_verify.get("verifications"):
+        v0 = y_verify["verifications"][0]
+        r.expect(v0.get("target") == x_act_file,
+                 "Y verify target should still point at X's act path")
+        r.expect(v0.get("judgement") == "passed", "judgement preserved")
     return r.failures
 
 
@@ -1001,6 +1218,10 @@ def main() -> int:
         case_e2_name_resolution,
         case_e3_categories_aggregation,
         case_f1_matter_via_drafts_publish,
+        # P4.7 verifications_received reverse-write
+        case_g1_verify_reverse_write_basic,
+        case_g2_verify_reverse_write_accumulate,
+        case_g3_verify_cross_matter_no_reverse_write,
     ]
 
     summary: list[str] = []

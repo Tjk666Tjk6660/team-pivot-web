@@ -346,3 +346,299 @@ def test_timeline_item_key_order_matches_example(tmp_path):
     idx_quote = verify_block.find("quote:")
     idx_verif = verify_block.find("verifications:")
     assert 0 < idx_created < idx_creator < idx_owner < idx_type < idx_summary < idx_quote < idx_verif
+
+
+# ---------- P4.7 verifications_received reverse-write ----------
+
+
+def _bootstrap_with_act(tmp_path, *, act_file: str, act_creator: str = "u",
+                        act_owner: str | None = None,
+                        now_iso_init: str = "2026-04-23T10:00:00+08:00",
+                        now_iso_act: str = "2026-04-23T10:30:00+08:00"):
+    """Create a planning matter with one think + one act ready to be verified."""
+    path = matter_index_path(tmp_path / "index", "auth-redesign")
+    create_matter_index(
+        path,
+        matter_id="auth-redesign",
+        title="Auth Redesign",
+        initial_item=_initial_think(creator=act_creator),
+        now_iso=now_iso_init,
+    )
+    item: dict = {
+        "file": act_file,
+        "creator": act_creator,
+        "type": "act",
+        "summary": "do something",
+    }
+    if act_owner is not None:
+        item["owner"] = act_owner
+    append_file_item(path, item=item, now_iso=now_iso_act)
+    return path
+
+
+def test_reverse_write_single_verify_single_target(tmp_path):
+    """Single verify covering a single act lands one entry on the act."""
+    act = "discussions/auth-redesign/002_u_act_a.md"
+    path = _bootstrap_with_act(tmp_path, act_file=act)
+
+    verify_file = "discussions/auth-redesign/003_u_verify_a.md"
+    append_file_item(path, item={
+        "file": verify_file,
+        "creator": "u",
+        "type": "verify",
+        "summary": "ok",
+        "verifications": [{"target": act, "judgement": "passed", "comment": "good"}],
+    }, now_iso="2026-04-23T11:00:00+08:00")
+
+    data = read_matter_index(path)
+    act_item = next(it for it in data["timeline"] if it["file"] == act)
+    received = act_item["verifications_received"]
+    assert len(received) == 1
+    entry = received[0]
+    assert entry == {
+        "verify_file": verify_file,
+        "verified_at": "2026-04-23T11:00:00+08:00",
+        "verified_by": "u",
+        "judgement": "passed",
+        "comment": "good",
+    }
+
+
+def test_reverse_write_single_verify_multiple_targets(tmp_path):
+    """One verify covering two acts mirrors one entry onto each act."""
+    act_a = "discussions/auth-redesign/002_u_act_a.md"
+    act_b = "discussions/auth-redesign/003_u_act_b.md"
+    path = _bootstrap_with_act(tmp_path, act_file=act_a)
+    append_file_item(path, item={
+        "file": act_b, "creator": "u", "type": "act", "summary": "act b",
+    }, now_iso="2026-04-23T10:45:00+08:00")
+
+    verify_file = "discussions/auth-redesign/004_u_verify.md"
+    append_file_item(path, item={
+        "file": verify_file,
+        "creator": "u", "owner": "u",
+        "type": "verify",
+        "summary": "汇总",
+        "verifications": [
+            {"target": act_a, "judgement": "passed", "comment": "A 通过"},
+            {"target": act_b, "judgement": "failed", "comment": "B 边界遗漏"},
+        ],
+    }, now_iso="2026-04-23T11:30:00+08:00")
+
+    data = read_matter_index(path)
+    a = next(it for it in data["timeline"] if it["file"] == act_a)
+    b = next(it for it in data["timeline"] if it["file"] == act_b)
+    assert len(a["verifications_received"]) == 1
+    assert a["verifications_received"][0]["judgement"] == "passed"
+    assert a["verifications_received"][0]["comment"] == "A 通过"
+    assert len(b["verifications_received"]) == 1
+    assert b["verifications_received"][0]["judgement"] == "failed"
+    assert b["verifications_received"][0]["comment"] == "B 边界遗漏"
+
+
+def test_reverse_write_multiple_verifies_accumulate_in_order(tmp_path):
+    """Two verifies targeting the same act accumulate two entries in
+    chronological order (I6: append-only by verify write time)."""
+    act = "discussions/auth-redesign/002_u_act_a.md"
+    path = _bootstrap_with_act(tmp_path, act_file=act)
+
+    verify1 = "discussions/auth-redesign/003_u_verify1.md"
+    verify2 = "discussions/auth-redesign/004_u_verify2.md"
+    append_file_item(path, item={
+        "file": verify1, "creator": "u", "type": "verify", "summary": "v1",
+        "verifications": [{"target": act, "judgement": "failed", "comment": "first round failed"}],
+    }, now_iso="2026-04-23T11:00:00+08:00")
+    append_file_item(path, item={
+        "file": verify2, "creator": "u", "type": "verify", "summary": "v2",
+        "verifications": [{"target": act, "judgement": "passed", "comment": "second round passed"}],
+    }, now_iso="2026-04-23T13:00:00+08:00")
+
+    data = read_matter_index(path)
+    act_item = next(it for it in data["timeline"] if it["file"] == act)
+    received = act_item["verifications_received"]
+    assert len(received) == 2
+    assert received[0]["verify_file"] == verify1
+    assert received[0]["judgement"] == "failed"
+    assert received[1]["verify_file"] == verify2
+    assert received[1]["judgement"] == "passed"
+    # Chronological order matches verify created_at
+    assert received[0]["verified_at"] == "2026-04-23T11:00:00+08:00"
+    assert received[1]["verified_at"] == "2026-04-23T13:00:00+08:00"
+
+
+def test_reverse_write_skipped_for_cross_matter_target(tmp_path):
+    """Cross-matter verify (target lives in another matter, only listed in
+    refer[]) leaves the local matter untouched (I7)."""
+    act_local = "discussions/auth-redesign/002_u_act_a.md"
+    path = _bootstrap_with_act(tmp_path, act_file=act_local)
+
+    external_act = "discussions/other-matter/001_u_act_x.md"
+    append_file_item(path, item={
+        "file": "discussions/auth-redesign/003_u_verify.md",
+        "creator": "u", "type": "verify", "summary": "cross-matter",
+        "refer": [external_act],
+        "verifications": [
+            {"target": external_act, "judgement": "passed", "comment": "ok"},
+        ],
+    }, now_iso="2026-04-23T11:00:00+08:00")
+
+    data = read_matter_index(path)
+    # Local act untouched — no verifications_received attached.
+    a = next(it for it in data["timeline"] if it["file"] == act_local)
+    assert "verifications_received" not in a
+
+
+def test_reverse_write_verified_by_uses_owner_field(tmp_path):
+    """verified_by 取 verify 的 owner（spec §九.2 判断责任人）。
+
+    备注：`_normalize_item` 在 creator 存在时自动 `owner = creator`，因此通过
+    `append_file_item` 写入时 owner 必非空，`_reverse_write_verifications` 里
+    `owner or creator` 的右半 fallback 实际走不到——它作为防御性兜底保留，
+    应对未来可能直接调内部函数的调用路径。
+    """
+    act = "discussions/auth-redesign/002_u_act_a.md"
+    path = _bootstrap_with_act(tmp_path, act_file=act)
+    append_file_item(path, item={
+        "file": "discussions/auth-redesign/003_u_verify.md",
+        "creator": "alice", "owner": "bob",
+        "type": "verify", "summary": "v",
+        "verifications": [{"target": act, "judgement": "passed", "comment": ""}],
+    }, now_iso="2026-04-23T11:00:00+08:00")
+
+    data = read_matter_index(path)
+    a = next(it for it in data["timeline"] if it["file"] == act)
+    assert a["verifications_received"][0]["verified_by"] == "bob"
+
+
+def test_reverse_write_verified_by_falls_back_to_creator(tmp_path):
+    """直接调 _reverse_write_verifications 验证 owner 缺失时回退到 creator。
+
+    这条用例 bypass `_normalize_item`，否则 owner 总会被默认填成 creator，
+    fallback 分支无法被覆盖。
+    """
+    from server.matter_index import _reverse_write_verifications
+
+    act = "discussions/auth-redesign/002_u_act_a.md"
+    index = {
+        "matter": {"current_status": "executing"},
+        "timeline": [
+            {"file": act, "type": "act", "summary": "a"},
+        ],
+    }
+    verify_no_owner = {
+        "file": "discussions/auth-redesign/003_u_verify.md",
+        "created_at": "2026-04-23T11:00:00+08:00",
+        "creator": "alice",
+        # 故意不传 owner
+        "type": "verify",
+        "summary": "v",
+        "verifications": [
+            {"target": act, "judgement": "passed", "comment": ""},
+        ],
+    }
+    _reverse_write_verifications(index, verify_no_owner)
+
+    a = index["timeline"][0]
+    assert a["verifications_received"][0]["verified_by"] == "alice"
+
+
+def test_reverse_write_does_not_appear_on_non_act_items(tmp_path):
+    """think / verify / result / insight items must never carry
+    verifications_received (I2)."""
+    path = _bootstrap(tmp_path)
+    # Add an act so we can have a legal verify target.
+    act = "discussions/auth-redesign/002_u_act_a.md"
+    append_file_item(path, item={
+        "file": act, "creator": "u", "type": "act", "summary": "go",
+        "status_change": {"from": "planning", "to": "executing"},
+    }, now_iso="2026-04-23T10:30:00+08:00")
+    # Verify covers act
+    append_file_item(path, item={
+        "file": "discussions/auth-redesign/003_u_verify.md",
+        "creator": "u", "type": "verify", "summary": "v",
+        "verifications": [{"target": act, "judgement": "passed", "comment": ""}],
+    }, now_iso="2026-04-23T11:00:00+08:00")
+    # Result terminates the matter
+    append_file_item(path, item={
+        "file": "discussions/auth-redesign/004_u_result.md",
+        "creator": "u", "type": "result", "summary": "done",
+        "outcome": "finished",
+        "status_change": {"from": "executing", "to": "finished"},
+    }, now_iso="2026-04-23T12:00:00+08:00")
+    # Insight in finished
+    append_file_item(path, item={
+        "file": "discussions/auth-redesign/005_u_insight.md",
+        "creator": "u", "type": "insight", "summary": "lesson",
+    }, now_iso="2026-04-23T13:00:00+08:00")
+
+    data = read_matter_index(path)
+    for it in data["timeline"]:
+        if it.get("type") != "act":
+            assert "verifications_received" not in it, (
+                f"non-act item {it.get('file')} (type={it.get('type')}) "
+                f"unexpectedly has verifications_received"
+            )
+
+
+def test_reverse_write_atomic_with_verify_in_same_yaml(tmp_path):
+    """I5: verify item and the matching verifications_received entry must
+    materialize together in one atomic yaml write. Read the file once and
+    confirm both sides are mutually consistent."""
+    act_a = "discussions/auth-redesign/002_u_act_a.md"
+    act_b = "discussions/auth-redesign/003_u_act_b.md"
+    path = _bootstrap_with_act(tmp_path, act_file=act_a)
+    append_file_item(path, item={
+        "file": act_b, "creator": "u", "type": "act", "summary": "b",
+    }, now_iso="2026-04-23T10:45:00+08:00")
+    verify_file = "discussions/auth-redesign/004_u_verify.md"
+    append_file_item(path, item={
+        "file": verify_file,
+        "creator": "u", "owner": "u",
+        "type": "verify", "summary": "汇总",
+        "verifications": [
+            {"target": act_a, "judgement": "passed", "comment": "A"},
+            {"target": act_b, "judgement": "failed", "comment": "B"},
+        ],
+    }, now_iso="2026-04-23T11:30:00+08:00")
+
+    data = read_matter_index(path)
+    verify_item = next(it for it in data["timeline"] if it["file"] == verify_file)
+    assert len(verify_item["verifications"]) == 2
+
+    for j_target, expected_judgement, expected_comment in [
+        (act_a, "passed", "A"),
+        (act_b, "failed", "B"),
+    ]:
+        target = next(it for it in data["timeline"] if it["file"] == j_target)
+        rec = target["verifications_received"]
+        assert len(rec) == 1
+        assert rec[0]["verify_file"] == verify_file
+        assert rec[0]["judgement"] == expected_judgement
+        assert rec[0]["comment"] == expected_comment
+        # Mirror is consistent with the source verify entry
+        src = next(v for v in verify_item["verifications"] if v["target"] == j_target)
+        assert rec[0]["judgement"] == src["judgement"]
+        assert rec[0]["comment"] == src["comment"]
+
+
+def test_reverse_write_field_appears_in_canonical_position(tmp_path):
+    """`verifications_received` must sit between `verifications` (absent on act)
+    and `outcome`/`comments`/`status_change` per _ITEM_KEY_ORDER."""
+    act = "discussions/auth-redesign/002_u_act_a.md"
+    path = _bootstrap_with_act(tmp_path, act_file=act)
+    append_file_item(path, item={
+        "file": "discussions/auth-redesign/003_u_verify.md",
+        "creator": "u", "type": "verify", "summary": "v",
+        "verifications": [{"target": act, "judgement": "passed", "comment": ""}],
+    }, now_iso="2026-04-23T11:00:00+08:00")
+
+    raw = path.read_text(encoding="utf-8")
+    # Slice the act item block out of the yaml; act has no comments/status_change
+    # by default in this fixture, just headers + verifications_received.
+    act_block = raw.split(f"- file: {act}", 1)[1].split("- file:", 1)[0]
+    idx_summary = act_block.find("summary:")
+    idx_received = act_block.find("verifications_received:")
+    assert 0 < idx_summary < idx_received, (
+        f"verifications_received should appear after summary in act item, got "
+        f"summary@{idx_summary} received@{idx_received}"
+    )

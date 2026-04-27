@@ -28,14 +28,14 @@ from server.matter_index import (
     read_matter_index,
 )
 from server.notify import Notifier
-from server.posts import mark_indexed, read_post, write_post, write_post_pending
+from server.posts import mark_indexed, write_post_pending
 from server.threads import (
     generate_unique_hash,
     get_thread,
     next_post_number,
     sanitize_slug,
 )
-from server.users import User
+from server.users import User, UserRepo
 from server.workspace import Workspace
 
 
@@ -212,17 +212,12 @@ def add_standalone_mention(
         )
     if notifier is not None:
         thread_title = _lookup_thread_title(workspace, category, slug)
-        try:
-            excerpt = read_post(target_path).body
-        except Exception:
-            excerpt = ""
         notifier.notify_standalone_mention(
             category=category, slug=slug, thread_title=thread_title,
             target_filename=target_filename,
             author_name=user.name,
             mention_open_ids=mention_open_ids,
             mention_comments=mention_comments,
-            post_excerpt=excerpt,
         )
     return {"ok": True}
 
@@ -243,6 +238,52 @@ def _resolve_mentions(
     if comments:
         block["comments"] = comments
     return block
+
+
+def _resolve_mentions_for_index(
+    open_ids: list[str] | None,
+    users: UserRepo | None,
+) -> list[str] | None:
+    """Convert frontend-supplied open_ids into the form the matter index stores.
+
+    Registered Pivot users (have pinyin) → pinyin, matching creator/owner.
+    Un-registered contacts (only known via Feishu open_id) → keep open_id.
+    Returns None if input is None/empty so callers can drop the field cleanly.
+    """
+    if not open_ids:
+        return None
+    out: list[str] = []
+    for oid in open_ids:
+        u = users.get_by_any_id(oid) if users else None
+        if u and u.pinyin:
+            out.append(u.pinyin)
+        else:
+            out.append(oid)
+    return out
+
+
+def _resolve_comments_mentions(
+    comments: list[dict] | None,
+    users: UserRepo | None,
+    *,
+    author: str,
+) -> list[dict] | None:
+    """Normalize a comments[] payload for index storage:
+    - inject `author` (the file's creator — embedded comments are always
+      authored by the same user posting the file; CommentIn schema does not
+      accept author from clients);
+    - resolve each comment's mentions[] via _resolve_mentions_for_index.
+    Returns a new list; does not mutate input."""
+    if not comments:
+        return comments
+    out: list[dict] = []
+    for c in comments:
+        cc = dict(c)
+        cc["author"] = author
+        if cc.get("mentions"):
+            cc["mentions"] = _resolve_mentions_for_index(cc["mentions"], users)
+        out.append(cc)
+    return out
 
 
 def _lookup_thread_title(workspace: Workspace, category: str, slug: str) -> str:
@@ -289,6 +330,7 @@ def publish_matter_create(
     initial_item: dict,
     contacts: ContactRepo | None = None,
     notifier: Notifier | None = None,
+    users: UserRepo | None = None,
 ) -> dict:
     """Create a new matter and write its first timeline item.
 
@@ -319,8 +361,18 @@ def publish_matter_create(
     md_fm = {"type": doc_type, "author": user.pinyin, "created": now}
     md_path = thread_dir / filename
 
+    # Resolve comments[].mentions from open_id → pinyin (or keep open_id when
+    # the mentioned person isn't a registered Pivot user). The notifier still
+    # receives raw open_ids elsewhere; only the on-disk matter index stores the
+    # resolved form.
+    item_input = dict(initial_item)
+    if item_input.get("comments"):
+        item_input["comments"] = _resolve_comments_mentions(
+            item_input["comments"], users, author=user.pinyin,
+        )
+
     item = _build_timeline_item(
-        initial_item,
+        item_input,
         file_rel=file_rel,
         creator=user.pinyin,
         now_iso=now,
@@ -387,6 +439,7 @@ def publish_matter_append(
     item_body: dict,
     contacts: ContactRepo | None = None,
     notifier: Notifier | None = None,
+    users: UserRepo | None = None,
 ) -> dict:
     """Append a new timeline item (think/act/verify/result/insight) to a matter.
 
@@ -421,8 +474,14 @@ def publish_matter_append(
     filename = f"{seq:03d}_{user.pinyin}_{doc_type}_{generate_unique_hash(thread_dir)}.md"
     file_rel = f"discussions/{category}/{matter_id}/{filename}"
 
+    item_input = dict(item_body)
+    if item_input.get("comments"):
+        item_input["comments"] = _resolve_comments_mentions(
+            item_input["comments"], users, author=user.pinyin,
+        )
+
     item = _build_timeline_item(
-        item_body,
+        item_input,
         file_rel=file_rel,
         creator=user.pinyin,
         now_iso=now,
@@ -465,12 +524,19 @@ def publish_matter_append(
         )
         sc = item.get("status_change")
         if sc:
+            # P4.5 G 补遗：matter 的 status_change 天然由一篇具体文件触发
+            # （act / result / insight / think），把这篇文件的 type + summary
+            # + filename 带进卡片，让通知有"为什么变的"信息。
+            item_filename = (item.get("file") or "").rsplit("/", 1)[-1] or None
             notifier.notify_status_change(
                 category=category, slug=matter_id, thread_title=matter_title,
                 from_state=sc.get("from") or "",
                 to_state=sc.get("to") or "",
                 author_name=user.name,
                 reason=None,
+                trigger_type=item.get("type"),
+                trigger_summary=item.get("summary"),
+                trigger_filename=item_filename,
             )
 
     return {
@@ -492,6 +558,7 @@ def publish_matter_comment(
     mentions: list[str] | None = None,
     contacts: ContactRepo | None = None,
     notifier: Notifier | None = None,
+    users: UserRepo | None = None,
 ) -> dict:
     """Append a comment to a specific timeline item in a matter."""
     if not user.pinyin:
@@ -509,8 +576,12 @@ def publish_matter_comment(
         "body": body,
         "author": user.pinyin,
     }
-    if mentions:
-        comment["mentions"] = list(mentions)
+    # mentions 入 index 时把已注册用户的 open_id 转成 pinyin，与 creator/owner
+    # 同格式；未注册联系人保留 open_id（无 pinyin 可用）。通知发送一侧仍用原始
+    # open_ids（见下方 notifier 调用），不受影响。
+    resolved_mentions = _resolve_mentions_for_index(mentions, users)
+    if resolved_mentions:
+        comment["mentions"] = resolved_mentions
 
     with workspace.write_session(
         message=f"chore: comment on {matter_id}",

@@ -430,8 +430,108 @@ def test_append_comment_ok(client, event_bucket):
     assert len(comments) == 1
     assert comments[0]["body"] == "同意"
     assert comments[0]["mentions"] == ["liuyu"]
+    assert comments[0]["author"] == "dengke"
 
     assert any(e.topic == "matter.comment_appended" for e in event_bucket)
+
+
+def test_comment_mentions_resolve_open_id_to_pinyin(client, users):
+    """注册用户的 open_id 写入 index 时转换为 pinyin，与 creator/owner 同格式。"""
+    users.upsert_from_feishu(open_id="ou_2", union_id=None, name="刘昱", avatar_url="")
+    users.update_profile("ou_2", pinyin="liuyu")
+
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+    target = r.json()["initial_timeline_item"]["file"]
+
+    r2 = client.post(f"/api/matters/{matter_id}/comments", json={
+        "target_file": target,
+        "body": "请确认",
+        "mentions": ["ou_2"],
+    })
+    assert r2.status_code == 200, r2.text
+
+    # 直读磁盘 yaml，避免 GET 渲染层做了二次解析掩盖真实写入形态
+    from server.matter_index import read_matter_index, matter_index_path
+    raw = read_matter_index(matter_index_path(client.workspace.index_dir, matter_id))
+    on_disk_mentions = raw["timeline"][0]["comments"][0]["mentions"]
+    assert on_disk_mentions == ["liuyu"], on_disk_mentions
+
+
+def test_comment_mentions_keep_open_id_for_unregistered(client):
+    """未注册（无 pinyin）的 open_id 写入 index 时保留 open_id 原文。"""
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+    target = r.json()["initial_timeline_item"]["file"]
+
+    unregistered = "ou_unregistered_0000000000000001"
+    r2 = client.post(f"/api/matters/{matter_id}/comments", json={
+        "target_file": target,
+        "body": "FYI",
+        "mentions": [unregistered],
+    })
+    assert r2.status_code == 200, r2.text
+
+    from server.matter_index import read_matter_index, matter_index_path
+    raw = read_matter_index(matter_index_path(client.workspace.index_dir, matter_id))
+    on_disk_mentions = raw["timeline"][0]["comments"][0]["mentions"]
+    assert on_disk_mentions == [unregistered], on_disk_mentions
+
+
+def test_append_file_comments_mentions_resolved(client, users):
+    """append_file 路径里 comments[].mentions 同样要走 open_id → pinyin 转换。"""
+    users.upsert_from_feishu(open_id="ou_3", union_id=None, name="唐昆", avatar_url="")
+    users.update_profile("ou_3", pinyin="tangkun")
+
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {"type": "act", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+
+    r2 = client.post(f"/api/matters/{matter_id}/files", json={
+        "type": "act", "summary": "go",
+        "status_change": {"from": "planning", "to": "executing"},
+        "comments": [{"body": "请看一下", "mentions": ["ou_3"]}],
+    })
+    assert r2.status_code == 200, r2.text
+
+    from server.matter_index import read_matter_index, matter_index_path
+    raw = read_matter_index(matter_index_path(client.workspace.index_dir, matter_id))
+    appended = raw["timeline"][1]
+    assert appended["comments"][0]["mentions"] == ["tangkun"]
+
+
+def test_append_file_comments_have_author(client):
+    """嵌入评论(随 POST /files 一起提交)写入 index 时必须带 author=发文者pinyin，
+    与独立 POST /comments 路径一致。回归 2026-04-26 报告的 author 缺失 bug。"""
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {
+            "type": "act", "summary": "s", "body": "",
+            "comments": [{"body": "顺便说一句"}],
+        },
+    })
+    assert r.status_code == 200, r.text
+    matter_id = r.json()["matter_id"]
+
+    r2 = client.post(f"/api/matters/{matter_id}/files", json={
+        "type": "act", "summary": "go",
+        "status_change": {"from": "planning", "to": "executing"},
+        "comments": [{"body": "请跟进"}],
+    })
+    assert r2.status_code == 200, r2.text
+
+    from server.matter_index import read_matter_index, matter_index_path
+    raw = read_matter_index(matter_index_path(client.workspace.index_dir, matter_id))
+    assert raw["timeline"][0]["comments"][0]["author"] == "dengke"
+    assert raw["timeline"][1]["comments"][0]["author"] == "dengke"
 
 
 def test_append_comment_target_not_found(client):
@@ -553,6 +653,13 @@ def test_notifier_is_called_on_append_and_status_change(db, users, tmp_path):
     assert "new_reply" in topics, topics
     assert "status_change" in topics, topics
     assert "standalone_mention" in topics, topics
+
+    # P4.5 G 补遗：matter 路径的 status_change 必须带"触发三件套"
+    status_kwargs = next(kw for t, kw in calls if t == "status_change")
+    assert status_kwargs.get("trigger_type") == "act"
+    assert status_kwargs.get("trigger_summary") == "go"
+    tf = status_kwargs.get("trigger_filename") or ""
+    assert tf.endswith(".md") and "act" in tf, f"unexpected trigger_filename: {tf!r}"
 
 
 def test_full_lifecycle_planning_to_reviewed(client):

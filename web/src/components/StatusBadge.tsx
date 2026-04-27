@@ -19,3 +19,5 @@ export function StatusBadge({ status }: { status: MatterStatus | string | null |
   if (!cfg) return <Badge variant="outline">{status}</Badge>;
   return <Badge variant={cfg.variant}>{cfg.text}</Badge>;
 }
+
+export const STATUS_LABELS = LABELS;

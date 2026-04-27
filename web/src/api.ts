@@ -76,9 +76,11 @@ export type Verification = {
 
 export type TimelineComment = {
   author: string;
+  author_display?: string;
   created_at: string;
   body: string;
   mentions?: string[];
+  mentions_display?: string[];
 };
 
 export type TimelineItem = {
@@ -457,6 +459,7 @@ export type Draft = {
   mentions: MentionBlock | null;
   reply_to: string | null;
   references: string[];
+  matter_payload: Record<string, unknown> | null;
   created_at: number;
   updated_at: number;
 };
@@ -505,6 +508,7 @@ export async function createDraft(body: {
   thread_key?: string | null;
   reply_to?: string | null;
   references?: string[];
+  matter_payload?: Record<string, unknown> | null;
 }): Promise<Draft> {
   const r = await fetch("/api/drafts", {
     method: "POST",
@@ -528,6 +532,7 @@ export async function updateDraft(
     thread_key?: string | null;
     reply_to?: string | null;
     references?: string[];
+    matter_payload?: Record<string, unknown> | null;
   },
 ): Promise<Draft> {
   const r = await fetch(`/api/drafts/${id}`, {
@@ -739,10 +744,16 @@ export async function updateWorkspaceAdminConfig(body: {
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
+export type AIToolUse = {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+  output_summary?: { size: number; head: string };
+};
+
 export type AIConversation = {
   messages: ChatMessage[];
   reply_target: string | null;
-  reference_files: string[];
 };
 
 export async function fetchAIConversation(
@@ -762,7 +773,6 @@ export async function saveAIConversation(
   slug: string,
   messages: ChatMessage[],
   reply_target: string | null,
-  reference_files: string[],
 ): Promise<void> {
   const r = await fetch(
     `/api/ai/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/conversation`,
@@ -770,7 +780,7 @@ export async function saveAIConversation(
       method: "PUT",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages, reply_target, reference_files }),
+      body: JSON.stringify({ messages, reply_target }),
     },
   );
   if (!r.ok) throw new Error(`save conversation failed: ${r.status}`);
@@ -786,47 +796,35 @@ export async function clearAIConversation(
   );
 }
 
-export type AIFileEntry = {
-  path: string;
-  filename: string;
-  type: string;
-  author: string;
-  created: string;
-};
-
-export type AIThreadFiles = {
-  category: string;
-  slug: string;
-  title: string;
-  files: AIFileEntry[];
-};
-
-export async function fetchAIFiles(): Promise<AIThreadFiles[]> {
-  const r = await fetch("/api/ai/files", { credentials: "include" });
-  if (!r.ok) throw new Error(`/api/ai/files failed: ${r.status}`);
-  const body = (await r.json()) as { items: AIThreadFiles[] };
-  return body.items;
-}
+export type AIStreamEvent =
+  | { kind: "delta"; delta: string }
+  | { kind: "tool_start"; id: string; name: string; arguments: Record<string, unknown> }
+  | {
+      kind: "tool_end";
+      id: string;
+      name: string;
+      output_summary: { size: number; head: string };
+    };
 
 /**
- * Streams AI chat deltas. Yields string chunks. Throws on error.
- * Usage: for await (const chunk of streamAIChat(...)) { ... }
+ * Streams AI chat events. Yields structured events (text deltas and
+ * tool_call lifecycle). Throws on error.
+ * Usage: for await (const ev of streamAIChat(...)) { ... }
  */
 export async function* streamAIChat(
   category: string,
   slug: string,
   messages: ChatMessage[],
   reply_target: string | null,
-  reference_files: string[],
   signal?: AbortSignal,
-): AsyncGenerator<string> {
+): AsyncGenerator<AIStreamEvent> {
   const resp = await fetch(
     `/api/ai/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/chat`,
     {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages, reply_target, reference_files }),
+      body: JSON.stringify({ messages, reply_target }),
       signal,
     },
   );
@@ -862,9 +860,25 @@ export async function* streamAIChat(
       const data = line.slice(6);
       if (data === "[DONE]") return;
       try {
-        const msg = JSON.parse(data) as { delta?: string; error?: string };
+        const msg = JSON.parse(data) as {
+          delta?: string;
+          error?: string;
+          tool_call_start?: {
+            id: string;
+            name: string;
+            arguments: Record<string, unknown>;
+          };
+          tool_call_end?: {
+            id: string;
+            name: string;
+            output_summary: { size: number; head: string };
+          };
+        };
         if (msg.error) throw new Error(msg.error);
-        if (msg.delta) yield msg.delta;
+        if (msg.delta) yield { kind: "delta", delta: msg.delta };
+        if (msg.tool_call_start)
+          yield { kind: "tool_start", ...msg.tool_call_start };
+        if (msg.tool_call_end) yield { kind: "tool_end", ...msg.tool_call_end };
       } catch (e) {
         if (e instanceof Error && e.message !== "") throw e;
       }

@@ -129,6 +129,15 @@ def _migrate(conn) -> None:
                 " WHERE user_open_id=? AND thread_key=?",
                 (target, __import__("json").dumps(refs), row["user_open_id"], row["thread_key"]),
             )
+    # Tool-use schema migration: clear all prior AI conversations on first
+    # boot of the tool-use version. Threads/posts are untouched (Git is the
+    # source of truth). Column presence acts as the migration marker so this
+    # only fires once.
+    if "schema_ver" not in cols:
+        conn.execute(
+            "ALTER TABLE ai_conversations ADD COLUMN schema_ver INTEGER NOT NULL DEFAULT 1"
+        )
+        conn.execute("DELETE FROM ai_conversations")
 
 
 class Database:

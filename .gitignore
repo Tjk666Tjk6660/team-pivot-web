@@ -28,3 +28,5 @@ pivot-config.yaml
 .gstack/
 AI-docs/deploy.md
 CLAUDE.md
+web/package-lock.json
+web/tsconfig.tsbuildinfo

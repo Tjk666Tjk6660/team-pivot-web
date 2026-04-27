@@ -4,7 +4,10 @@ import { toast } from "sonner";
 import { ArrowLeft } from "lucide-react";
 import {
   createMatter,
+  deleteDraft,
+  fetchDrafts,
   fetchMatters,
+  streamAIChat,
   type DocType,
   type Me,
 } from "@/api";
@@ -14,54 +17,89 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Layout } from "@/components/Layout";
+import { formatSaveStatus, useDraftAutosave } from "@/hooks/useDraftAutosave";
 
 const NEW_CATEGORY_OPTION = "__new_category__";
 const CATEGORY_PATTERN = /^[^/\\:*?"<>|\t\n\r]{1,20}$/;
 
 export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const navigate = useNavigate();
-  const [category, setCategory] = useState("general");
+  const [category, setCategory] = useState("");
   const [newCategory, setNewCategory] = useState("");
   const [categoryMode, setCategoryMode] = useState<"select" | "create">("select");
   const [availableCategories, setAvailableCategories] = useState<string[]>([]);
   const [title, setTitle] = useState("");
   const [initialType, setInitialType] = useState<DocType>("think");
-  const [summary, setSummary] = useState("");
   const [body, setBody] = useState("");
   const [owner, setOwner] = useState<string>(me.pinyin ?? "");
-  const [submitting, setSubmitting] = useState(false);
+  const [stage, setStage] = useState<"idle" | "generating" | "submitting">("idle");
+  const submitting = stage !== "idle";
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const [draftLoaded, setDraftLoaded] = useState(false);
 
   useEffect(() => {
-    // categories come from existing matters for discovery; fall back to empty
-    fetchMatters()
-      .then((items) => {
-        // 当前 /api/matters 返回没有 category，但后端目录仍然按 category 分组。
-        // 第一版先允许用户手填，初始值留一个 general，不从服务端猜测。
-        void items;
-      })
-      .catch(() => {});
-    // best-effort: look up categories from threads list if available
-    fetch("/api/threads")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (!data?.items) return;
+    // /api/matters 返回里已经带 category,直接从已存在 matter 推断当前
+    // workspace 用过哪些 category;空 workspace 时直接进入 create 模式,
+    // 让用户当场新建第一个分类。同时拉一遍 drafts,把上次没发布完的
+    // matter 草稿(type=proposal && thread_key==null)恢复到表单。
+    Promise.all([fetchMatters(), fetchDrafts()])
+      .then(([items, drafts]) => {
         const cats = Array.from(
-          new Set((data.items as { category: string }[]).map((x) => x.category).filter(Boolean)),
+          new Set(
+            items
+              .map((m) => m.category)
+              .filter((c): c is string => typeof c === "string" && c.length > 0),
+          ),
         );
         setAvailableCategories(cats);
+
+        const candidate = drafts
+          .filter((d) => d.type === "proposal" && !d.thread_key)
+          .sort((a, b) => b.updated_at - a.updated_at)[0];
+
+        if (candidate) {
+          setDraftId(candidate.id);
+          setTitle(candidate.title ?? "");
+          setBody(candidate.body_md ?? "");
+          if (candidate.category) {
+            setCategory(candidate.category);
+          } else if (cats.length === 0) {
+            setCategoryMode("create");
+          } else {
+            setCategory(cats[0]);
+          }
+          const payload = candidate.matter_payload ?? {};
+          const dt = String((payload as Record<string, unknown>).doc_type ?? "");
+          if (dt === "act" || dt === "think") setInitialType(dt);
+          const ow = String((payload as Record<string, unknown>).owner ?? "");
+          if (ow) setOwner(ow);
+        } else if (cats.length === 0) {
+          setCategoryMode("create");
+        } else {
+          setCategory((current) => current || cats[0]);
+        }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setDraftLoaded(true));
   }, []);
 
-  useEffect(() => {
-    if (category.trim() && !availableCategories.includes(category.trim())) {
-      setCategoryMode("create");
-      setNewCategory(category.trim());
-      return;
-    }
-    setCategoryMode("select");
-    setNewCategory("");
-  }, [availableCategories, category]);
+  const isDirty = title.trim().length > 0 || body.trim().length > 0;
+  const { status: draftStatus } = useDraftAutosave({
+    draftId,
+    setDraftId,
+    type: "proposal",
+    payload: () => ({
+      title: title.trim() || null,
+      category: category.trim() || null,
+      body_md: body,
+      matter_payload: {
+        doc_type: initialType,
+        ...(owner.trim() ? { owner: owner.trim() } : {}),
+      },
+    }),
+    enabled: draftLoaded && isDirty && stage === "idle",
+    deps: [draftLoaded, isDirty, stage, title, category, body, initialType, owner],
+  });
 
   const categoryOptions = category.trim() && !availableCategories.includes(category.trim())
     ? [category.trim(), ...availableCategories]
@@ -82,24 +120,72 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) return toast.error("title 必填");
-    if (!summary.trim()) return toast.error("initial_file.summary 必填");
-    setSubmitting(true);
+    if (!body.trim()) return toast.error("正文必填（AI 将基于此生成 summary）");
+
+    setStage("generating");
+    let summary = "";
+    try {
+      const userMsg = [
+        `请为下面这篇新增的 ${initialType} 文件生成一句不超过 80 字的中文 summary。`,
+        `要求：`,
+        `- 直接输出这一句话本身，不要加引号，也不要任何前后解释。`,
+        `- 用最精简的语言概括这篇文件推进 / 判断 / 结论了什么。`,
+        ``,
+        `事项标题：${title.trim()}`,
+        ``,
+        `新文件正文：`,
+        "```",
+        body.trim(),
+        "```",
+      ].join("\n");
+      // 复用现有 chat 端点：NewMatter 还没有真实文件作起点帖子，传一个占位
+      // 字符串。后端 build_starting_post_block 对路径不合法 / 文件不存在的情况
+      // 静默降级为空 starting block，AI 仅基于下面 userMsg 里的 body 总结。
+      let acc = "";
+      for await (const ev of streamAIChat(
+        category.trim() || "general",
+        "_new_matter_",
+        [{ role: "user", content: userMsg }],
+        "_new_matter_summary_",
+      )) {
+        if (ev.kind === "delta") acc += ev.delta;
+      }
+      summary = acc.trim();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "生成 summary 失败");
+      setStage("idle");
+      return;
+    }
+    if (!summary) {
+      toast.error("AI 生成的 summary 为空");
+      setStage("idle");
+      return;
+    }
+
+    setStage("submitting");
     try {
       const r = await createMatter({
         category: category.trim(),
         title: title.trim(),
         initial_file: {
           type: initialType,
-          summary: summary.trim(),
-          body: body.trim() || undefined,
+          summary,
+          body: body.trim(),
           owner: owner.trim() || undefined,
         },
       });
+      if (draftId) {
+        try {
+          await deleteDraft(draftId);
+        } catch {
+          // 草稿删除失败不影响 matter 已发布的事实，仅吞掉错误。
+        }
+      }
       navigate(`/m/${encodeURIComponent(r.matter_id)}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
     } finally {
-      setSubmitting(false);
+      setStage("idle");
     }
   };
 
@@ -121,11 +207,22 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
           <div className="section-kicker">New Matter</div>
           <div className="flex flex-wrap items-baseline gap-3">
             <h1 className="text-2xl font-semibold tracking-[-0.03em] text-slate-950 sm:text-3xl">
-              新事项
+              新讨论
             </h1>
+            {draftStatus !== "idle" && (
+              <span
+                className={
+                  draftStatus === "error"
+                    ? "text-xs text-red-600"
+                    : "text-xs text-slate-500"
+                }
+              >
+                {formatSaveStatus(draftStatus)}
+              </span>
+            )}
           </div>
           <p className="max-w-2xl text-sm leading-7 text-slate-600">
-            第一版：category（分组标签）+ title + 首篇文件（think 或 act）。首篇允许没有 quote。
+            这里直接进入 matter 的起草区。先确定分类和标题，再把正文写清楚；表单会自动保存草稿，不需要额外操作。
           </p>
         </div>
 
@@ -136,7 +233,7 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
               <div className="space-y-2">
                 <div className="section-kicker">Category</div>
                 <p className="text-sm leading-6 text-slate-500">
-                  分组标签，决定磁盘位置 <span className="font-mono">discussions/{category}/...</span>
+                  从已有分类里选择，或者当场创建一个新的分类。
                 </p>
               </div>
               <div className="grid gap-2">
@@ -167,22 +264,27 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
                   <option value={NEW_CATEGORY_OPTION}>+ 新建 category</option>
                 </select>
                 {categoryMode === "create" && (
-                  <div className="flex gap-2">
-                    <Input
-                      value={newCategory}
-                      onChange={(e) => setNewCategory(e.target.value)}
-                      placeholder="输入新的 category"
-                      maxLength={20}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          createCategory();
-                        }
-                      }}
-                    />
-                    <Button type="button" variant="outline" className="rounded-xl" onClick={createCategory}>
-                      创建并选中
-                    </Button>
+                  <div className="space-y-1.5">
+                    <div className="flex gap-2">
+                      <Input
+                        value={newCategory}
+                        onChange={(e) => setNewCategory(e.target.value)}
+                        placeholder="输入新的 category"
+                        maxLength={20}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            createCategory();
+                          }
+                        }}
+                      />
+                      <Button type="button" variant="outline" className="rounded-xl" onClick={createCategory}>
+                        创建并选中
+                      </Button>
+                    </div>
+                    <p className="text-xs leading-5 text-slate-500">
+                      支持中文，最长 20 个字符；不能包含 <span className="font-mono">/ \ : * ? " &lt; &gt; |</span> 或换行。
+                    </p>
                   </div>
                 )}
               </div>
@@ -194,10 +296,10 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
             <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
               <div className="space-y-2">
                 <div className="section-kicker">Title</div>
-                <p className="text-sm leading-6 text-slate-500">事项标题；列表上一眼能认出是什么事。</p>
+                <p className="text-sm leading-6 text-slate-500">标题决定 matter 在左侧目录里的可读性，尽量写成一个完整的主题句。</p>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="title">Title</Label>
+                <Label htmlFor="title">标题</Label>
                 <Input
                   id="title"
                   value={title}
@@ -216,7 +318,7 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
               <div className="space-y-2">
                 <div className="section-kicker">首篇文件</div>
                 <p className="text-sm leading-6 text-slate-500">
-                  创建事项的同时写一篇 <span className="font-mono">think</span> 或{" "}
+                  适合直接写提案、背景、判断和待讨论问题，类型为 <span className="font-mono">think</span> 或{" "}
                   <span className="font-mono">act</span>。默认 think。
                 </p>
               </div>
@@ -240,24 +342,17 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
                   </label>
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="summary">
-                    Summary<span className="text-red-500"> *</span>
+                  <Label htmlFor="body">
+                    正文（markdown）<span className="text-red-500"> *</span>
                   </Label>
-                  <Input
-                    id="summary"
-                    value={summary}
-                    onChange={(e) => setSummary(e.target.value)}
-                    required
-                    maxLength={200}
-                    placeholder="一句话摘要"
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="body">Body（markdown，可选）</Label>
+                  <p className="text-xs text-slate-500">
+                    创建时 AI 将基于正文生成 summary。
+                  </p>
                   <Textarea
                     id="body"
                     value={body}
                     onChange={(e) => setBody(e.target.value)}
+                    required
                     rows={10}
                     maxLength={50000}
                     className="min-h-[14rem] rounded-2xl border-slate-300 bg-slate-100/92 font-mono text-sm"
@@ -282,9 +377,13 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
               <Button
                 type="submit"
                 className="rounded-xl px-5"
-                disabled={submitting || !title.trim() || !summary.trim()}
+                disabled={submitting || !title.trim() || !body.trim()}
               >
-                {submitting ? "创建中…" : "创建 Matter"}
+                {stage === "generating"
+                  ? "生成摘要中…"
+                  : stage === "submitting"
+                    ? "创建中…"
+                    : "创建 Matter"}
               </Button>
             </div>
           </form>

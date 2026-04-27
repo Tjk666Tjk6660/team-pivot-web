@@ -56,6 +56,12 @@ class Notifier(Protocol):
         to_state: str,
         author_name: str,
         reason: str | None,
+        # P4.5 G 补遗：matter 路径把"触发文件"三件套透传进来，
+        # 渲染端据此拼出"触发：<type> — <summary>"行、生成 matter URL。
+        # 老 thread 调用方不传，行为不变。
+        trigger_type: str | None = None,
+        trigger_summary: str | None = None,
+        trigger_filename: str | None = None,
     ) -> None: ...
 
     def notify_standalone_mention(
@@ -68,7 +74,6 @@ class Notifier(Protocol):
         author_name: str,
         mention_open_ids: list[str],
         mention_comments: str,
-        post_excerpt: str,
     ) -> None: ...
 
 
@@ -173,7 +178,7 @@ class FeishuNotifier:
 
     def notify_standalone_mention(
         self, *, category, slug, thread_title, target_filename,
-        author_name, mention_open_ids, mention_comments, post_excerpt,
+        author_name, mention_open_ids, mention_comments,
     ) -> None:
         post_url = self._post_url(category, slug, target_filename)
         card = build_standalone_mention_card(
@@ -184,32 +189,33 @@ class FeishuNotifier:
             target_filename=target_filename,
             mention_open_ids=mention_open_ids,
             mention_comments=mention_comments,
-            post_excerpt=post_excerpt,
             post_url=post_url,
         )
         self._broadcast(card, event=f"mention slug={slug} file={target_filename}")
-        dm = build_mention_dm_card(
-            author_name=author_name,
-            thread_title=thread_title,
-            thread_slug=slug,
-            target_filename=target_filename,
-            kind="提及",
-            comments=mention_comments,
-            post_url=post_url,
-            post_excerpt=post_excerpt,
-        )
-        self._dm_many(mention_open_ids, dm, event=f"mention slug={slug}")
 
     def notify_status_change(
         self, *, category, slug, thread_title, from_state, to_state, author_name, reason,
+        trigger_type: str | None = None,
+        trigger_summary: str | None = None,
+        trigger_filename: str | None = None,
     ) -> None:
+        # matter 路径的触发三件套齐全时，按 matter URL 指回详情页；否则走老
+        # thread URL（同事 P3 已不用，但保留兼容 PAT / VS Code 客户端调用）。
+        is_matter = trigger_filename is not None
+        detail_url = (
+            self._matter_url(slug)
+            if is_matter
+            else self._thread_url(category, slug)
+        )
         card = build_status_change_card(
             thread_title=thread_title,
             author_name=author_name,
             from_state=from_state,
             to_state=to_state,
             reason=reason,
-            thread_url=self._thread_url(category, slug),
+            thread_url=detail_url,
+            trigger_type=trigger_type,
+            trigger_summary=trigger_summary,
         )
         self._broadcast(card, event=f"status_change slug={slug} {from_state}->{to_state}")
 
@@ -217,6 +223,14 @@ class FeishuNotifier:
         from urllib.parse import urlencode
 
         next_path = f"/t/{category}/{slug}"
+        return f"{self._web_base_url}/auth/entry?{urlencode({'next': next_path})}"
+
+    def _matter_url(self, matter_id: str) -> str:
+        """P4.5 G 补遗：前端 matter 详情页路由为 /m/:matter_id，
+        通知卡片的跳转按钮在 matter 场景下用这个 URL。"""
+        from urllib.parse import urlencode
+
+        next_path = f"/m/{matter_id}"
         return f"{self._web_base_url}/auth/entry?{urlencode({'next': next_path})}"
 
     def _post_url(self, category: str, slug: str, filename: str) -> str:
@@ -384,19 +398,29 @@ def build_reply_card(
 
 
 _STATUS_LABEL = {
-    "open": "讨论中", "concluded": "已达成结论", "produced": "已转为项目",
-    "closed": "已关闭", "pending": "暂时搁置",
+    "planning": "计划中",
+    "executing": "执行中",
+    "paused": "已暂停",
+    "finished": "已完成",
+    "cancelled": "已取消",
+    "reviewed": "已复盘",
 }
 
 
 def build_status_change_card(
     *, thread_title, author_name, from_state, to_state, reason, thread_url,
+    trigger_type: str | None = None,
+    trigger_summary: str | None = None,
 ) -> dict:
     md_parts = [
         f"**操作**：{author_name}",
         f"**状态**：{_STATUS_LABEL.get(from_state, from_state)} → "
         f"{_STATUS_LABEL.get(to_state, to_state)}",
     ]
+    # matter 场景：触发文件 type + summary 给出"为什么"——比老 thread
+    # 的 reason 字段密度更高，也更忠于 matter "文件承载事实" 的设计。
+    if trigger_type and trigger_summary:
+        md_parts.append(f"**触发**：{trigger_type} — {trigger_summary}")
     if reason:
         md_parts.append(f"**原因**：{reason}")
     return _card_shell(
@@ -417,31 +441,39 @@ def build_standalone_mention_card(
     target_filename: str,
     mention_open_ids: list[str],
     mention_comments: str,
-    post_excerpt: str,
     post_url: str,
 ) -> dict:
+    """Standalone mention 群卡片（邮件式评论体）。
+
+    评论行布局：
+      **评论**：<橙色主评论人> <at><at>… 说：<br>{comment}
+
+    每个 <at id="ou_xxx"></at> 的 content 留空，由飞书自动拉取最新中文名 + 头像，
+    并触发被 @ 人的红点 + 推送（schema 2.0 markdown tag 行为）。
+
+    元信息块固定顺序：时间 → 项目 → 主题 → 被评文件。被评人不在卡片上显式出现，
+    读者要看是谁的帖子可以看 target_filename（含作者 pinyin）或点按钮跳进 Web。
+    """
     from datetime import datetime
 
-    lines: list[str] = []
-    if mention_open_ids:
-        lines.append(
-            " ".join(f'<at user_id="{oid}"></at>' for oid in mention_open_ids)
-        )
-    lines.append(f"**{author_name}** 提及了以上成员")
-    lines.append(f"**项目**：{category}")
-    lines.append(f"**主题**：{thread_title}")
-    lines.append(f"**帖子**：{target_filename}")
-    lines.append(f"**说明**：{_oneline(mention_comments)}")
-    lines.append(f"**时间**：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    at_tags = " ".join(f'<at id="{oid}"></at>' for oid in mention_open_ids)
+    comment_line = (
+        f"**评论**：<font color='orange'>**{author_name}**</font> "
+        f"{at_tags} 说：<br>{_oneline(mention_comments)}"
+    )
 
-    sections = ["<br>".join(lines)]
-    if post_excerpt:
-        sections.append(f"**相关内容**：{_truncate(post_excerpt, 150)}")
+    info_rows = [
+        f"**时间**：{datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        f"**项目**：{category}",
+        f"**主题**：{thread_title}",
+        f"**被评文件**：{target_filename}",
+    ]
+    info_block = "<br>".join(info_rows)
 
     return _card_shell(
-        header=f"提及：{thread_title}",
+        header=f"📣 提及：{thread_title}",
         template="orange",
-        markdown="\n\n".join(sections),
+        markdown="\n\n".join([comment_line, info_block]),
         button_text="查看该帖子",
         thread_url=post_url,
     )
