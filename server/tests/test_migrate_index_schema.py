@@ -6,6 +6,7 @@ in a temporary git repo.
 """
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -57,6 +58,39 @@ def _write_legacy_md(
     return path
 
 
+def _synthesize_creation_timeline(
+    *,
+    category: str,
+    slug: str,
+    files: list[dict],
+    base_iso: str = "2026-04-23T10:00:00+08:00",
+) -> list[dict]:
+    """Build minimal "X created thread" + "X replied" events for each file in
+    `files`, sourcing author from the filename's author segment. Times are
+    spaced 1h apart starting from `base_iso`. Mirrors what real legacy index
+    writers (server/index_files.py) produce.
+
+    Tests that need carry-over mention on a specific event should use the
+    explicit `timeline=` parameter on _write_legacy_index instead.
+    """
+    from datetime import datetime, timedelta
+    base = datetime.fromisoformat(base_iso)
+    events: list[dict] = []
+    for i, f in enumerate(files):
+        old_filename = str(f.get("path") or "")
+        m = re.match(r"^(\d{3})_([^_]+)_([^_]+)_([a-f0-9]{6})\.md$", old_filename)
+        author = m.group(2) if m else "unknown"
+        type_seg = m.group(3) if m else "reply"
+        verb = "created thread" if type_seg == "proposal" else "replied"
+        time = (base + timedelta(hours=i)).isoformat()
+        events.append({
+            "time": time,
+            "event": f"{author} {verb}",
+            "file": f"discussions/{category}/{slug}/{old_filename}",
+        })
+    return events
+
+
 def _write_legacy_index(
     workspace: Path,
     *,
@@ -69,10 +103,19 @@ def _write_legacy_index(
     timeline: list[dict] | None = None,
 ) -> Path:
     """Write `index/{slug}-discuss.index.yaml`. `files` are the legacy
-    `discussions[0].files[]` entries (path/summary/refs)."""
+    `discussions[0].files[]` entries (path/summary/refs).
+
+    If `timeline` is None, a minimal created/replied event is synthesized
+    for each file (1h apart starting at `created`). Pass `timeline=[]`
+    explicitly to test the no-events degraded path.
+    """
     index_dir = workspace / "index"
     index_dir.mkdir(parents=True, exist_ok=True)
     path = index_dir / f"{slug}-discuss.index.yaml"
+    if timeline is None:
+        timeline = _synthesize_creation_timeline(
+            category=category, slug=slug, files=files, base_iso=created,
+        )
     data = {
         "origin_path": f"discussions/{category}/{slug}/",
         "created": created,
@@ -82,7 +125,7 @@ def _write_legacy_index(
             "status": status,
             "files": files,
         }],
-        "timeline": timeline or [],
+        "timeline": timeline,
     }
     path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
                     encoding="utf-8")
@@ -536,23 +579,175 @@ def test_mention_without_file_dropped_with_warning(tmp_path):
     assert any("without file field" in w for w in item.warnings)
 
 
-def test_created_replied_status_change_events_dropped_silently(tmp_path):
-    """created_thread / replied / 状态变更 events drop with no warnings or comments."""
-    legacy = _build_open_thread(tmp_path)
-    # Patch in a few events directly
-    data = yaml.safe_load(legacy.read_text(encoding="utf-8"))
-    data["timeline"] = [
-        {"time": "2026-04-23T10:00:00+08:00", "event": "alice created thread",
-         "file": "discussions/test/demo/001_alice_proposal_aaa111.md"},
-        {"time": "2026-04-23T10:30:00+08:00", "event": "bob replied",
-         "file": "discussions/test/demo/002_bob_reply_bbb222.md"},
-        {"time": "2026-04-23T11:00:00+08:00",
-         "event": "alice 状态变更 open->concluded"},
-    ]
-    legacy.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
-                      encoding="utf-8")
+def test_status_change_events_dropped_silently(tmp_path):
+    """状态变更 events without mention drop silently per plan §4."""
+    cat, slug = "test", "stchg"
+    _write_legacy_md(tmp_path, category=cat, slug=slug,
+                     nnn=1, author="alice", type_seg="proposal", hash_seg="aaa111")
+    legacy = _write_legacy_index(
+        tmp_path, category=cat, slug=slug, status="open",
+        files=[{"path": "001_alice_proposal_aaa111.md", "summary": "", "refs": []}],
+        timeline=[
+            {"time": "2026-04-23T10:00:00+08:00", "event": "alice created thread",
+             "file": f"discussions/{cat}/{slug}/001_alice_proposal_aaa111.md"},
+            {"time": "2026-04-23T11:00:00+08:00",
+             "event": "alice 状态变更 open->concluded"},
+            {"time": "2026-04-23T12:00:00+08:00",
+             "event": "alice 从 concluded 状态重新打开，原因：发现新数据"},
+        ],
+    )
     item = migrate_one(tmp_path, legacy)
-    # No comments anywhere from these events
+    timeline = item.new_index_data["timeline"]
+    assert len(timeline) == 1
+    # No comments synthesized from status-change events
+    assert "comments" not in timeline[0]
+
+
+# --------------------------------------------------------------------------- #
+# §映射规则 §4 created/replied 携带 mention → 首条 comment                     #
+# (漏洞 2 修复:发帖时附带的 @mention.comments 必须迁入新 timeline item)        #
+# --------------------------------------------------------------------------- #
+
+
+def test_created_event_with_mention_comments_becomes_first_comment(tmp_path):
+    """`X created thread` 事件携带 mention.comments → 该 file item 的第一条 comment。"""
+    cat, slug = "test", "createdmen"
+    _write_legacy_md(tmp_path, category=cat, slug=slug,
+                     nnn=1, author="alice", type_seg="proposal", hash_seg="aaa111")
+    legacy = _write_legacy_index(
+        tmp_path, category=cat, slug=slug, status="open",
+        files=[{"path": "001_alice_proposal_aaa111.md", "summary": "", "refs": []}],
+        timeline=[
+            {"time": "2026-04-23T10:00:00+08:00",
+             "event": "alice created thread",
+             "file": f"discussions/{cat}/{slug}/001_alice_proposal_aaa111.md",
+             "mention": {
+                 "users": [{"user": "Bob", "open_id": "ou_bob_xxxxxxxxxxxxxxx"}],
+                 "comments": "请看一下这个提案",
+             }},
+        ],
+    )
+    item = migrate_one(tmp_path, legacy)
+    first = item.new_index_data["timeline"][0]
+    assert first["creator"] == "alice"
+    assert first["created_at"] == "2026-04-23T10:00:00+08:00"
+    assert "comments" in first
+    assert len(first["comments"]) == 1
+    c = first["comments"][0]
+    assert c["body"] == "请看一下这个提案"
+    assert c["author"] == "alice"
+    assert c["created_at"] == "2026-04-23T10:00:00+08:00"
+    assert c["mentions"] == ["ou_bob_xxxxxxxxxxxxxxx"]
+
+
+def test_replied_event_with_mention_comments_becomes_first_comment(tmp_path):
+    """`X replied` 事件携带 mention.comments → 该 reply file item 的第一条 comment。"""
+    cat, slug = "test", "repliedmen"
+    _write_legacy_md(tmp_path, category=cat, slug=slug,
+                     nnn=1, author="alice", type_seg="proposal", hash_seg="aaa111")
+    _write_legacy_md(tmp_path, category=cat, slug=slug,
+                     nnn=2, author="bob", type_seg="reply", hash_seg="bbb222")
+    legacy = _write_legacy_index(
+        tmp_path, category=cat, slug=slug, status="open",
+        files=[
+            {"path": "001_alice_proposal_aaa111.md", "summary": "", "refs": []},
+            {"path": "002_bob_reply_bbb222.md", "summary": "", "refs": []},
+        ],
+        timeline=[
+            {"time": "2026-04-23T10:00:00+08:00",
+             "event": "alice created thread",
+             "file": f"discussions/{cat}/{slug}/001_alice_proposal_aaa111.md"},
+            {"time": "2026-04-23T11:00:00+08:00",
+             "event": "bob replied",
+             "file": f"discussions/{cat}/{slug}/002_bob_reply_bbb222.md",
+             "mention": {
+                 "users": [{"user": "Alice", "open_id": "ou_alice_xxxxxxxxxxxxx"}],
+                 "comments": "回复 + 圈一下你",
+             }},
+        ],
+    )
+    item = migrate_one(tmp_path, legacy)
+    second = item.new_index_data["timeline"][1]
+    assert second["creator"] == "bob"
+    assert second["comments"][0]["body"] == "回复 + 圈一下你"
+    assert second["comments"][0]["author"] == "bob"
+    # Proposal item has no mention; should not have comments[]
+    first = item.new_index_data["timeline"][0]
+    assert "comments" not in first
+
+
+def test_event_with_users_only_no_comments_still_produces_comment(tmp_path):
+    """Real production data has 2 cases where created/replied events carry
+    mention.users but mention.comments is empty (圈了人但没留话)。仍应产出
+    comment 条目（body=""，mentions 落 pinyin/open_id）以保留圈人记录。"""
+    cat, slug = "test", "usersonly"
+    _write_legacy_md(tmp_path, category=cat, slug=slug,
+                     nnn=1, author="alice", type_seg="proposal", hash_seg="aaa111")
+    legacy = _write_legacy_index(
+        tmp_path, category=cat, slug=slug, status="open",
+        files=[{"path": "001_alice_proposal_aaa111.md", "summary": "", "refs": []}],
+        timeline=[
+            {"time": "2026-04-23T10:00:00+08:00",
+             "event": "alice created thread",
+             "file": f"discussions/{cat}/{slug}/001_alice_proposal_aaa111.md",
+             "mention": {
+                 "users": [{"user": "Bob", "open_id": "ou_bob_xxxxxxxxxxxxxxx"}],
+                 "comments": "",
+             }},
+        ],
+    )
+    item = migrate_one(tmp_path, legacy)
+    first = item.new_index_data["timeline"][0]
+    assert first["comments"][0]["body"] == ""
+    assert first["comments"][0]["mentions"] == ["ou_bob_xxxxxxxxxxxxxxx"]
+
+
+def test_first_event_mention_and_later_standalone_mentions_coexist_sorted(tmp_path):
+    """Created/replied 携带的 mention 是首条 comment;后续独立 mentioned 事件追加在后。
+    最终 comments[] 按 created_at 升序。"""
+    cat, slug = "test", "twosrc"
+    _write_legacy_md(tmp_path, category=cat, slug=slug,
+                     nnn=1, author="alice", type_seg="proposal", hash_seg="aaa111")
+    legacy = _write_legacy_index(
+        tmp_path, category=cat, slug=slug, status="open",
+        files=[{"path": "001_alice_proposal_aaa111.md", "summary": "", "refs": []}],
+        timeline=[
+            {"time": "2026-04-23T10:00:00+08:00",
+             "event": "alice created thread",
+             "file": f"discussions/{cat}/{slug}/001_alice_proposal_aaa111.md",
+             "mention": {
+                 "users": [{"user": "Bob", "open_id": "ou_b"}],
+                 "comments": "first (carried)",
+             }},
+            {"time": "2026-04-23T11:00:00+08:00",
+             "event": "carol mentioned",
+             "file": f"discussions/{cat}/{slug}/001_alice_proposal_aaa111.md",
+             "mention": {
+                 "users": [{"user": "Bob", "open_id": "ou_b"}],
+                 "comments": "second (standalone)",
+             }},
+            {"time": "2026-04-23T12:00:00+08:00",
+             "event": "dave mentioned",
+             "file": f"discussions/{cat}/{slug}/001_alice_proposal_aaa111.md",
+             "mention": {
+                 "users": [{"user": "Bob", "open_id": "ou_b"}],
+                 "comments": "third (standalone)",
+             }},
+        ],
+    )
+    item = migrate_one(tmp_path, legacy)
+    first = item.new_index_data["timeline"][0]
+    bodies = [c["body"] for c in first["comments"]]
+    authors = [c["author"] for c in first["comments"]]
+    assert bodies == ["first (carried)", "second (standalone)", "third (standalone)"]
+    assert authors == ["alice", "carol", "dave"]
+
+
+def test_pure_created_replied_events_without_mention_produce_no_comments(tmp_path):
+    """Bare created/replied events (no mention payload) drive file items
+    but do NOT synthesize comments[]."""
+    legacy = _build_open_thread(tmp_path)   # auto-synthesized timeline, no mentions
+    item = migrate_one(tmp_path, legacy)
     for t in item.new_index_data["timeline"]:
         assert "comments" not in t
 
@@ -601,45 +796,30 @@ def test_title_uses_frontmatter_title_if_present(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# Frontmatter fallbacks                                                       #
+# Degraded paths: timeline event missing                                      #
+# (plan §3 — created_at + creator come from the legacy timeline event, not    #
+# from MD frontmatter; if the event is missing, creator falls to "unknown"   #
+# and created_at to "" with a warning.)                                       #
 # --------------------------------------------------------------------------- #
 
 
-def test_missing_author_falls_back(tmp_path):
-    """A legacy MD with no `author` in frontmatter falls back to 'unknown'."""
-    cat, slug = "test", "noauth"
-    fname = "001_alice_proposal_aaa111.md"
-    md_path = tmp_path / "discussions" / cat / slug / fname
-    md_path.parent.mkdir(parents=True, exist_ok=True)
-    md_path.write_text(
-        "---\ntype: proposal\ncreated: '2026-04-23T10:00:00+08:00'\n---\n# x\n",
-        encoding="utf-8",
-    )
+def test_missing_creation_event_creator_unknown(tmp_path):
+    """If files[] lists a file but legacy.timeline has no created/replied
+    event for it, creator/owner fall to 'unknown' with a warning."""
+    cat, slug = "test", "noevt"
+    _write_legacy_md(tmp_path, category=cat, slug=slug,
+                     nnn=1, author="alice", type_seg="proposal", hash_seg="aaa111")
     legacy = _write_legacy_index(
         tmp_path, category=cat, slug=slug, status="open",
-        files=[{"path": fname, "summary": "", "refs": []}],
+        files=[{"path": "001_alice_proposal_aaa111.md", "summary": "", "refs": []}],
+        timeline=[],   # explicit empty: no created/replied events
     )
     item = migrate_one(tmp_path, legacy)
-    assert item.new_index_data["timeline"][0]["creator"] == "unknown"
-
-
-def test_missing_created_falls_back_to_index_top(tmp_path):
-    """Empty frontmatter created_at falls back to legacy index top-level created."""
-    cat, slug = "test", "nocreated"
-    fname = "001_alice_proposal_aaa111.md"
-    md_path = tmp_path / "discussions" / cat / slug / fname
-    md_path.parent.mkdir(parents=True, exist_ok=True)
-    md_path.write_text(
-        "---\ntype: proposal\nauthor: alice\n---\n# x\n",
-        encoding="utf-8",
-    )
-    legacy = _write_legacy_index(
-        tmp_path, category=cat, slug=slug, status="open",
-        files=[{"path": fname, "summary": "", "refs": []}],
-    )
-    item = migrate_one(tmp_path, legacy)
-    # frontmatter.created missing → empty string
-    assert item.new_index_data["timeline"][0]["created_at"] == ""
+    first = item.new_index_data["timeline"][0]
+    assert first["creator"] == "unknown"
+    assert first["owner"] == "unknown"
+    assert first["created_at"] == ""
+    assert any("no 'created thread'/'replied' event" in w for w in item.warnings)
 
 
 # --------------------------------------------------------------------------- #

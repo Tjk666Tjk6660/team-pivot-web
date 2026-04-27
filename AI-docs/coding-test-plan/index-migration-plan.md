@@ -131,49 +131,72 @@ Rule [thread → matter type 映射]：
 
 ### 3. timeline item 字段映射
 
-| 老字段 | 新字段 | 备注 |
+迁移采用 **legacy.timeline 驱动 + legacy.discussions[0].files[i] 补 metadata** 的合并口径：
+
+- `legacy.timeline[]` 里每篇 file 的 `"X created thread"` / `"X replied"` 事件，本身就是该 file 的诞生时刻和作者归属——`event.time` = 创建时间，`event.event` 字符串首词 = 创建者 pinyin
+- `legacy.discussions[0].files[i]` 提供该 file 的 `summary` 和 `refs[]`（即 quote / refer）
+- created/replied 事件可能携带 `mention` 字段（发帖人在创建/回帖时同时圈人 + 写评论的产物），这条信息**只能从事件层面取到**——files[] 里没有
+
+老 plan 试图从 MD frontmatter 取 `created` / `author`、再用"INDEX 顶层 created"兜底；但 INDEX 顶层 `created` 是 thread 起点，对 reply 来说不是它自己的时刻——事实上是错的。新口径直接从 timeline event 读真值，避开兜底链复杂度。
+
+字段映射表：
+
+| 新字段 | 来源 | 备注 |
 |---|---|---|
-| `discussions[0].files[i].path` | `timeline[i].file` | 前缀补 `discussions/<category>/<slug>/`，**filename 段使用新 type 段（按 §2 改名规则）** |
-| `discussions[0].files[i].summary` | `timeline[i].summary` | 为空时保留 `""`，不自动填充（writer 层不强制非空） |
-| 帖子 frontmatter `author` | `timeline[i].creator` 和 `timeline[i].owner` | 老数据无 owner 概念，默认两字段同值 |
-| 帖子 frontmatter `created` | `timeline[i].created_at` | 缺失用 INDEX 顶层 `created` |
-| `refs[{type:from, path}]` | `timeline[i].quote` | 取第一条；多于一条记警告。**path 中的 filename 段同样换为新文件名** |
-| `refs[{type:refer, path}]` | `timeline[i].refer` | 保留顺序；去掉 `type:from`。**path 中的 filename 段同样换为新文件名** |
+| `timeline[i].file` | `discussions[0].files[i].path`，前缀补 `discussions/<category>/<slug>/` | filename 段使用新 type 段（按 §2 改名规则） |
+| `timeline[i].created_at` | legacy.timeline 中 event 含 `"created thread"` 或 `"replied"` 且 `event.file` 指向本文件的那条的 `time` | 找不到对应事件 → 落空串 + warning（数据完整性问题，正常路径不会命中） |
+| `timeline[i].creator` 和 `timeline[i].owner` | 同上事件的 `event` 字符串首词（pinyin） | 老数据无 owner 概念，默认两字段同值；事件缺失时落 `"unknown"` + warning |
+| `timeline[i].summary` | `discussions[0].files[i].summary` | 为空时保留 `""`，不自动填充 |
+| `timeline[i].quote` | `refs[{type:from}]` 第一条的 path | 多于一条记 warning。path 中 filename 段按 §2 换为新文件名 |
+| `timeline[i].refer` | `refs[{type:refer}]` 全部的 path，保序 | path 中 filename 段按 §2 换为新文件名 |
+
+**MD frontmatter 不再作为 created_at 或 creator 的事实源**——只在 `matter.title` 三级 fallback 里读一次（详见 §5），以及 §2 的"按新 type 改写 frontmatter type 字段"那一步。
 
 ### 4. 事件流迁移
 
 老 `timeline[]` 是 flat event log，不直接塞进 matter timeline（matter 的 timeline 是文件流）。逐事件处理：
 
-- **`"X created thread"` / `"X replied"` 事件 → 丢弃**
-  理由：这些事件的所有信息（file 路径、creator、created_at）已经被新 timeline 的 file item 完整承载——file item 由迁移脚本通过 `discussions[0].files[i]` 直接生成，留事件等于双写同一事实。
+- **`"X created thread"` / `"X replied"` 事件 → 驱动 file item 诞生 + 携带的 mention 入 comments[]**
+  - 事件本身**不**作为独立 timeline 条目出现在新 matter 中；它的信息已由 §3 字段映射规则吸收为对应 file item 的 `created_at` / `creator` / `owner`
+  - 如果该事件携带 `mention` 字段（`mention.users` 或 `mention.comments` 任一非空）—— 这是发帖人在创建/回帖时同时圈人 + 写评论的产物 —— 转为该 file item 的**首条 comment**，按下方 `Rule [mention → comments]` 解析（author = 事件首词 pinyin，created_at = 事件 time）
 
-- **`"X mentioned"` 事件 → 转为对应 file item 的 `comments[]`**
-  按下方 `Rule [mention → comments]` 执行。
+- **`"X mentioned"` 事件（独立的，非 created/replied 的） → 转为对应 file item 的 `comments[]`**
+  按下方 `Rule [mention → comments]` 执行；同 file 多条按 time 升序追加在首条 comment 之后。
 
 - **状态变更事件（`"X 状态变更 A->B"` / `"X 从 ... 状态重新打开，原因：..."`）→ 丢弃**
   理由：老事件没有"由哪份文件触发"的字段，无法重建到新 schema 的 `status_change`（它必须挂在具体 timeline item 上）。老中间态丢弃，只保留 matter 顶层 `current_status` = §1 映射后的终态；当映射结果为 `executing`（来源 concluded/produced），由 §1 落地步骤选定的 act item 单独承载 `status_change: {from: planning, to: executing}`。
 
 ```
-Rule [mention → comments]：对老 timeline 中 event 含 "mentioned" 的事件：
+Rule [mention → comments]：把任一 mention 事件（无论来自 "X created thread" / "X replied" 携带的 mention，
+                          还是独立 "X mentioned"）转为目标 file item 的一条 comment：
 
-  1. event.file 缺失 → 记 warning，丢弃，不阻断
-  2. 把 event.file 用本次迁移的 rename 映射换成新文件名（filename 的 type 段从老 type 改为新 type，按 §2 表）；
+  1. 仅对独立 "X mentioned" 事件：event.file 缺失 → 记 warning，丢弃，不阻断
+     （created/replied 路径在 §3 合并阶段已落锚到具体 file item，不会走到这一步）
+  2. 用 rename_map 把 event.file 换成新文件名（filename 的 type 段从老 type 改为新 type，按 §2 表）；
      按换算后的新路径在新 matter timeline 找 timeline[i]：
-     - 找不到（迁移脚本本次未处理该文件，或老路径在迁移前就已被改名/删除）→ 记 warning，丢弃，不阻断
+     - 找不到 → 记 warning，丢弃，不阻断
      - 找到 → 进入 step 3
   3. 追加到 timeline[i].comments[]：
      {
        created_at: event.time,
-       body:       event.mention.comments,
+       body:       event.mention.comments,    # 可能为空字符串(仅圈人没留话)
        mentions:   _resolve_mentions_for_index([open_id, ...]),
                    # 复用 server/publish.py::_resolve_mentions_for_index
                    # 注册用户落 pinyin，未注册兜底 open_id（commit f3ce04c 已确立的口径）
-       author:     event.event 字符串前缀（如 "huangshengli mentioned" 取 "huangshengli"）
+       author:     event.event 字符串前缀
+                   # "huangshengli mentioned" → "huangshengli"
+                   # "alice created thread"   → "alice"
+                   # "bob replied"            → "bob"
      }
-  4. 同一 file 上多条 mention 按 event.time 升序追加，保持原时序
+  4. 同一 file item 上多条 comment 在迁移结束时按 created_at 升序排序
+     （保证 created/replied 携带的 mention 在最前——它的 created_at = file 的 created_at = 最早可能时间）
 ```
 
-实测依据：扫了 pivot-mirror 全部老 index，共 19 条 mention 事件，**100% 带 file 字段**，父级定位天然可达。
+实测依据（扫 pivot-mirror 真实生产数据，24 thread / 103 file）：
+- 状态变更事件：**0 条** —— 全丢规则不触发
+- created/replied 携带 mention：**43 条**（其中 41 条带 mention.comments 文本）—— 必须迁入 comments[]，否则数据丢失
+- 独立 "X mentioned" 事件：24 条 —— 走原 mention → comments 路径
+- 100% 携带 mention 的事件都带 file 字段，父级定位天然可达
 
 ### 5. matter header 字段
 

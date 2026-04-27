@@ -193,11 +193,24 @@ def migrate_one(
     *,
     users_repo=None,
 ) -> MigrationItem:
-    """Pure function: read legacy yaml + MD frontmatters → return MigrationItem.
+    """Pure function: read legacy yaml → return MigrationItem.
 
     Only IO reads (no writes). `users_repo` is an optional UserRepo used for
     open_id → pinyin resolution in mention.comments[].mentions; if None, all
     mentions fall through to open_id literal (acceptable for unit tests).
+
+    Algorithm (per plan §3 / §4): timeline-driven + files-supplemented merge.
+
+      1. Index legacy.timeline by file: which "X created thread"/"X replied"
+         event birthed each file. Event.time → created_at; event prefix →
+         creator/owner. Event.mention (if any) → first comment.
+      2. For each entry in legacy.discussions[0].files[i], build a timeline
+         item using metadata from step 1, plus summary/refs from the entry.
+      3. Apply pivot logic for concluded/produced statuses.
+      4. Walk timeline a second time for standalone "X mentioned" events,
+         routing each to the matching item's comments[].
+      5. Sort each item's comments[] by created_at (so the first-from-event
+         mention naturally lands at index 0).
     """
     discussions_dir = workspace / "discussions"
     index_dir = workspace / "index"
@@ -212,6 +225,7 @@ def migrate_one(
     discussion = discussions[0]
     legacy_status = str(discussion.get("status") or "open")
     legacy_files = discussion.get("files") or []
+    legacy_timeline = legacy.get("timeline") or []
     origin_path = str(discussion.get("path") or "").rstrip("/")
     # origin_path = "discussions/<category>/<slug>"
     parts = origin_path.split("/")
@@ -229,6 +243,14 @@ def migrate_one(
     new_status = STATUS_MAP.get(legacy_status, "planning")
     warnings: list[str] = []
 
+    # ---- Index timeline events by old filename ----
+    # creation_event_by_file: old_filename → the "X created thread"/"X replied"
+    # event that birthed this file (used to source created_at + creator + first
+    # comment from carried mention).
+    creation_event_by_file: dict[str, dict] = _index_creation_events(
+        legacy_timeline
+    )
+
     # ---- Determine pivot (the file that becomes act for executing migration) ----
     pivot_filename: str | None = None
     if legacy_status in EXECUTING_FROM_STATUSES:
@@ -243,20 +265,16 @@ def migrate_one(
                 f"(empty or all unparseable filenames); refusing to migrate"
             )
 
-    # ---- Build per-file rename + type maps ----
-    # rename_map: old_filename → new_filename (used for both files[] paths and refs)
+    # ---- Build rename_map: old_filename → new_filename ----
     rename_map: dict[str, str] = {}
-    # new_type_map: new_filename → matter timeline item.type
-    new_type_map: dict[str, str] = {}
-    # Track files we processed (in legacy order)
-    processed_files: list[dict] = []
-
+    # processed in order of legacy_files (== NNN-monotonic == natural timeline order)
+    processed: list[dict] = []
     for f_entry in legacy_files:
         old_filename = str(f_entry.get("path") or "")
         if not old_filename:
             warnings.append("skipping files[] entry with empty path")
             continue
-        old_md_path = discussions_dir / category / slug / old_filename
+        new_type = "act" if old_filename == pivot_filename else "think"
         m = FILENAME_RE.match(old_filename)
         if not m:
             warnings.append(
@@ -264,66 +282,55 @@ def migrate_one(
                 "skipping rename + treating as think"
             )
             new_filename = old_filename  # leave name as-is, still map type
-            new_type = (
-                "act" if old_filename == pivot_filename else "think"
-            )
-            rename_map[old_filename] = new_filename
-            new_type_map[new_filename] = new_type
-            processed_files.append({
-                "old_filename": old_filename,
-                "new_filename": new_filename,
-                "new_type": new_type,
-                "old_md_path": old_md_path,
-                "summary": str(f_entry.get("summary") or ""),
-                "refs": list(f_entry.get("refs") or []),
-            })
-            continue
-
-        nnn, author, _old_type_seg, hash_seg = m.groups()
-        # 所有非 pivot 的老文件(proposal / reply / comment)统一映射为 think;
-        # pivot 选取已在 §1/§2 完成,这里只需根据 pivot 标记决定 act 还是 think。
-        new_type = "act" if old_filename == pivot_filename else "think"
-        new_filename = f"{nnn}_{author}_{new_type}_{hash_seg}.md"
+            new_type = "act" if old_filename == pivot_filename else "think"
+        else:
+            nnn, author_seg, _old_type_seg, hash_seg = m.groups()
+            new_filename = f"{nnn}_{author_seg}_{new_type}_{hash_seg}.md"
         rename_map[old_filename] = new_filename
-        new_type_map[new_filename] = new_type
-        processed_files.append({
+        processed.append({
             "old_filename": old_filename,
             "new_filename": new_filename,
             "new_type": new_type,
-            "old_md_path": old_md_path,
             "summary": str(f_entry.get("summary") or ""),
             "refs": list(f_entry.get("refs") or []),
         })
 
-    # ---- Build matter header ----
-    matter_title = _derive_title(legacy_files, discussions_dir / category / slug, slug)
-    matter_created_at = str(legacy.get("created") or "")
-    matter_updated_at = str(legacy.get("last_updated") or matter_created_at)
-
-    # ---- Build new timeline (file items) ----
+    # ---- Build new timeline (file items, driven by legacy_files order) ----
     new_timeline: list[dict] = []
-    for fp in processed_files:
-        item = _build_timeline_item(
+    for fp in processed:
+        item = _build_item_from_event(
             fp,
             origin_path=origin_path,
             rename_map=rename_map,
+            creation_event=creation_event_by_file.get(fp["old_filename"]),
+            users_repo=users_repo,
             warnings=warnings,
-            workspace=workspace,
         )
         # Pivot gets status_change planning→executing
         if pivot_filename is not None and fp["old_filename"] == pivot_filename:
             item["status_change"] = {"from": "planning", "to": "executing"}
         new_timeline.append(item)
 
-    # ---- Process legacy event log: mention → comments[] ----
-    _apply_mentions_to_timeline(
-        legacy.get("timeline") or [],
+    # ---- Process standalone "X mentioned" events → comments[] ----
+    _apply_standalone_mentions_to_timeline(
+        legacy_timeline,
         new_timeline,
         rename_map=rename_map,
-        origin_path=origin_path,
         users_repo=users_repo,
         warnings=warnings,
     )
+
+    # ---- Sort comments by created_at within each item (defensive) ----
+    for item in new_timeline:
+        if "comments" in item:
+            item["comments"].sort(key=lambda c: c.get("created_at") or "")
+
+    # ---- Build matter header (title still needs MD read for fallback) ----
+    matter_title = _derive_title(
+        legacy_files, discussions_dir / category / slug, slug
+    )
+    matter_created_at = str(legacy.get("created") or "")
+    matter_updated_at = str(legacy.get("last_updated") or matter_created_at)
 
     # ---- Compose new matter index dict ----
     new_index_data: dict = {
@@ -341,8 +348,8 @@ def migrate_one(
     # ---- Compute md_renames + md_frontmatter_updates ----
     md_renames: list[tuple[Path, Path]] = []
     md_frontmatter_updates: list[tuple[Path, str]] = []
-    for fp in processed_files:
-        old_path = fp["old_md_path"]
+    for fp in processed:
+        old_path = discussions_dir / category / slug / fp["old_filename"]
         new_path = discussions_dir / category / slug / fp["new_filename"]
         if old_path != new_path:
             md_renames.append((old_path, new_path))
@@ -417,34 +424,70 @@ def _derive_title(
     return slug_fallback
 
 
-def _build_timeline_item(
+def _index_creation_events(legacy_timeline: list[dict]) -> dict[str, dict]:
+    """Index the legacy timeline by file: which "X created thread"/"X replied"
+    event birthed each file. Returns {old_filename: event_dict}.
+
+    Per plan §3, each file's authoritative created_at and creator come from
+    these events (not MD frontmatter). The event's `mention` field, if any,
+    is also harvested here (deferred to _build_item_from_event).
+    """
+    by_file: dict[str, dict] = {}
+    for ev in legacy_timeline:
+        e = str(ev.get("event") or "")
+        if "created thread" not in e and "replied" not in e:
+            continue
+        file_path = str(ev.get("file") or "")
+        if not file_path:
+            continue
+        old_filename = file_path.rsplit("/", 1)[-1]
+        # Last write wins if duplicates exist (shouldn't happen in well-formed
+        # legacy data, but cheap to be defensive).
+        by_file[old_filename] = ev
+    return by_file
+
+
+def _build_item_from_event(
     fp: dict,
     *,
     origin_path: str,
     rename_map: dict[str, str],
+    creation_event: dict | None,
+    users_repo,
     warnings: list[str],
-    workspace: Path,
 ) -> dict:
-    """Build one matter timeline item from a legacy files[] entry."""
+    """Build one matter timeline item, sourcing time/creator from the legacy
+    timeline event that birthed the file (per plan §3) and metadata from the
+    files[] entry. If the event carries a mention, attach as the first comment.
+    """
     new_filename = fp["new_filename"]
     file_path = f"{origin_path}/{new_filename}"
 
-    # Read frontmatter for creator/owner/created_at
-    creator = "unknown"
+    # ---- Source created_at + creator from the timeline event (plan §3) ----
     created_at = ""
-    try:
-        post = read_post(fp["old_md_path"])
-        fm = post.frontmatter
-        creator = str(fm.get("author") or "unknown")
-        if fm.get("created"):
-            created_at = str(fm["created"])
-    except Exception:
+    creator = "unknown"
+    first_comment: dict | None = None
+    if creation_event is None:
         warnings.append(
-            f"could not read frontmatter for {fp['old_filename']}; "
-            "using fallback creator/created_at"
+            f"file {fp['old_filename']} has no 'created thread'/'replied' "
+            "event in legacy timeline; created_at/creator unknown"
         )
+    else:
+        created_at = str(creation_event.get("time") or "")
+        event_str = str(creation_event.get("event") or "")
+        if event_str:
+            creator = event_str.split(" ", 1)[0]
+        # Carry mention as the file's first comment (plan §4).
+        mention = creation_event.get("mention") or {}
+        if mention.get("users") or mention.get("comments"):
+            first_comment = _mention_to_comment(
+                mention,
+                time=created_at,
+                author=creator,
+                users_repo=users_repo,
+            )
 
-    # Resolve quote / refer from refs (apply rename_map to in-thread paths)
+    # ---- quote / refer from refs[] (apply rename_map to in-thread paths) ----
     quote: str | None = None
     refer: list[str] = []
     from_refs = [r for r in fp["refs"] if r.get("type") == "from"]
@@ -473,6 +516,8 @@ def _build_timeline_item(
         item["quote"] = quote
     if refer:
         item["refer"] = refer
+    if first_comment is not None:
+        item["comments"] = [first_comment]
     return item
 
 
@@ -492,25 +537,28 @@ def _rewrite_ref_path(
     return ref_path
 
 
-def _apply_mentions_to_timeline(
+def _apply_standalone_mentions_to_timeline(
     legacy_events: list[dict],
     new_timeline: list[dict],
     *,
     rename_map: dict[str, str],
-    origin_path: str,
     users_repo,
     warnings: list[str],
 ) -> None:
-    """Walk legacy event log, route 'X mentioned' events into the matching
-    timeline item's comments[]. Drops created_thread / replied / status-change
-    events silently per plan §4."""
+    """Walk legacy event log, route standalone 'X mentioned' events into the
+    matching timeline item's comments[]. Created/replied events were already
+    consumed by _build_item_from_event (their carried mention became the first
+    comment); status-change events are dropped per plan §4."""
     by_file: dict[str, dict] = {it["file"]: it for it in new_timeline}
 
-    # Bucket mentions per target file, then sort by event.time per file
-    bucket: dict[str, list[tuple[str, dict]]] = {}
     for ev in legacy_events:
         event = str(ev.get("event") or "")
+        # "mentioned" but not the substring "created thread"/"replied" — those
+        # were absorbed at item-build time.
         if "mentioned" not in event:
+            continue
+        if "created thread" in event or "replied" in event:
+            # defensive — shouldn't normally co-occur in a single event string
             continue
         old_file_path = str(ev.get("file") or "")
         if not old_file_path:
@@ -525,15 +573,13 @@ def _apply_mentions_to_timeline(
                 f"mention target {old_file_path!r} not in new timeline; dropping"
             )
             continue
+        mention = ev.get("mention") or {}
         time = str(ev.get("time") or "")
-        bucket.setdefault(new_file_path, []).append((time, ev))
-
-    for target_path, events in bucket.items():
-        events.sort(key=lambda t: t[0])  # ascending by time
-        item = by_file[target_path]
-        comments_list = item.setdefault("comments", [])
-        for time, ev in events:
-            comments_list.append(_mention_event_to_comment(ev, users_repo=users_repo))
+        author = event.split(" ", 1)[0] if event else "unknown"
+        comment = _mention_to_comment(
+            mention, time=time, author=author, users_repo=users_repo
+        )
+        item.setdefault("comments", []).append(comment)
 
 
 def _rewrite_event_file(old_file_path: str, rename_map: dict[str, str]) -> str:
@@ -547,17 +593,25 @@ def _rewrite_event_file(old_file_path: str, rename_map: dict[str, str]) -> str:
     return old_file_path
 
 
-def _mention_event_to_comment(ev: dict, *, users_repo) -> dict:
-    """Convert a 'X mentioned' event into a matter comment dict.
+def _mention_to_comment(
+    mention: dict, *, time: str, author: str, users_repo
+) -> dict:
+    """Build a matter comment dict from any mention payload.
+
+    Source can be:
+      - "X created thread"/"X replied" event's `mention` field (carried at
+        post creation), in which case time = event.time = file's created_at
+        and author = file's creator.
+      - "X mentioned" standalone event's `mention` field, in which case time
+        is the mention's own timestamp and author is the mentioner.
 
     Per plan §4 Rule:
-      created_at = event.time
-      body       = event.mention.comments
+      created_at = time
+      body       = mention.comments  (may be empty if user only @'d someone)
       mentions   = [open_id, ...] resolved via _resolve_mentions_for_index
                    (registered → pinyin, unregistered → keeps open_id)
-      author     = event.event 字符串前缀
+      author     = author
     """
-    mention = ev.get("mention") or {}
     body = str(mention.get("comments") or "")
     users = mention.get("users") or []
     open_ids = [
@@ -566,10 +620,6 @@ def _mention_event_to_comment(ev: dict, *, users_repo) -> dict:
         if isinstance(u, dict) and u.get("open_id")
     ]
     resolved = _resolve_mentions_for_index(open_ids, users_repo)
-
-    event_str = str(ev.get("event") or "")
-    author = event_str.split(" ", 1)[0] if event_str else "unknown"
-    time = str(ev.get("time") or "")
 
     comment: dict = {
         "created_at": time,
