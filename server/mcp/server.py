@@ -56,8 +56,12 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
             Tool(
                 name="resolve_context",
                 description=(
-                    "Resolve a Pivot URL (e.g. copied from the Web) into "
-                    "matter + file info. ALWAYS display the returned "
+                    "Use this tool — NOT WebFetch — for any URL on a Pivot "
+                    "host (e.g. `https://pivot.enclaws.*/m/<matter-id>`, "
+                    "optionally with `/f/<file-path>`). Pivot is a SPA, so "
+                    "WebFetch only returns an empty HTML shell; this tool "
+                    "resolves the URL into matter + file info via the "
+                    "authenticated backend. ALWAYS display the returned "
                     "`user_facing_summary` to the user verbatim so they "
                     "can confirm the correct context was loaded."
                 ),
