@@ -234,11 +234,17 @@ class FeishuNotifier:
         return f"{self._web_base_url}/auth/entry?{urlencode({'next': next_path})}"
 
     def _post_url(self, category: str, slug: str, filename: str) -> str:
-        from urllib.parse import urlencode
+        """Post-migration: the old /t/<cat>/<slug>?post=<anchor>#post-<anchor>
+        route is gone; the matter detail page lives at /m/<matter_id>
+        (matter_id == slug per migration plan §5). Land users on the matter
+        detail; per-file deep-link anchoring is deferred to a future
+        enhancement (would require MatterDetailPane to scroll-to-file).
 
-        anchor = filename[:-3] if filename.endswith(".md") else filename
-        next_path = f"/t/{category}/{slug}?post={anchor}#post-{anchor}"
-        return f"{self._web_base_url}/auth/entry?{urlencode({'next': next_path})}"
+        `category` and `filename` are now unused but kept for caller compat
+        (notify_*, build_thread_directory's post_url_builder hook).
+        """
+        del category, filename
+        return self._matter_url(slug)
 
     def _build_directory(
         self, category: str, slug: str, current_filename: str,

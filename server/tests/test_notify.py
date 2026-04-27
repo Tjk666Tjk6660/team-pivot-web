@@ -292,12 +292,23 @@ def test_feishu_notifier_uses_auth_entry_thread_url():
     )
 
 
-def test_feishu_notifier_post_url_carries_anchor():
+def test_feishu_notifier_post_url_lands_on_matter_detail():
+    """Post-migration: per-post deep-link URL lands on /m/<matter_id>.
+    The old /t/<cat>/<slug>?post=<anchor> route is gone (frontend has no
+    such route after the matter migration), so all notify cards (new
+    thread, new reply, standalone mention, plus directory entries via
+    build_thread_directory) land users on the matter detail page.
+
+    Per-file scroll-to-anchor is a future enhancement requiring
+    MatterDetailPane to consume a `?file=` param or hash."""
     notifier = FeishuNotifier(tokens=None, web_base_url="https://pivot.enclaws.ai")  # type: ignore[arg-type]
     url = notifier._post_url("general", "hello", "001_user_proposal_abc.md")
-    # URL-encoded next should include both ?post=<anchor> and #post-<anchor>
-    assert "post%3D001_user_proposal_abc" in url
-    assert "%23post-001_user_proposal_abc" in url
+    # New: /m/<slug>, URL-encoded as /m/hello
+    assert "%2Fm%2Fhello" in url
+    # Old artifacts must be gone — no /t/, no ?post=, no #post-
+    assert "%2Ft%2F" not in url
+    assert "post%3D" not in url
+    assert "%23post-" not in url
 
 
 # ─── Discussion directory ──────────────────────────────────────────────────
