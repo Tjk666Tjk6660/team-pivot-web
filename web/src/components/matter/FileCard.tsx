@@ -3,9 +3,15 @@ import Markdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { MermaidBlock } from "./MermaidBlock";
-import { MessageSquare, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { toast } from "sonner";
-import type { DocType, Judgement, MatterStatus, MentionBlock, TimelineItem } from "@/api";
+import type {
+  DocType,
+  Judgement,
+  MatterStatus,
+  MentionBlock,
+  TimelineItem,
+} from "@/api";
 import { Button } from "@/components/ui/button";
 import {
   MentionField,
@@ -79,14 +85,14 @@ export function FileCard({
     <article
       ref={registerRef}
       className={cn(
-        "scroll-mt-24 rounded-2xl border border-slate-200 border-l-[6px] bg-white p-4 shadow-sm sm:p-5",
+        "scroll-mt-24 rounded-[var(--r-md)] border border-[var(--line)] border-l-[6px] bg-[var(--surface)] p-4 shadow-[var(--shadow-sm)] sm:p-5",
         cfg.side,
-        highlighted && "ring-2 ring-blue-300",
+        highlighted && "ring-2 ring-[var(--accent-soft)]",
       )}
     >
       {/* header */}
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-2 text-[11px] text-slate-500">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 text-[11px] text-[var(--text-mute)]">
           <span
             className={cn(
               "inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ring-1",
@@ -98,42 +104,52 @@ export function FileCard({
           <span>第 {index + 1} 条</span>
           <span>·</span>
           <span>
-            作者 <span className="font-medium text-slate-700">{item.creator}</span>
+            作者{" "}
+            <span className="font-medium text-[var(--text-soft)]">
+              {item.creator}
+            </span>
           </span>
           <span>·</span>
-          <span title={formatFullDateTime(item.created_at)}>{relativeTime(item.created_at)}</span>
+          <span title={formatFullDateTime(item.created_at)}>
+            {relativeTime(item.created_at)}
+          </span>
         </div>
         <MentionPopover onSubmit={onAddComment} align="right" />
       </div>
-      <div className="mt-1 font-mono text-xs text-slate-700 break-all">
+      <div className="mt-1 break-all font-mono text-xs text-[var(--text-soft)]">
         {shortFile(item.file)}
       </div>
 
-      <p className="mt-3 text-[14px] font-medium text-slate-900">{item.summary}</p>
+      <p className="mt-3 text-[14px] font-medium text-[var(--text)]">
+        {item.summary}
+      </p>
 
       {/* quote / refer / status_change chips */}
-      {(item.quote || (item.refer && item.refer.length > 0) || item.status_change) && (
+      {(item.quote ||
+        (item.refer && item.refer.length > 0) ||
+        item.status_change) && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           {item.quote && (
             <button
               type="button"
               onClick={() => onJump(item.quote as string)}
-              className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700 ring-1 ring-slate-200 hover:bg-slate-200"
+              className="inline-flex items-center gap-1 rounded-full bg-[var(--surface-alt)] px-2 py-0.5 text-[11px] text-[var(--text-soft)] ring-1 ring-[var(--line)] hover:bg-[var(--accent-bg)]"
               title={item.quote}
             >
-              ← quote: <span className="font-mono">{shortFile(item.quote)}</span>
+              ← quote:{" "}
+              <span className="font-mono">{shortFile(item.quote)}</span>
             </button>
           )}
           {item.refer && item.refer.length > 0 && (
             <span
-              className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] text-indigo-700 ring-1 ring-indigo-200"
+              className="inline-flex items-center gap-1 rounded-full bg-[var(--accent-bg)] px-2 py-0.5 text-[11px] text-[var(--accent)] ring-1 ring-[var(--accent-soft)]"
               title={item.refer.join("\n")}
             >
               ↔ refer: {item.refer.length}
             </span>
           )}
           {item.status_change && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-purple-50 px-2 py-0.5 text-[11px] text-purple-700 ring-1 ring-purple-200">
+            <span className="inline-flex items-center gap-1 rounded-full bg-[var(--status-project-bg)] px-2 py-0.5 text-[11px] text-[var(--status-project-fg)] ring-1 ring-[var(--accent-soft)]">
               status: {item.status_change.from} → {item.status_change.to}
             </span>
           )}
@@ -141,38 +157,42 @@ export function FileCard({
       )}
 
       {/* verify: verifications table */}
-      {item.type === "verify" && item.verifications && item.verifications.length > 0 && (
-        <div className="mt-3 overflow-hidden rounded-lg border border-amber-200">
-          <table className="w-full text-xs">
-            <thead className="bg-amber-50 text-[11px] uppercase text-amber-800">
-              <tr>
-                <th className="px-3 py-1.5 text-left">target (act)</th>
-                <th className="px-3 py-1.5 text-left">judgement</th>
-                <th className="px-3 py-1.5 text-left">comment</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-amber-100 bg-white">
-              {item.verifications.map((v, i) => (
-                <tr key={i}>
-                  <td className="px-3 py-1.5">
-                    <button
-                      type="button"
-                      onClick={() => onJump(v.target)}
-                      className="font-mono text-[11px] text-slate-700 hover:underline"
-                    >
-                      {shortFile(v.target)}
-                    </button>
-                  </td>
-                  <td className="px-3 py-1.5">
-                    <JudgementChip judgement={v.judgement} />
-                  </td>
-                  <td className="px-3 py-1.5 text-slate-600">{v.comment}</td>
+      {item.type === "verify" &&
+        item.verifications &&
+        item.verifications.length > 0 && (
+          <div className="mt-3 overflow-hidden rounded-[var(--r-sm)] border border-[var(--accent-soft)]">
+            <table className="w-full text-xs">
+              <thead className="bg-[var(--accent-bg)] text-[11px] uppercase text-[var(--accent)]">
+                <tr>
+                  <th className="px-3 py-1.5 text-left">target (act)</th>
+                  <th className="px-3 py-1.5 text-left">judgement</th>
+                  <th className="px-3 py-1.5 text-left">comment</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody className="divide-y divide-[var(--line-soft)] bg-[var(--surface)]">
+                {item.verifications.map((v, i) => (
+                  <tr key={i}>
+                    <td className="px-3 py-1.5">
+                      <button
+                        type="button"
+                        onClick={() => onJump(v.target)}
+                        className="font-mono text-[11px] text-[var(--text-soft)] hover:underline"
+                      >
+                        {shortFile(v.target)}
+                      </button>
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <JudgementChip judgement={v.judgement} />
+                    </td>
+                    <td className="px-3 py-1.5 text-[var(--text-soft)]">
+                      {v.comment}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
       {/* result banner */}
       {item.type === "result" && item.outcome && (
@@ -180,11 +200,12 @@ export function FileCard({
           className={cn(
             "mt-3 rounded-lg px-4 py-3 text-sm font-semibold",
             item.outcome === "finished"
-              ? "bg-green-50 text-green-800 ring-1 ring-green-200"
-              : "bg-slate-100 text-slate-700 ring-1 ring-slate-300",
+              ? "bg-[var(--status-concluded-bg)] text-[var(--status-concluded-fg)] ring-1 ring-[var(--line)]"
+              : "bg-[var(--status-archived-bg)] text-[var(--status-archived-fg)] ring-1 ring-[var(--line)]",
           )}
         >
-          Matter 结果：{item.outcome === "finished" ? "已完成 finished" : "已取消 cancelled"}
+          Matter 结果：
+          {item.outcome === "finished" ? "已完成 finished" : "已取消 cancelled"}
         </div>
       )}
 
@@ -192,17 +213,24 @@ export function FileCard({
       {item.body && (
         <>
           <div
-            style={expanded ? undefined : { maxHeight: COLLAPSE_HEIGHT, overflow: "hidden" }}
-            className="prose-pivot mt-3 max-w-none text-[13.5px] leading-7 text-slate-700"
+            style={
+              expanded
+                ? undefined
+                : { maxHeight: COLLAPSE_HEIGHT, overflow: "hidden" }
+            }
+            className="prose-pivot mt-3 max-w-none text-[13.5px] leading-7 text-[var(--text-soft)]"
           >
-            <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            <Markdown
+              remarkPlugins={[remarkGfm]}
+              components={markdownComponents}
+            >
               {item.body}
             </Markdown>
           </div>
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
-            className="mt-1 text-xs text-blue-600 hover:underline"
+            className="mt-1 text-xs text-[var(--accent)] hover:underline"
           >
             {expanded ? "收起 ↑" : "展开全文 ↓"}
           </button>
@@ -213,7 +241,7 @@ export function FileCard({
       <CommentsBlock item={item} />
 
       {/* 三入口 */}
-      <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3">
+      <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-[var(--line-soft)] pt-3">
         <CardAddButton
           label="think"
           disabled={!allowThink}
@@ -232,8 +260,9 @@ export function FileCard({
           active={activeType === "verify"}
           onClick={() => onCreate("verify", item.file)}
         />
-        <div className="ml-auto text-[10px] text-slate-400">
-          点按钮 · 新文件 quote 自动写入 <span className="font-mono">{shortFile(item.file)}</span>
+        <div className="ml-auto text-[10px] text-[var(--text-fade)]">
+          点按钮 · 新文件 quote 自动写入{" "}
+          <span className="font-mono">{shortFile(item.file)}</span>
         </div>
       </div>
     </article>
@@ -260,7 +289,10 @@ function MentionPopover({
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+      if (
+        popoverRef.current &&
+        !popoverRef.current.contains(e.target as Node)
+      ) {
         setOpen(false);
       }
     };
@@ -296,18 +328,18 @@ function MentionPopover({
         type="button"
         onClick={() => setOpen((o) => !o)}
         title="圈人留言（追加为本文件的一条带 mention 的评论）"
-        className="inline-flex items-center rounded-md border border-blue-200 bg-white px-2 py-1 text-[11px] font-semibold text-blue-700 hover:border-blue-300 hover:bg-blue-50"
+        className="inline-flex items-center rounded-[var(--r-sm)] border border-[var(--accent-soft)] bg-[var(--surface)] px-2 py-1 text-[11px] font-semibold text-[var(--accent)] hover:bg-[var(--accent-bg)]"
       >
         @ 提及
       </button>
       {open && (
         <div
           className={cn(
-            "absolute top-full z-50 mt-2 w-[22rem] rounded-md border border-slate-200 bg-white p-3 shadow-lg",
+            "absolute top-full z-50 mt-2 w-[22rem] rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] p-3 shadow-[var(--shadow-lg)]",
             align === "right" ? "right-0" : "left-0",
           )}
         >
-          <p className="mb-2 text-[10.5px] font-bold uppercase tracking-wider text-slate-500">
+          <p className="mb-2 text-[10.5px] font-bold uppercase tracking-wider text-[var(--text-mute)]">
             提及某人
           </p>
           <MentionField
@@ -333,7 +365,7 @@ function MentionPopover({
               size="sm"
               onClick={() => void submit()}
               disabled={submitting}
-              className="bg-blue-600 text-white hover:bg-blue-700"
+              className="bg-[var(--accent)] text-[var(--accent-ink)] hover:opacity-90"
             >
               {submitting ? "发送中…" : "发送"}
             </Button>
@@ -360,14 +392,16 @@ function CardAddButton({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      title={disabled ? "当前 matter 状态不允许新增此类型" : `基于此新增 ${label}`}
+      title={
+        disabled ? "当前 matter 状态不允许新增此类型" : `基于此新增 ${label}`
+      }
       className={cn(
         "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
         disabled
-          ? "cursor-not-allowed border-slate-200 text-slate-400"
+          ? "cursor-not-allowed border-[var(--line)] text-[var(--text-fade)]"
           : active
-            ? "border-blue-400 bg-blue-50 text-blue-700"
-            : "border-slate-300 text-slate-700 hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700",
+            ? "border-[var(--accent-soft)] bg-[var(--accent-bg)] text-[var(--accent)]"
+            : "border-[var(--line-strong)] text-[var(--text-soft)] hover:border-[var(--accent-soft)] hover:bg-[var(--accent-bg)] hover:text-[var(--accent)]",
       )}
     >
       <Plus className="h-3 w-3" />
@@ -378,12 +412,20 @@ function CardAddButton({
 
 function JudgementChip({ judgement }: { judgement: Judgement }) {
   const MAP: Record<Judgement, string> = {
-    passed: "bg-green-100 text-green-800 ring-green-200",
-    failed: "bg-red-100 text-red-800 ring-red-200",
-    cancelled: "bg-slate-100 text-slate-600 ring-slate-300",
+    passed:
+      "bg-[var(--status-concluded-bg)] text-[var(--status-concluded-fg)] ring-[var(--line)]",
+    failed:
+      "bg-[color-mix(in_srgb,var(--danger-500)_12%,var(--surface))] text-[var(--danger-600)] ring-[color-mix(in_srgb,var(--danger-500)_24%,var(--line))]",
+    cancelled:
+      "bg-[var(--status-archived-bg)] text-[var(--status-archived-fg)] ring-[var(--line)]",
   };
   return (
-    <span className={cn("inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ring-1", MAP[judgement])}>
+    <span
+      className={cn(
+        "inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ring-1",
+        MAP[judgement],
+      )}
+    >
       {judgement}
     </span>
   );
@@ -393,39 +435,42 @@ function CommentsBlock({ item }: { item: TimelineItem }) {
   if (item.comments.length === 0) return null;
 
   return (
-    <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
-      <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-        <MessageSquare className="h-3 w-3" />
-        comments · {item.comments.length}
-      </div>
-      <ul className="mt-2 space-y-2">
+    <div className="mt-3">
+      <ul className="space-y-2">
         {item.comments.map((c, i) => {
-          const author = ((c.author_display || c.author) ?? "").trim() || "未知用户";
+          const author =
+            ((c.author_display || c.author) ?? "").trim() || "未知用户";
           const mentionNames = c.mentions_display ?? c.mentions ?? [];
           const body = c.body?.trim();
           return (
             <li
               key={i}
-              className="rounded-md border border-slate-200 bg-white px-3 py-2 text-[12.5px] text-slate-700"
+              className="rounded-[var(--r-sm)] border border-[var(--line)] bg-[var(--surface-alt)] px-3 py-2 text-[12.5px] leading-6 text-[var(--text-soft)]"
             >
-              <span className="text-slate-500">评论{i + 1}</span>
+              <span className="inline-flex items-center rounded-full border border-[var(--line)] bg-[var(--surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-soft)]">
+                评论{i + 1}
+              </span>
               <span
-                className="ml-1 text-slate-400"
+                className="ml-1 text-[var(--text-fade)]"
                 title={formatFullDateTime(c.created_at)}
               >
                 · {relativeTime(c.created_at)}
               </span>
-              <span className="ml-2 font-semibold text-slate-900">{author}</span>
+              <span className="ml-2 font-semibold text-[var(--text)]">
+                {author}
+              </span>
               {mentionNames.map((name, mi) => (
-                <span key={mi} className="ml-1 text-blue-600">
+                <span key={mi} className="ml-1 text-[var(--accent)]">
                   @{name}
                 </span>
               ))}
-              <span className="ml-1 text-slate-500">说:</span>
+              <span className="ml-1 text-[var(--text-mute)]">说:</span>
               {body ? (
                 <span className="ml-0.5">{body}</span>
               ) : (
-                <span className="ml-0.5 text-slate-400">未填写评论内容</span>
+                <span className="ml-0.5 text-[var(--text-fade)]">
+                  未填写评论内容
+                </span>
               )}
             </li>
           );

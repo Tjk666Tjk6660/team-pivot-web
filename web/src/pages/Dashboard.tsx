@@ -61,7 +61,11 @@ type DashboardContext = {
   ai: {
     activeStream: ActiveAIStream;
     getThreadState: (threadKey: string) => AIThreadState;
-    ensureThreadLoaded: (category: string, slug: string, threadKey: string) => Promise<void>;
+    ensureThreadLoaded: (
+      category: string,
+      slug: string,
+      threadKey: string,
+    ) => Promise<void>;
     setInput: (threadKey: string, value: string) => void;
     setReplyTarget: (
       category: string,
@@ -69,7 +73,11 @@ type DashboardContext = {
       threadKey: string,
       value: string | null,
     ) => void;
-    clearThreadConversation: (category: string, slug: string, threadKey: string) => Promise<void>;
+    clearThreadConversation: (
+      category: string,
+      slug: string,
+      threadKey: string,
+    ) => Promise<void>;
     sendMessage: (args: {
       category: string;
       slug: string;
@@ -77,7 +85,11 @@ type DashboardContext = {
       threadTitle: string;
       rawText: string;
       hasReplyDraft: boolean;
-      onUseDraftAsReply: (content: string, replyTo: string, summary?: string) => Promise<boolean>;
+      onUseDraftAsReply: (
+        content: string,
+        replyTo: string,
+        summary?: string,
+      ) => Promise<boolean>;
     }) => Promise<void>;
   };
 };
@@ -109,10 +121,7 @@ function extractDraft(
   const summaryMatch = text.match(SUMMARY_RE);
   // Strip both blocks from `rest` so the user-facing AI message doesn't
   // show the raw <draft>/<summary> tags after streaming completes.
-  const rest = text
-    .replace(DRAFT_RE, "")
-    .replace(SUMMARY_RE, "")
-    .trim();
+  const rest = text.replace(DRAFT_RE, "").replace(SUMMARY_RE, "").trim();
   return {
     draft: m[2].trim(),
     rest,
@@ -178,7 +187,9 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const load = useCallback(async () => {
     try {
       const [m, w, d] = await Promise.all([
-        fetchMatters(), fetchWorkspaceStatus(), fetchDrafts(),
+        fetchMatters(),
+        fetchWorkspaceStatus(),
+        fetchDrafts(),
       ]);
       setMatters((prev) => (sameMatters(prev, m) ? prev : m));
       setWorkspace(w);
@@ -211,13 +222,17 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     const next = !current.favorite;
     // optimistic
     setMatters((prev) =>
-      prev ? prev.map((m) => (m.id === matterId ? { ...m, favorite: next } : m)) : prev,
+      prev
+        ? prev.map((m) => (m.id === matterId ? { ...m, favorite: next } : m))
+        : prev,
     );
     try {
       await setMatterFavorite(matterId, next);
     } catch (e) {
       setMatters((prev) =>
-        prev ? prev.map((m) => (m.id === matterId ? { ...m, favorite: !next } : m)) : prev,
+        prev
+          ? prev.map((m) => (m.id === matterId ? { ...m, favorite: !next } : m))
+          : prev,
       );
       toast.error(e instanceof Error ? e.message : String(e));
     }
@@ -232,7 +247,8 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     threadKey: string,
     snapshot?: AIThreadState,
   ) => {
-    const thread = snapshot ?? aiThreadsRef.current[threadKey] ?? emptyAIThreadState();
+    const thread =
+      snapshot ?? aiThreadsRef.current[threadKey] ?? emptyAIThreadState();
     saveAIConversation(
       category,
       slug,
@@ -241,7 +257,11 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     ).catch(() => {});
   };
 
-  const ensureThreadLoaded = async (category: string, slug: string, threadKey: string) => {
+  const ensureThreadLoaded = async (
+    category: string,
+    slug: string,
+    threadKey: string,
+  ) => {
     const current = aiThreadsRef.current[threadKey];
     if (current?.loaded || current?.loading) return;
 
@@ -257,7 +277,10 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       const conv = await fetchAIConversation(category, slug);
       setAiThreads((prev) => {
         const existing = prev[threadKey] ?? emptyAIThreadState();
-        const mapped: AIMsg[] = conv.messages.map((m, idx) => ({ ...m, id: idx + 1 }));
+        const mapped: AIMsg[] = conv.messages.map((m, idx) => ({
+          ...m,
+          id: idx + 1,
+        }));
         return {
           ...prev,
           [threadKey]: {
@@ -304,12 +327,18 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
         ...existing,
         replyTarget: value,
       };
-      queueMicrotask(() => persistThreadConversation(category, slug, threadKey, nextState));
+      queueMicrotask(() =>
+        persistThreadConversation(category, slug, threadKey, nextState),
+      );
       return { ...prev, [threadKey]: nextState };
     });
   };
 
-  const clearThreadConversation = async (category: string, slug: string, threadKey: string) => {
+  const clearThreadConversation = async (
+    category: string,
+    slug: string,
+    threadKey: string,
+  ) => {
     setAiThreads((prev) => ({
       ...prev,
       [threadKey]: {
@@ -343,7 +372,11 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     threadTitle: string;
     rawText: string;
     hasReplyDraft: boolean;
-    onUseDraftAsReply: (content: string, replyTo: string, summary?: string) => Promise<boolean>;
+    onUseDraftAsReply: (
+      content: string,
+      replyTo: string,
+      summary?: string,
+    ) => Promise<boolean>;
   }) => {
     const trimmed = rawText.trim();
     if (!trimmed) return;
@@ -362,7 +395,11 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     }
 
     const currentReplyTarget = current.replyTarget;
-    const userMsg: AIMsg = { id: current.nextId, role: "user", content: trimmed };
+    const userMsg: AIMsg = {
+      id: current.nextId,
+      role: "user",
+      content: trimmed,
+    };
     const assistantId = current.nextId + 1;
     const withUser: AIMsg[] = [...current.messages, userMsg];
     const pendingMessages: AIMsg[] = [
@@ -384,12 +421,20 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     }));
 
     setActiveAIStream({ threadKey, category, slug, title: threadTitle });
-    const historyForApi: ChatMessage[] = withUser.map(({ role, content }) => ({ role, content }));
+    const historyForApi: ChatMessage[] = withUser.map(({ role, content }) => ({
+      role,
+      content,
+    }));
 
     try {
       let accumulated = "";
       const toolUses: AIToolUse[] = [];
-      for await (const ev of streamAIChat(category, slug, historyForApi, currentReplyTarget)) {
+      for await (const ev of streamAIChat(
+        category,
+        slug,
+        historyForApi,
+        currentReplyTarget,
+      )) {
         if (ev.kind === "delta") {
           accumulated += ev.delta;
           setAiThreads((prev) => {
@@ -452,7 +497,9 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
         } else {
           let proceed = true;
           if (hasReplyDraft) {
-            proceed = window.confirm("你已修改 Reply 框内容，是否用 AI 新草稿覆盖？");
+            proceed = window.confirm(
+              "你已修改 Reply 框内容，是否用 AI 新草稿覆盖？",
+            );
           }
           if (proceed) {
             const ok = await onUseDraftAsReply(
@@ -502,28 +549,39 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
           [threadKey]: {
             ...existing,
             messages: existing.messages.map((m) =>
-              m.id === assistantId ? { ...m, content: `_错误：${errText}_` } : m,
+              m.id === assistantId
+                ? { ...m, content: `_错误：${errText}_` }
+                : m,
             ),
             streaming: false,
           },
         };
       });
     } finally {
-      setActiveAIStream((prev) => (prev?.threadKey === threadKey ? null : prev));
+      setActiveAIStream((prev) =>
+        prev?.threadKey === threadKey ? null : prev,
+      );
     }
   };
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   // Subscribe to SSE matter events + visibility/reconnect resume signals.
   // Both list-mutating events and resume should converge on a single debounced
   // refetch keyed by "matters-list" so a burst of events triggers one network
   // call.
-  useMatterEvents(useCallback((evt) => {
-    // resume / matter.created / matter.updated all warrant a list refresh.
-    if (evt.type !== "resume" && !evt.matter_id) return;
-    scheduleRefresh("matters-list", refreshMattersSilently);
-  }, [refreshMattersSilently]));
+  useMatterEvents(
+    useCallback(
+      (evt) => {
+        // resume / matter.created / matter.updated all warrant a list refresh.
+        if (evt.type !== "resume" && !evt.matter_id) return;
+        scheduleRefresh("matters-list", refreshMattersSilently);
+      },
+      [refreshMattersSilently],
+    ),
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -557,7 +615,10 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     const maxWidth = Math.min(560, rect.width - 360);
 
     const onMove = (moveEvent: MouseEvent) => {
-      const next = Math.min(Math.max(moveEvent.clientX - rect.left, minWidth), maxWidth);
+      const next = Math.min(
+        Math.max(moveEvent.clientX - rect.left, minWidth),
+        maxWidth,
+      );
       setSidebarWidth(next);
       if (!sidebarOpen) setSidebarOpen(true);
     };
@@ -580,7 +641,10 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       <Toaster position="top-center" richColors />
       <header
         className="relative z-40 shrink-0 border-b backdrop-blur"
-        style={{ borderColor: "var(--line)", background: "rgba(255, 253, 248, 0.94)" }}
+        style={{
+          borderColor: "var(--line)",
+          background: "rgba(255, 253, 248, 0.94)",
+        }}
       >
         <div className="flex min-h-[3.75rem] items-center gap-3 px-3 py-2 sm:min-h-[3.75rem] sm:gap-4 sm:px-6 sm:py-2">
           <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-5">
@@ -611,7 +675,10 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
               />
               <span
                 className="truncate text-[17px] font-semibold"
-                style={{ color: "var(--text)", letterSpacing: "var(--letter-tight)" }}
+                style={{
+                  color: "var(--text)",
+                  letterSpacing: "var(--letter-tight)",
+                }}
               >
                 Pivot
               </span>
@@ -619,7 +686,10 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
             <nav className="hidden items-center gap-1 sm:flex">
               <span
                 className="rounded-md px-3 py-1.5 text-[13px] font-semibold cursor-default"
-                style={{ background: "var(--accent-bg)", color: "var(--accent)" }}
+                style={{
+                  background: "var(--accent-bg)",
+                  color: "var(--accent)",
+                }}
               >
                 讨论
               </span>
@@ -673,7 +743,10 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
         </div>
       </header>
 
-      <div ref={layoutRef} className="flex flex-1 flex-col overflow-hidden md:flex-row">
+      <div
+        ref={layoutRef}
+        className="flex flex-1 flex-col overflow-hidden md:flex-row"
+      >
         <aside
           className={cn(
             "min-h-0 overflow-y-auto md:shrink-0 md:transition-[width] md:duration-200 md:ease-out",
@@ -698,7 +771,6 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
             <ThreadListPane
               drafts={drafts}
               matters={matters}
-              onToggleFavorite={toggleMatterFavorite}
               onRemoveDraft={removeDraft}
             />
           )}
@@ -709,7 +781,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
             onMouseDown={startSidebarResize}
             title="拖拽调整导航栏宽度"
           >
-            <div className="pointer-events-none flex items-center text-slate-300 transition-colors group-hover:text-slate-500">
+            <div className="pointer-events-none flex items-center text-[var(--text-fade)] transition-colors group-hover:text-[var(--text-mute)]">
               <GripVertical className="h-3.5 w-3.5" />
             </div>
           </div>
@@ -722,19 +794,21 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
           style={{ background: "var(--bg)" }}
         >
           <Outlet
-            context={{
-              reloadLists: load,
-              toggleMatterFavorite,
-              ai: {
-                activeStream: activeAIStream,
-                getThreadState,
-                ensureThreadLoaded,
-                setInput,
-                setReplyTarget,
-                clearThreadConversation,
-                sendMessage,
-              },
-            } satisfies DashboardContext}
+            context={
+              {
+                reloadLists: load,
+                toggleMatterFavorite,
+                ai: {
+                  activeStream: activeAIStream,
+                  getThreadState,
+                  ensureThreadLoaded,
+                  setInput,
+                  setReplyTarget,
+                  clearThreadConversation,
+                  sendMessage,
+                },
+              } satisfies DashboardContext
+            }
           />
         </main>
       </div>
@@ -749,7 +823,8 @@ function UserMenu({ me, onLogout }: { me: Me; onLogout: () => void }) {
   useEffect(() => {
     if (!open) return;
     const onClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
     };
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
@@ -778,7 +853,10 @@ function UserMenu({ me, onLogout }: { me: Me; onLogout: () => void }) {
         >
           {me.name}
         </span>
-        <ChevronDown className="h-3.5 w-3.5" style={{ color: "var(--text-mute)" }} />
+        <ChevronDown
+          className="h-3.5 w-3.5"
+          style={{ color: "var(--text-mute)" }}
+        />
       </button>
       {open && (
         <div
@@ -813,7 +891,10 @@ function UserMenu({ me, onLogout }: { me: Me; onLogout: () => void }) {
             className="flex items-center gap-2.5 px-3 py-2.5 text-[13px] hover:bg-[var(--surface-alt)]"
             style={{ color: "var(--text-soft)" }}
           >
-            <User className="h-3.5 w-3.5" style={{ color: "var(--text-mute)" }} />
+            <User
+              className="h-3.5 w-3.5"
+              style={{ color: "var(--text-mute)" }}
+            />
             个人设置
           </Link>
           <Link
@@ -822,19 +903,28 @@ function UserMenu({ me, onLogout }: { me: Me; onLogout: () => void }) {
             className="flex items-center gap-2.5 px-3 py-2.5 text-[13px] hover:bg-[var(--surface-alt)]"
             style={{ color: "var(--text-soft)" }}
           >
-            <ShieldCheck className="h-3.5 w-3.5" style={{ color: "var(--text-mute)" }} />
+            <ShieldCheck
+              className="h-3.5 w-3.5"
+              style={{ color: "var(--text-mute)" }}
+            />
             管理员设置
           </Link>
           <button
             type="button"
-            onClick={() => { setOpen(false); onLogout(); }}
+            onClick={() => {
+              setOpen(false);
+              onLogout();
+            }}
             className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] hover:bg-[var(--surface-alt)]"
             style={{
               color: "var(--text-soft)",
               borderTop: "1px solid var(--line-soft)",
             }}
           >
-            <LogOut className="h-3.5 w-3.5" style={{ color: "var(--text-mute)" }} />
+            <LogOut
+              className="h-3.5 w-3.5"
+              style={{ color: "var(--text-mute)" }}
+            />
             退出登录
           </button>
         </div>

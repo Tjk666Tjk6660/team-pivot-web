@@ -50,10 +50,10 @@ export function MermaidBlock({ code }: { code: string }) {
 
   if (error) {
     return (
-      <div className="my-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+      <div className="my-2 rounded-md border border-[color-mix(in_srgb,var(--warn-500)_24%,var(--line))] bg-[color-mix(in_srgb,var(--warn-500)_10%,var(--surface))] p-2 text-xs text-[var(--warn-600)]">
         <div className="mb-1 font-semibold">Mermaid 渲染失败</div>
-        <div className="mb-1 text-[11px] text-amber-700">{error}</div>
-        <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-[11px] text-amber-900">
+        <div className="mb-1 text-[11px] text-[var(--warn-600)]">{error}</div>
+        <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-[11px] text-[var(--warn-600)]">
           {code}
         </pre>
       </div>
@@ -62,7 +62,7 @@ export function MermaidBlock({ code }: { code: string }) {
 
   if (!svg) {
     return (
-      <pre className="my-2 overflow-x-auto rounded-md border border-slate-200 bg-slate-50 p-2 font-mono text-[11px] text-slate-500">
+      <pre className="my-2 overflow-x-auto rounded-md border border-[var(--line)] bg-[var(--surface-alt)] p-2 font-mono text-[11px] text-[var(--text-mute)]">
         {code}
       </pre>
     );
@@ -70,7 +70,7 @@ export function MermaidBlock({ code }: { code: string }) {
 
   return (
     <div
-      className="my-2 flex justify-center overflow-x-auto rounded-md border border-slate-200 bg-white p-3"
+      className="my-2 flex justify-center overflow-x-auto rounded-md border border-[var(--line)] bg-[var(--surface)] p-3"
       dangerouslySetInnerHTML={{ __html: svg }}
     />
   );

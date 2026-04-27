@@ -359,7 +359,7 @@ export function CreateFileForm({
     <div className="space-y-3 text-sm" onBlur={handleContainerBlur}>
       {quote && (
         <FieldRow label="quote" hint="入口自动带入，只读">
-          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-700">
+          <div className="rounded-md border border-[var(--line)] bg-[var(--surface-alt)] px-3 py-2 font-mono text-xs text-[var(--text-soft)]">
             {shortFile(quote)}
           </div>
         </FieldRow>
@@ -455,8 +455,8 @@ export function CreateFileForm({
                     className={cn(
                       "rounded-full border px-2 py-0.5 font-mono text-[11px]",
                       selected
-                        ? "border-indigo-400 bg-indigo-100 text-indigo-800"
-                        : "border-slate-300 text-slate-600 hover:border-slate-400",
+                        ? "border-[var(--accent)] bg-[var(--accent-bg)] text-[var(--accent)]"
+                        : "border-[var(--line-strong)] text-[var(--text-soft)] hover:border-[var(--text-fade)]",
                     )}
                   >
                     {shortFile(x.file)}
@@ -464,7 +464,7 @@ export function CreateFileForm({
                 );
               })}
             {timeline.length <= 1 && (
-              <span className="text-xs text-slate-400">（无其它文件）</span>
+              <span className="text-xs text-[var(--text-fade)]">（无其它文件）</span>
             )}
           </div>
         </FieldRow>
@@ -531,14 +531,14 @@ export function CreateFileForm({
       )}
 
       {reviewedTransition && (
-        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+        <div className="rounded-md border border-[color-mix(in_srgb,var(--danger-500)_24%,var(--line))] bg-[color-mix(in_srgb,var(--danger-500)_10%,var(--surface))] px-3 py-2 text-xs text-[var(--danger-600)]">
           ⚠ 这条 insight 提交后会推进事项到 <span className="font-mono">reviewed</span>
           （{matterStatus} → reviewed）。归档后不再允许新增任何文件，操作不可撤销。
         </div>
       )}
 
       {isResult && (
-        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+        <div className="rounded-md border border-[color-mix(in_srgb,var(--danger-500)_24%,var(--line))] bg-[color-mix(in_srgb,var(--danger-500)_10%,var(--surface))] px-3 py-2 text-xs text-[var(--danger-600)]">
           ⚠ 这条 result 提交后会收口事项
           （<span className="font-mono">executing</span> → <span className="font-mono">{form.outcome}</span>）。
           收口后不再允许新增 act / verify / 执行性 think，只剩 insight 可追加，操作不可撤销。
@@ -562,7 +562,7 @@ export function CreateFileForm({
           <Button
             variant="outline"
             size="sm"
-            className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+            className="border-[color-mix(in_srgb,var(--danger-500)_24%,var(--line))] text-[var(--danger-600)] hover:bg-[color-mix(in_srgb,var(--danger-500)_10%,var(--surface))] hover:text-[var(--danger-600)]"
             onClick={() => void onDeleteDraft()}
             disabled={submitting}
           >
@@ -631,11 +631,11 @@ function FieldRow({
   return (
     <div>
       <div className="mb-1 flex items-center gap-2 text-xs">
-        <span className="font-medium text-slate-700">
+        <span className="font-medium text-[var(--text-soft)]">
           {label}
-          {required && <span className="ml-0.5 text-red-500">*</span>}
+          {required && <span className="ml-0.5 text-[var(--danger-500)]">*</span>}
         </span>
-        {hint && <span className="text-slate-400">{hint}</span>}
+        {hint && <span className="text-[var(--text-fade)]">{hint}</span>}
       </div>
       {children}
     </div>
@@ -670,7 +670,7 @@ function VerificationsEditor({
 }) {
   if (actFiles.length === 0) {
     return (
-      <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+      <div className="rounded-md border border-[color-mix(in_srgb,var(--warn-500)_24%,var(--line))] bg-[color-mix(in_srgb,var(--warn-500)_10%,var(--surface))] p-2 text-xs text-[var(--warn-600)]">
         当前 matter 没有 act — 无法创建 verify。请先在 planning / executing 下追加 act。
       </div>
     );
@@ -686,11 +686,11 @@ function VerificationsEditor({
     ]);
 
   return (
-    <div className="space-y-2 rounded-md border border-slate-200 p-2">
+    <div className="space-y-2 rounded-md border border-[var(--line)] p-2">
       {verifications.map((v, i) => (
-        <div key={i} className="grid grid-cols-12 gap-2 rounded-md bg-slate-50 p-2">
+        <div key={i} className="grid grid-cols-12 gap-2 rounded-md bg-[var(--surface-alt)] p-2">
           <select
-            className="col-span-5 rounded-md border border-slate-300 bg-white px-2 py-1 font-mono text-[11px]"
+            className="col-span-5 rounded-md border border-[var(--line-strong)] bg-[var(--surface)] px-2 py-1 font-mono text-[11px]"
             value={v.target}
             onChange={(e) => update(i, { target: e.target.value })}
           >
@@ -701,7 +701,7 @@ function VerificationsEditor({
             ))}
           </select>
           <select
-            className="col-span-3 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs"
+            className="col-span-3 rounded-md border border-[var(--line-strong)] bg-[var(--surface)] px-2 py-1 text-xs"
             value={v.judgement}
             onChange={(e) => update(i, { judgement: e.target.value as Judgement })}
           >
@@ -718,7 +718,7 @@ function VerificationsEditor({
           <button
             type="button"
             onClick={() => remove(i)}
-            className="col-span-1 text-xs text-slate-400 hover:text-red-500"
+            className="col-span-1 text-xs text-[var(--text-fade)] hover:text-[var(--danger-500)]"
             title="移除"
           >
             ×
@@ -728,7 +728,7 @@ function VerificationsEditor({
       <button
         type="button"
         onClick={add}
-        className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
+        className="inline-flex items-center gap-1 rounded-md border border-[var(--line-strong)] px-2 py-1 text-[11px] text-[var(--text-soft)] hover:bg-[var(--surface-alt)]"
       >
         <Plus className="h-3 w-3" />
         追加 target

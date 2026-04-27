@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Bot, ChevronRight, Sparkles, Star, X } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Bot,
+  ChevronRight,
+  Minimize2,
+  Sparkles,
+  Star,
+  X,
+} from "lucide-react";
 import {
   appendMatterComment,
   appendMatterFile,
@@ -47,6 +56,8 @@ export function MatterDetailEmpty() {
   return <HomeWelcomePane />;
 }
 
+const JUMP_CONTROL_MIN_SCROLL = 240;
+
 // Stable compare for MatterDetail — returns true when nothing the view reads
 // has changed, so the silent refresh path can no-op and avoid re-rendering
 // the timeline (which would otherwise reset card-level UI like highlights).
@@ -88,17 +99,20 @@ export function MatterDetailPane() {
   const [searchParams, setSearchParams] = useSearchParams();
   const draftIdFromUrl = searchParams.get("draft");
   const { reloadLists, toggleMatterFavorite, ai } = useDashboard();
-  const [data, setData] = useState<MatterDetailData | null | undefined>(undefined);
+  const [data, setData] = useState<MatterDetailData | null | undefined>(
+    undefined,
+  );
   const [sessionOpenId, setSessionOpenId] = useState<string>("");
   const [sessionName, setSessionName] = useState<string>("");
-  const [pendingCreate, setPendingCreate] = useState<
-    { type: DocType; quote: string | null; reviewedTransition?: boolean } | null
-  >(null);
+  const [pendingCreate, setPendingCreate] = useState<{
+    type: DocType;
+    quote: string | null;
+    reviewedTransition?: boolean;
+  } | null>(null);
   const [matterDrafts, setMatterDrafts] = useState<Draft[]>([]);
   const [pendingDraftId, setPendingDraftId] = useState<string | null>(null);
-  const [pendingInitial, setPendingInitial] = useState<Partial<FormSnapshot> | null>(
-    null,
-  );
+  const [pendingInitial, setPendingInitial] =
+    useState<Partial<FormSnapshot> | null>(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [resultConfirmOpen, setResultConfirmOpen] = useState(false);
   const [reviewedConfirmOpen, setReviewedConfirmOpen] = useState(false);
@@ -108,7 +122,9 @@ export function MatterDetailPane() {
   const draftFromPayload = (d: Draft): Partial<FormSnapshot> => {
     const mp = (d.matter_payload ?? {}) as Record<string, unknown>;
     const sc = mp.status_change as FormSnapshot["status_change"] | undefined;
-    const rawMentions = mp.mentions as { open_ids?: unknown; comments?: unknown } | undefined;
+    const rawMentions = mp.mentions as
+      | { open_ids?: unknown; comments?: unknown }
+      | undefined;
     const mentions =
       rawMentions &&
       Array.isArray(rawMentions.open_ids) &&
@@ -145,14 +161,13 @@ export function MatterDetailPane() {
       const mpQuote = (mp as { quote?: unknown }).quote;
       const sameType = (mp as { doc_type?: unknown }).doc_type === type;
       const sameQuote =
-        quote === null
-          ? mpQuote == null || mpQuote === ""
-          : mpQuote === quote;
+        quote === null ? mpQuote == null || mpQuote === "" : mpQuote === quote;
       // 区分"纯 insight"草稿和"insight + 推进 reviewed"草稿,避免互相覆盖。
       const draftIsReviewed =
-        ((mp as { status_change?: { to?: unknown } }).status_change?.to) ===
+        (mp as { status_change?: { to?: unknown } }).status_change?.to ===
         "reviewed";
-      if (sameType && sameQuote && draftIsReviewed === reviewedTransition) return d;
+      if (sameType && sameQuote && draftIsReviewed === reviewedTransition)
+        return d;
     }
     return null;
   };
@@ -175,20 +190,33 @@ export function MatterDetailPane() {
       return;
     }
     const existing = findDraft(matterDrafts, type, quote, reviewedTransition);
-    setPendingCreate({ type, quote, reviewedTransition: reviewedTransition || undefined });
+    setPendingCreate({
+      type,
+      quote,
+      reviewedTransition: reviewedTransition || undefined,
+    });
     setPendingDraftId(existing?.id ?? null);
     setPendingInitial(existing ? draftFromPayload(existing) : null);
   };
 
-  const requestCreate = (type: DocType, quote: string) => openPending(type, quote);
+  const requestCreate = (type: DocType, quote: string) =>
+    openPending(type, quote);
   const [highlight, setHighlight] = useState<string | null>(null);
+  const [jumpBounds, setJumpBounds] = useState({
+    top: true,
+    bottom: false,
+    canScroll: false,
+  });
   const [aiOpen, setAiOpen] = useState(false);
+  const [aiMinimized, setAiMinimized] = useState(false);
   const [pendingAIOrigin, setPendingAIOrigin] = useState<string | null>(null);
   const [aiFillToken, setAiFillToken] = useState(0);
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const contentScrollRef = useRef<HTMLDivElement | null>(null);
 
   const openAIForFile = (file: string) => {
     setPendingAIOrigin(file);
+    setAiMinimized(false);
     setAiOpen(true);
   };
 
@@ -198,6 +226,7 @@ export function MatterDetailPane() {
   // read_matter_index（服务端 tools.py 已加,文件名规则 {matter_id}.index.yaml）。
   const openMatterAIAssistant = () => {
     if (!matter_id || !data || data.timeline.length === 0) return;
+    setAiMinimized(false);
     const { matter: m, timeline: tl } = data;
     const tk = m.category ? `${m.category}/${m.id}` : m.id;
     const firstFile = tl[0].file;
@@ -281,7 +310,8 @@ export function MatterDetailPane() {
     const found = matterDrafts.find((d) => d.id === draftIdFromUrl);
     if (!found) return;
     const mp = (found.matter_payload ?? {}) as Record<string, unknown>;
-    const docType = typeof mp.doc_type === "string" ? (mp.doc_type as DocType) : null;
+    const docType =
+      typeof mp.doc_type === "string" ? (mp.doc_type as DocType) : null;
     if (!docType) return;
     const quote = typeof mp.quote === "string" && mp.quote ? mp.quote : null;
     setPendingCreate({ type: docType, quote });
@@ -305,21 +335,26 @@ export function MatterDetailPane() {
   // upstream emits both the wire events (matter.created / matter.updated) and
   // resume signals (visibilitychange / pageshow / EventSource reconnect), so
   // the local visibility listener that used to live here was removed.
-  useMatterEvents(useCallback((evt) => {
-    if (!matter_id) return;
-    if (evt.type !== "resume" && evt.matter_id !== matter_id) return;
-    scheduleRefresh(`detail:${matter_id}`, async () => {
-      await refreshDetailSilently();
-      // Mark-read + sidebar refresh only when the user is actually looking
-      // at the page; otherwise we'd silently zero unread counts in the
-      // background.
-      if (document.visibilityState === "visible") {
-        markMatterRead(matter_id)
-          .then(() => reloadListsRef.current())
-          .catch(() => {});
-      }
-    });
-  }, [matter_id, refreshDetailSilently]));
+  useMatterEvents(
+    useCallback(
+      (evt) => {
+        if (!matter_id) return;
+        if (evt.type !== "resume" && evt.matter_id !== matter_id) return;
+        scheduleRefresh(`detail:${matter_id}`, async () => {
+          await refreshDetailSilently();
+          // Mark-read + sidebar refresh only when the user is actually looking
+          // at the page; otherwise we'd silently zero unread counts in the
+          // background.
+          if (document.visibilityState === "visible") {
+            markMatterRead(matter_id)
+              .then(() => reloadListsRef.current())
+              .catch(() => {});
+          }
+        });
+      },
+      [matter_id, refreshDetailSilently],
+    ),
+  );
 
   useEffect(() => {
     fetchMe()
@@ -341,10 +376,40 @@ export function MatterDetailPane() {
     window.setTimeout(() => setHighlight(null), 1600);
   };
 
+  useEffect(() => {
+    const updateJumpBounds = () => {
+      const el = contentScrollRef.current;
+      if (!el) return;
+      const scrollable = el.scrollHeight - el.clientHeight;
+      const canScroll = scrollable > JUMP_CONTROL_MIN_SCROLL;
+      const top = el.scrollTop <= 8;
+      const bottom = el.scrollTop >= scrollable - 8;
+      setJumpBounds((prev) =>
+        prev.top === top &&
+        prev.bottom === bottom &&
+        prev.canScroll === canScroll
+          ? prev
+          : { top, bottom, canScroll },
+      );
+    };
+
+    updateJumpBounds();
+    const el = contentScrollRef.current;
+    el?.addEventListener("scroll", updateJumpBounds, { passive: true });
+    window.addEventListener("resize", updateJumpBounds);
+    return () => {
+      el?.removeEventListener("scroll", updateJumpBounds);
+      window.removeEventListener("resize", updateJumpBounds);
+    };
+  }, [data?.timeline.length, aiOpen, aiMinimized]);
+
   // pendingCreate 草稿卡片出现时,滚动让它进视野(它总是渲染在 timeline 最末尾)。
   useEffect(() => {
     if (!pendingCreate) return;
-    pendingArticleRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    pendingArticleRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
   }, [pendingCreate]);
 
   if (data === undefined) {
@@ -365,7 +430,8 @@ export function MatterDetailPane() {
   const { matter, timeline } = data;
   const canGenerateResult = matter.current_status === "executing";
   const canGenerateInsight =
-    matter.current_status === "finished" || matter.current_status === "cancelled";
+    matter.current_status === "finished" ||
+    matter.current_status === "cancelled";
 
   const afterWrite = async () => {
     await Promise.resolve();
@@ -421,7 +487,8 @@ export function MatterDetailPane() {
     if (snap.owner) payload.owner = snap.owner;
     if (snap.ownerDisplayName) payload.owner_display = snap.ownerDisplayName;
     if (snap.refer.length > 0) payload.refer = snap.refer;
-    if (snap.verifications.length > 0) payload.verifications = snap.verifications;
+    if (snap.verifications.length > 0)
+      payload.verifications = snap.verifications;
     if (snap.status_change) payload.status_change = snap.status_change;
     if (snap.outcome) payload.outcome = snap.outcome;
     if (snap.mentions && snap.mentions.open_ids.length > 0) {
@@ -443,9 +510,7 @@ export function MatterDetailPane() {
           body_md: snap.body,
           matter_payload,
         });
-        setMatterDrafts((prev) =>
-          prev.map((x) => (x.id === d.id ? d : x)),
-        );
+        setMatterDrafts((prev) => prev.map((x) => (x.id === d.id ? d : x)));
       } else {
         const d = await createDraft({
           type: "reply",
@@ -520,13 +585,19 @@ export function MatterDetailPane() {
     if (!pendingCreate) {
       const status = matter.current_status;
       const hint =
-        status === "planning"  ? "可在任意卡片底部点击「+ think / + act / + verify」新建草稿" :
-        status === "executing" ? "可在任意卡片底部点击「+ think / + act / + verify」，或顶部「生成 Result」新建草稿" :
-        status === "paused"    ? "matter 已暂停（paused），仅允许新建「+ think」草稿" :
-        status === "finished"  ? "matter 已完成（finished），请点击顶部「生成 Insight」新建草稿" :
-        status === "cancelled" ? "matter 已取消（cancelled），请点击顶部「生成 Insight」新建草稿" :
-        status === "reviewed"  ? "matter 已 reviewed，不再允许新增文件，AI 草稿无法填入" :
-        "请先在合适的卡片上新建草稿";
+        status === "planning"
+          ? "可在任意卡片底部点击「+ think / + act / + verify」新建草稿"
+          : status === "executing"
+            ? "可在任意卡片底部点击「+ think / + act / + verify」，或顶部「生成 Result」新建草稿"
+            : status === "paused"
+              ? "matter 已暂停（paused），仅允许新建「+ think」草稿"
+              : status === "finished"
+                ? "matter 已完成（finished），请点击顶部「生成 Insight」新建草稿"
+                : status === "cancelled"
+                  ? "matter 已取消（cancelled），请点击顶部「生成 Insight」新建草稿"
+                  : status === "reviewed"
+                    ? "matter 已 reviewed，不再允许新增文件，AI 草稿无法填入"
+                    : "请先在合适的卡片上新建草稿";
       toast.error(`未找到对应草稿卡片：${hint}`);
       return false;
     }
@@ -600,341 +671,401 @@ export function MatterDetailPane() {
     }
   };
 
-  const threadKey = matter.category ? `${matter.category}/${matter.id}` : matter.id;
-  const aiThreadState = ai.getThreadState(threadKey);
-  const aiOriginItem = aiThreadState.replyTarget
-    ? timeline.find((t) => t.file === aiThreadState.replyTarget) ?? null
-    : null;
+  const threadKey = matter.category
+    ? `${matter.category}/${matter.id}`
+    : matter.id;
 
   return (
     <div className="relative flex h-full min-h-0">
       {/* 左：主内容 */}
-      <div className="min-w-0 flex-1 overflow-y-auto">
-      <div className="mx-auto w-full max-w-5xl px-3 py-3 sm:px-5 sm:py-5">
-        {/* 顶部 bar：面包屑 + AI 总结 */}
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <nav className="flex min-w-0 items-center gap-1.5 text-sm text-slate-500">
-            <Link to="/" className="shrink-0 hover:text-slate-800">Pivot</Link>
-            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-300" />
-            {matter.category && (
-              <span className="shrink-0 truncate text-slate-600">{matter.category}</span>
-            )}
-          </nav>
-          <Button
-            type="button"
-            variant={aiOpen ? "secondary" : "default"}
-            size="sm"
-            className={cn(
-              "h-9 shrink-0 rounded-xl px-3.5 text-xs font-semibold",
-              !aiOpen && "bg-blue-600 text-white shadow-[0_8px_22px_rgba(37,99,235,0.24)] hover:bg-blue-700",
-            )}
-            onClick={() => {
-              if (aiOpen) {
-                setAiOpen(false);
-              } else {
-                openMatterAIAssistant();
+      <div ref={contentScrollRef} className="min-w-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-5xl px-3 py-3 sm:px-5 sm:py-5">
+          {/* 顶部 bar：面包屑 + AI 总结 */}
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <nav className="flex min-w-0 items-center gap-1.5 text-sm text-[var(--text-mute)]">
+              <Link to="/" className="shrink-0 hover:text-[var(--text)]">
+                Pivot
+              </Link>
+              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--text-fade)]" />
+              {matter.category && (
+                <span className="shrink-0 truncate text-[var(--text-soft)]">
+                  {matter.category}
+                </span>
+              )}
+            </nav>
+            <Button
+              type="button"
+              variant={aiOpen ? "secondary" : "default"}
+              size="sm"
+              className={cn(
+                "h-9 shrink-0 rounded-[var(--r-sm)] px-3.5 text-xs font-semibold shadow-none",
+                !aiOpen &&
+                  "bg-[var(--accent)] text-[var(--accent-ink)] hover:opacity-90",
+              )}
+              onClick={() => {
+                if (aiOpen) {
+                  if (aiMinimized) {
+                    setAiMinimized(false);
+                  } else {
+                    setAiOpen(false);
+                  }
+                } else {
+                  openMatterAIAssistant();
+                }
+              }}
+              disabled={timeline.length === 0}
+              title={
+                timeline.length === 0
+                  ? "时间线为空，无法生成总结"
+                  : aiOpen
+                    ? "关闭 AI 助手"
+                    : "自动选起点 + 预填总结提示词，等你点【发送】"
               }
-            }}
-            disabled={timeline.length === 0}
-            title={
-              timeline.length === 0
-                ? "时间线为空，无法生成总结"
-                : aiOpen
-                  ? "关闭 AI 助手"
-                  : "自动选起点 + 预填总结提示词，等你点【发送】"
-            }
-          >
-            <Sparkles className="mr-1.5 h-3.5 w-3.5" />
-            AI 总结
-          </Button>
-        </div>
+            >
+              <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+              AI 总结
+            </Button>
+          </div>
 
-        {/* ==== Header ==== */}
-        <header className="mb-4 rounded-[1.3rem] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <div className="mb-1 flex items-center gap-2 text-[11px] uppercase tracking-wide text-slate-400">
-                <span>matter</span>
-                <span>·</span>
-                <span className="font-mono">{matter.id}</span>
+          {/* ==== Header ==== */}
+          <header className="pivot-card mb-4 p-5">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="mb-1 flex items-center gap-2 text-[11px] uppercase tracking-wide text-[var(--text-fade)]">
+                  <span>matter</span>
+                  <span>·</span>
+                  <span className="font-mono">{matter.id}</span>
+                </div>
+                <h1 className="editorial-title text-xl font-semibold sm:text-[22px]">
+                  {matter.title}
+                </h1>
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--text-mute)]">
+                  <span>{timeline.length} 个文件</span>
+                  {matter.last_file_type && matter.last_summary && (
+                    <>
+                      <span>·</span>
+                      <span className="max-w-[28rem] truncate">
+                        最近{" "}
+                        <span className="font-mono">
+                          {matter.last_file_type}
+                        </span>{" "}
+                        — {matter.last_summary}
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
-              <h1 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-[22px]">
-                {matter.title}
-              </h1>
-              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-                <span>{timeline.length} 个文件</span>
-                {matter.last_file_type && matter.last_summary && (
-                  <>
-                    <span>·</span>
-                    <span className="max-w-[28rem] truncate">
-                      最近 <span className="font-mono">{matter.last_file_type}</span> — {matter.last_summary}
-                    </span>
-                  </>
-                )}
-              </div>
-            </div>
-            <div className="flex shrink-0 flex-wrap items-center gap-2">
-              <StatusBadge status={matter.current_status} />
-              {matter_id && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-9 rounded-xl px-3 text-xs"
-                  onClick={() => {
-                    // optimistic flip locally (Dashboard does the authoritative optimistic on the list)
-                    setData((prev) =>
-                      prev
-                        ? { ...prev, matter: { ...prev.matter, favorite: !prev.matter.favorite } }
-                        : prev,
-                    );
-                    void toggleMatterFavorite(matter_id).catch(() => {
+              <div className="flex shrink-0 flex-wrap items-center gap-4">
+                <StatusBadge
+                  status={matter.current_status}
+                  className="h-7 px-3"
+                />
+                {matter_id && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 rounded-[var(--r-sm)] px-1.5 text-xs font-medium text-[var(--text-soft)] hover:bg-[var(--surface-alt)]"
+                    onClick={() => {
+                      // optimistic flip locally (Dashboard does the authoritative optimistic on the list)
                       setData((prev) =>
                         prev
                           ? {
                               ...prev,
-                              matter: { ...prev.matter, favorite: !prev.matter.favorite },
+                              matter: {
+                                ...prev.matter,
+                                favorite: !prev.matter.favorite,
+                              },
                             }
                           : prev,
                       );
-                    });
-                  }}
-                  title={matter.favorite ? "取消收藏" : "收藏"}
-                >
-                  <Star
-                    className={cn(
-                      "h-4 w-4",
-                      matter.favorite ? "fill-amber-400 text-amber-500" : "text-slate-400",
-                    )}
-                  />
-                  {matter.favorite ? "已收藏" : "收藏"}
-                </Button>
-              )}
-              {canGenerateResult && (
-                <Button
-                  className="h-9 rounded-xl bg-purple-600 px-3 text-xs font-semibold text-white hover:bg-purple-700"
-                  onClick={() => setResultConfirmOpen(true)}
-                >
-                  生成 Result
-                </Button>
-              )}
-              {canGenerateInsight && (
-                <Button
-                  variant="outline"
-                  className="h-9 rounded-xl px-3 text-xs font-semibold text-slate-700"
-                  onClick={() => openPending("insight", null)}
-                >
-                  生成 Insight
-                </Button>
-              )}
-              {canGenerateInsight && (
-                <Button
-                  className="h-9 rounded-xl bg-red-600 px-3 text-xs font-semibold text-white hover:bg-red-700"
-                  onClick={() => setReviewedConfirmOpen(true)}
-                  title="事项归档收口（不可逆）"
-                >
-                  推进到 Reviewed
-                </Button>
-              )}
-            </div>
-          </div>
-        </header>
-
-        {/* ==== 时间轴 ==== */}
-        <section className="mb-4 rounded-[1.3rem] border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-[13px] font-semibold text-slate-800">
-              时间轴 · {timeline.length}
-            </h2>
-            <span className="text-[11px] text-slate-500">
-              按 created_at 升序 · 点圆点跳转到文件卡片
-            </span>
-          </div>
-          <TimelineStrip items={timeline} highlight={highlight} onJump={onJump} />
-        </section>
-
-        {/* ==== 文件流 ==== */}
-        <section className="space-y-3">
-          {timeline.map((item, i) => (
-            <FileCard
-              key={item.file}
-              item={item}
-              index={i}
-              matterStatus={matter.current_status}
-              activeType={
-                pendingCreate && pendingCreate.quote === item.file
-                  ? pendingCreate.type
-                  : null
-              }
-              onCreate={requestCreate}
-              onAddComment={(body, mentions) => submitComment(item.file, body, mentions)}
-              onJump={onJump}
-              registerRef={(el) => {
-                cardRefs.current[item.file] = el;
-              }}
-              highlighted={highlight === item.file}
-            />
-          ))}
-          {pendingCreate && (
-            <article
-              ref={pendingArticleRef}
-              className={cn(
-                "rounded-2xl border border-slate-200 border-l-[6px] [border-left-style:dashed] bg-white p-4 shadow-sm sm:p-5",
-                TYPE_VISUAL[pendingCreate.type].side,
-              )}
-            >
-              <div className="mb-3 flex flex-wrap items-center gap-2">
-                <span
-                  className={cn(
-                    "inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ring-1",
-                    TYPE_VISUAL[pendingCreate.type].chip,
-                  )}
-                >
-                  {TYPE_VISUAL[pendingCreate.type].label}
-                </span>
-                {pendingCreate.reviewedTransition && (
-                  <span className="inline-flex items-center rounded-md bg-red-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-red-700 ring-1 ring-red-200">
-                    → reviewed
-                  </span>
+                      void toggleMatterFavorite(matter_id).catch(() => {
+                        setData((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                matter: {
+                                  ...prev.matter,
+                                  favorite: !prev.matter.favorite,
+                                },
+                              }
+                            : prev,
+                        );
+                      });
+                    }}
+                    title={matter.favorite ? "取消收藏" : "收藏"}
+                  >
+                    <Star
+                      className={cn(
+                        "h-4 w-4",
+                        matter.favorite
+                          ? "fill-[var(--warn-500)] text-[var(--warn-500)]"
+                          : "text-[var(--text-fade)]",
+                      )}
+                    />
+                    {matter.favorite ? "已收藏" : "收藏"}
+                  </Button>
                 )}
-                <span className="text-[11px] text-slate-500">
-                  {pendingCreate.quote ? (
-                    <>
-                      新增 · 基于{" "}
-                      <span className="font-mono text-slate-700">
-                        {shortFile(pendingCreate.quote)}
-                      </span>
-                    </>
-                  ) : (
-                    <>页面级 · 无 quote</>
-                  )}
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="ml-auto h-7 rounded-lg border-blue-200 px-2.5 text-[11px] font-semibold text-blue-700 hover:bg-blue-50"
-                  onClick={() => {
-                    if (pendingCreate.quote) {
-                      openAIForFile(pendingCreate.quote);
-                    } else {
-                      setAiOpen(true);
-                    }
-                  }}
-                  title="打开 AI 助手"
-                >
-                  <Sparkles className="mr-1 h-3 w-3" />
-                  AI 助手
-                </Button>
+                {canGenerateResult && (
+                  <Button
+                    className="h-9 rounded-[var(--r-sm)] bg-[var(--violet-600)] px-3 text-xs font-semibold text-white hover:opacity-90"
+                    onClick={() => setResultConfirmOpen(true)}
+                  >
+                    生成 Result
+                  </Button>
+                )}
+                {canGenerateInsight && (
+                  <Button
+                    variant="outline"
+                    className="h-9 rounded-[var(--r-sm)] px-3 text-xs font-semibold text-[var(--text-soft)]"
+                    onClick={() => openPending("insight", null)}
+                  >
+                    生成 Insight
+                  </Button>
+                )}
+                {canGenerateInsight && (
+                  <Button
+                    className="h-9 rounded-[var(--r-sm)] bg-[var(--danger-600)] px-3 text-xs font-semibold text-white hover:opacity-90"
+                    onClick={() => setReviewedConfirmOpen(true)}
+                    title="事项归档收口（不可逆）"
+                  >
+                    推进到 Reviewed
+                  </Button>
+                )}
               </div>
-              <CreateFileForm
-                key={`${pendingCreate.quote ?? "__page__"}:${pendingCreate.type}:${pendingCreate.reviewedTransition ? "rev" : "norm"}:${aiFillToken}`}
-                context={
-                  pendingCreate.quote
-                    ? {
-                        kind: "card",
-                        type: pendingCreate.type,
-                        quote: pendingCreate.quote,
-                      }
-                    : {
-                        kind: "page",
-                        type: pendingCreate.type as "insight" | "result",
-                        reviewedTransition: pendingCreate.reviewedTransition,
-                      }
-                }
-                matterStatus={matter.current_status}
-                sessionOpenId={sessionOpenId}
-                sessionName={sessionName || sessionOpenId}
-                timeline={timeline}
-                initial={pendingInitial ?? undefined}
-                onSubmit={submitNewFile}
-                onSuccess={() => {
-                  setPendingCreate(null);
-                  setPendingDraftId(null);
-                  setPendingInitial(null);
-                }}
-                onGenerateSummary={generateSummaryViaChat}
-                onFormBlur={saveDraftFromForm}
-                onDeleteDraft={
-                  pendingDraftId ? () => setConfirmDeleteOpen(true) : undefined
-                }
-              />
-            </article>
-          )}
-          {matter.current_status === "reviewed" && (
-            <div className="rounded-xl border border-slate-200 bg-slate-100/60 p-4 text-center text-xs text-slate-500">
-              事项生命周期已收口（reviewed）。原则上不再新增文件。
             </div>
-          )}
-        </section>
-      </div>
+
+            <div className="mt-3 rounded-[var(--r-sm)] bg-[var(--surface-alt)] px-3 py-2 text-xs text-[var(--text-soft)]">
+              <span className="font-semibold text-[var(--text)]">
+                状态语义：
+              </span>
+              {allowed}
+            </div>
+          </header>
+
+          {/* ==== 时间轴 ==== */}
+          <section className="pivot-card mb-4 p-4">
+            <div className="mb-2 flex items-center justify-between">
+              <h2 className="text-[13px] font-semibold text-[var(--text)]">
+                时间轴 · {timeline.length}
+              </h2>
+              <span className="text-[11px] text-[var(--text-mute)]">
+                按 created_at 升序 · 点圆点跳转到文件卡片
+              </span>
+            </div>
+            <TimelineStrip
+              items={timeline}
+              highlight={highlight}
+              onJump={onJump}
+            />
+          </section>
+
+          {/* ==== 文件流 ==== */}
+          <section className="space-y-3">
+            {timeline.map((item, i) => (
+              <FileCard
+                key={item.file}
+                item={item}
+                index={i}
+                matterStatus={matter.current_status}
+                activeType={
+                  pendingCreate && pendingCreate.quote === item.file
+                    ? pendingCreate.type
+                    : null
+                }
+                onCreate={requestCreate}
+                onAddComment={(body, mentions) =>
+                  submitComment(item.file, body, mentions)
+                }
+                onJump={onJump}
+                registerRef={(el) => {
+                  cardRefs.current[item.file] = el;
+                }}
+                highlighted={highlight === item.file}
+              />
+            ))}
+            {pendingCreate && (
+              <article
+                ref={pendingArticleRef}
+                className={cn(
+                  "rounded-[var(--r-md)] border border-[var(--line)] border-l-[6px] [border-left-style:dashed] bg-[var(--surface)] p-4 shadow-[var(--shadow-sm)] sm:p-5",
+                  TYPE_VISUAL[pendingCreate.type].side,
+                )}
+              >
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <span
+                    className={cn(
+                      "inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ring-1",
+                      TYPE_VISUAL[pendingCreate.type].chip,
+                    )}
+                  >
+                    {TYPE_VISUAL[pendingCreate.type].label}
+                  </span>
+                  {pendingCreate.reviewedTransition && (
+                    <span className="inline-flex items-center rounded-[var(--r-sm)] bg-[color-mix(in_srgb,var(--danger-500)_12%,var(--surface))] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--danger-600)] ring-1 ring-[color-mix(in_srgb,var(--danger-500)_24%,var(--line))]">
+                      → reviewed
+                    </span>
+                  )}
+                  <span className="text-[11px] text-[var(--text-mute)]">
+                    {pendingCreate.quote ? (
+                      <>
+                        新增 · 基于{" "}
+                        <span className="font-mono text-[var(--text-soft)]">
+                          {shortFile(pendingCreate.quote)}
+                        </span>
+                      </>
+                    ) : (
+                      <>页面级 · 无 quote</>
+                    )}
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="ml-auto h-7 rounded-[var(--r-sm)] border-[var(--accent-soft)] px-2.5 text-[11px] font-semibold text-[var(--accent)] hover:bg-[var(--accent-bg)]"
+                    onClick={() => {
+                      if (pendingCreate.quote) {
+                        openAIForFile(pendingCreate.quote);
+                      } else {
+                        setAiMinimized(false);
+                        setAiOpen(true);
+                      }
+                    }}
+                    title="打开 AI 助手"
+                  >
+                    <Sparkles className="mr-1 h-3 w-3" />
+                    AI 助手
+                  </Button>
+                </div>
+                <CreateFileForm
+                  key={`${pendingCreate.quote ?? "__page__"}:${pendingCreate.type}:${pendingCreate.reviewedTransition ? "rev" : "norm"}:${aiFillToken}`}
+                  context={
+                    pendingCreate.quote
+                      ? {
+                          kind: "card",
+                          type: pendingCreate.type,
+                          quote: pendingCreate.quote,
+                        }
+                      : {
+                          kind: "page",
+                          type: pendingCreate.type as "insight" | "result",
+                          reviewedTransition: pendingCreate.reviewedTransition,
+                        }
+                  }
+                  matterStatus={matter.current_status}
+                  sessionOpenId={sessionOpenId}
+                  sessionName={sessionName || sessionOpenId}
+                  timeline={timeline}
+                  initial={pendingInitial ?? undefined}
+                  onSubmit={submitNewFile}
+                  onSuccess={() => {
+                    setPendingCreate(null);
+                    setPendingDraftId(null);
+                    setPendingInitial(null);
+                  }}
+                  onGenerateSummary={generateSummaryViaChat}
+                  onFormBlur={saveDraftFromForm}
+                  onDeleteDraft={
+                    pendingDraftId
+                      ? () => setConfirmDeleteOpen(true)
+                      : undefined
+                  }
+                />
+              </article>
+            )}
+            {matter.current_status === "reviewed" && (
+              <div className="rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface-alt)] p-4 text-center text-xs text-[var(--text-mute)]">
+                事项生命周期已收口（reviewed）。原则上不再新增文件。
+              </div>
+            )}
+          </section>
+        </div>
       </div>
 
       {/* 右：AI 助手（桌面端拆分布局） */}
       {aiOpen && (
-        <aside className="hidden w-[480px] shrink-0 flex-col border-l border-slate-200 bg-white lg:flex">
-          <div className="flex items-center justify-between border-b border-slate-200/80 px-4 py-3">
-            <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
-              <Bot className="h-4 w-4 text-blue-600" />
-              AI 助手
-            </div>
-            <Button
+        <>
+          {aiMinimized && (
+            <button
               type="button"
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-100"
-              onClick={() => setAiOpen(false)}
+              className="fixed inset-x-3 bottom-3 z-50 flex h-12 items-center justify-between rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--text)] shadow-[var(--shadow-lg)] xl:hidden"
+              onClick={() => setAiMinimized(false)}
             >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-          {aiOriginItem && (() => {
-            const oCfg = TYPE_VISUAL[aiOriginItem.type];
-            return (
-              <div className="border-b border-slate-200/80 bg-slate-50/60 px-4 py-3">
-                <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                  起点帖子
+              <span className="flex min-w-0 items-center gap-2">
+                <Bot className="h-4 w-4 shrink-0 text-[var(--accent)]" />
+                <span className="truncate">AI 助手</span>
+              </span>
+              <span className="text-[11px] font-medium text-[var(--text-mute)]">
+                点按展开
+              </span>
+            </button>
+          )}
+          {!aiMinimized && (
+            <aside className="fixed inset-0 z-50 flex min-h-0 flex-col overflow-hidden bg-[var(--surface)] xl:static xl:inset-auto xl:z-auto xl:w-[480px] xl:shrink-0 xl:border-l xl:border-[var(--line)]">
+              <div className="flex items-center justify-between border-b border-[var(--line)] px-4 py-3">
+                <div className="flex items-center gap-2 text-sm font-medium text-[var(--text)]">
+                  <Bot className="h-4 w-4 text-[var(--accent)]" />
+                  AI 助手
                 </div>
-                <button
-                  type="button"
-                  onClick={() => onJump(aiOriginItem.file)}
-                  className={cn(
-                    "block w-full rounded-lg border border-slate-200 border-l-[4px] bg-white p-2.5 text-left shadow-sm transition-colors hover:border-blue-300",
-                    oCfg.side,
-                  )}
-                  title="跳转到该文件"
-                >
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span
-                      className={cn(
-                        "inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1",
-                        oCfg.chip,
-                      )}
-                    >
-                      {oCfg.label}
-                    </span>
-                    <span className="font-mono text-[11px] text-slate-700">
-                      {shortFile(aiOriginItem.file)}
-                    </span>
-                    <span className="text-[10px] text-slate-400">· {aiOriginItem.creator}</span>
-                  </div>
-                  <p className="mt-1 line-clamp-2 text-[12px] text-slate-700">{aiOriginItem.summary}</p>
-                </button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 rounded-[var(--r-sm)] text-[var(--text-mute)] hover:bg-[var(--surface-alt)] xl:hidden"
+                    onClick={() => setAiMinimized(true)}
+                    title="最小化"
+                  >
+                    <Minimize2 className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 rounded-[var(--r-sm)] text-[var(--text-mute)] hover:bg-[var(--surface-alt)]"
+                    onClick={() => {
+                      setAiOpen(false);
+                      setAiMinimized(false);
+                    }}
+                    title="关闭"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
-            );
-          })()}
-          <div className="min-h-0 flex-1 p-4">
-            <AIPane
-              category={matter.category ?? ""}
-              slug={matter.id}
-              threadKey={threadKey}
-              threadTitle={matter.title}
-              onUseDraftAsReply={handleUseDraftAsReply}
-              hasReplyDraft={!!pendingDraftId}
-              pendingReplyTarget={pendingAIOrigin}
-              onPendingReplyTargetConsumed={() => setPendingAIOrigin(null)}
-            />
-          </div>
-        </aside>
+              <div className="min-h-0 flex-1 p-3 sm:p-4">
+                <AIPane
+                  category={matter.category ?? ""}
+                  slug={matter.id}
+                  threadKey={threadKey}
+                  threadTitle={matter.title}
+                  onUseDraftAsReply={handleUseDraftAsReply}
+                  hasReplyDraft={!!pendingDraftId}
+                  pendingReplyTarget={pendingAIOrigin}
+                  onPendingReplyTargetConsumed={() => setPendingAIOrigin(null)}
+                />
+              </div>
+            </aside>
+          )}
+        </>
+      )}
+
+      {timeline.length > 0 && jumpBounds.canScroll && (
+        <MatterJumpControl
+          atTop={jumpBounds.top}
+          atBottom={jumpBounds.bottom}
+          onTop={() =>
+            contentScrollRef.current?.scrollTo({
+              top: 0,
+              behavior: "smooth",
+            })
+          }
+          onBottom={() =>
+            contentScrollRef.current?.scrollTo({
+              top: contentScrollRef.current.scrollHeight,
+              behavior: "smooth",
+            })
+          }
+        />
       )}
 
       <Dialog open={resultConfirmOpen} onOpenChange={setResultConfirmOpen}>
@@ -945,7 +1076,7 @@ export function MatterDetailPane() {
               发布 Result 后：
             </DialogDescription>
           </DialogHeader>
-          <ul className="list-disc space-y-0.5 pl-5 text-xs text-slate-600">
+          <ul className="list-disc space-y-0.5 pl-5 text-xs text-[var(--text-soft)]">
             <li>
               matter 状态变更为 <span className="font-mono">finished</span> 或{" "}
               <span className="font-mono">cancelled</span>
@@ -956,11 +1087,14 @@ export function MatterDetailPane() {
             </li>
           </ul>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setResultConfirmOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setResultConfirmOpen(false)}
+            >
               取消
             </Button>
             <Button
-              className="bg-purple-600 text-white hover:bg-purple-700"
+              className="bg-[var(--violet-600)] text-white hover:opacity-90"
               onClick={() => {
                 setResultConfirmOpen(false);
                 openPending("result", null);
@@ -976,24 +1110,28 @@ export function MatterDetailPane() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>⚠ 推进到 Reviewed 是事项最终归档</DialogTitle>
-            <DialogDescription className="text-xs">
-              推进后：
-            </DialogDescription>
+            <DialogDescription className="text-xs">推进后：</DialogDescription>
           </DialogHeader>
-          <ul className="list-disc space-y-0.5 pl-5 text-xs text-slate-600">
+          <ul className="list-disc space-y-0.5 pl-5 text-xs text-[var(--text-soft)]">
             <li>
-              matter 状态变更为 <span className="font-mono">reviewed</span>，生命周期收口
+              matter 状态变更为 <span className="font-mono">reviewed</span>
+              ，生命周期收口
             </li>
-            <li>不再允许新增任何文件（think / act / verify / result / insight）</li>
+            <li>
+              不再允许新增任何文件（think / act / verify / result / insight）
+            </li>
             <li>已发布的所有文件 / AI 助手会话 / 草稿仍可查阅</li>
             <li>此操作不可撤销</li>
           </ul>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setReviewedConfirmOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setReviewedConfirmOpen(false)}
+            >
               取消
             </Button>
             <Button
-              className="bg-red-600 text-white hover:bg-red-700"
+              className="bg-[var(--danger-600)] text-white hover:opacity-90"
               onClick={() => {
                 setReviewedConfirmOpen(false);
                 openPending("insight", null, { reviewedTransition: true });
@@ -1014,11 +1152,14 @@ export function MatterDetailPane() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmDeleteOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setConfirmDeleteOpen(false)}
+            >
               取消
             </Button>
             <Button
-              className="bg-red-600 text-white hover:bg-red-700"
+              className="bg-[var(--danger-600)] text-white hover:opacity-90"
               onClick={() => void handleConfirmDelete()}
             >
               删除草稿
@@ -1030,3 +1171,38 @@ export function MatterDetailPane() {
   );
 }
 
+function MatterJumpControl({
+  atTop,
+  atBottom,
+  onTop,
+  onBottom,
+}: {
+  atTop: boolean;
+  atBottom: boolean;
+  onTop: () => void;
+  onBottom: () => void;
+}) {
+  return (
+    <div className="fixed bottom-6 right-5 z-40 flex w-11 flex-col items-center overflow-hidden rounded-full border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-lg)] sm:bottom-8 sm:right-7">
+      <button
+        type="button"
+        disabled={atTop}
+        onClick={onTop}
+        title="回到顶部"
+        className="flex h-10 w-11 items-center justify-center text-[var(--text-soft)] transition hover:bg-[var(--surface-alt)] hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:text-[var(--text-fade)] disabled:hover:bg-transparent disabled:hover:text-[var(--text-fade)]"
+      >
+        <ArrowUp className="h-4 w-4" />
+      </button>
+      <span className="h-px w-5 bg-[var(--line)]" aria-hidden />
+      <button
+        type="button"
+        disabled={atBottom}
+        onClick={onBottom}
+        title="去到底部"
+        className="flex h-10 w-11 items-center justify-center text-[var(--text-soft)] transition hover:bg-[var(--surface-alt)] hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:text-[var(--text-fade)] disabled:hover:bg-transparent disabled:hover:text-[var(--text-fade)]"
+      >
+        <ArrowDown className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}

@@ -207,7 +207,7 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
           asChild
           variant="ghost"
           size="sm"
-          className="rounded-xl px-3 text-slate-700 hover:bg-slate-100"
+          className="rounded-[var(--r-md)] px-3 text-[var(--text-soft)] hover:bg-[var(--surface-alt)]"
         >
           <Link to="/">
             <ArrowLeft className="h-4 w-4" />
@@ -217,22 +217,22 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
         <div className="space-y-2">
           <div className="section-kicker">New Matter</div>
           <div className="flex flex-wrap items-baseline gap-3">
-            <h1 className="text-2xl font-semibold tracking-[-0.03em] text-slate-950 sm:text-3xl">
+            <h1 className="text-2xl font-semibold tracking-[-0.03em] text-[var(--text)] sm:text-3xl">
               新讨论
             </h1>
             {draftStatus !== "idle" && (
               <span
                 className={
                   draftStatus === "error"
-                    ? "text-xs text-red-600"
-                    : "text-xs text-slate-500"
+                    ? "text-xs text-[var(--danger-600)]"
+                    : "text-xs text-[var(--text-mute)]"
                 }
               >
                 {formatSaveStatus(draftStatus)}
               </span>
             )}
           </div>
-          <p className="max-w-2xl text-sm leading-7 text-slate-600">
+          <p className="max-w-2xl text-sm leading-7 text-[var(--text-soft)]">
             这里直接进入 matter 的起草区。先确定分类和标题，再把正文写清楚；表单会自动保存草稿，不需要额外操作。
           </p>
         </div>
@@ -243,7 +243,7 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
             <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
               <div className="space-y-2">
                 <div className="section-kicker">Category</div>
-                <p className="text-sm leading-6 text-slate-500">
+                <p className="text-sm leading-6 text-[var(--text-mute)]">
                   从已有分类里选择，或者当场创建一个新的分类。
                 </p>
               </div>
@@ -264,7 +264,7 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
                     setCategory(next);
                   }}
                   required
-                  className="flex h-11 w-full rounded-xl border border-input bg-slate-100/90 px-3 py-2 text-sm ring-offset-background"
+                  className="flex h-11 w-full rounded-[var(--r-md)] border border-input bg-[var(--surface-alt)] px-3 py-2 text-sm ring-offset-background"
                 >
                   {categoryOptions.length === 0 && <option value="general">general</option>}
                   {categoryOptions.map((opt) => (
@@ -289,11 +289,11 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
                           }
                         }}
                       />
-                      <Button type="button" variant="outline" className="rounded-xl" onClick={createCategory}>
+                      <Button type="button" variant="outline" className="rounded-[var(--r-md)]" onClick={createCategory}>
                         创建并选中
                       </Button>
                     </div>
-                    <p className="text-xs leading-5 text-slate-500">
+                    <p className="text-xs leading-5 text-[var(--text-mute)]">
                       支持中文，最长 20 个字符；不能包含 <span className="font-mono">/ \ : * ? " &lt; &gt; |</span> 或换行。
                     </p>
                   </div>
@@ -307,7 +307,7 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
             <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
               <div className="space-y-2">
                 <div className="section-kicker">Title</div>
-                <p className="text-sm leading-6 text-slate-500">标题决定 matter 在左侧目录里的可读性，尽量写成一个完整的主题句。</p>
+                <p className="text-sm leading-6 text-[var(--text-mute)]">标题决定 matter 在左侧目录里的可读性，尽量写成一个完整的主题句。</p>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="title">标题</Label>
@@ -317,7 +317,7 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
                   onChange={(e) => setTitle(e.target.value)}
                   required
                   maxLength={200}
-                  className="h-11 rounded-xl bg-slate-100/90"
+                  className="h-11 rounded-[var(--r-md)] bg-[var(--surface-alt)]"
                 />
               </div>
             </div>
@@ -328,7 +328,7 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
             <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
               <div className="space-y-2">
                 <div className="section-kicker">首篇文件</div>
-                <p className="text-sm leading-6 text-slate-500">
+                <p className="text-sm leading-6 text-[var(--text-mute)]">
                   适合直接写提案、背景、判断和待讨论问题，类型为 <span className="font-mono">think</span> 或{" "}
                   <span className="font-mono">act</span>。默认 think。
                 </p>
@@ -354,9 +354,9 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="body">
-                    正文（markdown）<span className="text-red-500"> *</span>
+                    正文（markdown）<span className="text-[var(--danger-500)]"> *</span>
                   </Label>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-[var(--text-mute)]">
                     创建时 AI 将基于正文生成 summary。
                   </p>
                   <Textarea
@@ -366,7 +366,7 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
                     required
                     rows={10}
                     maxLength={50000}
-                    className="min-h-[14rem] rounded-2xl border-slate-300 bg-slate-100/92 font-mono text-sm"
+                    className="min-h-[14rem] rounded-[var(--r-md)] border-[var(--line-strong)] bg-[var(--surface-alt)] font-mono text-sm"
                   />
                 </div>
                 {initialType === "act" && (
@@ -390,7 +390,7 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
             <div className="flex flex-wrap gap-3 pt-2">
               <Button
                 type="submit"
-                className="rounded-xl px-5"
+                className="rounded-[var(--r-md)] px-5"
                 disabled={submitting || !title.trim() || !body.trim()}
               >
                 {stage === "generating"

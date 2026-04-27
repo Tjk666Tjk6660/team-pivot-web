@@ -81,32 +81,32 @@ export function OwnerPicker({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex h-11 w-full items-center justify-between rounded-md border border-slate-300 bg-white px-3 text-sm hover:bg-slate-50"
+        className="flex h-11 w-full items-center justify-between rounded-md border border-[var(--line-strong)] bg-[var(--surface)] px-3 text-sm hover:bg-[var(--surface-alt)]"
       >
-        <span className={cn(value ? "text-slate-800" : "text-slate-400")}>
+        <span className={cn(value ? "text-[var(--text)]" : "text-[var(--text-fade)]")}>
           {label}
         </span>
-        <ChevronDown className="h-4 w-4 text-slate-400" />
+        <ChevronDown className="h-4 w-4 text-[var(--text-fade)]" />
       </button>
 
       {open && (
-        <div className="absolute left-0 right-0 top-full z-30 mt-1 rounded-md border border-slate-200 bg-white shadow-md">
-          <div className="flex items-center gap-1 border-b border-slate-100 p-2">
+        <div className="absolute left-0 right-0 top-full z-30 mt-1 rounded-md border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-md)]">
+          <div className="flex items-center gap-1 border-b border-[var(--line-soft)] p-2">
             <input
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="搜索名字 / 拼音…"
-              className="h-8 flex-1 rounded border border-slate-200 bg-slate-50 px-2 text-xs outline-none focus:border-blue-400"
+              className="h-8 flex-1 rounded border border-[var(--line)] bg-[var(--surface-alt)] px-2 text-xs outline-none focus:border-[var(--accent)]"
             />
             {query && (
               <button
                 type="button"
                 onClick={() => setQuery("")}
-                className="rounded p-1 hover:bg-slate-100"
+                className="rounded p-1 hover:bg-[var(--surface-alt)]"
                 title="清空"
               >
-                <X className="h-3.5 w-3.5 text-slate-500" />
+                <X className="h-3.5 w-3.5 text-[var(--text-mute)]" />
               </button>
             )}
           </div>
@@ -117,26 +117,26 @@ export function OwnerPicker({
               type="button"
               onClick={pickSelf}
               className={cn(
-                "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-slate-100",
-                value === sessionOpenId && "bg-blue-50",
+                "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--surface-alt)]",
+                value === sessionOpenId && "bg-[var(--accent-bg)]",
               )}
             >
-              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-100 text-[10px] font-semibold text-blue-700">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--accent-bg)] text-[10px] font-semibold text-[var(--accent)]">
                 你
               </span>
-              <span className="text-slate-800">{sessionName}</span>
+              <span className="text-[var(--text)]">{sessionName}</span>
               {value === sessionOpenId && (
-                <span className="ml-auto text-xs text-blue-600">✓</span>
+                <span className="ml-auto text-xs text-[var(--accent)]">✓</span>
               )}
             </button>
 
-            <div className="my-1 border-t border-slate-100" />
+            <div className="my-1 border-t border-[var(--line-soft)]" />
 
             {loading && (
-              <div className="px-3 py-2 text-xs text-slate-400">搜索中…</div>
+              <div className="px-3 py-2 text-xs text-[var(--text-fade)]">搜索中…</div>
             )}
             {!loading && results.length === 0 && (
-              <div className="px-3 py-2 text-xs text-slate-400">
+              <div className="px-3 py-2 text-xs text-[var(--text-fade)]">
                 {query ? "没有匹配项" : "输入关键词搜索联系人"}
               </div>
             )}
@@ -149,20 +149,20 @@ export function OwnerPicker({
                     type="button"
                     onClick={() => pickContact(c)}
                     className={cn(
-                      "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-slate-100",
-                      selected && "bg-blue-50",
+                      "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--surface-alt)]",
+                      selected && "bg-[var(--accent-bg)]",
                     )}
                   >
                     {c.avatar_url ? (
                       <img src={c.avatar_url} alt="" className="h-5 w-5 rounded-full" />
                     ) : (
-                      <span className="h-5 w-5 rounded-full bg-slate-200" />
+                      <span className="h-5 w-5 rounded-full bg-[var(--line-strong)]" />
                     )}
-                    <span className="text-slate-800">{c.name}</span>
+                    <span className="text-[var(--text)]">{c.name}</span>
                     {c.en_name && (
-                      <span className="text-xs text-slate-500">（{c.en_name}）</span>
+                      <span className="text-xs text-[var(--text-mute)]">（{c.en_name}）</span>
                     )}
-                    {selected && <span className="ml-auto text-xs text-blue-600">✓</span>}
+                    {selected && <span className="ml-auto text-xs text-[var(--accent)]">✓</span>}
                   </button>
                 );
               })}

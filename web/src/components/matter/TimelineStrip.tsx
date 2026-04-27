@@ -97,7 +97,7 @@ export function TimelineStrip({
   }, []);
 
   if (items.length === 0) {
-    return <div className="text-xs text-slate-400">（空）</div>;
+    return <div className="text-xs text-[var(--text-fade)]">（空）</div>;
   }
 
   const layout = width > 0 ? computeLayout(items.length, width) : null;
@@ -139,7 +139,7 @@ export function TimelineStrip({
             return (
               <div
                 key={`arrow-${r}`}
-                className="pointer-events-none absolute text-[11px] font-medium text-slate-400"
+                className="pointer-events-none absolute text-[11px] font-medium text-[var(--text-fade)]"
                 style={{
                   left: pos.x + dx,
                   top: pos.y - 8,
@@ -173,7 +173,7 @@ export function TimelineStrip({
                   className={cn(
                     "block h-4 w-4 rounded-full ring-2 ring-white transition-transform",
                     cfg.dot,
-                    active && "scale-125 shadow-lg",
+                    active && "scale-125 shadow-[var(--shadow-lg)]",
                   )}
                 />
                 <span
@@ -184,11 +184,11 @@ export function TimelineStrip({
                 >
                   {item.type} #{i + 1}
                 </span>
-                <span className="text-[10px] text-slate-500">
+                <span className="text-[10px] text-[var(--text-mute)]">
                   {relativeTime(item.created_at)}
                 </span>
                 {item.status_change && (
-                  <span className="mt-0.5 inline-flex max-w-full items-center truncate rounded-full bg-purple-50 px-1.5 py-0.5 text-[10px] text-purple-700 ring-1 ring-purple-200">
+                  <span className="mt-0.5 inline-flex max-w-full items-center truncate rounded-full bg-[var(--status-project-bg)] px-1.5 py-0.5 text-[10px] text-[var(--status-project-fg)] ring-1 ring-[var(--accent-soft)]">
                     {item.status_change.from} → {item.status_change.to}
                   </span>
                 )}
@@ -197,8 +197,8 @@ export function TimelineStrip({
                     className={cn(
                       "mt-0.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] ring-1",
                       item.outcome === "finished"
-                        ? "bg-green-50 text-green-700 ring-green-200"
-                        : "bg-slate-100 text-slate-600 ring-slate-300",
+                        ? "bg-[var(--status-concluded-bg)] text-[var(--status-concluded-fg)] ring-[var(--line)]"
+                        : "bg-[var(--surface-alt)] text-[var(--text-soft)] ring-[var(--line-strong)]",
                     )}
                   >
                     {item.outcome}

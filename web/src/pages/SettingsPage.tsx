@@ -282,13 +282,13 @@ function NewTokenDialog({
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <KeyRound className="h-5 w-5 text-amber-500" />
+            <KeyRound className="h-5 w-5 text-[var(--warn-500)]" />
             Token 已创建
           </DialogTitle>
         </DialogHeader>
         {token && (
           <div className="space-y-3 py-2">
-            <div className="rounded-md border-2 border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+            <div className="rounded-[var(--r-sm)] border-2 border-[color-mix(in_srgb,var(--warn-500)_35%,var(--line))] bg-[color-mix(in_srgb,var(--warn-500)_10%,var(--surface))] p-3 text-xs text-[var(--warn-600)]">
               ⚠️ <strong>请立即复制并妥善保存。</strong>关闭此窗口后将无法再次查看。
             </div>
             <div className="rounded-md bg-muted p-3 font-mono text-xs break-all">

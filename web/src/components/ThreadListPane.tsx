@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import {  NavLink, useLocation } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import {
   ChevronDown,
   ChevronRight,
@@ -20,12 +20,10 @@ const UNCATEGORIZED = "未分类";
 export function ThreadListPane({
   drafts,
   matters,
-  onToggleFavorite,
   onRemoveDraft,
 }: {
   drafts: Draft[] | null;
   matters: MatterSummary[] | null;
-  onToggleFavorite: (matterId: string) => Promise<void>;
   onRemoveDraft: (id: string) => void;
 }) {
   const location = useLocation();
@@ -48,7 +46,9 @@ export function ThreadListPane({
     return m ? (m.category ?? UNCATEGORIZED) : null;
   }, [activeMatterId, matters]);
 
-  const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({});
+  const [openCategories, setOpenCategories] = useState<Record<string, boolean>>(
+    {},
+  );
   const [favoritesOpen, setFavoritesOpen] = useState(true);
   const [draftsOpen, setDraftsOpen] = useState(true);
   const [mattersOpen, setMattersOpen] = useState(true);
@@ -92,15 +92,13 @@ export function ThreadListPane({
             count={favorites.length}
             open={favoritesOpen}
             onToggle={() => setFavoritesOpen((v) => !v)}
-            icon={<Star className="h-3.5 w-3.5 shrink-0 text-amber-500" />}
+            icon={
+              <Star className="h-3.5 w-3.5 shrink-0 text-[var(--warn-500)]" />
+            }
           >
             {favoritesOpen &&
               favorites.map((m) => (
-                <MatterRow
-                  key={`fav-${m.id}`}
-                  matter={m}
-                  onToggleFavorite={() => void onToggleFavorite(m.id)}
-                />
+                <MatterRow key={`fav-${m.id}`} matter={m} />
               ))}
           </Section>
         )}
@@ -112,13 +110,15 @@ export function ThreadListPane({
             count={drafts.length}
             open={draftsOpen}
             onToggle={() => setDraftsOpen((v) => !v)}
-            icon={<FileText className="h-3.5 w-3.5 shrink-0 text-sky-600" />}
+            icon={
+              <FileText className="h-3.5 w-3.5 shrink-0 text-[var(--info-500)]" />
+            }
           >
             {draftsOpen &&
               drafts.map((d) => (
                 <div
                   key={d.id}
-                  className="group mx-1 flex items-start gap-2 rounded-lg border border-transparent px-2 py-1.5 transition-colors hover:bg-slate-100/80"
+                  className="group mx-1 flex items-start gap-2 rounded-[var(--r-sm)] border border-transparent px-2 py-1.5 transition-colors hover:bg-[var(--surface-alt)]"
                 >
                   <NavLink
                     to={
@@ -130,13 +130,16 @@ export function ThreadListPane({
                     }
                     className="min-w-0 flex-1"
                   >
-                    <div className="truncate text-sm font-medium text-slate-800">
+                    <div className="truncate text-sm font-medium text-[var(--text)]">
                       {d.type === "proposal"
                         ? d.title?.trim() || "(untitled)"
                         : `Reply: ${d.thread_key ?? ""}`}
                     </div>
-                    <div className="mt-0.5 truncate text-xs text-slate-500">
-                      {d.type} · {relativeTime(new Date(d.updated_at * 1000).toISOString())}
+                    <div className="mt-0.5 truncate text-xs text-[var(--text-mute)]">
+                      {d.type} ·{" "}
+                      {relativeTime(
+                        new Date(d.updated_at * 1000).toISOString(),
+                      )}
                     </div>
                   </NavLink>
                   <Button
@@ -162,10 +165,14 @@ export function ThreadListPane({
           icon={<FolderTree className="h-3.5 w-3.5 shrink-0" />}
         >
           {matters === null && (
-            <div className="px-4 py-3 text-sm text-muted-foreground">Loading…</div>
+            <div className="px-4 py-3 text-sm text-muted-foreground">
+              Loading…
+            </div>
           )}
           {mattersOpen && matters !== null && matters.length === 0 && (
-            <div className="px-4 py-3 text-sm text-muted-foreground">还没有事项。</div>
+            <div className="px-4 py-3 text-sm text-muted-foreground">
+              还没有事项。
+            </div>
           )}
           {mattersOpen &&
             matters !== null &&
@@ -175,46 +182,44 @@ export function ThreadListPane({
               return (
                 <div
                   key={group.category}
-                  className="mx-1 border-b border-slate-200/60 py-1 last:border-b-0"
+                  className="mx-1 border-b border-[var(--line-soft)] py-1 last:border-b-0"
                 >
                   <button
                     type="button"
                     onClick={() => toggleCategory(group.category)}
-                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-slate-100/80"
+                    className="flex w-full items-center gap-2 rounded-[var(--r-sm)] px-3 py-2 text-left transition-colors hover:bg-[var(--surface-alt)]"
                   >
                     {open ? (
                       <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
                     ) : (
                       <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
                     )}
-                    <FolderTree className="h-4 w-4 shrink-0 text-slate-400" />
+                    <FolderTree className="h-4 w-4 shrink-0 text-[var(--text-fade)]" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="truncate text-sm font-semibold text-slate-900 md:text-[15px]">
+                        <span className="truncate text-sm font-semibold text-[var(--text)] md:text-[15px]">
                           {group.category}
                         </span>
-                        <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
+                        <span className="rounded-full bg-[var(--surface-alt)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-mute)]">
                           {group.items.length}
                         </span>
                       </div>
                       {group.last_updated && (
-                        <div className="mt-0.5 truncate text-[11px] text-slate-500 md:text-xs">
+                        <div className="mt-0.5 truncate text-[11px] text-[var(--text-mute)] md:text-xs">
                           最近活动 {relativeTime(group.last_updated)}
                         </div>
                       )}
                     </div>
                     {group.unread > 0 && (
-                      <Badge variant="red" className="shrink-0">{group.unread}</Badge>
+                      <Badge variant="red" className="shrink-0">
+                        {group.unread}
+                      </Badge>
                     )}
                   </button>
                   {open && (
-                    <div className="mt-1 ml-5 border-l border-slate-200/70 bg-transparent pl-2">
+                    <div className="mt-1 ml-5 border-l border-[var(--line)] bg-transparent pl-2">
                       {group.items.map((m) => (
-                        <MatterRow
-                          key={m.id}
-                          matter={m}
-                          onToggleFavorite={() => void onToggleFavorite(m.id)}
-                        />
+                        <MatterRow key={m.id} matter={m} />
                       ))}
                     </div>
                   )}
@@ -227,13 +232,7 @@ export function ThreadListPane({
   );
 }
 
-function MatterRow({
-  matter,
-  onToggleFavorite,
-}: {
-  matter: MatterSummary;
-  onToggleFavorite: () => void;
-}) {
+function MatterRow({ matter }: { matter: MatterSummary }) {
   const meta = [
     matter.file_count ? `${matter.file_count} 个文件` : null,
     matter.last_file_type ? `最近 ${matter.last_file_type}` : null,
@@ -242,13 +241,14 @@ function MatterRow({
     .filter(Boolean)
     .join(" · ");
   return (
-    <div className="relative">
+    <div>
       <NavLink
         to={`/m/${encodeURIComponent(matter.id)}`}
         className={({ isActive }) =>
           cn(
-            "mx-0 block rounded-lg border-l-2 border-transparent px-3 py-2.5 pl-4 pr-8 transition-colors hover:bg-slate-100/80",
-            isActive && "border-blue-500 bg-blue-100/85 text-blue-950 hover:bg-blue-100/85",
+            "group mx-0 block rounded-[var(--r-sm)] border-l-2 border-transparent px-3 py-2.5 pl-4 text-[var(--text)] transition-colors duration-150 hover:border-[var(--accent-soft)] hover:bg-[var(--surface-alt)] hover:text-[var(--text)] hover:shadow-[inset_0_0_0_1px_var(--line-soft)]",
+            isActive &&
+              "border-[var(--accent)] bg-[var(--accent-bg)] text-[var(--text)] hover:bg-[var(--accent-bg)]",
           )
         }
       >
@@ -256,17 +256,24 @@ function MatterRow({
           <>
             <div className="flex items-center gap-2">
               {matter.unread_count > 0 && (
-                <Badge variant="red" className="shrink-0">{matter.unread_count}</Badge>
+                <Badge variant="red" className="shrink-0">
+                  {matter.unread_count}
+                </Badge>
               )}
-              <span className="truncate text-[14px] font-medium">{matter.title}</span>
+              <span className="truncate text-[14px] font-medium text-[var(--text)] group-hover:text-[var(--text)]">
+                {matter.title}
+              </span>
               <span className="ml-auto shrink-0">
-                <StatusBadge status={matter.current_status} />
+                <StatusBadge
+                  status={matter.current_status}
+                  className="h-5 px-2 text-[10.5px] transition-transform duration-150 group-hover:translate-x-0.5"
+                />
               </span>
             </div>
             <div
               className={cn(
-                "mt-1 truncate text-[10px] leading-5 text-slate-500 md:text-[11px]",
-                isActive && "text-blue-800/80",
+                "mt-1 truncate text-[10px] leading-5 text-[var(--text-mute)] group-hover:text-[var(--text-soft)] md:text-[11px]",
+                isActive && "text-[var(--accent)]",
               )}
             >
               {meta}
@@ -274,23 +281,6 @@ function MatterRow({
           </>
         )}
       </NavLink>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          onToggleFavorite();
-        }}
-        title={matter.favorite ? "取消收藏" : "收藏"}
-        className="absolute right-1 top-1.5 rounded-md p-1 opacity-60 hover:bg-slate-100 hover:opacity-100"
-      >
-        <Star
-          className={cn(
-            "h-4 w-4",
-            matter.favorite ? "fill-amber-400 text-amber-500" : "text-slate-400",
-          )}
-        />
-      </button>
     </div>
   );
 }
@@ -317,7 +307,7 @@ function Section({
       <button
         type="button"
         onClick={onToggle}
-        className="sticky top-0 z-10 mx-1 mt-1 flex w-[calc(100%-0.5rem)] items-center gap-2 border-b border-slate-200/70 bg-[rgba(248,250,252,0.96)] px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500 backdrop-blur md:text-[11px] md:tracking-[0.14em]"
+        className="sticky top-0 z-10 mx-1 mt-1 flex w-[calc(100%-0.5rem)] items-center gap-2 border-b border-[var(--line)] bg-[rgba(250,248,243,0.96)] px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-mute)] backdrop-blur md:text-[11px] md:tracking-[0.14em]"
       >
         {open ? (
           <ChevronDown className="h-3.5 w-3.5 shrink-0" />

@@ -75,7 +75,7 @@ export function ResultConfirmDialog({
                 发布 Result 后：
               </DialogDescription>
             </DialogHeader>
-            <ul className="list-disc space-y-0.5 pl-5 text-xs text-slate-600">
+            <ul className="list-disc space-y-0.5 pl-5 text-xs text-[var(--text-soft)]">
               <li>
                 matter 状态变更为 <span className="font-mono">finished</span> 或{" "}
                 <span className="font-mono">cancelled</span>
@@ -90,7 +90,7 @@ export function ResultConfirmDialog({
                 取消
               </Button>
               <Button
-                className="bg-purple-600 text-white hover:bg-purple-700"
+                className="bg-[var(--violet-600)] text-white hover:opacity-90"
                 onClick={() => setPhase("form")}
               >
                 继续生成
@@ -108,8 +108,8 @@ export function ResultConfirmDialog({
 
             <div className="space-y-3 text-sm">
               <div>
-                <div className="mb-1 text-xs font-medium text-slate-700">
-                  outcome<span className="ml-0.5 text-red-500">*</span>
+                <div className="mb-1 text-xs font-medium text-[var(--text-soft)]">
+                  outcome<span className="ml-0.5 text-[var(--danger-500)]">*</span>
                 </div>
                 <div className="flex gap-5">
                   <label className="flex items-center gap-1.5">
@@ -132,8 +132,8 @@ export function ResultConfirmDialog({
               </div>
 
               <div>
-                <div className="mb-1 text-xs font-medium text-slate-700">
-                  summary<span className="ml-0.5 text-red-500">*</span>
+                <div className="mb-1 text-xs font-medium text-[var(--text-soft)]">
+                  summary<span className="ml-0.5 text-[var(--danger-500)]">*</span>
                 </div>
                 <Input
                   value={summary}
@@ -143,7 +143,7 @@ export function ResultConfirmDialog({
               </div>
 
               <div>
-                <div className="mb-1 text-xs font-medium text-slate-700">body</div>
+                <div className="mb-1 text-xs font-medium text-[var(--text-soft)]">body</div>
                 <Textarea
                   rows={4}
                   value={body}
@@ -156,8 +156,8 @@ export function ResultConfirmDialog({
                 className={cn(
                   "rounded-md px-3 py-2 text-xs ring-1",
                   outcome === "finished"
-                    ? "bg-green-50 text-green-800 ring-green-200"
-                    : "bg-slate-100 text-slate-700 ring-slate-300",
+                    ? "bg-[var(--status-concluded-bg)] text-[var(--status-concluded-fg)] ring-[var(--line)]"
+                    : "bg-[var(--status-archived-bg)] text-[var(--status-archived-fg)] ring-[var(--line)]",
                 )}
               >
                 发布后触发状态 <span className="font-mono">executing → {outcome}</span>

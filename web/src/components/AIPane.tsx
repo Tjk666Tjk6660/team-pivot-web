@@ -21,14 +21,13 @@ import type { AIToolUse } from "@/api";
 
 const GENERATE_TAG = "[[GENERATE_REPLY_DRAFT]]";
 
-// Rotating hints shown in the textarea placeholder while AI is streaming —
-// keeps the "等待间隙" 不空，给点 Coda/书信体气质的提示。
+// Rotating hints shown while AI is streaming.
 const STREAMING_HINTS = [
   "正在对齐颗粒度…",
   "正在追溯线索…",
   "正在校对引用…",
   "正在编织上下文…",
-  "正在斟酌措辞…",
+  "正在梳理证据…",
   "正在权衡分歧…",
   "正在拼装结论…",
   "正在润色草稿…",
@@ -48,7 +47,11 @@ export function AIPane({
   slug: string;
   threadKey: string;
   threadTitle: string;
-  onUseDraftAsReply: (content: string, replyTo: string, summary?: string) => Promise<boolean>;
+  onUseDraftAsReply: (
+    content: string,
+    replyTo: string,
+    summary?: string,
+  ) => Promise<boolean>;
   pendingReplyTarget?: string | null;
   onPendingReplyTargetConsumed?: () => void;
   hasReplyDraft: boolean;
@@ -72,7 +75,8 @@ export function AIPane({
   }, [streaming]);
 
   const activeStream = ai.activeStream;
-  const blockedByOtherThread = !!activeStream && activeStream.threadKey !== threadKey;
+  const blockedByOtherThread =
+    !!activeStream && activeStream.threadKey !== threadKey;
   const activeThreadTitle = activeStream?.title ?? "";
 
   useEffect(() => {
@@ -84,17 +88,31 @@ export function AIPane({
     ai.setReplyTarget(category, slug, threadKey, pendingReplyTarget);
     onPendingReplyTargetConsumed?.();
     setTimeout(() => inputRef.current?.focus(), 50);
-  }, [ai, category, slug, threadKey, pendingReplyTarget, onPendingReplyTargetConsumed, loaded]);
+  }, [
+    ai,
+    category,
+    slug,
+    threadKey,
+    pendingReplyTarget,
+    onPendingReplyTargetConsumed,
+    loaded,
+  ]);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: "smooth",
+    });
   }, [messages]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const ensureComposerVisible = () => {
       requestAnimationFrame(() => {
-        composerRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        composerRef.current?.scrollIntoView({
+          block: "nearest",
+          behavior: "smooth",
+        });
       });
     };
     const viewport = window.visualViewport;
@@ -123,7 +141,7 @@ export function AIPane({
       slug,
       threadKey,
       threadTitle,
-      rawText: `${GENERATE_TAG} 请根据以上对话，生成针对「${target}」的完整回复正文，整个正文必须用 <draft type="think">...</draft> 标签包裹；同时额外用 <summary>...</summary> 标签包一句不超过 80 字的中文 summary（用最精简的语言概括这篇文件推进 / 判断 / 结论了什么，不要加引号也不要前后解释）。`,
+      rawText: `${GENERATE_TAG} 请根据以上对话，生成针对「${target}」的完整回复正文，整个正文必须用 <draft type="think">...</draft> 标签包裹；同时额外用 <summary>...</summary> 标签包裹一句不超过 80 字的中文 summary（用最精简的语言概括这篇文件推进 / 判断 / 结论了什么，不要加引号，也不要前后解释）。`,
       hasReplyDraft,
       onUseDraftAsReply,
     });
@@ -132,20 +150,21 @@ export function AIPane({
   const noTarget = !replyTarget;
   const noUserMsg = messages.filter((m) => m.role === "user").length === 0;
   const interactionsDisabled = blockedByOtherThread || loading;
-  const sendDisabled = interactionsDisabled || streaming || noTarget || !input.trim();
-  const generateDisabled = interactionsDisabled || streaming || noTarget || noUserMsg;
+  const sendDisabled =
+    interactionsDisabled || streaming || noTarget || !input.trim();
+  const generateDisabled =
+    interactionsDisabled || streaming || noTarget || noUserMsg;
 
   return (
-    <div
-      className="flex h-full min-h-0 flex-col gap-2.5 overflow-hidden p-2 sm:gap-3 sm:p-4"
-      style={{ background: "var(--bg-alt)" }}
-    >
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden bg-transparent">
       {blockedByOtherThread && (
         <div
-          className="rounded-[var(--r-md)] px-4 py-3 text-[12px]"
+          className="rounded-[var(--r-md)] px-3.5 py-3 text-[12px]"
           style={{
-            border: "1px solid color-mix(in srgb, var(--warn-500) 35%, var(--line))",
-            background: "color-mix(in srgb, var(--warn-500) 8%, var(--surface))",
+            border:
+              "1px solid color-mix(in srgb, var(--warn-500) 35%, var(--line))",
+            background:
+              "color-mix(in srgb, var(--warn-500) 8%, var(--surface))",
             color: "var(--warn-600)",
           }}
         >
@@ -154,7 +173,7 @@ export function AIPane({
             <div>
               <div className="font-semibold">AI 输出被其他 thread 占用</div>
               <div className="mt-1 leading-relaxed">
-                《{activeThreadTitle}》正在输出，请等待它完成后再尝试。
+                「{activeThreadTitle}」正在输出，请等待它完成后再尝试。
               </div>
             </div>
           </div>
@@ -163,10 +182,10 @@ export function AIPane({
 
       {replyTarget && (
         <div
-          className="shrink-0 rounded-[var(--r-md)] px-3 py-2 text-[11.5px]"
+          className="shrink-0 rounded-[var(--r-sm)] px-3 py-2 text-[11.5px]"
           style={{
-            border: "1px solid var(--accent-soft)",
-            background: "var(--accent-bg)",
+            border: "1px solid var(--line)",
+            background: "var(--surface-alt)",
             color: "var(--accent)",
           }}
           title={replyTarget}
@@ -183,11 +202,7 @@ export function AIPane({
 
       <div
         ref={scrollRef}
-        className="min-h-[12rem] flex-1 space-y-3 overflow-y-auto rounded-[var(--r-md)] px-2.5 py-3 sm:px-4 sm:py-4"
-        style={{
-          border: "1px solid var(--line)",
-          background: "var(--surface)",
-        }}
+        className="min-h-[12rem] flex-1 space-y-3 overflow-y-auto px-1 py-1"
       >
         {loading && (
           <p
@@ -217,7 +232,11 @@ export function AIPane({
             <AIMessageBubble
               key={m.id}
               msg={m}
-              streamingHint={isLastEmptyAssistant ? STREAMING_HINTS[streamingHintIdx] : undefined}
+              streamingHint={
+                isLastEmptyAssistant
+                  ? STREAMING_HINTS[streamingHintIdx]
+                  : undefined
+              }
             />
           );
         })}
@@ -225,13 +244,14 @@ export function AIPane({
 
       <div
         ref={composerRef}
-        className="shrink-0 rounded-[var(--r-md)] p-2.5 pb-3 sm:p-3.5 sm:pb-5"
+        className="shrink-0 rounded-[var(--r-md)] p-3"
         style={{
           border: "1px solid var(--line)",
-          background: "var(--surface-alt)",
+          background: "var(--surface)",
+          boxShadow: "var(--shadow-sm)",
         }}
       >
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
           <div
             className="flex items-center gap-2 text-[13px] font-semibold font-serif-body"
             style={{ color: "var(--text)" }}
@@ -243,17 +263,21 @@ export function AIPane({
             <Button
               size="sm"
               variant="default"
-              className="h-8 rounded-md px-3 text-[12.5px] font-semibold shadow-none"
+              className="h-8 rounded-[var(--r-sm)] px-3 text-[12.5px] font-semibold shadow-none"
               style={{
-                background: generateDisabled ? "var(--surface)" : "var(--accent)",
-                color: generateDisabled ? "var(--text-fade)" : "var(--accent-ink)",
+                background: generateDisabled
+                  ? "var(--surface-alt)"
+                  : "var(--accent)",
+                color: generateDisabled
+                  ? "var(--text-fade)"
+                  : "var(--accent-ink)",
                 border: `1px solid ${generateDisabled ? "var(--line)" : "var(--accent)"}`,
               }}
               disabled={generateDisabled}
               onClick={() => void handleGenerateDraft()}
               title={
                 blockedByOtherThread
-                  ? `《${activeThreadTitle}》正在输出`
+                  ? `「${activeThreadTitle}」正在输出`
                   : noTarget
                     ? "未指定起点帖子"
                     : noUserMsg
@@ -269,9 +293,11 @@ export function AIPane({
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="h-8 rounded-md px-3 text-[12px]"
+                className="h-8 rounded-[var(--r-sm)] px-3 text-[12px]"
                 style={{ color: "var(--text-soft)" }}
-                onClick={() => void ai.clearThreadConversation(category, slug, threadKey)}
+                onClick={() =>
+                  void ai.clearThreadConversation(category, slug, threadKey)
+                }
                 disabled={blockedByOtherThread || streaming}
               >
                 清空对话
@@ -281,9 +307,11 @@ export function AIPane({
               size="sm"
               onClick={() => void handleSend()}
               disabled={sendDisabled}
-              className="h-8 rounded-md px-3 text-[12.5px] font-semibold shadow-none"
+              className="h-8 rounded-[var(--r-sm)] px-3 text-[12.5px] font-semibold shadow-none"
               style={{
-                background: sendDisabled ? "var(--surface)" : "var(--accent)",
+                background: sendDisabled
+                  ? "var(--surface-alt)"
+                  : "var(--accent)",
                 color: sendDisabled ? "var(--text-fade)" : "var(--accent-ink)",
                 border: `1px solid ${sendDisabled ? "var(--line)" : "var(--accent)"}`,
               }}
@@ -301,7 +329,10 @@ export function AIPane({
             onChange={(e) => ai.setInput(threadKey, e.target.value)}
             onFocus={() => {
               requestAnimationFrame(() => {
-                composerRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+                composerRef.current?.scrollIntoView({
+                  block: "nearest",
+                  behavior: "smooth",
+                });
               });
             }}
             onKeyDown={(e) => {
@@ -312,17 +343,17 @@ export function AIPane({
             }}
             placeholder={
               blockedByOtherThread
-                ? `《${activeThreadTitle}》正在输出，请稍后…`
+                ? `「${activeThreadTitle}」正在输出，请稍后…`
                 : noTarget
                   ? "未指定起点帖子（请从某条帖子点击「AI 回复」进入）"
                   : "询问问题、提炼结论，或让 AI 帮你生成这条回复…"
             }
             rows={4}
             disabled={blockedByOtherThread || streaming || noTarget}
-            className="min-h-[9.5rem] w-full resize-none rounded-[var(--r-md)] text-[13px]"
+            className="min-h-[8.5rem] w-full resize-none rounded-[var(--r-sm)] text-[13px] shadow-none"
             style={{
-              background: "var(--surface)",
-              border: "1px solid var(--line-strong)",
+              background: "var(--surface-alt)",
+              border: "1px solid var(--line)",
               color: "var(--text)",
             }}
           />
@@ -340,16 +371,18 @@ function AIMessageBubble({
   streamingHint?: string;
 }) {
   const isUser = msg.role === "user";
-  const display = isUser ? msg.content.replace(GENERATE_TAG, "🎯").trim() : msg.content;
+  const display = isUser
+    ? msg.content.replace(GENERATE_TAG, "生成草稿").trim()
+    : msg.content;
   if (isUser) {
     return (
       <div className="flex justify-end">
         <div
-          className="max-w-[88%] whitespace-pre-wrap rounded-[var(--r-md)] px-3.5 py-2.5 text-[13px] leading-[1.55]"
+          className="max-w-[88%] whitespace-pre-wrap rounded-[var(--r-md)] px-3.5 py-2.5 text-[13px] leading-[1.6]"
           style={{
-            background: "var(--accent)",
-            color: "var(--accent-ink)",
-            border: "1px solid var(--accent)",
+            background: "var(--accent-bg)",
+            color: "var(--text)",
+            border: "1px solid var(--accent-soft)",
             boxShadow: "var(--shadow-sm)",
           }}
         >
@@ -360,7 +393,9 @@ function AIMessageBubble({
   }
   return (
     <div>
-      {msg.toolUses && msg.toolUses.length > 0 && <ToolUseTimeline tools={msg.toolUses} />}
+      {msg.toolUses && msg.toolUses.length > 0 && (
+        <ToolUseTimeline tools={msg.toolUses} />
+      )}
       <div
         className="prose-pivot max-w-none overflow-hidden rounded-[var(--r-md)] px-4 py-3 text-[13.5px]"
         style={{
@@ -368,6 +403,7 @@ function AIMessageBubble({
           border: "1px solid var(--line)",
           borderLeft: "3px solid var(--accent)",
           color: "var(--text)",
+          boxShadow: "var(--shadow-sm)",
         }}
       >
         {msg.content ? (
@@ -389,7 +425,9 @@ function AIMessageBubble({
             style={{ color: "var(--text-mute)" }}
           >
             {streamingHint ?? "正在等待回应…"}
-            <span className="animate-pulse" aria-hidden>▌</span>
+            <span className="animate-pulse" aria-hidden>
+              ▌
+            </span>
           </span>
         )}
       </div>
@@ -411,10 +449,11 @@ function ToolUseTimeline({ tools }: { tools: AIToolUse[] }) {
     if (allDone && startAt !== null && endAt === null) setEndAt(Date.now());
   }, [allDone, startAt, endAt]);
 
-  const currentTool = tools.find((t) => !t.output_summary) ?? tools[tools.length - 1];
+  const currentTool =
+    tools.find((t) => !t.output_summary) ?? tools[tools.length - 1];
   const headerLabel = allDone
     ? startAt !== null && endAt !== null
-      ? `查阅了 ${((endAt - startAt) / 1000).toFixed(2)}s`
+      ? `查阅 ${((endAt - startAt) / 1000).toFixed(2)}s`
       : `已读 ${tools.length} 项`
     : `正在读 ${currentTool ? fullActionText(currentTool) : "…"}`;
 
@@ -434,11 +473,19 @@ function ToolUseTimeline({ tools }: { tools: AIToolUse[] }) {
       >
         <span className="flex min-w-0 items-center gap-1.5">
           {allDone ? (
-            <CheckCircle2 className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--ok-500)" }} />
+            <CheckCircle2
+              className="h-3.5 w-3.5 shrink-0"
+              style={{ color: "var(--ok-500)" }}
+            />
           ) : (
-            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" style={{ color: "var(--text-fade)" }} />
+            <Loader2
+              className="h-3.5 w-3.5 shrink-0 animate-spin"
+              style={{ color: "var(--text-fade)" }}
+            />
           )}
-          <span className="truncate" title={headerLabel}>{headerLabel}</span>
+          <span className="truncate" title={headerLabel}>
+            {headerLabel}
+          </span>
         </span>
         <ChevronRight
           className={`h-3 w-3 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
@@ -467,18 +514,22 @@ function ToolUseTimeline({ tools }: { tools: AIToolUse[] }) {
 function fullActionText(t: AIToolUse): string {
   switch (t.name) {
     case "list_thread_titles":
-      return "所有 thread 列表";
+      return "全部 thread 列表";
     case "search_indexes": {
-      const kw = typeof t.arguments?.keyword === "string" ? t.arguments.keyword : "";
+      const kw =
+        typeof t.arguments?.keyword === "string" ? t.arguments.keyword : "";
       return kw ? `搜索「${kw}」` : "搜索 index";
     }
     case "read_thread_index": {
       const slug =
-        typeof t.arguments?.thread_slug === "string" ? t.arguments.thread_slug : "";
+        typeof t.arguments?.thread_slug === "string"
+          ? t.arguments.thread_slug
+          : "";
       return slug ? `index: ${slug}` : "index";
     }
     case "read_post": {
-      const path = typeof t.arguments?.path === "string" ? t.arguments.path : "";
+      const path =
+        typeof t.arguments?.path === "string" ? t.arguments.path : "";
       return path ? path.split("/").pop() || path : "帖子";
     }
     default:
@@ -493,8 +544,8 @@ function TimelineRow({ tool }: { tool: AIToolUse }) {
     <li className="relative flex items-center gap-2">
       <span
         aria-hidden
-        className={`absolute -left-[15px] top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full ring-2 ring-slate-50/70 ${
-          pending ? "bg-slate-300 animate-pulse" : "bg-emerald-500"
+        className={`absolute -left-[15px] top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full ring-2 ring-[var(--surface)] ${
+          pending ? "bg-[var(--text-fade)] animate-pulse" : "bg-[var(--ok-500)]"
         }`}
       />
       <span
@@ -504,7 +555,11 @@ function TimelineRow({ tool }: { tool: AIToolUse }) {
         <s.Icon className={`h-3 w-3 shrink-0 ${s.iconTone}`} />
         <span className="truncate">{s.label}</span>
       </span>
-      {pending && <span className="shrink-0 animate-pulse text-slate-400">…</span>}
+      {pending && (
+        <span className="shrink-0 animate-pulse text-[var(--text-fade)]">
+          …
+        </span>
+      )}
     </li>
   );
 }
@@ -528,33 +583,37 @@ function describeToolCall(t: AIToolUse): ChipStyle {
         title: "list_thread_titles",
       };
     case "search_indexes": {
-      const kw = typeof t.arguments?.keyword === "string" ? t.arguments.keyword : "";
+      const kw =
+        typeof t.arguments?.keyword === "string" ? t.arguments.keyword : "";
       return {
         Icon: Search,
-        tone: "bg-amber-50 text-amber-800 ring-amber-200/60",
-        iconTone: "text-amber-500",
+        tone: "bg-[color-mix(in_srgb,var(--warn-500)_10%,var(--surface))] text-[var(--warn-600)] ring-[color-mix(in_srgb,var(--warn-500)_24%,var(--line))]",
+        iconTone: "text-[var(--warn-500)]",
         label: kw || "搜索",
         title: kw ? `search_indexes("${kw}")` : "search_indexes",
       };
     }
     case "read_thread_index": {
       const slug =
-        typeof t.arguments?.thread_slug === "string" ? t.arguments.thread_slug : "";
+        typeof t.arguments?.thread_slug === "string"
+          ? t.arguments.thread_slug
+          : "";
       return {
         Icon: BookOpen,
-        tone: "bg-sky-50 text-sky-800 ring-sky-200/60",
-        iconTone: "text-sky-500",
+        tone: "bg-[var(--status-discussing-bg)] text-[var(--status-discussing-fg)] ring-[var(--line)]",
+        iconTone: "text-[var(--status-discussing-fg)]",
         label: truncateMiddle(slug, 24) || "index",
         title: slug ? `read_thread_index(${slug})` : "read_thread_index",
       };
     }
     case "read_post": {
-      const path = typeof t.arguments?.path === "string" ? t.arguments.path : "";
+      const path =
+        typeof t.arguments?.path === "string" ? t.arguments.path : "";
       const filename = path.split("/").pop() ?? path;
       return {
         Icon: FileText,
-        tone: "bg-slate-100 text-slate-700 ring-slate-200/70",
-        iconTone: "text-slate-500",
+        tone: "bg-[var(--surface-alt)] text-[var(--text-soft)] ring-[var(--line)]",
+        iconTone: "text-[var(--text-mute)]",
         label: prettifyPostFilename(filename) || "post",
         title: path || "read_post",
       };
@@ -562,8 +621,8 @@ function describeToolCall(t: AIToolUse): ChipStyle {
     default:
       return {
         Icon: FileText,
-        tone: "bg-slate-100 text-slate-600 ring-slate-200/70",
-        iconTone: "text-slate-400",
+        tone: "bg-[var(--surface-alt)] text-[var(--text-soft)] ring-[var(--line)]",
+        iconTone: "text-[var(--text-fade)]",
         label: t.name,
         title: t.name,
       };

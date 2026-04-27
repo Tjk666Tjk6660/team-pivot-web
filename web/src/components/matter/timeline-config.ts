@@ -19,11 +19,11 @@ export type TypeVisual = {
 };
 
 export const TYPE_VISUAL: Record<DocType, TypeVisual> = {
-  think:   { label: "think",   side: "border-l-blue-400",    chip: "bg-blue-100 text-blue-700 ring-blue-200",         dot: "bg-blue-500",    pill: "text-blue-700"    },
-  act:     { label: "act",     side: "border-l-emerald-400", chip: "bg-emerald-100 text-emerald-700 ring-emerald-200", dot: "bg-emerald-500", pill: "text-emerald-700" },
-  verify:  { label: "verify",  side: "border-l-amber-400",   chip: "bg-amber-100 text-amber-700 ring-amber-200",       dot: "bg-amber-500",   pill: "text-amber-700"   },
-  result:  { label: "result",  side: "border-l-purple-500",  chip: "bg-purple-100 text-purple-700 ring-purple-200",    dot: "bg-purple-600",  pill: "text-purple-700"  },
-  insight: { label: "insight", side: "border-l-slate-400",   chip: "bg-slate-100 text-slate-700 ring-slate-200",       dot: "bg-slate-500",   pill: "text-slate-700"   },
+  think:   { label: "think",   side: "border-l-[var(--info-500)]",   chip: "bg-[var(--status-discussing-bg)] text-[var(--status-discussing-fg)] ring-[var(--line)]", dot: "bg-[var(--info-500)]",    pill: "text-[var(--status-discussing-fg)]" },
+  act:     { label: "act",     side: "border-l-[var(--ok-500)]",     chip: "bg-[var(--status-concluded-bg)] text-[var(--status-concluded-fg)] ring-[var(--line)]",   dot: "bg-[var(--ok-500)]",      pill: "text-[var(--status-concluded-fg)]" },
+  verify:  { label: "verify",  side: "border-l-[var(--warn-500)]",   chip: "bg-[var(--status-paused-bg)] text-[var(--status-paused-fg)] ring-[var(--line)]",        dot: "bg-[var(--warn-500)]",    pill: "text-[var(--status-paused-fg)]" },
+  result:  { label: "result",  side: "border-l-[var(--violet-500)]", chip: "bg-[var(--status-project-bg)] text-[var(--status-project-fg)] ring-[var(--line)]",       dot: "bg-[var(--violet-500)]",  pill: "text-[var(--status-project-fg)]" },
+  insight: { label: "insight", side: "border-l-[var(--text-fade)]",  chip: "bg-[var(--status-archived-bg)] text-[var(--status-archived-fg)] ring-[var(--line)]",    dot: "bg-[var(--text-mute)]",   pill: "text-[var(--status-archived-fg)]" },
 };
 
 export const STATUS_DESC: Record<MatterStatus, string> = {
