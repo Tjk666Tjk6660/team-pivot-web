@@ -119,199 +119,12 @@ def build_router(
             settings.set(_KEY_MAX_ROUNDS, str(body.max_rounds))
         return {"ok": True}
 
-    # ── Conversation persistence ───────────────────────────────────────────────
-
-    @router.get("/api/ai/threads/{category}/{slug}/conversation")
-    def get_conversation(
-        category: str,
-        slug: str,
-        user: User = Depends(current_user),
-    ):
-        messages, reply_target = conversations.get(
-            user.open_id, f"{category}/{slug}"
-        )
-        return {
-            "messages": messages,
-            "reply_target": reply_target,
-        }
-
-    @router.put("/api/ai/threads/{category}/{slug}/conversation")
-    def save_conversation(
-        category: str,
-        slug: str,
-        body: ConversationSave,
-        user: User = Depends(current_user),
-    ):
-        conversations.save(
-            user.open_id,
-            f"{category}/{slug}",
-            [m.model_dump() for m in body.messages],
-            body.reply_target,
-        )
-        return {"ok": True}
-
-    @router.delete("/api/ai/threads/{category}/{slug}/conversation")
-    def clear_conversation(
-        category: str,
-        slug: str,
-        user: User = Depends(current_user),
-    ):
-        conversations.delete(user.open_id, f"{category}/{slug}")
-        return {"ok": True}
-
-    # ── Chat (SSE) ─────────────────────────────────────────────────────────────
-
-    @router.post("/api/ai/threads/{category}/{slug}/chat")
-    async def chat(
-        category: str,
-        slug: str,
-        body: ChatRequest,
-        _: User = Depends(current_user),
-    ):
-        api_key = settings.get(_KEY_API_KEY)
-        if not api_key:
-            raise HTTPException(400, "未配置 AI API Key，请在【设置】中配置")
-
-        base_url = settings.get(_KEY_BASE_URL) or DEFAULT_BASE_URL
-        model = settings.get(_KEY_MODEL) or DEFAULT_MODEL
-        max_context_tokens = _get_int(settings, _KEY_MAX_CONTEXT_TOKENS, _DEFAULT_MAX_CONTEXT_TOKENS)
-        min_rounds = _get_int(settings, _KEY_MIN_ROUNDS, _DEFAULT_MIN_ROUNDS)
-        max_rounds = _get_int(settings, _KEY_MAX_ROUNDS, _DEFAULT_MAX_ROUNDS)
-
-        if not body.reply_target:
-            raise HTTPException(400, "缺少起点帖子（reply_target）")
-
-        try:
-            starting_block = build_starting_post_block(
-                workspace.discussions_dir, workspace.index_dir, body.reply_target
-            )
-        except ContextTooLongError as e:
-            raise HTTPException(422, str(e))
-
-        system_prompt = build_system_prompt(starting_block)
-        user_history = [{"role": m.role, "content": m.content} for m in body.messages]
-
-        tools_handler = AITools(workspace.discussions_dir, workspace.index_dir)
-        tool_specs = tools_handler.specs()
-
-        async def generate():
-            try:
-                selected = truncate_messages(
-                    user_history,
-                    system_prompt_len=len(system_prompt),
-                    max_context_tokens=max_context_tokens,
-                    min_rounds=min_rounds,
-                    max_rounds=max_rounds,
-                )
-                messages: list[dict] = [{"role": "system", "content": system_prompt}]
-                messages.extend(selected)
-
-                for turn in range(_MAX_TOOL_TURNS):
-                    pending_tool_calls: list[dict] = []
-                    finish_reason = "stop"
-                    assistant_text_parts: list[str] = []
-
-                    async for event in stream_chat(
-                        messages, model, api_key, base_url, tools=tool_specs
-                    ):
-                        etype = event.get("type")
-                        if etype == "text":
-                            delta = event.get("delta") or ""
-                            assistant_text_parts.append(delta)
-                            yield _sse({"delta": delta})
-                        elif etype == "tool_call":
-                            pending_tool_calls.append(
-                                {
-                                    "id": event.get("id") or "",
-                                    "name": event.get("name") or "",
-                                    "arguments": event.get("arguments") or "",
-                                }
-                            )
-                        elif etype == "finish":
-                            finish_reason = event.get("reason") or "stop"
-
-                    if not pending_tool_calls:
-                        break
-
-                    # Record the assistant turn that requested tools, then
-                    # dispatch each one, streaming tool_call_start/end so the
-                    # frontend can render "已读" markers.
-                    assistant_msg: dict = {
-                        "role": "assistant",
-                        "content": "".join(assistant_text_parts),
-                        "tool_calls": [
-                            {
-                                "id": tc["id"],
-                                "type": "function",
-                                "function": {
-                                    "name": tc["name"],
-                                    "arguments": tc["arguments"],
-                                },
-                            }
-                            for tc in pending_tool_calls
-                        ],
-                    }
-                    messages.append(assistant_msg)
-
-                    for tc in pending_tool_calls:
-                        try:
-                            args = json.loads(tc["arguments"] or "{}")
-                            if not isinstance(args, dict):
-                                args = {}
-                        except json.JSONDecodeError:
-                            args = {}
-
-                        yield _sse(
-                            {
-                                "tool_call_start": {
-                                    "id": tc["id"],
-                                    "name": tc["name"],
-                                    "arguments": args,
-                                }
-                            }
-                        )
-                        result = tools_handler.dispatch(tc["name"], args)
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tc["id"],
-                                "content": result,
-                            }
-                        )
-                        yield _sse(
-                            {
-                                "tool_call_end": {
-                                    "id": tc["id"],
-                                    "name": tc["name"],
-                                    "output_summary": _summarize(result),
-                                }
-                            }
-                        )
-
-                    if finish_reason not in ("tool_calls", "function_call", None):
-                        # Provider signaled end-of-turn after tools; loop will
-                        # still run once more so the model gets to respond.
-                        pass
-                else:
-                    yield _sse(
-                        {
-                            "error": f"工具调用超过 {_MAX_TOOL_TURNS} 轮，已中止。"
-                        }
-                    )
-            except AIError as e:
-                log.warning("ai chat error: %s", e)
-                yield _sse({"error": str(e)})
-            except Exception:
-                log.exception("unexpected ai error")
-                yield _sse({"error": "服务异常，请稍后重试"})
-            yield "data: [DONE]\n\n"
-
-        return StreamingResponse(generate(), media_type="text/event-stream")
-
-    # ── Matter AI routes (P4.5) ────────────────────────────────────────────────
-    # Mirror the thread routes above, but key conversations on
-    # `category/matter_id` (derived from the matter index). matter_id equals
-    # slug, so the existing ai_conversations schema is reused unchanged.
+    # ── Conversation persistence + chat (SSE) ────────────────────────────────
+    # Both conversation key and chat are matter-scoped. Conversation key is
+    # `category/matter_id` (derived from the matter index by `_matter_thread_key`);
+    # the chat endpoint never validates matter existence — `build_starting_post_block`
+    # silently downgrades to an empty starting block on a missing path, so callers
+    # like NewMatter can use a placeholder matter_id to generate ad-hoc summaries.
 
     def _matter_thread_key(matter_id: str) -> str:
         data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
@@ -365,8 +178,10 @@ def build_router(
         body: ChatRequest,
         _: User = Depends(current_user),
     ):
-        # Existence check — produces 404 before we burn an API call.
-        _matter_thread_key(matter_id)
+        # No existence check: build_starting_post_block silently downgrades to
+        # an empty starting block on missing/invalid paths, so callers like
+        # NewMatter (matter not yet created) can use a placeholder matter_id
+        # to generate ad-hoc summaries without us 404-ing them upfront.
 
         api_key = settings.get(_KEY_API_KEY)
         if not api_key:

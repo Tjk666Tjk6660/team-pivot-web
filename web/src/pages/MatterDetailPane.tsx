@@ -470,7 +470,6 @@ export function MatterDetailPane() {
 
     let accumulated = "";
     for await (const ev of streamAIChat(
-      matter.category ?? "",
       matter.id,
       [{ role: "user", content: userMsg }],
       replyTarget,
@@ -1056,8 +1055,7 @@ export function MatterDetailPane() {
               </div>
               <div className="min-h-0 flex-1 p-3 sm:p-4">
                 <AIPane
-                  category={matter.category ?? ""}
-                  slug={matter.id}
+                  matter_id={matter.id}
                   threadKey={threadKey}
                   threadTitle={matter.title}
                   onUseDraftAsReply={handleUseDraftAsReply}

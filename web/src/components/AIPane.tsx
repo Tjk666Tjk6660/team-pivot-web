@@ -34,8 +34,7 @@ const STREAMING_HINTS = [
 ];
 
 export function AIPane({
-  category,
-  slug,
+  matter_id,
   threadKey,
   threadTitle,
   onUseDraftAsReply,
@@ -43,8 +42,7 @@ export function AIPane({
   onPendingReplyTargetConsumed,
   hasReplyDraft,
 }: {
-  category: string;
-  slug: string;
+  matter_id: string;
   threadKey: string;
   threadTitle: string;
   onUseDraftAsReply: (
@@ -80,18 +78,17 @@ export function AIPane({
   const activeThreadTitle = activeStream?.title ?? "";
 
   useEffect(() => {
-    void ai.ensureThreadLoaded(category, slug, threadKey);
-  }, [ai, category, slug, threadKey]);
+    void ai.ensureThreadLoaded(matter_id, threadKey);
+  }, [ai, matter_id, threadKey]);
 
   useEffect(() => {
     if (!pendingReplyTarget || !loaded) return;
-    ai.setReplyTarget(category, slug, threadKey, pendingReplyTarget);
+    ai.setReplyTarget(matter_id, threadKey, pendingReplyTarget);
     onPendingReplyTargetConsumed?.();
     setTimeout(() => inputRef.current?.focus(), 50);
   }, [
     ai,
-    category,
-    slug,
+    matter_id,
     threadKey,
     pendingReplyTarget,
     onPendingReplyTargetConsumed,
@@ -123,8 +120,7 @@ export function AIPane({
   const handleSend = async () => {
     if (blockedByOtherThread) return;
     await ai.sendMessage({
-      category,
-      slug,
+      matter_id,
       threadKey,
       threadTitle,
       rawText: input,
@@ -137,8 +133,7 @@ export function AIPane({
     if (blockedByOtherThread || !replyTarget) return;
     const target = replyTarget.split("/").pop() ?? replyTarget;
     await ai.sendMessage({
-      category,
-      slug,
+      matter_id,
       threadKey,
       threadTitle,
       rawText: `${GENERATE_TAG} 请根据以上对话，生成针对「${target}」的完整回复正文，整个正文必须用 <draft type="think">...</draft> 标签包裹；同时额外用 <summary>...</summary> 标签包裹一句不超过 80 字的中文 summary（用最精简的语言概括这篇文件推进 / 判断 / 结论了什么，不要加引号，也不要前后解释）。`,
@@ -296,7 +291,7 @@ export function AIPane({
                 className="h-8 rounded-[var(--r-sm)] px-3 text-[12px]"
                 style={{ color: "var(--text-soft)" }}
                 onClick={() =>
-                  void ai.clearThreadConversation(category, slug, threadKey)
+                  void ai.clearThreadConversation(matter_id, threadKey)
                 }
                 disabled={blockedByOtherThread || streaming}
               >

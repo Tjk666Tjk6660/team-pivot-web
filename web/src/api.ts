@@ -34,27 +34,6 @@ export async function logout(): Promise<void> {
   await fetch("/logout", { method: "POST", credentials: "include" });
 }
 
-export type ThreadMeta = {
-  category: string;
-  slug: string;
-  title: string;
-  author: string | null;
-  author_display: string | null;
-  status: string | null;
-  last_updated: string | null;
-  post_count: number;
-  unread_count: number;
-  favorite: boolean;
-};
-
-export async function fetchThreads(category?: string): Promise<ThreadMeta[]> {
-  const qs = category ? `?category=${encodeURIComponent(category)}` : "";
-  const r = await fetch(`/api/threads${qs}`, { credentials: "include" });
-  if (!r.ok) throw new Error(`/api/threads failed: ${r.status}`);
-  const body = (await r.json()) as { items: ThreadMeta[] };
-  return body.items;
-}
-
 // ── Matter (pivot-interface.md §Matter API) ────────────────────────────────
 
 export type MatterStatus =
@@ -372,78 +351,6 @@ export async function fetchAppHome(): Promise<AppHomePayload> {
   return (await r.json()) as AppHomePayload;
 }
 
-export type MentionEntry = {
-  time: string | null;
-  author_id: string | null;
-  author_display: string | null;
-  users: { user: string; open_id: string }[];
-  comments: string | null;
-};
-
-export type Post = {
-  filename: string;
-  frontmatter: Record<string, unknown>;
-  body: string;
-  author_display: string | null;
-  author_avatar_url: string | null;
-  mentions: MentionEntry[];
-};
-
-export type ThreadDetail = {
-  meta: ThreadMeta;
-  posts: Post[];
-};
-
-export async function fetchThread(category: string, slug: string): Promise<ThreadDetail> {
-  const r = await fetch(
-    `/api/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}`,
-    { credentials: "include" },
-  );
-  if (r.status === 404) throw new Error("thread not found");
-  if (!r.ok) throw new Error(`fetch thread failed: ${r.status}`);
-  return (await r.json()) as ThreadDetail;
-}
-
-export async function createThread(
-  body: { category: string; title: string; body: string },
-): Promise<{ category: string; slug: string; filename: string }> {
-  const r = await fetch("/api/threads", {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) {
-    const detail = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(detail.detail || `create failed: ${r.status}`);
-  }
-  return await r.json();
-}
-
-export async function postReply(
-  category: string, slug: string, body: string,
-  opts?: { reply_to?: string | null; references?: string[] },
-): Promise<{ filename: string }> {
-  const r = await fetch(
-    `/api/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/posts`,
-    {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        body,
-        reply_to: opts?.reply_to ?? null,
-        references: opts?.references ?? [],
-      }),
-    },
-  );
-  if (!r.ok) {
-    const detail = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(detail.detail || `reply failed: ${r.status}`);
-  }
-  return await r.json();
-}
-
 export type MentionBlock = {
   open_ids: string[];
   comments: string;
@@ -570,75 +477,6 @@ export async function publishDraft(
   return await r.json();
 }
 
-export async function addMention(
-  category: string,
-  slug: string,
-  target_filename: string,
-  mentions: MentionBlock,
-): Promise<{ ok: true }> {
-  const r = await fetch(
-    `/api/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/mentions`,
-    {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target_filename, mentions }),
-    },
-  );
-  if (!r.ok) {
-    const d = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(d.detail || `mention failed: ${r.status}`);
-  }
-  return await r.json();
-}
-
-export async function changeThreadStatus(
-  category: string, slug: string, to: string, reason?: string,
-): Promise<{ ok: true; from: string; to: string }> {
-  const r = await fetch(
-    `/api/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/status`,
-    {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ to, reason }),
-    },
-  );
-  if (!r.ok) {
-    const d = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(d.detail || `status change failed: ${r.status}`);
-  }
-  return await r.json();
-}
-
-export async function setThreadFavorite(
-  category: string,
-  slug: string,
-  favorite: boolean,
-): Promise<{ ok: true; thread_key: string; favorite: boolean }> {
-  const r = await fetch(
-    `/api/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/favorite`,
-    {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ favorite }),
-    },
-  );
-  if (!r.ok) {
-    const d = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(d.detail || `favorite failed: ${r.status}`);
-  }
-  return await r.json();
-}
-
-export async function markThreadRead(category: string, slug: string): Promise<void> {
-  await fetch(
-    `/api/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/read`,
-    { method: "POST", credentials: "include" },
-  );
-}
-
 // ── AI ──────────────────────────────────────────────────────────────────────
 
 export type AISettings = {
@@ -757,11 +595,10 @@ export type AIConversation = {
 };
 
 export async function fetchAIConversation(
-  category: string,
-  slug: string,
+  matter_id: string,
 ): Promise<AIConversation> {
   const r = await fetch(
-    `/api/ai/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/conversation`,
+    `/api/ai/matters/${encodeURIComponent(matter_id)}/conversation`,
     { credentials: "include" },
   );
   if (!r.ok) throw new Error(`fetch conversation failed: ${r.status}`);
@@ -769,13 +606,12 @@ export async function fetchAIConversation(
 }
 
 export async function saveAIConversation(
-  category: string,
-  slug: string,
+  matter_id: string,
   messages: ChatMessage[],
   reply_target: string | null,
 ): Promise<void> {
   const r = await fetch(
-    `/api/ai/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/conversation`,
+    `/api/ai/matters/${encodeURIComponent(matter_id)}/conversation`,
     {
       method: "PUT",
       credentials: "include",
@@ -786,12 +622,9 @@ export async function saveAIConversation(
   if (!r.ok) throw new Error(`save conversation failed: ${r.status}`);
 }
 
-export async function clearAIConversation(
-  category: string,
-  slug: string,
-): Promise<void> {
+export async function clearAIConversation(matter_id: string): Promise<void> {
   await fetch(
-    `/api/ai/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/conversation`,
+    `/api/ai/matters/${encodeURIComponent(matter_id)}/conversation`,
     { method: "DELETE", credentials: "include" },
   );
 }
@@ -812,14 +645,13 @@ export type AIStreamEvent =
  * Usage: for await (const ev of streamAIChat(...)) { ... }
  */
 export async function* streamAIChat(
-  category: string,
-  slug: string,
+  matter_id: string,
   messages: ChatMessage[],
   reply_target: string | null,
   signal?: AbortSignal,
 ): AsyncGenerator<AIStreamEvent> {
   const resp = await fetch(
-    `/api/ai/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/chat`,
+    `/api/ai/matters/${encodeURIComponent(matter_id)}/chat`,
     {
       method: "POST",
       credentials: "include",

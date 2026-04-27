@@ -50,8 +50,7 @@ type AIThreadState = {
 
 type ActiveAIStream = {
   threadKey: string;
-  category: string;
-  slug: string;
+  matter_id: string;
   title: string;
 } | null;
 
@@ -62,25 +61,21 @@ type DashboardContext = {
     activeStream: ActiveAIStream;
     getThreadState: (threadKey: string) => AIThreadState;
     ensureThreadLoaded: (
-      category: string,
-      slug: string,
+      matter_id: string,
       threadKey: string,
     ) => Promise<void>;
     setInput: (threadKey: string, value: string) => void;
     setReplyTarget: (
-      category: string,
-      slug: string,
+      matter_id: string,
       threadKey: string,
       value: string | null,
     ) => void;
     clearThreadConversation: (
-      category: string,
-      slug: string,
+      matter_id: string,
       threadKey: string,
     ) => Promise<void>;
     sendMessage: (args: {
-      category: string;
-      slug: string;
+      matter_id: string;
       threadKey: string;
       threadTitle: string;
       rawText: string;
@@ -242,24 +237,21 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     aiThreads[threadKey] ?? emptyAIThreadState();
 
   const persistThreadConversation = (
-    category: string,
-    slug: string,
+    matter_id: string,
     threadKey: string,
     snapshot?: AIThreadState,
   ) => {
     const thread =
       snapshot ?? aiThreadsRef.current[threadKey] ?? emptyAIThreadState();
     saveAIConversation(
-      category,
-      slug,
+      matter_id,
       thread.messages.map(({ role, content }) => ({ role, content })),
       thread.replyTarget,
     ).catch(() => {});
   };
 
   const ensureThreadLoaded = async (
-    category: string,
-    slug: string,
+    matter_id: string,
     threadKey: string,
   ) => {
     const current = aiThreadsRef.current[threadKey];
@@ -274,7 +266,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     }));
 
     try {
-      const conv = await fetchAIConversation(category, slug);
+      const conv = await fetchAIConversation(matter_id);
       setAiThreads((prev) => {
         const existing = prev[threadKey] ?? emptyAIThreadState();
         const mapped: AIMsg[] = conv.messages.map((m, idx) => ({
@@ -316,8 +308,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   };
 
   const setReplyTarget = (
-    category: string,
-    slug: string,
+    matter_id: string,
     threadKey: string,
     value: string | null,
   ) => {
@@ -328,15 +319,14 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
         replyTarget: value,
       };
       queueMicrotask(() =>
-        persistThreadConversation(category, slug, threadKey, nextState),
+        persistThreadConversation(matter_id, threadKey, nextState),
       );
       return { ...prev, [threadKey]: nextState };
     });
   };
 
   const clearThreadConversation = async (
-    category: string,
-    slug: string,
+    matter_id: string,
     threadKey: string,
   ) => {
     setAiThreads((prev) => ({
@@ -354,20 +344,18 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     if (activeAIStreamRef.current?.threadKey === threadKey) {
       setActiveAIStream(null);
     }
-    await clearAIConversation(category, slug).catch(() => {});
+    await clearAIConversation(matter_id).catch(() => {});
   };
 
   const sendMessage = async ({
-    category,
-    slug,
+    matter_id,
     threadKey,
     threadTitle,
     rawText,
     hasReplyDraft,
     onUseDraftAsReply,
   }: {
-    category: string;
-    slug: string;
+    matter_id: string;
     threadKey: string;
     threadTitle: string;
     rawText: string;
@@ -420,7 +408,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       },
     }));
 
-    setActiveAIStream({ threadKey, category, slug, title: threadTitle });
+    setActiveAIStream({ threadKey, matter_id, title: threadTitle });
     const historyForApi: ChatMessage[] = withUser.map(({ role, content }) => ({
       role,
       content,
@@ -430,8 +418,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       let accumulated = "";
       const toolUses: AIToolUse[] = [];
       for await (const ev of streamAIChat(
-        category,
-        slug,
+        matter_id,
         historyForApi,
         currentReplyTarget,
       )) {
@@ -538,7 +525,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
         return { ...prev, [threadKey]: nextState };
       });
       if (finalSnapshot) {
-        persistThreadConversation(category, slug, threadKey, finalSnapshot);
+        persistThreadConversation(matter_id, threadKey, finalSnapshot);
       }
     } catch (e) {
       const errText = e instanceof Error ? e.message : String(e);

@@ -155,12 +155,11 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
         body.trim(),
         "```",
       ].join("\n");
-      // 复用现有 chat 端点：NewMatter 还没有真实文件作起点帖子，传一个占位
-      // 字符串。后端 build_starting_post_block 对路径不合法 / 文件不存在的情况
+      // 复用 matter chat 端点：NewMatter 阶段 matter 还不存在，传占位 matter_id；
+      // 后端 chat_matter 没有存在性检查，build_starting_post_block 对非法 reply_target
       // 静默降级为空 starting block，AI 仅基于下面 userMsg 里的 body 总结。
       let acc = "";
       for await (const ev of streamAIChat(
-        category.trim() || "general",
         "_new_matter_",
         [{ role: "user", content: userMsg }],
         "_new_matter_summary_",
