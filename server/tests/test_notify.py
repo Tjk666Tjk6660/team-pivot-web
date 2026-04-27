@@ -8,6 +8,7 @@ from server.notify import (
     build_mention_dm_card,
     build_reply_card,
     build_standalone_mention_card,
+    build_status_change_card,
     build_thread_card,
     build_thread_directory,
 )
@@ -396,6 +397,124 @@ def test_noop_notifier_silent():
         category="c", slug="s", thread_title="t", target_filename="f.md",
         author_name="a", mention_open_ids=["ou_x"], mention_comments="hi",
     )
+
+
+# ─── status_change 卡片（P4.5 G 补遗） ────────────────────────────────────
+
+
+def test_status_change_card_matter_labels():
+    """_STATUS_LABEL 现在覆盖 matter 6 态，从/到的中文映射应生效。"""
+    card = build_status_change_card(
+        thread_title="Auth Redesign",
+        author_name="邓柯",
+        from_state="executing",
+        to_state="finished",
+        reason=None,
+        thread_url="http://localhost:5173/auth/entry?next=%2Fm%2Fauth-redesign",
+    )
+    md = card["body"]["elements"][0]["content"]
+    assert "执行中" in md and "已完成" in md, md
+    # 没传触发文件时不渲染"触发"行
+    assert "**触发**" not in md
+    assert card["header"]["title"]["content"] == "状态变更：Auth Redesign"
+
+
+def test_status_change_card_with_trigger_file():
+    """matter 路径带触发三件套时，卡片出"触发：<type> — <summary>"行。"""
+    card = build_status_change_card(
+        thread_title="Auth Redesign",
+        author_name="邓柯",
+        from_state="executing",
+        to_state="finished",
+        reason=None,
+        thread_url="http://x/auth/entry",
+        trigger_type="result",
+        trigger_summary="主链路完成，结果可接受",
+    )
+    md = card["body"]["elements"][0]["content"]
+    assert "**触发**：result — 主链路完成，结果可接受" in md
+
+
+def test_status_change_card_without_matter_labels_fallback_to_raw():
+    """unknown state (旧 thread 残留调用、或非标值) fallback 到原字符串，不炸。"""
+    card = build_status_change_card(
+        thread_title="Legacy",
+        author_name="u",
+        from_state="open",  # 老 thread 态，不在新 _STATUS_LABEL 里
+        to_state="concluded",
+        reason=None,
+        thread_url="http://x/auth/entry",
+    )
+    md = card["body"]["elements"][0]["content"]
+    assert "open" in md and "concluded" in md
+
+
+def test_feishu_notifier_matter_status_change_uses_matter_url(monkeypatch):
+    """trigger_filename 提供时，按钮跳转应走 /m/:matter_id，而非 /t/:cat/:slug。"""
+    captured: list[dict] = []
+
+    class _StubTokens:
+        def get(self) -> str:
+            return "token"
+
+    n = FeishuNotifier(
+        tokens=_StubTokens(),
+        web_base_url="http://localhost:5173",
+        workspace=None,
+    )
+
+    def _fake_broadcast(card, *, event):
+        captured.append({"card": card, "event": event})
+
+    monkeypatch.setattr(n, "_broadcast", _fake_broadcast)
+
+    n.notify_status_change(
+        category="Pivot", slug="auth-redesign", thread_title="Auth Redesign",
+        from_state="executing", to_state="finished",
+        author_name="邓柯", reason=None,
+        trigger_type="result",
+        trigger_summary="完成",
+        trigger_filename="004_dengke_result_abc.md",
+    )
+
+    assert len(captured) == 1
+    card = captured[0]["card"]
+    # 按钮链接走 /m/<matter_id>（matter 路由）；next= 参数是 URL-encoded
+    btn_url = _extract_button_url(card)
+    assert "%2Fm%2Fauth-redesign" in btn_url, btn_url
+    assert "%2Ft%2F" not in btn_url, btn_url
+
+
+def test_feishu_notifier_thread_status_change_uses_thread_url(monkeypatch):
+    """未提供 trigger_filename 时按老 thread 路径走 /t/:cat/:slug，兼容老客户端。"""
+    captured: list[dict] = []
+
+    class _StubTokens:
+        def get(self) -> str:
+            return "token"
+
+    n = FeishuNotifier(
+        tokens=_StubTokens(),
+        web_base_url="http://localhost:5173",
+        workspace=None,
+    )
+    monkeypatch.setattr(n, "_broadcast", lambda card, *, event: captured.append(card))
+
+    n.notify_status_change(
+        category="general", slug="legacy-thread", thread_title="Legacy",
+        from_state="open", to_state="concluded",
+        author_name="u", reason="some reason",
+    )
+
+    btn_url = _extract_button_url(captured[0])
+    assert "%2Ft%2Fgeneral%2Flegacy-thread" in btn_url
+
+
+def _extract_button_url(card: dict) -> str:
+    """Pull the action URL out of a card (schema 2.0)."""
+    import json as _json
+    raw = _json.dumps(card, ensure_ascii=False)
+    return raw
 
 
 def test_feishu_notifier_standalone_mention_does_not_dm(monkeypatch):

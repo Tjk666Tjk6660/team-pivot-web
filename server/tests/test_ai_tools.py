@@ -105,6 +105,48 @@ def test_read_thread_index_unknown_slug_errors(tmp_path):
     assert result.startswith("[tool error]")
 
 
+def test_read_matter_index_returns_yaml(tmp_path):
+    discussions, index = _setup_workspace(tmp_path)
+    # matter index 命名是 {matter_id}.index.yaml,不带 -discuss 后缀
+    _write(
+        index / "matter-001.index.yaml",
+        "matter:\n"
+        "  id: matter-001\n"
+        "  title: 你好\n"
+        "  current_status: planning\n"
+        "timeline:\n"
+        "- file: discussions/general/matter-001/001_x_think_aaa.md\n"
+        "  type: think\n"
+        "  summary: 起点\n",
+    )
+    tools = AITools(discussions, index)
+
+    result = tools.dispatch("read_matter_index", {"matter_id": "matter-001"})
+
+    assert "matter-001" in result
+    assert "current_status: planning" in result
+    assert "timeline:" in result
+
+
+def test_read_matter_index_unknown_id_errors(tmp_path):
+    discussions, index = _setup_workspace(tmp_path)
+    tools = AITools(discussions, index)
+
+    result = tools.dispatch("read_matter_index", {"matter_id": "nonexistent"})
+
+    assert result.startswith("[tool error]")
+
+
+def test_read_matter_index_empty_id_errors(tmp_path):
+    discussions, index = _setup_workspace(tmp_path)
+    tools = AITools(discussions, index)
+
+    assert tools.dispatch("read_matter_index", {"matter_id": ""}).startswith(
+        "[tool error]"
+    )
+    assert tools.dispatch("read_matter_index", {}).startswith("[tool error]")
+
+
 def test_read_post_happy_path_returns_body(tmp_path):
     discussions, index = _setup_workspace(tmp_path)
     tools = AITools(discussions, index)
@@ -181,7 +223,63 @@ def test_unknown_tool_name_errors(tmp_path):
     assert result.startswith("[tool error]")
 
 
-def test_specs_include_all_four_tools(tmp_path):
+def _seed_matter_index(index_dir: Path) -> None:
+    """Add a couple of matter index files alongside the legacy thread fixtures."""
+    _write(
+        index_dir / "feedback-loop.index.yaml",
+        "matter:\n"
+        "  id: feedback-loop\n"
+        "  title: 优化反馈闭环\n"
+        "  current_status: executing\n"
+        "  created_at: '2026-04-01T10:00:00+08:00'\n"
+        "  updated_at: '2026-04-20T18:00:00+08:00'\n"
+        "timeline: []\n",
+    )
+    _write(
+        index_dir / "rate-limiter.index.yaml",
+        "matter:\n"
+        "  id: rate-limiter\n"
+        "  title: 接口限流策略\n"
+        "  current_status: planning\n"
+        "  created_at: '2026-04-15T09:00:00+08:00'\n"
+        "  updated_at: '2026-04-18T11:00:00+08:00'\n"
+        "timeline: []\n",
+    )
+
+
+def test_list_matters_orders_by_updated_at_desc(tmp_path):
+    discussions, index = _setup_workspace(tmp_path)
+    _seed_matter_index(index)
+    tools = AITools(discussions, index)
+
+    result = tools.dispatch("list_matters", {})
+
+    # both matters present, freshly-updated one first
+    feedback_pos = result.index("feedback-loop")
+    rate_pos = result.index("rate-limiter")
+    assert feedback_pos < rate_pos
+    # matter status surfaces in the line
+    assert "[executing]" in result
+    assert "[planning]" in result
+    # legacy thread slugs must not leak into the matter listing
+    assert "auth-redesign" not in result
+
+
+def test_search_indexes_covers_matter_and_thread(tmp_path):
+    discussions, index = _setup_workspace(tmp_path)
+    _seed_matter_index(index)
+    tools = AITools(discussions, index)
+
+    matter_hit = tools.dispatch("search_indexes", {"keyword": "限流"})
+    assert "kind=matter" in matter_hit
+    assert "matter_id=rate-limiter" in matter_hit
+
+    thread_hit = tools.dispatch("search_indexes", {"keyword": "liuyu"})
+    assert "kind=thread" in thread_hit
+    assert "thread_slug=auth-redesign" in thread_hit
+
+
+def test_specs_include_all_tools(tmp_path):
     discussions, index = _setup_workspace(tmp_path)
     tools = AITools(discussions, index)
 
@@ -189,7 +287,9 @@ def test_specs_include_all_four_tools(tmp_path):
 
     assert names == {
         "list_thread_titles",
+        "list_matters",
         "search_indexes",
         "read_thread_index",
+        "read_matter_index",
         "read_post",
     }

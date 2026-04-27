@@ -5,7 +5,11 @@ from typing import Callable
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from server.inbox import compute_inbox, latest_post_filename
+from server.inbox import (
+    compute_inbox,
+    compute_matter_inbox,
+    latest_post_filename,
+)
 from server.mentions import resolve_id
 from server.read_state import ReadStateRepo
 from server.users import User, UserRepo
@@ -31,6 +35,12 @@ def build_router(
             user.open_id,
             read_states,
         )
+        matter_items = compute_matter_inbox(
+            workspace.discussions_dir,
+            workspace.index_dir,
+            user.open_id,
+            read_states,
+        )
         return {
             "items": [
                 {
@@ -49,7 +59,22 @@ def build_router(
                     "last_post_author_display": resolve_id(it.last_post_author, users, contacts),
                 }
                 for it in items
-            ]
+            ],
+            "matters": [
+                {
+                    "matter_id": m.matter_id,
+                    "category": m.category,
+                    "title": m.title,
+                    "current_status": m.current_status,
+                    "updated_at": m.updated_at,
+                    "file_count": m.file_count,
+                    "unread_count": m.unread_count,
+                    "last_file_type": m.last_file_type,
+                    "last_summary": m.last_summary,
+                    "last_file_author_display": resolve_id(m.last_file_author, users, contacts),
+                }
+                for m in matter_items
+            ],
         }
 
     @router.post("/threads/{category}/{slug}/read")

@@ -5,9 +5,11 @@ import { Login } from "@/pages/Login";
 import { Dashboard } from "@/pages/Dashboard";
 import { ProfileSetup } from "@/pages/ProfileSetup";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { SettingsExternalAI } from "@/pages/SettingsExternalAI";
 import { AdminPage } from "@/pages/AdminPage";
-import { ThreadDetailEmpty, ThreadDetailPane } from "@/pages/ThreadDetailPane";
-import { NewThread } from "@/pages/NewThread";
+import { MatterDetailEmpty, MatterDetailPane } from "@/pages/MatterDetailPane";
+import { NewMatter } from "@/pages/NewMatter";
+import { MatterEventsProvider } from "@/events/MatterEventsProvider";
 
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
@@ -27,15 +29,18 @@ export function App() {
   if (me.needs_setup) return <ProfileSetup me={me} onDone={setMe} />;
 
   return (
-    <Routes>
-      <Route element={<Dashboard me={me} onLogout={doLogout} />}>
-        <Route path="/" element={<ThreadDetailEmpty />} />
-        <Route path="/t/:category/:slug" element={<ThreadDetailPane />} />
-      </Route>
-      <Route path="/new" element={<NewThread me={me} onLogout={doLogout} />} />
-      <Route path="/settings" element={<SettingsPage />} />
-      <Route path="/admin" element={<AdminPage />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <MatterEventsProvider>
+      <Routes>
+        <Route element={<Dashboard me={me} onLogout={doLogout} />}>
+          <Route path="/" element={<MatterDetailEmpty />} />
+          <Route path="/m/:matter_id" element={<MatterDetailPane />} />
+        </Route>
+        <Route path="/new" element={<NewMatter me={me} onLogout={doLogout} />} />
+        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/settings/external-ai" element={<SettingsExternalAI />} />
+        <Route path="/admin" element={<AdminPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </MatterEventsProvider>
   );
 }

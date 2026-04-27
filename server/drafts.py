@@ -24,6 +24,8 @@ class Draft:
     references_json: str
     created_at: float
     updated_at: float
+    # P4.6: matter 草稿走这一列，非 matter 草稿保持 NULL
+    matter_payload_json: str | None = None
 
 
 class DraftRepo:
@@ -42,6 +44,7 @@ class DraftRepo:
         mentions_json: str | None = None,
         reply_to: str | None = None,
         references_json: str = "[]",
+        matter_payload_json: str | None = None,
     ) -> Draft:
         if type_ not in VALID_TYPES:
             raise ValueError(f"invalid draft type: {type_}")
@@ -51,8 +54,9 @@ class DraftRepo:
             conn.execute(
                 "INSERT INTO drafts"
                 " (id, user_open_id, type, title, category, body_md, thread_key,"
-                "  mentions_json, reply_to, references_json, created_at, updated_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "  mentions_json, reply_to, references_json, matter_payload_json,"
+                "  created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     draft_id,
                     user_open_id,
@@ -64,6 +68,7 @@ class DraftRepo:
                     mentions_json,
                     reply_to,
                     references_json,
+                    matter_payload_json,
                     now,
                     now,
                 ),
@@ -98,6 +103,7 @@ class DraftRepo:
         mentions_json: str | None = None,
         reply_to: str | None = None,
         references_json: str | None = None,
+        matter_payload_json: str | None = None,
     ) -> Draft | None:
         fields: list[str] = []
         values: list[object] = []
@@ -109,6 +115,7 @@ class DraftRepo:
             ("mentions_json", mentions_json),
             ("reply_to", reply_to),
             ("references_json", references_json),
+            ("matter_payload_json", matter_payload_json),
         ):
             if val is not None:
                 fields.append(f"{name}=?")
@@ -145,4 +152,7 @@ def _row(row: sqlite3.Row) -> Draft:
         references_json=(row["references_json"] if "references_json" in cols else None) or "[]",
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        matter_payload_json=(
+            row["matter_payload_json"] if "matter_payload_json" in cols else None
+        ),
     )

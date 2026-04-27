@@ -15,6 +15,7 @@ export function useDraftAutosave(params: {
     mentions?: MentionBlock | null;
     reply_to?: string | null;
     references?: string[];
+    matter_payload?: Record<string, unknown> | null;
   };
   enabled: boolean;
   debounceMs?: number;

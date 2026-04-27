@@ -167,7 +167,7 @@ function AdminIntro() {
 
 function QuickFact({ title, value }: { title: string; value: string }) {
   return (
-    <div className="rounded-xl border border-[var(--line)] bg-white/80 p-4">
+    <div className="rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)]/80 p-4">
       <div className="text-xs font-medium uppercase tracking-wide text-[var(--text-mute)]">{title}</div>
       <div className="mt-1 text-sm font-semibold text-[var(--text)]">{value}</div>
     </div>
@@ -188,11 +188,11 @@ function AdminGate({ onUnlock }: { onUnlock: () => void }) {
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-12">
-      <Card className="overflow-hidden border-[var(--line)] shadow-sm">
+      <Card className="overflow-hidden border-[var(--line)] shadow-[var(--shadow-sm)]">
         <div className="grid lg:grid-cols-[minmax(0,1.1fr)_420px]">
-          <div className="border-b bg-gradient-to-br from-slate-50 via-white to-slate-100 p-8 lg:border-b-0 lg:border-r">
+          <div className="border-b border-[var(--line)] bg-[var(--surface-alt)] p-8 lg:border-b-0 lg:border-r">
             <div className="mb-3 flex items-center gap-2 text-sm font-medium text-[var(--text-soft)]">
-              <Lock className="h-4 w-4 text-amber-600" />
+              <Lock className="h-4 w-4 text-[var(--warn-600)]" />
               需要管理员密码
             </div>
             <h2 className="text-2xl font-semibold tracking-tight text-[var(--text)]">
@@ -283,7 +283,7 @@ function WorkspaceConfigSection({ onAdminLost }: { onAdminLost: () => void }) {
 
   return (
     <section>
-      <Card className="shadow-sm">
+      <Card className="shadow-[var(--shadow-sm)]">
         <CardHeader className="pb-4">
           <CardTitle className="flex items-center gap-2 text-base">
             <FolderGit2 className="h-4 w-4" />
@@ -318,14 +318,14 @@ function WorkspaceConfigSection({ onAdminLost }: { onAdminLost: () => void }) {
                   id="repo-visibility"
                   value={visibility}
                   onChange={(e) => setVisibility(e.target.value as "public" | "private")}
-                  className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm dark:bg-zinc-900"
+                  className="flex h-10 w-full rounded-[var(--r-sm)] border border-[var(--line-strong)] bg-[var(--surface)] px-3 py-2 text-sm"
                 >
                   <option value="private">private</option>
                   <option value="public">public</option>
                 </select>
               </div>
 
-              <div className="rounded-xl border bg-muted/25 p-4 text-sm text-muted-foreground">
+              <div className="rounded-[var(--r-md)] border bg-muted/25 p-4 text-sm text-muted-foreground">
                 <div className="font-medium text-foreground">使用说明</div>
                 <p className="mt-2 leading-6">
                   `write token` 给服务器 pull / push 用；`readonly token` 只给 VS Code 客户端 clone / pull 用。
@@ -439,7 +439,7 @@ function AISettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
 
   return (
     <section>
-      <Card className="shadow-sm">
+      <Card className="shadow-[var(--shadow-sm)]">
         <CardHeader className="pb-4">
           <CardTitle className="flex items-center gap-2 text-base">
             <Bot className="h-4 w-4" />
@@ -471,7 +471,7 @@ function AISettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
               <div className="space-y-2">
                 <Label htmlFor="ai-key">
                   AI API Key
-                  {hasKey && <span className="ml-2 text-xs text-green-600">（已配置）</span>}
+                  {hasKey && <span className="ml-2 text-xs text-[var(--ok-600)]">（已配置）</span>}
                 </Label>
                 <Input
                   id="ai-key"
@@ -501,8 +501,8 @@ function AISettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
                       onClick={() => setModel(m)}
                       className={`rounded px-2 py-0.5 text-xs transition-colors ${
                         model === m
-                          ? "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
-                          : "bg-muted text-muted-foreground hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                          ? "bg-[var(--accent-bg)] text-[var(--accent)]"
+                          : "bg-[var(--surface-alt)] text-[var(--text-mute)] hover:bg-[var(--accent-bg)]"
                       }`}
                     >
                       {m}
@@ -588,7 +588,7 @@ function SyncContactsSection({ onAdminLost }: { onAdminLost: () => void }) {
 
   return (
     <section>
-      <Card className="shadow-sm">
+      <Card className="shadow-[var(--shadow-sm)]">
         <CardHeader className="pb-4">
           <CardTitle className="flex items-center gap-2 text-base">
             <Users className="h-4 w-4" />

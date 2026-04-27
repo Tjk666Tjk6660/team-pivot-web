@@ -147,7 +147,7 @@
 - 作用：创建草稿
 - 鉴权：Cookie 或 Bearer PAT
 - 请求体：
-  - `type`: `proposal | reply`
+  - `type`: `proposal | reply`（语义：`proposal` = 首篇，`reply` = 追加；matter 草稿沿用此二值，不新增类型）
   - `title?`
   - `category?`
   - `body_md?`
@@ -155,24 +155,61 @@
   - `mentions?`
   - `reply_to?`
   - `references?`
+  - `matter_payload?`：matter 草稿专属结构化字段（见下方"matter_payload 字段形态"）；老 thread 草稿留空即可
 - 备注：
   - proposal 草稿的 `category` 与正式发帖共用同一规则：支持中文，最长 20 个字符，禁止路径危险字符
+  - **matter 迁移之后**，发布 (`POST /api/drafts/{id}/publish`) 只接受带 `matter_payload` 的草稿；历史缺失 `matter_payload` 的草稿可继续 GET / PATCH / DELETE，但 publish 会被拒（见下）
 
 ### GET /api/drafts/{draft_id}
 - 作用：读取草稿
 - 鉴权：Cookie 或 Bearer PAT
+- 返回：draft 所有字段，**响应体新增 `matter_payload` 字段**（matter 草稿非空；老 thread 草稿为 `null`）
 
 ### PATCH /api/drafts/{draft_id}
-- 作用：更新草稿
+- 作用：更新草稿（autosave 调用此接口）
 - 鉴权：Cookie 或 Bearer PAT
+- 请求体：同 `POST /api/drafts`，所有字段可选（只更新传入的字段）；**包括 `matter_payload`**
 
 ### DELETE /api/drafts/{draft_id}
 - 作用：删除草稿
 - 鉴权：Cookie 或 Bearer PAT
 
 ### POST /api/drafts/{draft_id}/publish
-- 作用：发布草稿为正式 proposal 或 reply
+- 作用：发布草稿为正式 matter 文件（matter 迁移后，此接口**只服务 matter 发布路径**）
 - 鉴权：Cookie 或 Bearer PAT
+- 分发规则：
+  - `matter_payload` 为空：`400 {detail: {code: "matter_payload_required", message: "..."}}`——要求前端先 PATCH 补全
+  - `matter_payload` 非空 + `type=proposal`：走 `publish_matter_create`（matter 首篇；`category` / `title` 必填）
+  - `matter_payload` 非空 + `type=reply`：走 `publish_matter_append`（matter 追加；`thread_key` 最后一段作 `matter_id`）
+- 返回：
+  - `published`: matter 响应形态 `{matter_id, category, slug, filename, file, matter, item}`
+  - `draft_id`: 已发布草稿的 id（发布成功后草稿会被删除）
+- 老 thread 发布路径：`POST /api/drafts/{id}/publish` 不再兼容老 `proposal / reply`；若要直发老 thread，用 `POST /api/threads` 或 `POST /api/threads/{c}/{s}/posts`（这组接口 P5 清理前仍保留）
+
+### matter_payload 字段形态
+
+matter 草稿在 `matter_payload` 字段（JSON）里承载全部 matter 专属结构化字段：
+
+```json
+{
+  "doc_type": "think|act|verify|result|insight",
+  "summary": "...",
+  "owner": "...",
+  "quote": "discussions/<category>/<slug>/<filename>",
+  "refer": ["discussions/<cat>/<slug>/<file>", "..."],
+  "verifications": [
+    {"target": "...", "judgement": "passed|failed|cancelled", "comment": "..."}
+  ],
+  "outcome": "finished|cancelled",
+  "status_change": {"from": "executing", "to": "finished"}
+}
+```
+
+- `doc_type` / `summary`：必填（publish 时若缺会返回 `400 matter_doc_type_required` / `400 matter_summary_required`）
+- `verifications`：仅 `doc_type=verify` 必填
+- `outcome` / `status_change`：仅 `doc_type=result` 的完整发布需要
+- `quote` / `refer` / `owner`：任意 type 可选
+- 写入 matter index 时，字段集与 `POST /api/matters/{id}/files` 一致
 
 ## Inbox / Read State
 

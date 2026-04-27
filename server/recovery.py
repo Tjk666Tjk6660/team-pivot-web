@@ -6,6 +6,7 @@ from pathlib import Path
 
 import yaml
 
+from server.doc_types import VALID_DOC_TYPES
 from server.index_files import (
     _atomic_write_yaml,
     append_reply_to_index,
@@ -41,6 +42,23 @@ def _repair_post(post_path: Path, discussions_root: Path, index_dir: Path) -> No
     ptype = str(fm.get("type", "reply"))
     author_id = str(fm.get("author", "unknown"))
     now = str(fm.get("created") or fm.get("created_at") or _now_iso())
+
+    # Matter-model files carry structured fields (quote/refer/verifications/
+    # status_change/owner) that only live in the matter index, not in the MD
+    # frontmatter. If the MD was written but the matter index update failed,
+    # we cannot reconstruct the item from the MD alone. Do NOT fall through to
+    # the old thread-repair path — it would create a stale
+    # `{slug}-discuss.index.yaml`. Log a warning so an operator can inspect,
+    # then flip the state to indexed to stop repeat warnings on every startup.
+    if ptype in VALID_DOC_TYPES:
+        log.warning(
+            "recovery: partially-written matter file detected path=%s type=%s; "
+            "matter index update did not complete. Manual inspection required. "
+            "Flipping index_state to indexed to silence repeat warnings.",
+            post_path, ptype,
+        )
+        mark_indexed(post_path)
+        return
 
     index_path = Path(index_dir) / f"{slug}-discuss.index.yaml"
     if not index_path.is_file():

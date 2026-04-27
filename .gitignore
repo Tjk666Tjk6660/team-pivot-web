@@ -28,3 +28,8 @@ pivot-config.yaml
 .gstack/
 AI-docs/deploy.md
 CLAUDE.md
+web/package-lock.json
+web/tsconfig.tsbuildinfo
+
+# migration test secrets (env.init has GH_TOKEN)
+scripts/migration-test/env.init

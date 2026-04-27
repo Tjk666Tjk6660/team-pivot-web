@@ -1,41 +1,57 @@
-type Tone = "discussing" | "concluded" | "project" | "archived" | "paused";
+import { Badge } from "@/components/ui/badge";
+import type { MatterStatus } from "@/api";
+import { cn } from "@/lib/utils";
 
-const LABELS: Record<string, { text: string; tone: Tone; short: string }> = {
-  open:      { text: "讨论中",     tone: "discussing", short: "讨论" },
-  concluded: { text: "已达成结论", tone: "concluded",  short: "结论" },
-  produced:  { text: "已转为项目", tone: "project",    short: "项目" },
-  closed:    { text: "已关闭",     tone: "archived",   short: "归档" },
-  pending:   { text: "暂时搁置",   tone: "paused",     short: "搁置" },
+const LABELS: Record<
+  MatterStatus,
+  {
+    text: string;
+    variant: "blue" | "amber" | "gray" | "green" | "purple";
+  }
+> = {
+  planning: { text: "讨论中", variant: "blue" },
+  executing: { text: "执行中", variant: "amber" },
+  paused: { text: "已暂停", variant: "gray" },
+  finished: { text: "已完成", variant: "green" },
+  cancelled: { text: "已取消", variant: "gray" },
+  reviewed: { text: "已复盘", variant: "purple" },
+};
+
+type StatusVariant = "blue" | "amber" | "gray" | "green" | "purple";
+
+const DOT_CLASS: Record<StatusVariant, string> = {
+  blue: "bg-[var(--info-500)]",
+  amber: "bg-[var(--warn-500)]",
+  gray: "bg-[var(--text-fade)]",
+  green: "bg-[var(--ok-500)]",
+  purple: "bg-[var(--violet-600)]",
 };
 
 export function StatusBadge({
   status,
-  size = "md",
+  className,
 }: {
-  status: string | null;
-  size?: "sm" | "md";
+  status: MatterStatus | string | null | undefined;
+  className?: string;
 }) {
   if (!status) return null;
-  const s = LABELS[status];
-  const label = s?.text ?? status;
-  const tone = s?.tone ?? "archived";
-  const padding = size === "sm" ? "px-1.5 py-[1px] text-[10.5px]" : "px-2.5 py-[3px] text-[11.5px]";
-
+  const cfg = LABELS[status as MatterStatus];
+  if (!cfg) return <Badge variant="outline">{status}</Badge>;
   return (
-    <span
-      className={`inline-flex shrink-0 items-center gap-1 rounded-[var(--r-xs)] font-semibold uppercase tracking-[0.04em] font-meta whitespace-nowrap ${padding}`}
-      style={{
-        background: `var(--status-${tone}-bg)`,
-        color: `var(--status-${tone}-fg)`,
-      }}
+    <Badge
+      variant={cfg.variant}
+      className={cn(
+        "gap-1.5 rounded-[var(--r-sm)] border-transparent px-2 py-1 text-[11px] font-semibold leading-none",
+        cfg.variant === "blue" &&
+          "bg-[color-mix(in_srgb,var(--info-500)_12%,var(--surface))] text-[var(--info-500)]",
+        className,
+      )}
     >
       <span
-        aria-hidden
-        className="h-1.5 w-1.5 shrink-0 rounded-full"
-        style={{ background: "currentColor" }}
+        className={cn("h-1.5 w-1.5 rounded-full", DOT_CLASS[cfg.variant])}
       />
-      {label}
-    </span>
+      {cfg.text}
+    </Badge>
   );
 }
 

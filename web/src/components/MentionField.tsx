@@ -58,13 +58,13 @@ export function MentionField({
           {value.open_ids.map((oid) => (
             <span
               key={oid}
-              className="inline-flex items-center gap-1 rounded bg-blue-50 px-2 py-0.5 text-xs text-blue-700"
+              className="inline-flex items-center gap-1 rounded bg-[var(--accent-bg)] px-2 py-0.5 text-xs text-[var(--accent)]"
             >
               @{names[oid] ?? oid.slice(0, 8)}
               <button
                 type="button"
                 onClick={() => remove(oid)}
-                className="hover:text-blue-900"
+                className="hover:text-[var(--accent)]"
               >
                 <X className="h-3 w-3" />
               </button>
@@ -80,7 +80,7 @@ export function MentionField({
           />
         </div>
         {focused && (
-          <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-md border bg-white dark:bg-zinc-900 shadow-md">
+          <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-[var(--r-sm)] border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-md)]">
             {loading && (
               <div className="p-2.5 text-xs text-muted-foreground">搜索中…</div>
             )}
@@ -101,8 +101,8 @@ export function MentionField({
                     disabled={selected}
                     className={
                       selected
-                        ? "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 cursor-default"
-                        : "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                        ? "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm bg-[var(--accent-bg)] text-[var(--accent)] cursor-default"
+                        : "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-[var(--surface-alt)]"
                     }
                   >
                     {c.avatar_url && (

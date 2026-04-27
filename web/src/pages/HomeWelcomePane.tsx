@@ -100,7 +100,7 @@ export function HomeWelcomePane() {
         style={{ fontFamily: "var(--font-serif)", color: "var(--text-soft)" }}
       >
         团队进入 Pivot 后的工作入口。讨论、结论、上下文、更新记录都在同一块工作台里展开；
-        左侧按分类和 thread 组织，右侧是阅读与回复区。
+        左侧按分类和 matter 组织，右侧是阅读与回复区。
       </p>
 
       {/* 3 guide cards */}
@@ -108,7 +108,7 @@ export function HomeWelcomePane() {
         <GuideCard
           kicker="工作方式"
           title="先读上下文，再行动"
-          body="左侧按分类和 thread 组织，右侧是阅读与回复区。"
+          body="左侧按分类和 matter 组织，右侧是阅读与回复区。"
         />
         <GuideCard
           kicker="内容来源"
@@ -117,7 +117,7 @@ export function HomeWelcomePane() {
         />
         <GuideCard
           kicker="下一步"
-          title="从一个 thread 开始"
+          title="从一个 matter 开始"
           body="从左侧继续已有讨论，或者直接发起一个新的提案。"
         />
       </div>

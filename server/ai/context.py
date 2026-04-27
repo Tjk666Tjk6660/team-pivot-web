@@ -50,15 +50,20 @@ def build_starting_post_block(
     extensions (matter status, doc type, quote/refer/verifications/
     status_change) can be added by widening this function alone.
     """
+    # Accept both 3-part ("cat/slug/fname.md") and matter-style 4-part
+    # ("discussions/cat/slug/fname.md") — strip the "discussions/" prefix.
+    if reply_target.startswith("discussions/"):
+        reply_target = reply_target[len("discussions/"):]
     parts = reply_target.split("/")
     if len(parts) != 3:
-        raise ContextTooLongError(
-            f"reply_target 格式非法：{reply_target}，应为 '<category>/<slug>/<filename>.md'"
-        )
+        # 路径不合法（例：NewMatter 在还没有任何文件时传的占位字符串）→ 静默
+        # 降级为空 starting block；chat 端点可以仅靠 user 消息内容继续。
+        return ""
     category, slug, filename = parts
     full = Path(discussions_dir) / category / slug / filename
     if not full.is_file():
-        raise ContextTooLongError(f"起点帖子不存在：{reply_target}")
+        # 文件不存在同样静默降级（避免合法格式但磁盘不在的占位破坏整个流程）。
+        return ""
 
     try:
         post = read_post(full)

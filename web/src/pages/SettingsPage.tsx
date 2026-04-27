@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Copy, KeyRound, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronRight, Copy, KeyRound, Plus, Trash2 } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import {
   createApiToken,
@@ -55,9 +55,34 @@ export function SettingsPage() {
         </div>
       </header>
       <main className="mx-auto max-w-3xl space-y-8 px-6 py-8">
+        <ExternalAILinkSection />
         <ApiTokensSection />
       </main>
     </div>
+  );
+}
+
+// ── External AI Link ─────────────────────────────────────────────────────────
+
+function ExternalAILinkSection() {
+  return (
+    <section>
+      <h2 className="mb-3 text-sm font-semibold">外部 AI 接入</h2>
+      <Card className="p-0">
+        <Link
+          to="/settings/external-ai"
+          className="flex items-center justify-between px-6 py-4 text-sm hover:bg-accent/50"
+        >
+          <div>
+            <div className="font-medium">连接 Claude Code / Cursor / Codex / Claude Desktop</div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              让外部 AI 客户端通过 MCP 读写 Pivot 内容
+            </p>
+          </div>
+          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+        </Link>
+      </Card>
+    </section>
   );
 }
 
@@ -282,13 +307,13 @@ function NewTokenDialog({
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <KeyRound className="h-5 w-5 text-amber-500" />
+            <KeyRound className="h-5 w-5 text-[var(--warn-500)]" />
             Token 已创建
           </DialogTitle>
         </DialogHeader>
         {token && (
           <div className="space-y-3 py-2">
-            <div className="rounded-md border-2 border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+            <div className="rounded-[var(--r-sm)] border-2 border-[color-mix(in_srgb,var(--warn-500)_35%,var(--line))] bg-[color-mix(in_srgb,var(--warn-500)_10%,var(--surface))] p-3 text-xs text-[var(--warn-600)]">
               ⚠️ <strong>请立即复制并妥善保存。</strong>关闭此窗口后将无法再次查看。
             </div>
             <div className="rounded-md bg-muted p-3 font-mono text-xs break-all">

@@ -82,16 +82,51 @@ def build_router(
 
     @router.get("/categories")
     def list_categories(user: User = Depends(current_user)):
-        all_threads = list_threads(workspace.discussions_dir, workspace.index_dir)
+        # Aggregate both legacy threads and new matters by category. Matters
+        # contribute file_count from their timeline; threads contribute
+        # post_count. The API surface stays compatible (post_count is the
+        # legacy name); we also return thread_count / matter_count so
+        # frontend can tell how much of each is under a given category.
         grouped: dict[str, dict] = {}
-        for m in all_threads:
+
+        for m in list_threads(workspace.discussions_dir, workspace.index_dir):
             cat = m.category
-            if cat not in grouped:
-                grouped[cat] = {"name": cat, "post_count": 0, "last_updated": None}
-            grouped[cat]["post_count"] += m.post_count
-            cur = grouped[cat]["last_updated"]
+            g = grouped.setdefault(cat, {
+                "name": cat, "post_count": 0, "last_updated": None,
+                "thread_count": 0, "matter_count": 0,
+            })
+            g["post_count"] += m.post_count
+            g["thread_count"] += 1
+            cur = g["last_updated"]
             if m.last_updated and (cur is None or m.last_updated > cur):
-                grouped[cat]["last_updated"] = m.last_updated
+                g["last_updated"] = m.last_updated
+
+        from server.inbox import (
+            _derive_matter_category,
+            _list_matter_index_paths,
+        )
+        from server.matter_index import read_matter_index as _read_mi
+
+        for index_path in _list_matter_index_paths(workspace.index_dir):
+            data = _read_mi(index_path)
+            if data is None:
+                continue
+            cat = _derive_matter_category(data)
+            if not cat:
+                continue
+            matter = data.get("matter") or {}
+            timeline = data.get("timeline") or []
+            g = grouped.setdefault(cat, {
+                "name": cat, "post_count": 0, "last_updated": None,
+                "thread_count": 0, "matter_count": 0,
+            })
+            g["post_count"] += len(timeline)
+            g["matter_count"] += 1
+            updated_at = matter.get("updated_at")
+            cur = g["last_updated"]
+            if updated_at and (cur is None or updated_at > cur):
+                g["last_updated"] = updated_at
+
         items = sorted(
             grouped.values(),
             key=lambda c: c["last_updated"] or "",

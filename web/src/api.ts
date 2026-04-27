@@ -7,6 +7,38 @@ export type Me = {
   needs_setup: boolean;
 };
 
+export class SessionExpiredError extends Error {
+  constructor() {
+    super("登录已失效，正在跳转登录页。");
+    this.name = "SessionExpiredError";
+  }
+}
+
+let loginRedirectStarted = false;
+
+function isSessionExpiredDetail(detail: unknown): boolean {
+  return detail === "invalid_token" || detail === "not logged in";
+}
+
+function redirectToLogin(): void {
+  if (loginRedirectStarted || typeof window === "undefined") return;
+  loginRedirectStarted = true;
+  const current = window.location.href;
+  const next = window.location.pathname.startsWith("/login")
+    ? window.location.origin + "/"
+    : current;
+  window.location.assign(`/login?next=${encodeURIComponent(next)}`);
+}
+
+async function throwIfSessionExpired(resp: Response): Promise<void> {
+  if (resp.status !== 401) return;
+  const body = await resp.clone().json().catch(() => ({}));
+  if (isSessionExpiredDetail((body as { detail?: unknown }).detail)) {
+    redirectToLogin();
+    throw new SessionExpiredError();
+  }
+}
+
 export async function fetchMe(): Promise<Me | null> {
   const r = await fetch("/me", { credentials: "include" });
   if (r.status === 401) return null;
@@ -24,6 +56,7 @@ export async function updateProfile(
     body: JSON.stringify(body),
   });
   if (!r.ok) {
+    await throwIfSessionExpired(r);
     const detail = await r.json().catch(() => ({ detail: r.statusText }));
     throw new Error(detail.detail || `/me/profile failed: ${r.status}`);
   }
@@ -34,25 +67,260 @@ export async function logout(): Promise<void> {
   await fetch("/logout", { method: "POST", credentials: "include" });
 }
 
-export type ThreadMeta = {
-  category: string;
-  slug: string;
+// ── Matter (pivot-interface.md §Matter API) ────────────────────────────────
+
+export type MatterStatus =
+  | "planning" | "executing" | "paused" | "finished" | "cancelled" | "reviewed";
+
+export type DocType = "think" | "act" | "verify" | "result" | "insight";
+
+export type Judgement = "passed" | "failed" | "cancelled";
+
+export type Outcome = "finished" | "cancelled";
+
+export type StatusChange = { from: MatterStatus; to: MatterStatus };
+
+export type Verification = {
+  target: string;
+  judgement: Judgement;
+  comment: string;
+};
+
+export type TimelineComment = {
+  author: string;
+  author_display?: string;
+  created_at: string;
+  body: string;
+  mentions?: string[];
+  mentions_display?: string[];
+};
+
+export type TimelineItem = {
+  file: string;
+  created_at: string;
+  creator: string;
+  owner: string;
+  type: DocType;
+  summary: string;
+  quote: string | null;
+  refer: string[];
+  comments: TimelineComment[];
+  status_change: StatusChange | null;
+  expanded: boolean;
+  body: string;
+  verifications?: Verification[];
+  outcome?: Outcome;
+};
+
+export type MatterSummary = {
+  id: string;
   title: string;
-  author: string | null;
-  author_display: string | null;
-  status: string | null;
-  last_updated: string | null;
-  post_count: number;
+  category: string | null;
+  current_status: MatterStatus;
+  created_at: string;
+  updated_at: string;
+  file_count: number;
+  last_file_type: DocType | null;
+  last_summary: string | null;
   unread_count: number;
   favorite: boolean;
 };
 
-export async function fetchThreads(category?: string): Promise<ThreadMeta[]> {
-  const qs = category ? `?category=${encodeURIComponent(category)}` : "";
-  const r = await fetch(`/api/threads${qs}`, { credentials: "include" });
-  if (!r.ok) throw new Error(`/api/threads failed: ${r.status}`);
-  const body = (await r.json()) as { items: ThreadMeta[] };
+export type MatterMeta = MatterSummary;
+
+export type MatterDetail = {
+  matter: MatterMeta;
+  timeline: TimelineItem[];
+};
+
+export async function fetchMatters(query?: {
+  status?: MatterStatus;
+  owner?: string;
+  q?: string;
+}): Promise<MatterSummary[]> {
+  const params = new URLSearchParams();
+  if (query?.status) params.set("status", query.status);
+  if (query?.owner) params.set("owner", query.owner);
+  if (query?.q) params.set("q", query.q);
+  const qs = params.toString() ? `?${params}` : "";
+  const r = await fetch(`/api/matters${qs}`, { credentials: "include" });
+  await throwIfSessionExpired(r);
+  if (!r.ok) throw new Error(`/api/matters failed: ${r.status}`);
+  const body = (await r.json()) as { items: MatterSummary[] };
   return body.items;
+}
+
+export async function fetchMatter(matterId: string): Promise<MatterDetail> {
+  const r = await fetch(`/api/matters/${encodeURIComponent(matterId)}`, {
+    credentials: "include",
+  });
+  await throwIfSessionExpired(r);
+  if (r.status === 404) throw new Error("matter not found");
+  if (!r.ok) throw new Error(`fetch matter failed: ${r.status}`);
+  return (await r.json()) as MatterDetail;
+}
+
+export type InitialFileIn = {
+  type: DocType;
+  summary: string;
+  body?: string;
+  owner?: string | null;
+  comments?: { body: string; mentions?: string[] }[];
+};
+
+export type NewMatterResponse = {
+  matter: MatterMeta;
+  initial_timeline_item: TimelineItem;
+  matter_id: string;
+  file: string;
+};
+
+export async function createMatter(body: {
+  category: string;
+  title: string;
+  initial_file: InitialFileIn;
+}): Promise<NewMatterResponse> {
+  const r = await fetch("/api/matters", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    await throwIfSessionExpired(r);
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    const detail = typeof d.detail === "string"
+      ? d.detail
+      : d.detail?.message || d.detail?.code || `create matter failed: ${r.status}`;
+    throw new Error(detail);
+  }
+  return (await r.json()) as NewMatterResponse;
+}
+
+export type NewFileIn = {
+  type: DocType;
+  summary: string;
+  body?: string;
+  owner?: string | null;
+  quote?: string | null;
+  refer?: string[];
+  comments?: { body: string; mentions?: string[] }[];
+  verifications?: Verification[];
+  outcome?: Outcome;
+  status_change?: StatusChange;
+};
+
+export type AppendFileResponse = {
+  item: TimelineItem;
+  matter: MatterMeta;
+};
+
+export async function appendMatterFile(
+  matterId: string,
+  body: NewFileIn,
+): Promise<AppendFileResponse> {
+  const r = await fetch(
+    `/api/matters/${encodeURIComponent(matterId)}/files`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!r.ok) {
+    await throwIfSessionExpired(r);
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    const detail = typeof d.detail === "string"
+      ? d.detail
+      : d.detail?.message || d.detail?.code || `append file failed: ${r.status}`;
+    throw new Error(detail);
+  }
+  return (await r.json()) as AppendFileResponse;
+}
+
+export async function appendMatterResult(
+  matterId: string,
+  body: {
+    summary: string;
+    body?: string;
+    outcome: Outcome;
+    comments?: { body: string; mentions?: string[] }[];
+  },
+): Promise<AppendFileResponse> {
+  const r = await fetch(
+    `/api/matters/${encodeURIComponent(matterId)}/result`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!r.ok) {
+    await throwIfSessionExpired(r);
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    const detail = typeof d.detail === "string"
+      ? d.detail
+      : d.detail?.message || d.detail?.code || `append result failed: ${r.status}`;
+    throw new Error(detail);
+  }
+  return (await r.json()) as AppendFileResponse;
+}
+
+export async function markMatterRead(matterId: string): Promise<void> {
+  await fetch(
+    `/api/matters/${encodeURIComponent(matterId)}/read`,
+    { method: "POST", credentials: "include" },
+  );
+}
+
+export async function setMatterFavorite(
+  matterId: string,
+  favorite: boolean,
+): Promise<{ ok: true; thread_key: string; favorite: boolean }> {
+  const r = await fetch(
+    `/api/matters/${encodeURIComponent(matterId)}/favorite`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ favorite }),
+    },
+  );
+  if (!r.ok) {
+    await throwIfSessionExpired(r);
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    const detail = typeof d.detail === "string"
+      ? d.detail
+      : d.detail?.message || d.detail?.code || `favorite failed: ${r.status}`;
+    throw new Error(detail);
+  }
+  return await r.json();
+}
+
+export async function appendMatterComment(
+  matterId: string,
+  body: { target_file: string; body: string; mentions?: string[] },
+): Promise<{ item: TimelineItem }> {
+  const r = await fetch(
+    `/api/matters/${encodeURIComponent(matterId)}/comments`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!r.ok) {
+    await throwIfSessionExpired(r);
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    const detail = typeof d.detail === "string"
+      ? d.detail
+      : d.detail?.message || d.detail?.code || `append comment failed: ${r.status}`;
+    throw new Error(detail);
+  }
+  return (await r.json()) as { item: TimelineItem };
 }
 
 export type WorkspaceStatus = {
@@ -104,6 +372,7 @@ export type WorkspaceMirrorConfig = {
 
 export async function fetchWorkspaceStatus(): Promise<WorkspaceStatus> {
   const r = await fetch("/api/workspace/status", { credentials: "include" });
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`/api/workspace/status failed: ${r.status}`);
   return (await r.json()) as WorkspaceStatus;
 }
@@ -111,6 +380,7 @@ export async function fetchWorkspaceStatus(): Promise<WorkspaceStatus> {
 export async function fetchWorkspaceMirror(): Promise<WorkspaceMirrorConfig> {
   const r = await fetch("/api/workspace/mirror", { credentials: "include" });
   if (!r.ok) {
+    await throwIfSessionExpired(r);
     const d = await r.json().catch(() => ({ detail: r.statusText }));
     throw new Error(d.detail || `/api/workspace/mirror failed: ${r.status}`);
   }
@@ -119,80 +389,9 @@ export async function fetchWorkspaceMirror(): Promise<WorkspaceMirrorConfig> {
 
 export async function fetchAppHome(): Promise<AppHomePayload> {
   const r = await fetch("/api/app/home", { credentials: "include" });
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`/api/app/home failed: ${r.status}`);
   return (await r.json()) as AppHomePayload;
-}
-
-export type MentionEntry = {
-  time: string | null;
-  author_id: string | null;
-  author_display: string | null;
-  users: { user: string; open_id: string }[];
-  comments: string | null;
-};
-
-export type Post = {
-  filename: string;
-  frontmatter: Record<string, unknown>;
-  body: string;
-  author_display: string | null;
-  author_avatar_url: string | null;
-  mentions: MentionEntry[];
-};
-
-export type ThreadDetail = {
-  meta: ThreadMeta;
-  posts: Post[];
-};
-
-export async function fetchThread(category: string, slug: string): Promise<ThreadDetail> {
-  const r = await fetch(
-    `/api/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}`,
-    { credentials: "include" },
-  );
-  if (r.status === 404) throw new Error("thread not found");
-  if (!r.ok) throw new Error(`fetch thread failed: ${r.status}`);
-  return (await r.json()) as ThreadDetail;
-}
-
-export async function createThread(
-  body: { category: string; title: string; body: string },
-): Promise<{ category: string; slug: string; filename: string }> {
-  const r = await fetch("/api/threads", {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) {
-    const detail = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(detail.detail || `create failed: ${r.status}`);
-  }
-  return await r.json();
-}
-
-export async function postReply(
-  category: string, slug: string, body: string,
-  opts?: { reply_to?: string | null; references?: string[] },
-): Promise<{ filename: string }> {
-  const r = await fetch(
-    `/api/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/posts`,
-    {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        body,
-        reply_to: opts?.reply_to ?? null,
-        references: opts?.references ?? [],
-      }),
-    },
-  );
-  if (!r.ok) {
-    const detail = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(detail.detail || `reply failed: ${r.status}`);
-  }
-  return await r.json();
 }
 
 export type MentionBlock = {
@@ -210,6 +409,7 @@ export type Draft = {
   mentions: MentionBlock | null;
   reply_to: string | null;
   references: string[];
+  matter_payload: Record<string, unknown> | null;
   created_at: number;
   updated_at: number;
 };
@@ -225,6 +425,7 @@ export async function searchContacts(q: string): Promise<Contact[]> {
   const r = await fetch(`/api/contacts?q=${encodeURIComponent(q)}&limit=20`, {
     credentials: "include",
   });
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`/api/contacts failed: ${r.status}`);
   const body = (await r.json()) as { items: Contact[] };
   return body.items;
@@ -239,6 +440,7 @@ export async function syncContacts(): Promise<{ ok: true; synced: number; total:
 
 export async function fetchDrafts(): Promise<Draft[]> {
   const r = await fetch("/api/drafts", { credentials: "include" });
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`/api/drafts failed: ${r.status}`);
   const body = (await r.json()) as { items: Draft[] };
   return body.items;
@@ -246,6 +448,7 @@ export async function fetchDrafts(): Promise<Draft[]> {
 
 export async function fetchDraft(id: string): Promise<Draft> {
   const r = await fetch(`/api/drafts/${id}`, { credentials: "include" });
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`fetch draft failed: ${r.status}`);
   return (await r.json()) as Draft;
 }
@@ -258,6 +461,7 @@ export async function createDraft(body: {
   thread_key?: string | null;
   reply_to?: string | null;
   references?: string[];
+  matter_payload?: Record<string, unknown> | null;
 }): Promise<Draft> {
   const r = await fetch("/api/drafts", {
     method: "POST",
@@ -266,6 +470,7 @@ export async function createDraft(body: {
     body: JSON.stringify(body),
   });
   if (!r.ok) {
+    await throwIfSessionExpired(r);
     const d = await r.json().catch(() => ({ detail: r.statusText }));
     throw new Error(d.detail || `create draft failed: ${r.status}`);
   }
@@ -281,6 +486,7 @@ export async function updateDraft(
     thread_key?: string | null;
     reply_to?: string | null;
     references?: string[];
+    matter_payload?: Record<string, unknown> | null;
   },
 ): Promise<Draft> {
   const r = await fetch(`/api/drafts/${id}`, {
@@ -290,6 +496,7 @@ export async function updateDraft(
     body: JSON.stringify(body),
   });
   if (!r.ok) {
+    await throwIfSessionExpired(r);
     const d = await r.json().catch(() => ({ detail: r.statusText }));
     throw new Error(d.detail || `update draft failed: ${r.status}`);
   }
@@ -301,6 +508,7 @@ export async function deleteDraft(id: string): Promise<void> {
     method: "DELETE",
     credentials: "include",
   });
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`delete draft failed: ${r.status}`);
 }
 
@@ -312,79 +520,11 @@ export async function publishDraft(
     credentials: "include",
   });
   if (!r.ok) {
+    await throwIfSessionExpired(r);
     const d = await r.json().catch(() => ({ detail: r.statusText }));
     throw new Error(d.detail || `publish failed: ${r.status}`);
   }
   return await r.json();
-}
-
-export async function addMention(
-  category: string,
-  slug: string,
-  target_filename: string,
-  mentions: MentionBlock,
-): Promise<{ ok: true }> {
-  const r = await fetch(
-    `/api/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/mentions`,
-    {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target_filename, mentions }),
-    },
-  );
-  if (!r.ok) {
-    const d = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(d.detail || `mention failed: ${r.status}`);
-  }
-  return await r.json();
-}
-
-export async function changeThreadStatus(
-  category: string, slug: string, to: string, reason?: string,
-): Promise<{ ok: true; from: string; to: string }> {
-  const r = await fetch(
-    `/api/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/status`,
-    {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ to, reason }),
-    },
-  );
-  if (!r.ok) {
-    const d = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(d.detail || `status change failed: ${r.status}`);
-  }
-  return await r.json();
-}
-
-export async function setThreadFavorite(
-  category: string,
-  slug: string,
-  favorite: boolean,
-): Promise<{ ok: true; thread_key: string; favorite: boolean }> {
-  const r = await fetch(
-    `/api/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/favorite`,
-    {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ favorite }),
-    },
-  );
-  if (!r.ok) {
-    const d = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(d.detail || `favorite failed: ${r.status}`);
-  }
-  return await r.json();
-}
-
-export async function markThreadRead(category: string, slug: string): Promise<void> {
-  await fetch(
-    `/api/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/read`,
-    { method: "POST", credentials: "include" },
-  );
 }
 
 // ── AI ──────────────────────────────────────────────────────────────────────
@@ -436,6 +576,7 @@ async function adminFetch(url: string, init?: RequestInit): Promise<Response> {
       throw new AdminRequiredError();
     }
   }
+  await throwIfSessionExpired(r);
   return r;
 }
 
@@ -505,25 +646,24 @@ export type AIConversation = {
 };
 
 export async function fetchAIConversation(
-  category: string,
-  slug: string,
+  matter_id: string,
 ): Promise<AIConversation> {
   const r = await fetch(
-    `/api/ai/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/conversation`,
+    `/api/ai/matters/${encodeURIComponent(matter_id)}/conversation`,
     { credentials: "include" },
   );
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`fetch conversation failed: ${r.status}`);
   return (await r.json()) as AIConversation;
 }
 
 export async function saveAIConversation(
-  category: string,
-  slug: string,
+  matter_id: string,
   messages: ChatMessage[],
   reply_target: string | null,
 ): Promise<void> {
   const r = await fetch(
-    `/api/ai/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/conversation`,
+    `/api/ai/matters/${encodeURIComponent(matter_id)}/conversation`,
     {
       method: "PUT",
       credentials: "include",
@@ -531,15 +671,13 @@ export async function saveAIConversation(
       body: JSON.stringify({ messages, reply_target }),
     },
   );
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`save conversation failed: ${r.status}`);
 }
 
-export async function clearAIConversation(
-  category: string,
-  slug: string,
-): Promise<void> {
+export async function clearAIConversation(matter_id: string): Promise<void> {
   await fetch(
-    `/api/ai/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/conversation`,
+    `/api/ai/matters/${encodeURIComponent(matter_id)}/conversation`,
     { method: "DELETE", credentials: "include" },
   );
 }
@@ -560,14 +698,13 @@ export type AIStreamEvent =
  * Usage: for await (const ev of streamAIChat(...)) { ... }
  */
 export async function* streamAIChat(
-  category: string,
-  slug: string,
+  matter_id: string,
   messages: ChatMessage[],
   reply_target: string | null,
   signal?: AbortSignal,
 ): AsyncGenerator<AIStreamEvent> {
   const resp = await fetch(
-    `/api/ai/threads/${encodeURIComponent(category)}/${encodeURIComponent(slug)}/chat`,
+    `/api/ai/matters/${encodeURIComponent(matter_id)}/chat`,
     {
       method: "POST",
       credentials: "include",
@@ -578,6 +715,10 @@ export async function* streamAIChat(
   );
   if (!resp.ok) {
     const d = await resp.json().catch(() => ({ detail: resp.statusText }));
+    if (resp.status === 401 && isSessionExpiredDetail(d.detail)) {
+      redirectToLogin();
+      throw new SessionExpiredError();
+    }
     const detail = Array.isArray(d.detail)
       ? d.detail
         .map((item: unknown) => {
@@ -641,6 +782,7 @@ export async function refreshWorkspace(): Promise<WorkspaceStatus> {
     method: "POST",
     credentials: "include",
   });
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`/api/workspace/refresh failed: ${r.status}`);
   const body = (await r.json()) as { ok: boolean; head: string | null };
   return { ready: true, path: "", head: body.head };
@@ -660,6 +802,7 @@ export type ApiTokenCreated = ApiTokenSummary & { token: string };
 
 export async function fetchApiTokens(): Promise<ApiTokenSummary[]> {
   const r = await fetch("/api/tokens", { credentials: "include" });
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`/api/tokens failed: ${r.status}`);
   const body = (await r.json()) as { items: ApiTokenSummary[] };
   return body.items;
@@ -676,6 +819,7 @@ export async function createApiToken(
     body: JSON.stringify({ name, ttl_days }),
   });
   if (!r.ok) {
+    await throwIfSessionExpired(r);
     const d = await r.json().catch(() => ({ detail: r.statusText }));
     throw new Error(d.detail || `create token failed: ${r.status}`);
   }
@@ -684,5 +828,6 @@ export async function createApiToken(
 
 export async function deleteApiToken(id: string): Promise<void> {
   const r = await fetch(`/api/tokens/${id}`, { method: "DELETE", credentials: "include" });
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`delete token failed: ${r.status}`);
 }

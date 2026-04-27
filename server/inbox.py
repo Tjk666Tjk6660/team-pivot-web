@@ -3,11 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from server.doc_types import VALID_DOC_TYPES
+from server.matter_index import read_matter_index
 from server.posts import read_post
 from server.read_state import ReadStateRepo
 from server.threads import ThreadMeta, list_threads
 
 _CONTENT_TYPES = {"proposal", "reply"}
+# Per P4.5 decision: every timeline item counts as unread (no type filter).
+_MATTER_CONTENT_TYPES = frozenset(VALID_DOC_TYPES)
 
 
 @dataclass(frozen=True)
@@ -80,8 +84,15 @@ def latest_post_filename(thread_dir: Path) -> str | None:
     return fs[-1] if fs else None
 
 
-def _post_filenames(tdir: Path) -> list[str]:
-    """Returns sorted filenames of indexed proposal/reply posts."""
+def latest_matter_post_filename(matter_dir: Path) -> str | None:
+    fs = _post_filenames(matter_dir, types=_MATTER_CONTENT_TYPES)
+    return fs[-1] if fs else None
+
+
+def _post_filenames(tdir: Path, types: frozenset[str] = None) -> list[str]:
+    """Returns sorted filenames of indexed posts matching ``types`` (default proposal/reply)."""
+    if types is None:
+        types = frozenset(_CONTENT_TYPES)
     if not tdir.is_dir():
         return []
     out: list[str] = []
@@ -96,7 +107,7 @@ def _post_filenames(tdir: Path) -> list[str]:
             continue
         if p.frontmatter.get("index_state") == "un-indexed":
             continue
-        if p.frontmatter.get("type") not in _CONTENT_TYPES:
+        if p.frontmatter.get("type") not in types:
             continue
         out.append(f.name)
     return out
@@ -109,3 +120,126 @@ def _post_author(path: Path) -> str | None:
         return None
     author = p.frontmatter.get("author")
     return str(author) if author else None
+
+
+# ---------- matter ----------
+
+
+@dataclass(frozen=True)
+class MatterInboxItem:
+    matter_id: str
+    category: str
+    title: str
+    current_status: str
+    updated_at: str | None
+    file_count: int
+    unread_count: int
+    last_file_type: str | None
+    last_summary: str | None
+    last_file_author: str | None
+
+
+def _list_matter_index_paths(index_dir: Path) -> list[Path]:
+    p = Path(index_dir)
+    if not p.is_dir():
+        return []
+    out: list[Path] = []
+    for f in p.glob("*.index.yaml"):
+        if f.name.endswith("-discuss.index.yaml"):
+            continue
+        out.append(f)
+    return out
+
+
+def _derive_matter_category(data: dict) -> str | None:
+    timeline = data.get("timeline") or []
+    if not timeline:
+        return None
+    first = timeline[0].get("file") or ""
+    parts = first.split("/")
+    if len(parts) < 4 or parts[0] != "discussions":
+        return None
+    return parts[1]
+
+
+def compute_matter_inbox(
+    discussions_root: Path,
+    index_dir: Path,
+    user_open_id: str,
+    read_states: ReadStateRepo,
+) -> list[MatterInboxItem]:
+    """Return matters with unread timeline items for the given user."""
+    state = read_states.all_for_user(user_open_id)
+    out: list[MatterInboxItem] = []
+    for index_path in _list_matter_index_paths(index_dir):
+        data = read_matter_index(index_path)
+        if data is None:
+            continue
+        matter = data.get("matter") or {}
+        matter_id = str(matter.get("id") or index_path.stem.replace(".index", ""))
+        category = _derive_matter_category(data)
+        if category is None:
+            continue
+        tdir = discussions_root / category / matter_id
+        filenames = _post_filenames(tdir, types=_MATTER_CONTENT_TYPES)
+        if not filenames:
+            continue
+        key = f"{category}/{matter_id}"
+        last_read = state.get(key)
+        unread = (
+            filenames
+            if last_read is None
+            else [f for f in filenames if f > last_read]
+        )
+        if not unread:
+            continue
+        timeline = data.get("timeline") or []
+        last_item = timeline[-1] if timeline else {}
+        last_filename = filenames[-1]
+        last_author = _post_author(tdir / last_filename)
+        out.append(
+            MatterInboxItem(
+                matter_id=matter_id,
+                category=category,
+                title=str(matter.get("title") or matter_id),
+                current_status=str(matter.get("current_status") or "planning"),
+                updated_at=(str(matter.get("updated_at")) if matter.get("updated_at") else None),
+                file_count=len(timeline),
+                unread_count=len(unread),
+                last_file_type=last_item.get("type"),
+                last_summary=last_item.get("summary"),
+                last_file_author=last_author,
+            )
+        )
+    return out
+
+
+def compute_matter_unread_counts(
+    discussions_root: Path,
+    index_dir: Path,
+    user_open_id: str,
+    read_states: ReadStateRepo,
+) -> dict[str, int]:
+    """Returns {category/matter_id: unread_count}."""
+    state = read_states.all_for_user(user_open_id)
+    result: dict[str, int] = {}
+    for index_path in _list_matter_index_paths(index_dir):
+        data = read_matter_index(index_path)
+        if data is None:
+            continue
+        matter_id = str((data.get("matter") or {}).get("id") or "")
+        category = _derive_matter_category(data)
+        if not matter_id or not category:
+            continue
+        tdir = discussions_root / category / matter_id
+        filenames = _post_filenames(tdir, types=_MATTER_CONTENT_TYPES)
+        key = f"{category}/{matter_id}"
+        last_read = state.get(key)
+        count = (
+            len(filenames)
+            if last_read is None
+            else sum(1 for f in filenames if f > last_read)
+        )
+        if count > 0:
+            result[key] = count
+    return result

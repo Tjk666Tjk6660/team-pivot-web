@@ -39,6 +39,23 @@ def test_mark_indexed_flips_flag(tmp_path):
     assert read_post(p).frontmatter["index_state"] == "indexed"
 
 
+def test_matter_type_file_is_not_repaired_as_thread(tmp_path):
+    """Matter-model files (think/act/verify/result/insight) must not trigger
+    the legacy thread-repair path, which would create a stale
+    `{slug}-discuss.index.yaml`. They should log-and-flip-to-indexed."""
+    d = tmp_path / "discussions"
+    idx = tmp_path / "index"
+    p = _write_pending_post(d, "c", "m1", "001_u_think_aaa.md", "think", "u")
+
+    fixed = repair_partial_writes(d, idx)
+    # The repair counts this as "handled" (mark_indexed), not corrupted.
+    assert fixed == 1
+    # No legacy thread index should have been created.
+    assert not (idx / "m1-discuss.index.yaml").exists()
+    # Flag was flipped to indexed so it will not be re-scanned next startup.
+    assert read_post(p).frontmatter["index_state"] == "indexed"
+
+
 def test_recover_creates_missing_index_for_proposal(tmp_path):
     d = tmp_path / "discussions"
     idx = tmp_path / "index"

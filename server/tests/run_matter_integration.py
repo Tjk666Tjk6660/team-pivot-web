@@ -1,0 +1,1272 @@
+"""Matter API integration test driver — REAL HTTP edition.
+
+Drives the Matter API against a running backend (default http://127.0.0.1:8000)
+using a Bearer PAT. All writes go through the real ``write_session`` →
+commit → push path, producing real git commits in the configured workspace.
+
+Inputs (env vars):
+- ``PIVOT_BASE_URL``          default ``http://127.0.0.1:8000``
+- ``PIVOT_PAT``               required, ``pvt_...``
+- ``TEST_MY_OPENID``          optional, used in the comment-with-mention case
+
+Run:
+
+    $env:PIVOT_PAT = "pvt_..."
+    uv run python tests/integration/run_matter_integration.py
+
+Outputs land in ``tests/test_output/matter-integration-test/`` (gitignored).
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from urllib.parse import quote
+
+import httpx
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+OUT_DIR = REPO_ROOT / "tests" / "test_output" / "matter-integration-test"
+CASES_DIR = OUT_DIR / "cases"
+
+BASE_URL = os.getenv("PIVOT_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+PAT = os.getenv("PIVOT_PAT") or ""
+TEST_MY_OPENID = os.getenv("TEST_MY_OPENID") or ""
+RUN_TAG = time.strftime("%Y%m%d-%H%M%S")
+
+
+def _ensure_out_dir() -> None:
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    CASES_DIR.mkdir(exist_ok=True)
+
+
+def _client() -> httpx.Client:
+    if not PAT:
+        print("error: set PIVOT_PAT env var (pvt_...)", file=sys.stderr)
+        sys.exit(2)
+    return httpx.Client(
+        base_url=BASE_URL,
+        headers={"Authorization": f"Bearer {PAT}"},
+        timeout=30.0,
+    )
+
+
+# ---------- helpers ----------
+
+
+def _title(base: str) -> str:
+    # Suffix run tag so matter slugs are unique across repeat runs.
+    return f"{base}-{RUN_TAG}"
+
+
+def _url_matter(matter_id: str, suffix: str = "") -> str:
+    return f"/api/matters/{quote(matter_id, safe='')}{suffix}"
+
+
+@dataclass
+class Step:
+    name: str
+    method: str
+    path: str
+    body: dict | None = None
+    expect_status: int = 200
+
+
+class CaseRunner:
+    def __init__(self, case_id: str, client: httpx.Client):
+        self.case_id = case_id
+        self.client = client
+        self.dir = CASES_DIR / case_id
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.step_idx = 0
+        self.failures: list[str] = []
+
+    def _record(self, step: Step, response: httpx.Response) -> dict:
+        self.step_idx += 1
+        stem = f"{self.step_idx:02d}-{step.name}"
+        if step.body is not None:
+            (self.dir / f"{stem}.in.json").write_text(
+                json.dumps(
+                    {"method": step.method, "path": step.path, "body": step.body},
+                    ensure_ascii=False, indent=2,
+                ),
+                encoding="utf-8",
+            )
+        try:
+            body = response.json()
+        except Exception:
+            body = {"_raw": response.text}
+        (self.dir / f"{stem}.out.json").write_text(
+            json.dumps(
+                {"status": response.status_code, "body": body},
+                ensure_ascii=False, indent=2,
+            ),
+            encoding="utf-8",
+        )
+        if response.status_code != step.expect_status:
+            self.failures.append(
+                f"[{self.case_id}] step {self.step_idx} {step.name}: "
+                f"expected HTTP {step.expect_status}, got {response.status_code}; "
+                f"body={body!r}"
+            )
+        return body
+
+    def do(self, step: Step) -> dict:
+        method = step.method.upper()
+        if method == "GET":
+            resp = self.client.get(step.path)
+        elif method == "POST":
+            resp = self.client.post(step.path, json=step.body or {})
+        elif method == "PATCH":
+            resp = self.client.patch(step.path, json=step.body or {})
+        elif method == "DELETE":
+            resp = self.client.delete(step.path)
+        else:
+            raise ValueError(method)
+        return self._record(step, resp)
+
+    def save_final_index(self, matter_id: str, workspace_path: Path) -> dict:
+        # Try disk directly (workspace_path known); also request /api/matters/{id} to confirm.
+        index_path = workspace_path / "index" / f"{matter_id}.index.yaml"
+        if index_path.is_file():
+            (self.dir / "final-index.yaml").write_text(
+                index_path.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            return yaml.safe_load(index_path.read_text(encoding="utf-8"))
+        return {}
+
+    def expect(self, condition: bool, msg: str) -> None:
+        if not condition:
+            self.failures.append(f"[{self.case_id}] assertion failed: {msg}")
+
+
+# ---------- cases ----------
+
+
+def case_a1_pause_from_planning(client, workspace_path) -> list[str]:
+    r = CaseRunner("A1-pause-from-planning", client)
+    title = _title("IntegTest-A1-PauseFromPlanning")
+    created = r.do(Step("create-matter", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {
+            "type": "think",
+            "summary": "初步构想",
+            "body": "# Summary\n\n初步构想。\n",
+        },
+    }))
+    matter_id = created["matter_id"]
+    first_file = created["file"]
+
+    r.do(Step("pause-via-think", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "think",
+        "summary": "暂停：等第三方确认",
+        "body": "# Summary\n\n等依赖方确认再继续。\n",
+        "quote": first_file,
+        "status_change": {"from": "planning", "to": "paused"},
+    }))
+
+    detail = r.do(Step("get-detail", "GET", _url_matter(matter_id)))
+    idx = r.save_final_index(matter_id, workspace_path)
+
+    r.expect(idx.get("matter", {}).get("current_status") == "paused",
+             "current_status should be paused")
+    r.expect(len(idx.get("timeline", [])) == 2, "timeline should have 2 items")
+    r.expect(idx["timeline"][1].get("status_change", {}).get("to") == "paused",
+             "2nd item should carry status_change to paused")
+    r.expect(detail["matter"]["current_status"] == "paused",
+             "detail API should reflect paused")
+    return r.failures
+
+
+def case_a2_loop_round_trip(client, workspace_path) -> list[str]:
+    r = CaseRunner("A2-loop-a-planning-paused-planning", client)
+    title = _title("IntegTest-A2-RoundTrip")
+    created = r.do(Step("create-matter", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    }))
+    matter_id = created["matter_id"]
+    r.do(Step("pause", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "think", "summary": "pause", "body": "",
+        "status_change": {"from": "planning", "to": "paused"},
+    }))
+    r.do(Step("resume-to-planning", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "think", "summary": "resume", "body": "",
+        "status_change": {"from": "paused", "to": "planning"},
+    }))
+    idx = r.save_final_index(matter_id, workspace_path)
+    r.expect(idx["matter"]["current_status"] == "planning",
+             "current_status should be planning after resume")
+    r.expect(len(idx["timeline"]) == 3, "timeline should have 3 items")
+    return r.failures
+
+
+def case_a3_paused_to_executing(client, workspace_path) -> list[str]:
+    """Loop A alt: paused → executing via think, then an act concretely starts work.
+
+    Product doc §九.1 requires executing to be carried by at least one act;
+    resuming via think alone leaves executing semantically empty, so we follow
+    with a real act to close the loop.
+    """
+    r = CaseRunner("A3-paused-to-executing-with-act", client)
+    title = _title("IntegTest-A3-ResumeExecuting")
+    created = r.do(Step("create-matter", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {"type": "think", "summary": "初步方案", "body": "# Summary\n\n初步方案\n"},
+    }))
+    matter_id = created["matter_id"]
+    first_file = created["file"]
+
+    r.do(Step("pause", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "think",
+        "summary": "暂停：等第三方确认",
+        "body": "# Summary\n\n等依赖\n",
+        "quote": first_file,
+        "status_change": {"from": "planning", "to": "paused"},
+    }))
+    resume = r.do(Step("resume-to-executing", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "think",
+        "summary": "外部就绪，恢复到 executing",
+        "body": "# Summary\n\n恢复原因：依赖已 ready\n",
+        "status_change": {"from": "paused", "to": "executing"},
+    }))
+    resume_file = resume["item"]["file"]
+
+    r.do(Step("first-act-after-resume", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "act",
+        "summary": "落地第一个行动",
+        "body": "# What To Do\n\n- 对齐接口\n- 写服务端实现\n",
+        "quote": resume_file,
+    }))
+
+    idx = r.save_final_index(matter_id, workspace_path)
+    r.expect(idx["matter"]["current_status"] == "executing",
+             "current_status should be executing")
+    r.expect(len(idx["timeline"]) == 4, "timeline should have 4 items (think+think+think+act)")
+    last = idx["timeline"][-1]
+    r.expect(last["type"] == "act" and last["quote"] == resume_file,
+             "last item should be act quoting the resume-think")
+    return r.failures
+
+
+def case_b1_loop_b_finished(client, workspace_path) -> list[str]:
+    r = CaseRunner("B1-loop-b-finished-reviewed", client)
+    title = _title("IntegTest-B1-AuthRedesign")
+    created = r.do(Step("create-matter", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {
+            "type": "think",
+            "summary": "梳理登录链路",
+            "body": "# Summary\n\n梳理登录链路。\n",
+        },
+    }))
+    matter_id = created["matter_id"]
+    think_file = created["file"]
+
+    act_resp = r.do(Step("act-enter-executing", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "act",
+        "owner": "liuyu",
+        "summary": "按修正后的链路实现",
+        "body": "# What To Do\n\n- 调整登录回跳\n- cookie 持久化\n",
+        "quote": think_file,
+        "status_change": {"from": "planning", "to": "executing"},
+    }))
+    act_file = act_resp["item"]["file"]
+
+    r.do(Step("verify-pass", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "verify",
+        "summary": "主链路通过",
+        "body": "# Verifications\n",
+        "quote": act_file,
+        "verifications": [
+            {"target": act_file, "judgement": "passed", "comment": "可接受"},
+        ],
+    }))
+
+    r.do(Step("result-finished", "POST", _url_matter(matter_id, "/result"), body={
+        "summary": "事项完成",
+        "body": "整体结果可接受。",
+        "outcome": "finished",
+    }))
+
+    r.do(Step("insight-to-reviewed", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "insight",
+        "summary": "需求澄清节奏待优化",
+        "body": "# Summary\n\n沉淀复盘。\n",
+        "status_change": {"from": "finished", "to": "reviewed"},
+    }))
+
+    detail = r.do(Step("get-detail", "GET", _url_matter(matter_id)))
+    idx = r.save_final_index(matter_id, workspace_path)
+
+    r.expect(idx["matter"]["current_status"] == "reviewed",
+             "final status should be reviewed")
+    r.expect(len(idx["timeline"]) == 5, "timeline should have 5 items")
+    types_seq = [it["type"] for it in idx["timeline"]]
+    r.expect(types_seq == ["think", "act", "verify", "result", "insight"],
+             f"type sequence mismatch: {types_seq}")
+    result_item = next(it for it in idx["timeline"] if it["type"] == "result")
+    r.expect(result_item.get("outcome") == "finished",
+             "result.outcome should be finished")
+    act_item = next(it for it in idx["timeline"] if it["type"] == "act")
+    r.expect(act_item["owner"] == "liuyu", "act.owner should be liuyu")
+    r.expect(detail["matter"]["current_status"] == "reviewed",
+             "detail API reflects reviewed")
+    return r.failures
+
+
+def case_b2_cancelled_reviewed(client, workspace_path) -> list[str]:
+    r = CaseRunner("B2-cancelled-reviewed", client)
+    title = _title("IntegTest-B2-CancelPath")
+    created = r.do(Step("create-matter", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {"type": "think", "summary": "x", "body": ""},
+    }))
+    matter_id = created["matter_id"]
+    r.do(Step("act-enter-executing", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "act", "summary": "work",
+        "status_change": {"from": "planning", "to": "executing"},
+    }))
+    r.do(Step("result-cancel", "POST", _url_matter(matter_id, "/result"), body={
+        "summary": "取消",
+        "outcome": "cancelled",
+    }))
+    r.do(Step("insight-review", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "insight", "summary": "为什么取消",
+        "status_change": {"from": "cancelled", "to": "reviewed"},
+    }))
+    idx = r.save_final_index(matter_id, workspace_path)
+    r.expect(idx["matter"]["current_status"] == "reviewed",
+             "status should end reviewed")
+    result_item = next(it for it in idx["timeline"] if it["type"] == "result")
+    r.expect(result_item["outcome"] == "cancelled",
+             "outcome should be cancelled")
+    return r.failures
+
+
+def case_n1_reject_result_in_planning(client, workspace_path) -> list[str]:
+    r = CaseRunner("N1-reject-result-in-planning", client)
+    title = _title("IntegTest-N1-RejectResult")
+    created = r.do(Step("create-matter", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    }))
+    matter_id = created["matter_id"]
+    bad = r.do(Step(
+        "try-result-in-planning", "POST", _url_matter(matter_id, "/files"),
+        body={"type": "result", "summary": "nope", "outcome": "finished",
+              "status_change": {"from": "planning", "to": "finished"}},
+        expect_status=422,
+    ))
+    r.expect(bad["detail"]["code"] == "type_not_allowed",
+             f"expected type_not_allowed, got {bad['detail'].get('code')}")
+    r.save_final_index(matter_id, workspace_path)
+    return r.failures
+
+
+def case_n2_reject_post_reviewed(client, workspace_path) -> list[str]:
+    r = CaseRunner("N2-reject-post-reviewed", client)
+    title = _title("IntegTest-N2-StrictReviewed")
+    created = r.do(Step("create-matter", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {"type": "act", "summary": "s", "body": ""},
+    }))
+    matter_id = created["matter_id"]
+    r.do(Step("to-executing", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "act", "summary": "a",
+        "status_change": {"from": "planning", "to": "executing"},
+    }))
+    r.do(Step("finish", "POST", _url_matter(matter_id, "/result"), body={
+        "summary": "done", "outcome": "finished",
+    }))
+    r.do(Step("review", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "insight", "summary": "lesson",
+        "status_change": {"from": "finished", "to": "reviewed"},
+    }))
+    bad = r.do(Step(
+        "try-insight-after-reviewed", "POST", _url_matter(matter_id, "/files"),
+        body={"type": "insight", "summary": "oops"},
+        expect_status=422,
+    ))
+    r.expect(bad["detail"]["code"] == "type_not_allowed",
+             "reviewed must strictly deny new files")
+    r.save_final_index(matter_id, workspace_path)
+    return r.failures
+
+
+def case_n3_verify_target_not_act(client, workspace_path) -> list[str]:
+    r = CaseRunner("N3-verify-target-not-act", client)
+    title = _title("IntegTest-N3-TargetNotAct")
+    created = r.do(Step("create-matter", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    }))
+    matter_id = created["matter_id"]
+    think_file = created["file"]
+    bad = r.do(Step(
+        "verify-against-think", "POST", _url_matter(matter_id, "/files"),
+        body={"type": "verify", "summary": "bad target",
+              "verifications": [{"target": think_file, "judgement": "passed", "comment": ""}]},
+        expect_status=422,
+    ))
+    r.expect(bad["detail"]["code"] == "verification_target_not_act",
+             f"expected verification_target_not_act, got {bad['detail'].get('code')}")
+    r.save_final_index(matter_id, workspace_path)
+    return r.failures
+
+
+def case_n4_verify_target_not_found(client, workspace_path) -> list[str]:
+    r = CaseRunner("N4-verify-target-not-found", client)
+    title = _title("IntegTest-N4-TargetNotFound")
+    created = r.do(Step("create-matter", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    }))
+    matter_id = created["matter_id"]
+    bad = r.do(Step(
+        "verify-missing-target", "POST", _url_matter(matter_id, "/files"),
+        body={"type": "verify", "summary": "missing",
+              "verifications": [{"target": "discussions/ghost/999_nobody.md",
+                                 "judgement": "passed", "comment": ""}]},
+        expect_status=422,
+    ))
+    r.expect(bad["detail"]["code"] == "verification_target_not_found",
+             f"expected verification_target_not_found, got {bad['detail'].get('code')}")
+    r.save_final_index(matter_id, workspace_path)
+    return r.failures
+
+
+def case_n5_verify_via_refer_ok(client, workspace_path) -> list[str]:
+    r = CaseRunner("N5-verify-via-refer-ok", client)
+    title = _title("IntegTest-N5-ReferWhitelist")
+    created = r.do(Step("create-matter", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    }))
+    matter_id = created["matter_id"]
+    external = "discussions/external-matter/001_u_act_x.md"
+    r.do(Step(
+        "verify-via-refer", "POST", _url_matter(matter_id, "/files"),
+        body={"type": "verify", "summary": "cross-matter",
+              "refer": [external],
+              "verifications": [{"target": external, "judgement": "passed", "comment": "ok"}]},
+    ))
+    idx = r.save_final_index(matter_id, workspace_path)
+    verify_item = next(it for it in idx["timeline"] if it["type"] == "verify")
+    r.expect(verify_item["verifications"][0]["target"] == external,
+             "cross-matter target preserved via refer whitelist")
+    return r.failures
+
+
+def case_d1_multi_round_discussion(client, workspace_path) -> list[str]:
+    """Multiple think files continuing via quote chain (discussion-style depth).
+
+    Each new think quotes the previous, forming a lineage:
+      t1 → t2 (quote=t1) → t3 (quote=t2) → t4 (quote=t3)
+    """
+    r = CaseRunner("D1-multi-round-think-chain", client)
+    title = _title("IntegTest-D1-DiscussionChain")
+    created = r.do(Step("create-matter", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {
+            "type": "think",
+            "summary": "#1 把问题摆清楚",
+            "body": "# Summary\n\n目前登录链路在飞书内打开有两条不一致的回跳路径。\n",
+        },
+    }))
+    matter_id = created["matter_id"]
+    prev = created["file"]
+
+    bodies = [
+        ("#2 分析候选方案",
+         "# Summary\n\n方案 A：走飞书 authz code 预换。方案 B：浏览器 OAuth 统一。\n"),
+        ("#3 倾向方案 B",
+         "# Summary\n\n方案 B 实现复杂度低，回跳一致性强，但需要兼容飞书端内打开。\n"),
+        ("#4 确认 quote/refer 模型",
+         "# Summary\n\n方案 B 的 open_id 如何在 session 内保留？需要在下一篇 act 里落实。\n"),
+    ]
+    for i, (summary, body) in enumerate(bodies, start=2):
+        resp = r.do(Step(
+            f"think-{i}", "POST", _url_matter(matter_id, "/files"),
+            body={"type": "think", "summary": summary, "body": body, "quote": prev},
+        ))
+        prev = resp["item"]["file"]
+
+    idx = r.save_final_index(matter_id, workspace_path)
+    r.expect(len(idx["timeline"]) == 4, "4-item think chain")
+    # quote lineage check
+    timeline = idx["timeline"]
+    r.expect(timeline[0].get("quote") in (None, ""),
+             "first item has no quote")
+    for i in range(1, 4):
+        r.expect(timeline[i]["quote"] == timeline[i - 1]["file"],
+                 f"item {i+1} must quote item {i}")
+    r.expect(idx["matter"]["current_status"] == "planning",
+             "status stays planning (no status_change triggered)")
+    return r.failures
+
+
+def case_d2_executing_depth_multiple_acts(client, workspace_path) -> list[str]:
+    """Executing with multiple acts + mid-course think + a verify that covers two acts.
+
+    Shape:
+      think1(initial) → act1(→executing) → think2(mid-course修正) → act2(parallel)
+      → verify(covers act1 & act2) → result(finished)
+    """
+    r = CaseRunner("D2-executing-depth-multiple-acts", client)
+    title = _title("IntegTest-D2-ParallelActs")
+    created = r.do(Step("create-matter", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {
+            "type": "think",
+            "summary": "拆子任务",
+            "body": "# Summary\n\n拆成两个并行子任务\n",
+        },
+    }))
+    matter_id = created["matter_id"]
+    think1 = created["file"]
+
+    act1_resp = r.do(Step("act1-enter-executing", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "act",
+        "owner": "liuyu",
+        "summary": "子任务 A：回跳链路",
+        "body": "# What To Do\n\n回跳链路\n",
+        "quote": think1,
+        "status_change": {"from": "planning", "to": "executing"},
+    }))
+    act1 = act1_resp["item"]["file"]
+
+    think2_resp = r.do(Step("think2-mid-course", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "think",
+        "summary": "修正理解：子任务 B 先做不阻塞 A",
+        "body": "# Summary\n\n调整顺序\n",
+        "quote": act1,
+    }))
+    think2 = think2_resp["item"]["file"]
+
+    act2_resp = r.do(Step("act2-parallel", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "act",
+        "owner": "dengke",
+        "summary": "子任务 B：cookie 持久化",
+        "body": "# What To Do\n\ncookie 持久化\n",
+        "quote": think2,
+    }))
+    act2 = act2_resp["item"]["file"]
+
+    r.do(Step("verify-covers-both-acts", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "verify",
+        "summary": "两条行动汇总判断",
+        "body": "# Verifications\n",
+        "quote": act2,
+        "verifications": [
+            {"target": act1, "judgement": "passed",
+             "comment": "主链路通过，质量可接受"},
+            {"target": act2, "judgement": "failed",
+             "comment": "cookie 跨域场景未覆盖，需返工"},
+        ],
+    }))
+
+    r.do(Step("result-finished", "POST", _url_matter(matter_id, "/result"), body={
+        "summary": "整体结果可接受，cookie 跨域问题转到后续复盘",
+        "outcome": "finished",
+    }))
+
+    idx = r.save_final_index(matter_id, workspace_path)
+    r.expect(len(idx["timeline"]) == 6, f"6 items expected, got {len(idx['timeline'])}")
+    types_seq = [it["type"] for it in idx["timeline"]]
+    r.expect(types_seq == ["think", "act", "think", "act", "verify", "result"],
+             f"type sequence wrong: {types_seq}")
+    act_items = [it for it in idx["timeline"] if it["type"] == "act"]
+    owners = {it["owner"] for it in act_items}
+    r.expect(owners == {"liuyu", "dengke"},
+             f"two different act owners expected, got {owners}")
+    verify_item = next(it for it in idx["timeline"] if it["type"] == "verify")
+    r.expect(len(verify_item["verifications"]) == 2,
+             "verify should cover 2 acts")
+    judgements = {v["judgement"] for v in verify_item["verifications"]}
+    r.expect(judgements == {"passed", "failed"},
+             f"mixed judgements expected, got {judgements}")
+    r.expect(idx["matter"]["current_status"] == "finished",
+             "status should be finished")
+    return r.failures
+
+
+def case_d3_cross_matter_refer(client, workspace_path) -> list[str]:
+    """Build matter X, then matter Y whose act refers (refer) to a file in X."""
+    r = CaseRunner("D3-cross-matter-refer", client)
+
+    # Matter X: create + push an act so we have a concrete file to refer to.
+    tx = _title("IntegTest-D3-Source")
+    createdX = r.do(Step("create-source-matter", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": tx,
+        "initial_file": {
+            "type": "think",
+            "summary": "源 matter 想法",
+            "body": "# Summary\n\n这篇要被 matter Y refer\n",
+        },
+    }))
+    matter_x = createdX["matter_id"]
+    x_think = createdX["file"]
+    actX_resp = r.do(Step("source-act", "POST", _url_matter(matter_x, "/files"), body={
+        "type": "act",
+        "summary": "源 matter 的行动",
+        "body": "# What To Do\n\nY 要引用这篇\n",
+        "quote": x_think,
+        "status_change": {"from": "planning", "to": "executing"},
+    }))
+    x_act = actX_resp["item"]["file"]
+
+    # Matter Y: act in a new matter that refer's back into matter X.
+    ty = _title("IntegTest-D3-Consumer")
+    createdY = r.do(Step("create-consumer-matter", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": ty,
+        "initial_file": {
+            "type": "think",
+            "summary": "基于 X 的延伸讨论",
+            "body": "# Summary\n\n参考 X 的行动\n",
+        },
+    }))
+    matter_y = createdY["matter_id"]
+
+    y_act = r.do(Step("consumer-act-with-refer", "POST", _url_matter(matter_y, "/files"), body={
+        "type": "act",
+        "summary": "在 Y 里延续 X 的行动",
+        "body": "# What To Do\n\n延续 X.act\n",
+        "quote": createdY["file"],
+        "refer": [x_act, x_think],
+        "status_change": {"from": "planning", "to": "executing"},
+    }))
+
+    # Verify in Y pointing at X.act via refer whitelist.
+    r.do(Step("consumer-verify-refer-whitelist", "POST", _url_matter(matter_y, "/files"), body={
+        "type": "verify",
+        "summary": "针对 X.act 做跨 matter 验证",
+        "body": "# Verifications\n",
+        "refer": [x_act],
+        "verifications": [
+            {"target": x_act, "judgement": "passed",
+             "comment": "X 的行动对 Y 的前置已满足"},
+        ],
+    }))
+
+    idx_y = r.save_final_index(matter_y, workspace_path)
+    act_in_y = next(it for it in idx_y["timeline"] if it["type"] == "act")
+    r.expect(x_act in (act_in_y.get("refer") or []),
+             f"Y's act should refer to X.act; got refer={act_in_y.get('refer')}")
+    verify_in_y = next(it for it in idx_y["timeline"] if it["type"] == "verify")
+    r.expect(verify_in_y["verifications"][0]["target"] == x_act,
+             "Y's verify.target should be X.act")
+    r.expect(idx_y["matter"]["current_status"] == "executing",
+             "Y should be executing (triggered by its act)")
+    return r.failures
+
+
+def case_e1_favorite_and_read_cycle(client, workspace_path) -> list[str]:
+    """P4.5 favorite + read_state integration:
+      - create a matter
+      - GET /api/matters: unread_count == 1, favorite == false
+      - POST /favorite → favorite true
+      - POST /read → unread_count == 0
+      - append a file → unread_count back to 1 (new item since last_read)
+    """
+    r = CaseRunner("E1-favorite-and-read-cycle", client)
+    title = _title("IntegTest-E1-FavoriteRead")
+    created = r.do(Step("create", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {"type": "think", "summary": "start", "body": ""},
+    }))
+    matter_id = created["matter_id"]
+
+    # Step: list → baseline state
+    listing1 = r.do(Step("list-1-baseline", "GET", "/api/matters"))
+    entry = next((m for m in listing1["items"] if m["id"] == matter_id), None)
+    r.expect(entry is not None, "matter appears in list")
+    if entry:
+        r.expect(entry.get("unread_count", 0) >= 1,
+                 f"expect unread >= 1, got {entry.get('unread_count')}")
+        r.expect(entry.get("favorite") is False, "not yet favorited")
+
+    # Step: favorite on
+    r.do(Step("favorite-on", "POST", _url_matter(matter_id, "/favorite"),
+              body={"favorite": True}))
+    listing2 = r.do(Step("list-2-after-fav", "GET", "/api/matters"))
+    e2 = next((m for m in listing2["items"] if m["id"] == matter_id), None)
+    r.expect(e2 and e2.get("favorite") is True, "favorite reflected in list")
+
+    # Step: mark read → unread becomes 0
+    r.do(Step("mark-read", "POST", _url_matter(matter_id, "/read")))
+    listing3 = r.do(Step("list-3-after-read", "GET", "/api/matters"))
+    e3 = next((m for m in listing3["items"] if m["id"] == matter_id), None)
+    r.expect(e3 and e3.get("unread_count") == 0,
+             f"unread should reset to 0, got {e3 and e3.get('unread_count')}")
+
+    # Step: append a file → unread becomes 1 again
+    r.do(Step("append-after-read", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "think", "summary": "new", "body": "",
+    }))
+    listing4 = r.do(Step("list-4-after-append", "GET", "/api/matters"))
+    e4 = next((m for m in listing4["items"] if m["id"] == matter_id), None)
+    r.expect(e4 and e4.get("unread_count") == 1,
+             f"unread should be 1 (new item since last_read), got {e4 and e4.get('unread_count')}")
+
+    # Step: favorite off
+    r.do(Step("favorite-off", "POST", _url_matter(matter_id, "/favorite"),
+              body={"favorite": False}))
+    listing5 = r.do(Step("list-5-after-unfav", "GET", "/api/matters"))
+    e5 = next((m for m in listing5["items"] if m["id"] == matter_id), None)
+    r.expect(e5 and e5.get("favorite") is False, "favorite cleared")
+
+    r.save_final_index(matter_id, workspace_path)
+    return r.failures
+
+
+def case_e2_name_resolution(client, workspace_path) -> list[str]:
+    """P4.5 name resolution: GET /api/matters/{id} must expose
+    creator_display / owner_display / *_avatar_url."""
+    r = CaseRunner("E2-name-resolution", client)
+    title = _title("IntegTest-E2-Display")
+    created = r.do(Step("create", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {
+            "type": "think",
+            "summary": "测试 display 字段",
+            "body": "",
+        },
+    }))
+    matter_id = created["matter_id"]
+
+    detail = r.do(Step("detail", "GET", _url_matter(matter_id)))
+    first_item = detail["timeline"][0]
+    r.expect("creator_display" in first_item, "timeline item has creator_display")
+    r.expect("owner_display" in first_item, "timeline item has owner_display")
+    r.expect("creator_avatar_url" in first_item, "timeline item has creator_avatar_url")
+    r.expect("owner_avatar_url" in first_item, "timeline item has owner_avatar_url")
+
+    listing = r.do(Step("list-has-display", "GET", "/api/matters"))
+    entry = next((m for m in listing["items"] if m["id"] == matter_id), None)
+    r.expect(entry is not None, "matter in list")
+    if entry:
+        r.expect("creator_display" in entry, "list entry has creator_display")
+        r.expect("creator_avatar_url" in entry, "list entry has creator_avatar_url")
+
+    r.save_final_index(matter_id, workspace_path)
+    return r.failures
+
+
+def case_e3_categories_aggregation(client, workspace_path) -> list[str]:
+    """P4.5 /api/categories must aggregate both threads and matters and
+    expose matter_count / thread_count counters for the IntegTest category."""
+    r = CaseRunner("E3-categories-aggregation", client)
+    # Make sure there is at least one matter under IntegTest from this run.
+    title = _title("IntegTest-E3-CategorySeed")
+    r.do(Step("seed", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {"type": "think", "summary": "seed", "body": ""},
+    }))
+    cats = r.do(Step("list-categories", "GET", "/api/categories"))
+    integ = next((c for c in cats["items"] if c["name"] == "IntegTest"), None)
+    r.expect(integ is not None, "IntegTest category present in /api/categories")
+    if integ:
+        r.expect("matter_count" in integ and integ["matter_count"] >= 1,
+                 f"matter_count must be >= 1, got {integ.get('matter_count')}")
+        r.expect("thread_count" in integ,
+                 "thread_count key must be present (even if 0)")
+    return r.failures
+
+
+def case_f1_matter_via_drafts_publish(client, workspace_path) -> list[str]:
+    """P4.6 · matter 走 draft autosave + publish 规范路径。
+
+    对齐 main 分支原有流程：
+      POST /api/drafts  (带 matter_payload) →
+      PATCH /api/drafts/{id}  (autosave 模拟) →
+      POST /api/drafts/{id}/publish  →
+      GET /api/matters/{id} 验证落盘
+    追加一个文件同样走 type=reply + matter_payload。
+    """
+    r = CaseRunner("F1-matter-via-drafts-publish", client)
+    title = _title("IntegTest-F1-ViaDrafts")
+
+    # 1. 创建 matter 首篇草稿
+    create_resp = r.do(Step(
+        "create-draft-proposal", "POST", "/api/drafts",
+        body={
+            "type": "proposal",
+            "title": title,
+            "category": "IntegTest",
+            "body_md": "# Summary\n\n首篇（via drafts）\n",
+            "matter_payload": {
+                "doc_type": "think",
+                "summary": "首篇 via drafts",
+                "owner": "dengke",
+            },
+        },
+    ))
+    draft_id = create_resp["id"]
+    r.expect(create_resp.get("matter_payload", {}).get("doc_type") == "think",
+             "draft response echoes matter_payload")
+
+    # 2. autosave 模拟：PATCH 一次
+    r.do(Step(
+        "autosave-patch", "PATCH", f"/api/drafts/{draft_id}",
+        body={
+            "body_md": "# Summary\n\n首篇（via drafts, autosave 后）\n",
+            "matter_payload": {
+                "doc_type": "think",
+                "summary": "首篇 via drafts（更新）",
+                "owner": "dengke",
+            },
+        },
+    ))
+
+    # 3. 发布
+    publish_resp = r.do(Step(
+        "publish-draft", "POST", f"/api/drafts/{draft_id}/publish",
+    ))
+    published = publish_resp.get("published") or {}
+    matter_id = published.get("matter_id")
+    r.expect(bool(matter_id), f"publish response must include matter_id; got {published!r}")
+    r.expect("slug" not in published or published.get("slug") == matter_id,
+             "when matter path is taken, response shape is matter (no thread slug)")
+
+    # 4. 草稿已被清掉
+    detail_after = r.do(Step(
+        "get-draft-after-publish", "GET", f"/api/drafts/{draft_id}",
+        expect_status=404,
+    ))
+
+    # 5. GET /api/matters/{id} 读得到
+    if matter_id:
+        detail = r.do(Step("verify-matter-read", "GET", _url_matter(matter_id)))
+        r.expect(detail["matter"]["current_status"] == "planning",
+                 "new matter should be in planning")
+        r.expect(len(detail["timeline"]) == 1,
+                 "timeline should have the single initial item")
+        r.expect(detail["timeline"][0]["type"] == "think", "initial type=think")
+        r.expect(detail["timeline"][0]["summary"] == "首篇 via drafts（更新）",
+                 "summary reflects the autosaved payload")
+
+        # 6. 追加一个 act，同样走 drafts publish 路径
+        append_create = r.do(Step(
+            "create-draft-reply", "POST", "/api/drafts",
+            body={
+                "type": "reply",
+                "thread_key": matter_id,
+                "body_md": "# What To Do\n\nstart work\n",
+                "matter_payload": {
+                    "doc_type": "act",
+                    "summary": "开始行动",
+                    "owner": "dengke",
+                    "status_change": {"from": "planning", "to": "executing"},
+                },
+            },
+        ))
+        append_draft_id = append_create["id"]
+        r.do(Step("publish-append-draft", "POST",
+                  f"/api/drafts/{append_draft_id}/publish"))
+
+        detail2 = r.do(Step("verify-matter-append", "GET", _url_matter(matter_id)))
+        r.expect(detail2["matter"]["current_status"] == "executing",
+                 "act triggered planning→executing")
+        r.expect(len(detail2["timeline"]) == 2, "timeline has 2 items after append")
+        r.expect(detail2["timeline"][1]["type"] == "act",
+                 "second item should be act")
+
+        r.save_final_index(matter_id, workspace_path)
+
+    return r.failures
+
+
+def case_c1_comment_with_mention(client, workspace_path) -> list[str]:
+    """Exercise /comments endpoint + mention, using TEST_MY_OPENID as the @target."""
+    r = CaseRunner("C1-comment-with-mention", client)
+    title = _title("IntegTest-C1-CommentMention")
+    created = r.do(Step("create-matter", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {"type": "think", "summary": "s", "body": "首帖"},
+    }))
+    matter_id = created["matter_id"]
+    target_file = created["file"]
+
+    body = {"target_file": target_file, "body": "请你确认一下这个方向"}
+    if TEST_MY_OPENID:
+        body["mentions"] = [TEST_MY_OPENID]
+    r.do(Step("append-comment", "POST", _url_matter(matter_id, "/comments"), body=body))
+
+    idx = r.save_final_index(matter_id, workspace_path)
+    comments = idx["timeline"][0].get("comments") or []
+    r.expect(len(comments) == 1, "one comment on first item")
+    if TEST_MY_OPENID:
+        # mentions 在 fix(matter): resolve mention open_ids to pinyin 之后,
+        # 已注册用户的 open_id 会被转换为 pinyin（与 creator/owner 同格式),
+        # 未注册联系人才保留 open_id。PAT 持有者必然已注册（PAT 创建要求 pinyin)
+        # ,所以 TEST_MY_OPENID 在 mentions 里应当落成一个非 ou_ 开头的字符串。
+        mentions = comments[0].get("mentions") or []
+        r.expect(len(mentions) == 1,
+                 f"mentions should have 1 entry, got {mentions!r}")
+        if mentions:
+            r.expect(not mentions[0].startswith("ou_"),
+                     f"registered TEST_MY_OPENID should be resolved to pinyin, "
+                     f"got {mentions[0]!r}")
+            r.expect(mentions[0] != TEST_MY_OPENID,
+                     f"open_id should not be stored verbatim for registered user, "
+                     f"got {mentions[0]!r}")
+    # matter.updated_at must NOT advance past created_at (comments don't bump progress).
+    r.expect(idx["matter"]["updated_at"] == idx["matter"]["created_at"],
+             "comment should not bump matter.updated_at")
+    return r.failures
+
+
+# ---------- P4.7 verifications_received reverse-write ----------
+
+
+def case_g1_verify_reverse_write_basic(client, workspace_path) -> list[str]:
+    """P4.7 happy path: 单 verify 单 target 触发 act 上的反写。
+
+    形态:
+      think → act(planning→executing) → verify(target=act, passed)
+    断言:
+      - act 上 verifications_received 长度 1
+      - 字段全部正确(verify_file/verified_at/verified_by/judgement/comment)
+      - 同一份 yaml 里 verify.verifications[0] 与 act.verifications_received[0] 数据一致
+      - think 上 没有 verifications_received
+    """
+    r = CaseRunner("G1-verify-reverse-write-basic", client)
+    title = _title("IntegTest-G1-RWBasic")
+    created = r.do(Step("create-matter", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {"type": "think", "summary": "起手", "body": "# Summary\n\n起手\n"},
+    }))
+    matter_id = created["matter_id"]
+    think_file = created["file"]
+
+    act_resp = r.do(Step("act-enter-executing", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "act",
+        "summary": "推进实现",
+        "body": "# What To Do\n\n做事\n",
+        "quote": think_file,
+        "status_change": {"from": "planning", "to": "executing"},
+    }))
+    act_file = act_resp["item"]["file"]
+
+    verify_resp = r.do(Step("verify-the-act", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "verify",
+        "summary": "验收通过",
+        "body": "# Verifications\n",
+        "quote": act_file,
+        "verifications": [
+            {"target": act_file, "judgement": "passed", "comment": "结果可接受"},
+        ],
+    }))
+    verify_file = verify_resp["item"]["file"]
+
+    idx = r.save_final_index(matter_id, workspace_path)
+    timeline = idx.get("timeline", [])
+    think_item = next(it for it in timeline if it["file"] == think_file)
+    act_item = next(it for it in timeline if it["file"] == act_file)
+    verify_item = next(it for it in timeline if it["file"] == verify_file)
+
+    received = act_item.get("verifications_received") or []
+    r.expect(len(received) == 1,
+             f"act should have 1 verifications_received entry, got {len(received)}")
+    if received:
+        e = received[0]
+        r.expect(e.get("verify_file") == verify_file,
+                 f"verify_file mismatch: {e.get('verify_file')} != {verify_file}")
+        r.expect(e.get("verified_at") == verify_item.get("created_at"),
+                 "verified_at should equal verify item.created_at")
+        r.expect(e.get("verified_by") == verify_item.get("owner"),
+                 "verified_by should equal verify.owner")
+        r.expect(e.get("judgement") == "passed", "judgement passthrough")
+        r.expect(e.get("comment") == "结果可接受", "comment passthrough")
+        # mirror consistency
+        src = verify_item["verifications"][0]
+        r.expect(e["judgement"] == src["judgement"], "judgement mirror consistent")
+        r.expect(e["comment"] == src["comment"], "comment mirror consistent")
+    r.expect("verifications_received" not in think_item,
+             "think item should never carry verifications_received")
+    return r.failures
+
+
+def case_g2_verify_reverse_write_accumulate(client, workspace_path) -> list[str]:
+    """P4.7 I6: 多 verify 同 target 在 act 上按 verify 写入时间累积。
+
+    形态:
+      think → act → verify1(failed) → verify2(passed)
+    断言:
+      - act 上 verifications_received 长度 2
+      - 顺序与 verify 写入时间序一致(verify1 先,verify2 后)
+      - 每条对应到正确的 verify_file
+    """
+    r = CaseRunner("G2-verify-reverse-write-accumulate", client)
+    title = _title("IntegTest-G2-RWAccumulate")
+    created = r.do(Step("create-matter", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": title,
+        "initial_file": {"type": "think", "summary": "起手", "body": ""},
+    }))
+    matter_id = created["matter_id"]
+    think_file = created["file"]
+
+    act_resp = r.do(Step("act-go", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "act", "summary": "做事", "body": "",
+        "quote": think_file,
+        "status_change": {"from": "planning", "to": "executing"},
+    }))
+    act_file = act_resp["item"]["file"]
+
+    v1_resp = r.do(Step("verify-1-failed", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "verify",
+        "summary": "首轮失败",
+        "verifications": [{"target": act_file, "judgement": "failed",
+                           "comment": "边界遗漏"}],
+    }))
+    v1_file = v1_resp["item"]["file"]
+    v1_at = v1_resp["item"]["created_at"]
+
+    v2_resp = r.do(Step("verify-2-passed", "POST", _url_matter(matter_id, "/files"), body={
+        "type": "verify",
+        "summary": "复验通过",
+        "verifications": [{"target": act_file, "judgement": "passed",
+                           "comment": "已修复"}],
+    }))
+    v2_file = v2_resp["item"]["file"]
+    v2_at = v2_resp["item"]["created_at"]
+
+    idx = r.save_final_index(matter_id, workspace_path)
+    act_item = next(it for it in idx["timeline"] if it["file"] == act_file)
+    received = act_item.get("verifications_received") or []
+    r.expect(len(received) == 2,
+             f"act should have 2 verifications_received entries, got {len(received)}")
+    if len(received) == 2:
+        r.expect(received[0]["verify_file"] == v1_file,
+                 f"first entry should point to v1: {received[0]['verify_file']}")
+        r.expect(received[0]["judgement"] == "failed",
+                 "first entry judgement should be failed")
+        r.expect(received[0]["verified_at"] == v1_at,
+                 "first entry verified_at should match v1.created_at")
+        r.expect(received[1]["verify_file"] == v2_file,
+                 f"second entry should point to v2: {received[1]['verify_file']}")
+        r.expect(received[1]["judgement"] == "passed",
+                 "second entry judgement should be passed")
+        r.expect(received[1]["verified_at"] == v2_at,
+                 "second entry verified_at should match v2.created_at")
+        # I6 chronological order
+        r.expect(received[0]["verified_at"] <= received[1]["verified_at"],
+                 "entries must be in chronological order by verified_at")
+    return r.failures
+
+
+def case_g3_verify_cross_matter_no_reverse_write(client, workspace_path) -> list[str]:
+    """P4.7 I7: 跨 matter verify(target 在另一个 matter)静默跳过反写。
+
+    形态:
+      Matter X: think → act(executing)              (target 留在 X)
+      Matter Y: think → verify(refer=[X.act], target=X.act, passed)
+    断言:
+      - Matter X 的 act item 上 没有 verifications_received(I7 静默跳过)
+      - Matter Y 的 verify item 上 verifications[] 完整保留 target / judgement / comment
+        (权威源数据不丢)
+    """
+    r = CaseRunner("G3-verify-cross-matter-no-reverse-write", client)
+
+    # Matter X (target 所在)
+    x_title = _title("IntegTest-G3-XSrc")
+    x_created = r.do(Step("create-matter-x", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": x_title,
+        "initial_file": {"type": "think", "summary": "x-init", "body": ""},
+    }))
+    x_id = x_created["matter_id"]
+    x_act_resp = r.do(Step("x-act-go", "POST", _url_matter(x_id, "/files"), body={
+        "type": "act", "summary": "x-do",
+        "status_change": {"from": "planning", "to": "executing"},
+    }))
+    x_act_file = x_act_resp["item"]["file"]
+
+    # Matter Y (verify 所在,跨 matter 引用 X 的 act)
+    y_title = _title("IntegTest-G3-YDst")
+    y_created = r.do(Step("create-matter-y", "POST", "/api/matters", body={
+        "category": "IntegTest",
+        "title": y_title,
+        "initial_file": {"type": "think", "summary": "y-init", "body": ""},
+    }))
+    y_id = y_created["matter_id"]
+    r.do(Step("y-verify-cross-matter", "POST", _url_matter(y_id, "/files"), body={
+        "type": "verify",
+        "summary": "跨 matter 验证 X 的 act",
+        "refer": [x_act_file],
+        "verifications": [
+            {"target": x_act_file, "judgement": "passed",
+             "comment": "在 X 那边的 act 看着没问题"},
+        ],
+    }))
+
+    # X 的 act 不应有反写
+    x_idx = r.save_final_index(x_id, workspace_path)
+    x_act = next(it for it in x_idx["timeline"] if it["file"] == x_act_file)
+    r.expect("verifications_received" not in x_act,
+             "I7: cross-matter verify should NOT reverse-write to target act in another matter")
+
+    # Y 的 verify 数据保留
+    y_idx = r.save_final_index(y_id, workspace_path)
+    y_verify = next(it for it in y_idx["timeline"] if it["type"] == "verify")
+    r.expect(len(y_verify.get("verifications", [])) == 1,
+             "Y verify should have its verifications[] intact")
+    if y_verify.get("verifications"):
+        v0 = y_verify["verifications"][0]
+        r.expect(v0.get("target") == x_act_file,
+                 "Y verify target should still point at X's act path")
+        r.expect(v0.get("judgement") == "passed", "judgement preserved")
+    return r.failures
+
+
+# ---------- driver ----------
+
+
+def _fetch_workspace_path(client: httpx.Client) -> Path:
+    resp = client.get("/api/workspace/status")
+    resp.raise_for_status()
+    path = resp.json()["path"]
+    p = Path(path)
+    return p if p.is_absolute() else (REPO_ROOT / p)
+
+
+def _check_md_index_state(workspace_path: Path) -> list[str]:
+    """Scan every MD under discussions/IntegTest/*<RUN_TAG>*/ and confirm
+    frontmatter carries `index_state: indexed`. Anything else means either
+    (a) the two-phase write did not complete, or (b) the frontmatter dropped
+    the flag (schema regression)."""
+    import yaml as _yaml
+    failures: list[str] = []
+    root = workspace_path / "discussions" / "IntegTest"
+    if not root.is_dir():
+        return failures
+    for matter_dir in root.iterdir():
+        if not matter_dir.is_dir():
+            continue
+        if RUN_TAG not in matter_dir.name:
+            continue
+        for md in matter_dir.glob("*.md"):
+            text = md.read_text(encoding="utf-8")
+            if not text.startswith("---\n"):
+                failures.append(f"md without frontmatter: {md}")
+                continue
+            try:
+                fm_text = text.split("---\n", 2)[1]
+                fm = _yaml.safe_load(fm_text) or {}
+            except Exception as e:
+                failures.append(f"md frontmatter unparseable: {md}: {e}")
+                continue
+            state = fm.get("index_state")
+            if state != "indexed":
+                failures.append(
+                    f"md index_state != 'indexed' (got {state!r}): {md}"
+                )
+    return failures
+
+
+def main() -> int:
+    _ensure_out_dir()
+    client = _client()
+    workspace_path = _fetch_workspace_path(client)
+    print(f"backend: {BASE_URL}")
+    print(f"workspace: {workspace_path}")
+    print(f"run tag: {RUN_TAG}")
+    print()
+
+    cases = [
+        case_a1_pause_from_planning,
+        case_a2_loop_round_trip,
+        case_a3_paused_to_executing,
+        case_b1_loop_b_finished,
+        case_b2_cancelled_reviewed,
+        case_n1_reject_result_in_planning,
+        case_n2_reject_post_reviewed,
+        case_n3_verify_target_not_act,
+        case_n4_verify_target_not_found,
+        case_n5_verify_via_refer_ok,
+        case_c1_comment_with_mention,
+        case_d1_multi_round_discussion,
+        case_d2_executing_depth_multiple_acts,
+        case_d3_cross_matter_refer,
+        case_e1_favorite_and_read_cycle,
+        case_e2_name_resolution,
+        case_e3_categories_aggregation,
+        case_f1_matter_via_drafts_publish,
+        # P4.7 verifications_received reverse-write
+        case_g1_verify_reverse_write_basic,
+        case_g2_verify_reverse_write_accumulate,
+        case_g3_verify_cross_matter_no_reverse_write,
+    ]
+
+    summary: list[str] = []
+    all_failures: list[str] = []
+    for case in cases:
+        try:
+            fails = case(client, workspace_path)
+        except Exception as e:
+            fails = [f"[{case.__name__}] exception: {e!r}"]
+        all_failures.extend(fails)
+        summary.append(f"  [{('FAIL' if fails else 'PASS'):>4}] {case.__name__}")
+
+    # Sweep: every MD produced during this run must be index_state=indexed.
+    # Any un-indexed file points at a partially-written pair (MD landed but
+    # INDEX update failed) — serious data safety red flag.
+    index_state_failures = _check_md_index_state(workspace_path)
+    if index_state_failures:
+        all_failures.extend(index_state_failures)
+        summary.append(f"  [FAIL] md_index_state_sweep")
+    else:
+        summary.append(f"  [PASS] md_index_state_sweep")
+
+    report_lines = [
+        "# Matter Integration Test Report (real backend)",
+        "",
+        f"Backend: {BASE_URL}",
+        f"Workspace: {workspace_path}",
+        f"Run tag: {RUN_TAG}",
+        "",
+        f"Cases run: {len(cases)}",
+        f"Failures : {len(all_failures)}",
+        "",
+        "## Results",
+        "",
+        *summary,
+        "",
+        "## Failures",
+        "",
+        *([f"- {msg}" for msg in all_failures] if all_failures else ["(none)"]),
+    ]
+    (OUT_DIR / "REPORT.md").write_text("\n".join(report_lines), encoding="utf-8")
+
+    print("\n".join(report_lines))
+    return 1 if all_failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,93 +1,105 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { ChevronDown, ChevronRight, FileText, Star, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  FolderTree,
+  Star,
+  Trash2,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/StatusBadge";
 import { relativeTime } from "@/lib/time";
-import type { Draft, ThreadMeta } from "@/api";
+import type { Draft, MatterSummary } from "@/api";
+
+const UNCATEGORIZED = "未分类";
 
 export function ThreadListPane({
   drafts,
-  threads,
+  matters,
   onRemoveDraft,
 }: {
   drafts: Draft[] | null;
-  threads: ThreadMeta[] | null;
+  matters: MatterSummary[] | null;
   onRemoveDraft: (id: string) => void;
 }) {
   const location = useLocation();
-  const activeCategory = useMemo(() => {
-    const match = location.pathname.match(/^\/t\/([^/]+)\//);
+  const activeMatterId = useMemo(() => {
+    const match = location.pathname.match(/^\/m\/([^/]+)/);
     return match ? decodeURIComponent(match[1]) : null;
   }, [location.pathname]);
 
-  const grouped = useMemo(() => groupThreadsByCategory(threads), [threads]);
-  const favorites = useMemo(
-    () => [...(threads ?? [])]
-      .filter((thread) => thread.favorite)
-      .sort((a, b) => (b.last_updated || "").localeCompare(a.last_updated || "")),
-    [threads],
+  const favorites = useMemo(() => {
+    if (!matters) return [];
+    return matters
+      .filter((m) => m.favorite)
+      .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
+  }, [matters]);
+
+  const grouped = useMemo(() => groupByCategory(matters), [matters]);
+  const activeCategory = useMemo(() => {
+    if (!activeMatterId || !matters) return null;
+    const m = matters.find((x) => x.id === activeMatterId);
+    return m ? (m.category ?? UNCATEGORIZED) : null;
+  }, [activeMatterId, matters]);
+
+  const [openCategories, setOpenCategories] = useState<Record<string, boolean>>(
+    {},
   );
-  const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({});
   const [favoritesOpen, setFavoritesOpen] = useState(true);
   const [draftsOpen, setDraftsOpen] = useState(true);
-  const [threadsOpen, setThreadsOpen] = useState(true);
+  const [mattersOpen, setMattersOpen] = useState(true);
 
   const favoritesRef = useRef<HTMLElement | null>(null);
   const draftsRef = useRef<HTMLElement | null>(null);
-  const threadsRef = useRef<HTMLElement | null>(null);
+  const mattersRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!grouped.length) return;
-    setOpenCategories((current) => {
-      const next = { ...current };
+    setOpenCategories((prev) => {
+      const next = { ...prev };
       let changed = false;
-      for (const group of grouped) {
-        if (!(group.category in next)) {
-          next[group.category] = activeCategory === group.category;
+      for (const g of grouped) {
+        if (!(g.category in next)) {
+          next[g.category] = activeCategory === g.category;
           changed = true;
         }
       }
-      if (activeCategory && !next[activeCategory]) {
-        next[activeCategory] = true;
-        changed = true;
-      }
-      return changed ? next : current;
+      return changed ? next : prev;
     });
-  }, [grouped, activeCategory]);
+  }, [grouped]);
 
-  const toggleCategory = (category: string) => {
-    setOpenCategories((current) => ({ ...current, [category]: !current[category] }));
-  };
+  useEffect(() => {
+    if (!activeCategory) return;
+    setOpenCategories((prev) =>
+      prev[activeCategory] ? prev : { ...prev, [activeCategory]: true },
+    );
+  }, [activeCategory]);
+
+  const toggleCategory = (c: string) =>
+    setOpenCategories((prev) => ({ ...prev, [c]: !prev[c] }));
 
   return (
-    <div className="flex h-full flex-col px-3 py-4" style={{ background: "var(--bg)" }}>
-      <div className="min-h-0 flex-1 overflow-y-auto pr-0.5">
-        {threads !== null && favorites.length > 0 && (
+    <div className="flex h-full flex-col bg-transparent px-3 py-3 md:px-3 md:py-4">
+      <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
+        {matters !== null && favorites.length > 0 && (
           <Section
             sectionRef={favoritesRef}
-            title="我收藏的"
+            title="收藏"
             count={favorites.length}
             open={favoritesOpen}
             onToggle={() => setFavoritesOpen((v) => !v)}
             icon={
-              <Star
-                className="h-3 w-3 shrink-0"
-                style={{ color: "var(--accent)" }}
-              />
+              <Star className="h-3.5 w-3.5 shrink-0 text-[var(--warn-500)]" />
             }
           >
-            {favoritesOpen && favorites.map((t) => (
-              <ThreadRow
-                key={`favorite-${t.category}/${t.slug}`}
-                to={`/t/${encodeURIComponent(t.category)}/${encodeURIComponent(t.slug)}`}
-                title={t.title}
-                status={t.status}
-                meta={`${t.category} · ${t.author_display ?? t.author ?? "unknown"} · ${t.post_count} 帖${t.last_updated ? ` · ${relativeTime(t.last_updated)}` : ""}`}
-                unread={t.unread_count > 0 ? t.unread_count : undefined}
-              />
-            ))}
+            {favoritesOpen &&
+              favorites.map((m) => (
+                <MatterRow key={`fav-${m.id}`} matter={m} />
+              ))}
           </Section>
         )}
 
@@ -99,54 +111,42 @@ export function ThreadListPane({
             open={draftsOpen}
             onToggle={() => setDraftsOpen((v) => !v)}
             icon={
-              <FileText
-                className="h-3 w-3 shrink-0"
-                style={{ color: "var(--text-mute)" }}
-              />
+              <FileText className="h-3.5 w-3.5 shrink-0 text-[var(--info-500)]" />
             }
           >
-            {draftsOpen && drafts.map((d) => {
-              const isProposal = d.type === "proposal";
-              const draftLabel = isProposal ? "NEW" : "REPLY";
-              return (
+            {draftsOpen &&
+              drafts.map((d) => (
                 <div
                   key={d.id}
-                  className="group mx-1 mb-0.5 flex items-start gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-[var(--surface-alt)]"
+                  className="group mx-1 flex items-start gap-2 rounded-[var(--r-sm)] border border-transparent px-2 py-1.5 transition-colors hover:bg-[var(--surface-alt)]"
                 >
                   <NavLink
                     to={
-                      isProposal
-                        ? `/new?draft=${d.id}`
+                      d.type === "proposal"
+                        ? `/new?draft=${encodeURIComponent(d.id)}`
                         : d.thread_key
-                          ? `/t/${d.thread_key}`
+                          ? `/m/${encodeURIComponent(d.thread_key)}?draft=${encodeURIComponent(d.id)}`
                           : "#"
                     }
                     className="min-w-0 flex-1"
                   >
-                    <div className="flex items-center gap-1.5">
-                      <span
-                        className="rounded-[3px] px-1 py-[1px] text-[9.5px] font-bold tracking-wider font-meta"
-                        style={{
-                          background: isProposal ? "var(--status-discussing-bg)" : "var(--status-project-bg)",
-                          color: isProposal ? "var(--status-discussing-fg)" : "var(--status-project-fg)",
-                        }}
-                      >
-                        {draftLabel}
-                      </span>
-                      <span
-                        className="ml-auto text-[10.5px] font-mono"
-                        style={{ color: "var(--text-mute)" }}
-                      >
-                        {relativeTime(new Date(d.updated_at * 1000).toISOString())}
-                      </span>
-                    </div>
                     <div
-                      className="mt-1 truncate text-[13px] font-semibold leading-snug font-serif-body"
-                      style={{ color: "var(--text)" }}
+                      className="truncate text-sm font-medium text-[var(--text)]"
+                      title={
+                        d.type === "proposal"
+                          ? d.title?.trim() || "(untitled)"
+                          : `Reply: ${d.thread_key ?? ""}`
+                      }
                     >
-                      {isProposal
-                        ? (d.title?.trim() || "(未命名)")
-                        : `回复：${d.thread_key ?? ""}`}
+                      {d.type === "proposal"
+                        ? d.title?.trim() || "(untitled)"
+                        : `Reply: ${d.thread_key ?? ""}`}
+                    </div>
+                    <div className="mt-0.5 truncate text-xs text-[var(--text-mute)]">
+                      {d.type} ·{" "}
+                      {relativeTime(
+                        new Date(d.updated_at * 1000).toISOString(),
+                      )}
                     </div>
                   </NavLink>
                   <Button
@@ -156,109 +156,77 @@ export function ThreadListPane({
                     onClick={() => onRemoveDraft(d.id)}
                     title="删除草稿"
                   >
-                    <Trash2 className="h-3 w-3" style={{ color: "var(--danger-500)" }} />
+                    <Trash2 className="h-3.5 w-3.5 text-destructive" />
                   </Button>
                 </div>
-              );
-            })}
+              ))}
           </Section>
         )}
 
         <Section
-          sectionRef={threadsRef}
-          title="内容空间"
-          count={threads?.length ?? 0}
-          open={threadsOpen}
-          onToggle={() => setThreadsOpen((v) => !v)}
+          sectionRef={mattersRef}
+          title="空间"
+          count={matters?.length ?? 0}
+          open={mattersOpen}
+          onToggle={() => setMattersOpen((v) => !v)}
+          icon={<FolderTree className="h-3.5 w-3.5 shrink-0" />}
         >
-          {threads === null && (
-            <div className="px-3 py-3 text-[12px]" style={{ color: "var(--text-mute)" }}>
-              加载中…
+          {matters === null && (
+            <div className="px-4 py-3 text-sm text-muted-foreground">
+              Loading…
             </div>
           )}
-          {threadsOpen && threads !== null && threads.length === 0 && (
-            <div className="px-3 py-3 text-[12px]" style={{ color: "var(--text-mute)" }}>
-              还没有讨论。
+          {mattersOpen && matters !== null && matters.length === 0 && (
+            <div className="px-4 py-3 text-sm text-muted-foreground">
+              还没有事项。
             </div>
           )}
-          {threadsOpen && threads !== null && grouped.length > 0 &&
+          {mattersOpen &&
+            matters !== null &&
+            grouped.length > 0 &&
             grouped.map((group) => {
               const open = !!openCategories[group.category];
-              const swatch = categorySwatch(group.category);
               return (
-                <div key={group.category} className="mx-1 mb-1">
+                <div
+                  key={group.category}
+                  className="mx-1 border-b border-[var(--line-soft)] py-1 last:border-b-0"
+                >
                   <button
                     type="button"
                     onClick={() => toggleCategory(group.category)}
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-[var(--surface-alt)]"
+                    className="flex w-full items-center gap-2 rounded-[var(--r-sm)] px-3 py-2 text-left transition-colors hover:bg-[var(--surface-alt)]"
                   >
                     {open ? (
-                      <ChevronDown
-                        className="h-3 w-3 shrink-0"
-                        style={{ color: "var(--text-mute)" }}
-                      />
+                      <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
                     ) : (
-                      <ChevronRight
-                        className="h-3 w-3 shrink-0"
-                        style={{ color: "var(--text-mute)" }}
-                      />
+                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
                     )}
-                    <span
-                      aria-hidden
-                      className="h-2 w-2 shrink-0 rounded-[2px]"
-                      style={{ background: swatch }}
-                    />
+                    <FolderTree className="h-4 w-4 shrink-0 text-[var(--text-fade)]" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span
-                          className="truncate text-[13px] font-semibold"
-                          style={{ color: "var(--text)" }}
-                        >
+                        <span className="truncate text-sm font-semibold text-[var(--text)] md:text-[15px]">
                           {group.category}
+                        </span>
+                        <span className="rounded-full bg-[var(--surface-alt)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-mute)]">
+                          {group.items.length}
                         </span>
                       </div>
                       {group.last_updated && (
-                        <div
-                          className="mt-0.5 truncate text-[10.5px] font-meta"
-                          style={{ color: "var(--text-mute)" }}
-                        >
+                        <div className="mt-0.5 truncate text-[11px] text-[var(--text-mute)] md:text-xs">
                           最近活动 {relativeTime(group.last_updated)}
                         </div>
                       )}
                     </div>
-                    <span
-                      className="text-[11px] font-mono"
-                      style={{ color: "var(--text-mute)" }}
-                    >
-                      {group.threads.length}
-                    </span>
                     {group.unread > 0 && (
-                      <span
-                        className="ml-1 rounded-full px-1.5 py-[1px] text-[10px] font-bold font-meta"
-                        style={{
-                          background: "var(--accent)",
-                          color: "var(--accent-ink)",
-                        }}
-                      >
+                      <Badge variant="red" className="shrink-0">
                         {group.unread}
-                      </span>
+                      </Badge>
                     )}
                   </button>
                   {open && (
-                    <div
-                      className="mt-1 ml-[14px] pl-3"
-                      style={{ borderLeft: "1px solid var(--line-soft)" }}
-                    >
-                      {group.threads.map((t) => (
-                        <ThreadRow
-                          key={`${t.category}/${t.slug}`}
-                          to={`/t/${encodeURIComponent(t.category)}/${encodeURIComponent(t.slug)}`}
-                          title={t.title}
-                          status={t.status}
-                          meta={`${t.author_display ?? t.author ?? "unknown"} · ${t.post_count} 帖${t.last_updated ? ` · ${relativeTime(t.last_updated)}` : ""}`}
-                          unread={t.unread_count > 0 ? t.unread_count : undefined}
-                          nested
-                        />
+                    <div className="mt-1 ml-5 border-l border-[var(--line)] bg-transparent pl-2">
+                      {group.items.map((m) => (
+                        <MatterRow key={m.id} matter={m} />
                       ))}
                     </div>
                   )}
@@ -267,6 +235,64 @@ export function ThreadListPane({
             })}
         </Section>
       </div>
+    </div>
+  );
+}
+
+function MatterRow({ matter }: { matter: MatterSummary }) {
+  const meta = [
+    matter.file_count ? `${matter.file_count} 个文件` : null,
+    matter.last_file_type ? `最近 ${matter.last_file_type}` : null,
+    matter.updated_at ? relativeTime(matter.updated_at) : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <div>
+      <NavLink
+        to={`/m/${encodeURIComponent(matter.id)}`}
+        className={({ isActive }) =>
+          cn(
+            "group mx-0 block rounded-[var(--r-sm)] border-l-2 border-transparent px-3 py-2.5 pl-4 text-[var(--text)] transition-colors duration-150 hover:border-[var(--accent-soft)] hover:bg-[var(--accent-bg)] hover:text-[var(--text)]",
+            isActive &&
+              "border-[var(--accent)] bg-[var(--accent-bg)] text-[var(--text)] hover:bg-[var(--accent-bg)]",
+          )
+        }
+      >
+        {({ isActive }) => (
+          <>
+            <div className="flex items-start gap-2">
+              {matter.unread_count > 0 && (
+                <Badge variant="red" className="shrink-0">
+                  {matter.unread_count}
+                </Badge>
+              )}
+              <span
+                className="line-clamp-2 min-w-0 flex-1 text-[14px] font-medium leading-5 text-[var(--text)] transition-colors group-hover:text-[var(--accent)]"
+                title={matter.title}
+              >
+                {matter.title}
+              </span>
+            </div>
+            <div className="mt-1 flex items-center gap-2">
+              <div
+                className={cn(
+                  "min-w-0 flex-1 truncate text-[10px] leading-5 text-[var(--text-mute)] group-hover:text-[var(--text-soft)] md:text-[11px]",
+                  isActive && "text-[var(--accent)]",
+                )}
+              >
+                {meta}
+              </div>
+              <span className="shrink-0">
+                <StatusBadge
+                  status={matter.current_status}
+                  className="h-5 px-2 text-[10.5px] transition-transform duration-150 group-hover:translate-x-0.5"
+                />
+              </span>
+            </div>
+          </>
+        )}
+      </NavLink>
     </div>
   );
 }
@@ -289,147 +315,60 @@ function Section({
   sectionRef?: React.Ref<HTMLElement>;
 }) {
   return (
-    <section className="mb-5 last:mb-0" ref={sectionRef}>
+    <section className="mb-4 last:mb-0" ref={sectionRef}>
       <button
         type="button"
         onClick={onToggle}
-        className="mx-1 mt-1 mb-2 flex w-[calc(100%-0.5rem)] items-center gap-2 px-2 py-1 text-left text-[10px] font-bold uppercase tracking-[0.14em] font-meta"
-        style={{ color: "var(--text-mute)" }}
+        className="sticky top-0 z-10 mx-1 mt-1 flex w-[calc(100%-0.5rem)] items-center gap-2 border-b border-[var(--line)] bg-[rgba(250,248,243,0.96)] px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-mute)] backdrop-blur md:text-[11px] md:tracking-[0.14em]"
       >
         {open ? (
-          <ChevronDown className="h-3 w-3 shrink-0" />
+          <ChevronDown className="h-3.5 w-3.5 shrink-0" />
         ) : (
-          <ChevronRight className="h-3 w-3 shrink-0" />
+          <ChevronRight className="h-3.5 w-3.5 shrink-0" />
         )}
         {icon}
-        <span>{title}</span>
-        <span
-          className="ml-auto text-[10.5px] font-mono"
-          style={{ color: "var(--text-fade)" }}
-        >
-          {count}
-        </span>
+        {title}
+        <span className="ml-auto text-muted-foreground/70">{count}</span>
       </button>
       {children}
     </section>
   );
 }
 
-function ThreadRow({
-  to,
-  title,
-  status,
-  meta,
-  unread,
-  nested = false,
-}: {
-  to: string;
-  title: string;
-  status: string | null;
-  meta: string;
-  unread?: number;
-  nested?: boolean;
-}) {
-  return (
-    <NavLink
-      to={to}
-      className={({ isActive }) =>
-        cn(
-          "mx-1 mb-0.5 block rounded-md px-3 py-2 transition-colors",
-          nested && "mx-0 px-2.5 py-2",
-          isActive
-            ? "bg-[var(--accent-bg)]"
-            : "hover:bg-[var(--surface-alt)]",
-        )
-      }
-      style={({ isActive }) =>
-        isActive
-          ? { borderLeft: "2px solid var(--accent)" }
-          : { borderLeft: "2px solid transparent" }
-      }
-    >
-      {({ isActive }) => (
-        <>
-          <div className="flex items-center gap-2">
-            {unread !== undefined && (
-              <span
-                className="shrink-0 rounded-full px-1.5 py-[1px] text-[10px] font-bold font-meta"
-                style={{
-                  background: "var(--accent)",
-                  color: "var(--accent-ink)",
-                }}
-              >
-                {unread}
-              </span>
-            )}
-            <span
-              className="truncate text-[13.5px] font-semibold font-serif-body leading-snug"
-              style={{ color: isActive ? "var(--accent)" : "var(--text)" }}
-            >
-              {title}
-            </span>
-            <span className="ml-auto shrink-0">
-              <StatusBadge status={status} size="sm" />
-            </span>
-          </div>
-          <div
-            className="mt-1 truncate text-[10.5px] font-meta leading-tight"
-            style={{ color: "var(--text-mute)" }}
-          >
-            {meta}
-          </div>
-        </>
-      )}
-    </NavLink>
-  );
-}
-
 type CategoryGroup = {
   category: string;
-  threads: ThreadMeta[];
-  unread: number;
+  items: MatterSummary[];
   last_updated: string | null;
+  unread: number;
 };
 
-function groupThreadsByCategory(threads: ThreadMeta[] | null): CategoryGroup[] {
-  if (!threads || threads.length === 0) return [];
-
-  const grouped = new Map<string, CategoryGroup>();
-  for (const thread of threads) {
-    const existing = grouped.get(thread.category);
+function groupByCategory(matters: MatterSummary[] | null): CategoryGroup[] {
+  if (!matters || matters.length === 0) return [];
+  const map = new Map<string, CategoryGroup>();
+  for (const m of matters) {
+    const cat = m.category ?? UNCATEGORIZED;
+    const existing = map.get(cat);
     if (existing) {
-      existing.threads.push(thread);
-      existing.unread += thread.unread_count;
-      if ((thread.last_updated || "") > (existing.last_updated || "")) {
-        existing.last_updated = thread.last_updated;
+      existing.items.push(m);
+      existing.unread += m.unread_count;
+      if ((m.updated_at || "") > (existing.last_updated || "")) {
+        existing.last_updated = m.updated_at;
       }
-      continue;
+    } else {
+      map.set(cat, {
+        category: cat,
+        items: [m],
+        last_updated: m.updated_at,
+        unread: m.unread_count,
+      });
     }
-    grouped.set(thread.category, {
-      category: thread.category,
-      threads: [thread],
-      unread: thread.unread_count,
-      last_updated: thread.last_updated,
-    });
   }
-
-  return Array.from(grouped.values())
-    .map((group) => ({
-      ...group,
-      threads: [...group.threads].sort((a, b) => (b.last_updated || "").localeCompare(a.last_updated || "")),
+  return Array.from(map.values())
+    .map((g) => ({
+      ...g,
+      items: [...g.items].sort((a, b) =>
+        (b.updated_at || "").localeCompare(a.updated_at || ""),
+      ),
     }))
     .sort((a, b) => (b.last_updated || "").localeCompare(a.last_updated || ""));
-}
-
-const CATEGORY_PALETTE = [
-  "#5a3a1a", "#2854d4", "#1f7a50", "#a36a0e",
-  "#5238b8", "#2e3340", "#9e2f2f", "#0e7c66",
-];
-
-function categorySwatch(category: string): string {
-  let hash = 0;
-  for (let i = 0; i < category.length; i++) {
-    hash = (hash * 31 + category.charCodeAt(i)) >>> 0;
-  }
-  return CATEGORY_PALETTE[hash % CATEGORY_PALETTE.length];
 }

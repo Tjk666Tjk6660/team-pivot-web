@@ -19,6 +19,7 @@ from server.ai.prompts import build_system_prompt
 from server.ai.tools import AITools
 from server.ai_conversations import AIConversationRepo
 from server.auth.admin import require_admin
+from server.matter_index import matter_index_path, read_matter_index
 from server.settings import SettingsRepo
 from server.users import User
 from server.workspace import Workspace
@@ -118,55 +119,70 @@ def build_router(
             settings.set(_KEY_MAX_ROUNDS, str(body.max_rounds))
         return {"ok": True}
 
-    # ── Conversation persistence ───────────────────────────────────────────────
+    # ── Conversation persistence + chat (SSE) ────────────────────────────────
+    # Both conversation key and chat are matter-scoped. Conversation key is
+    # `category/matter_id` (derived from the matter index by `_matter_thread_key`);
+    # the chat endpoint never validates matter existence — `build_starting_post_block`
+    # silently downgrades to an empty starting block on a missing path, so callers
+    # like NewMatter can use a placeholder matter_id to generate ad-hoc summaries.
 
-    @router.get("/api/ai/threads/{category}/{slug}/conversation")
-    def get_conversation(
-        category: str,
-        slug: str,
+    def _matter_thread_key(matter_id: str) -> str:
+        data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
+        if data is None:
+            raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
+        timeline = data.get("timeline") or []
+        if timeline:
+            first = (timeline[0].get("file") or "").split("/")
+            if len(first) >= 4 and first[0] == "discussions":
+                return f"{first[1]}/{matter_id}"
+        return matter_id
+
+    @router.get("/api/ai/matters/{matter_id}/conversation")
+    def get_matter_conversation(
+        matter_id: str,
         user: User = Depends(current_user),
     ):
-        messages, reply_target = conversations.get(
-            user.open_id, f"{category}/{slug}"
-        )
+        key = _matter_thread_key(matter_id)
+        messages, reply_target = conversations.get(user.open_id, key)
         return {
             "messages": messages,
             "reply_target": reply_target,
         }
 
-    @router.put("/api/ai/threads/{category}/{slug}/conversation")
-    def save_conversation(
-        category: str,
-        slug: str,
+    @router.put("/api/ai/matters/{matter_id}/conversation")
+    def save_matter_conversation(
+        matter_id: str,
         body: ConversationSave,
         user: User = Depends(current_user),
     ):
+        key = _matter_thread_key(matter_id)
         conversations.save(
-            user.open_id,
-            f"{category}/{slug}",
+            user.open_id, key,
             [m.model_dump() for m in body.messages],
             body.reply_target,
         )
         return {"ok": True}
 
-    @router.delete("/api/ai/threads/{category}/{slug}/conversation")
-    def clear_conversation(
-        category: str,
-        slug: str,
+    @router.delete("/api/ai/matters/{matter_id}/conversation")
+    def clear_matter_conversation(
+        matter_id: str,
         user: User = Depends(current_user),
     ):
-        conversations.delete(user.open_id, f"{category}/{slug}")
+        key = _matter_thread_key(matter_id)
+        conversations.delete(user.open_id, key)
         return {"ok": True}
 
-    # ── Chat (SSE) ─────────────────────────────────────────────────────────────
-
-    @router.post("/api/ai/threads/{category}/{slug}/chat")
-    async def chat(
-        category: str,
-        slug: str,
+    @router.post("/api/ai/matters/{matter_id}/chat")
+    async def chat_matter(
+        matter_id: str,
         body: ChatRequest,
         _: User = Depends(current_user),
     ):
+        # No existence check: build_starting_post_block silently downgrades to
+        # an empty starting block on missing/invalid paths, so callers like
+        # NewMatter (matter not yet created) can use a placeholder matter_id
+        # to generate ad-hoc summaries without us 404-ing them upfront.
+
         api_key = settings.get(_KEY_API_KEY)
         if not api_key:
             raise HTTPException(400, "未配置 AI API Key，请在【设置】中配置")
@@ -232,9 +248,6 @@ def build_router(
                     if not pending_tool_calls:
                         break
 
-                    # Record the assistant turn that requested tools, then
-                    # dispatch each one, streaming tool_call_start/end so the
-                    # frontend can render "已读" markers.
                     assistant_msg: dict = {
                         "role": "assistant",
                         "content": "".join(assistant_text_parts),
@@ -288,8 +301,6 @@ def build_router(
                         )
 
                     if finish_reason not in ("tool_calls", "function_call", None):
-                        # Provider signaled end-of-turn after tools; loop will
-                        # still run once more so the model gets to respond.
                         pass
                 else:
                     yield _sse(
@@ -298,10 +309,10 @@ def build_router(
                         }
                     )
             except AIError as e:
-                log.warning("ai chat error: %s", e)
+                log.warning("ai matter chat error: %s", e)
                 yield _sse({"error": str(e)})
             except Exception:
-                log.exception("unexpected ai error")
+                log.exception("unexpected ai matter chat error")
                 yield _sse({"error": "服务异常，请稍后重试"})
             yield "data: [DONE]\n\n"
 
