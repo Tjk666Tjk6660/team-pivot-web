@@ -4,6 +4,8 @@ import { toast } from "sonner";
 import { ArrowLeft } from "lucide-react";
 import {
   createMatter,
+  deleteDraft,
+  fetchDrafts,
   fetchMatters,
   streamAIChat,
   type DocType,
@@ -15,13 +17,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Layout } from "@/components/Layout";
+import { formatSaveStatus, useDraftAutosave } from "@/hooks/useDraftAutosave";
 
 const NEW_CATEGORY_OPTION = "__new_category__";
 const CATEGORY_PATTERN = /^[^/\\:*?"<>|\t\n\r]{1,20}$/;
 
 export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const navigate = useNavigate();
-  const [category, setCategory] = useState("general");
+  const [category, setCategory] = useState("");
   const [newCategory, setNewCategory] = useState("");
   const [categoryMode, setCategoryMode] = useState<"select" | "create">("select");
   const [availableCategories, setAvailableCategories] = useState<string[]>([]);
@@ -31,12 +34,16 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [owner, setOwner] = useState<string>(me.pinyin ?? "");
   const [stage, setStage] = useState<"idle" | "generating" | "submitting">("idle");
   const submitting = stage !== "idle";
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const [draftLoaded, setDraftLoaded] = useState(false);
 
   useEffect(() => {
     // /api/matters 返回里已经带 category,直接从已存在 matter 推断当前
-    // workspace 用过哪些 category;失败/为空时下拉框留空,用户可手填新建。
-    fetchMatters()
-      .then((items) => {
+    // workspace 用过哪些 category;空 workspace 时直接进入 create 模式,
+    // 让用户当场新建第一个分类。同时拉一遍 drafts,把上次没发布完的
+    // matter 草稿(type=proposal && thread_key==null)恢复到表单。
+    Promise.all([fetchMatters(), fetchDrafts()])
+      .then(([items, drafts]) => {
         const cats = Array.from(
           new Set(
             items
@@ -45,19 +52,54 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
           ),
         );
         setAvailableCategories(cats);
+
+        const candidate = drafts
+          .filter((d) => d.type === "proposal" && !d.thread_key)
+          .sort((a, b) => b.updated_at - a.updated_at)[0];
+
+        if (candidate) {
+          setDraftId(candidate.id);
+          setTitle(candidate.title ?? "");
+          setBody(candidate.body_md ?? "");
+          if (candidate.category) {
+            setCategory(candidate.category);
+          } else if (cats.length === 0) {
+            setCategoryMode("create");
+          } else {
+            setCategory(cats[0]);
+          }
+          const payload = candidate.matter_payload ?? {};
+          const dt = String((payload as Record<string, unknown>).doc_type ?? "");
+          if (dt === "act" || dt === "think") setInitialType(dt);
+          const ow = String((payload as Record<string, unknown>).owner ?? "");
+          if (ow) setOwner(ow);
+        } else if (cats.length === 0) {
+          setCategoryMode("create");
+        } else {
+          setCategory((current) => current || cats[0]);
+        }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setDraftLoaded(true));
   }, []);
 
-  useEffect(() => {
-    if (category.trim() && !availableCategories.includes(category.trim())) {
-      setCategoryMode("create");
-      setNewCategory(category.trim());
-      return;
-    }
-    setCategoryMode("select");
-    setNewCategory("");
-  }, [availableCategories, category]);
+  const isDirty = title.trim().length > 0 || body.trim().length > 0;
+  const { status: draftStatus } = useDraftAutosave({
+    draftId,
+    setDraftId,
+    type: "proposal",
+    payload: () => ({
+      title: title.trim() || null,
+      category: category.trim() || null,
+      body_md: body,
+      matter_payload: {
+        doc_type: initialType,
+        ...(owner.trim() ? { owner: owner.trim() } : {}),
+      },
+    }),
+    enabled: draftLoaded && isDirty && stage === "idle",
+    deps: [draftLoaded, isDirty, stage, title, category, body, initialType, owner],
+  });
 
   const categoryOptions = category.trim() && !availableCategories.includes(category.trim())
     ? [category.trim(), ...availableCategories]
@@ -132,6 +174,13 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
           owner: owner.trim() || undefined,
         },
       });
+      if (draftId) {
+        try {
+          await deleteDraft(draftId);
+        } catch {
+          // 草稿删除失败不影响 matter 已发布的事实，仅吞掉错误。
+        }
+      }
       navigate(`/m/${encodeURIComponent(r.matter_id)}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
@@ -158,11 +207,22 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
           <div className="section-kicker">New Matter</div>
           <div className="flex flex-wrap items-baseline gap-3">
             <h1 className="text-2xl font-semibold tracking-[-0.03em] text-slate-950 sm:text-3xl">
-              新事项
+              新讨论
             </h1>
+            {draftStatus !== "idle" && (
+              <span
+                className={
+                  draftStatus === "error"
+                    ? "text-xs text-red-600"
+                    : "text-xs text-slate-500"
+                }
+              >
+                {formatSaveStatus(draftStatus)}
+              </span>
+            )}
           </div>
           <p className="max-w-2xl text-sm leading-7 text-slate-600">
-            第一版：category（分组标签）+ title + 首篇文件（think 或 act）。首篇允许没有 quote。
+            这里直接进入 matter 的起草区。先确定分类和标题，再把正文写清楚；表单会自动保存草稿，不需要额外操作。
           </p>
         </div>
 
@@ -173,7 +233,7 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
               <div className="space-y-2">
                 <div className="section-kicker">Category</div>
                 <p className="text-sm leading-6 text-slate-500">
-                  分组标签，决定磁盘位置 <span className="font-mono">discussions/{category}/...</span>
+                  从已有分类里选择，或者当场创建一个新的分类。
                 </p>
               </div>
               <div className="grid gap-2">
@@ -204,22 +264,27 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
                   <option value={NEW_CATEGORY_OPTION}>+ 新建 category</option>
                 </select>
                 {categoryMode === "create" && (
-                  <div className="flex gap-2">
-                    <Input
-                      value={newCategory}
-                      onChange={(e) => setNewCategory(e.target.value)}
-                      placeholder="输入新的 category"
-                      maxLength={20}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          createCategory();
-                        }
-                      }}
-                    />
-                    <Button type="button" variant="outline" className="rounded-xl" onClick={createCategory}>
-                      创建并选中
-                    </Button>
+                  <div className="space-y-1.5">
+                    <div className="flex gap-2">
+                      <Input
+                        value={newCategory}
+                        onChange={(e) => setNewCategory(e.target.value)}
+                        placeholder="输入新的 category"
+                        maxLength={20}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            createCategory();
+                          }
+                        }}
+                      />
+                      <Button type="button" variant="outline" className="rounded-xl" onClick={createCategory}>
+                        创建并选中
+                      </Button>
+                    </div>
+                    <p className="text-xs leading-5 text-slate-500">
+                      支持中文，最长 20 个字符；不能包含 <span className="font-mono">/ \ : * ? " &lt; &gt; |</span> 或换行。
+                    </p>
                   </div>
                 )}
               </div>
@@ -231,10 +296,10 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
             <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
               <div className="space-y-2">
                 <div className="section-kicker">Title</div>
-                <p className="text-sm leading-6 text-slate-500">事项标题；列表上一眼能认出是什么事。</p>
+                <p className="text-sm leading-6 text-slate-500">标题决定 matter 在左侧目录里的可读性，尽量写成一个完整的主题句。</p>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="title">Title</Label>
+                <Label htmlFor="title">标题</Label>
                 <Input
                   id="title"
                   value={title}
@@ -253,7 +318,7 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
               <div className="space-y-2">
                 <div className="section-kicker">首篇文件</div>
                 <p className="text-sm leading-6 text-slate-500">
-                  创建事项的同时写一篇 <span className="font-mono">think</span> 或{" "}
+                  适合直接写提案、背景、判断和待讨论问题，类型为 <span className="font-mono">think</span> 或{" "}
                   <span className="font-mono">act</span>。默认 think。
                 </p>
               </div>
@@ -278,10 +343,10 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="body">
-                    Body（markdown）<span className="text-red-500"> *</span>
+                    正文（markdown）<span className="text-red-500"> *</span>
                   </Label>
                   <p className="text-xs text-slate-500">
-                    创建时 AI 将基于正文生成 summary，无需手填。
+                    创建时 AI 将基于正文生成 summary。
                   </p>
                   <Textarea
                     id="body"
