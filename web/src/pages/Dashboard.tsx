@@ -621,7 +621,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
                 className="rounded-md px-3 py-1.5 text-[13px] font-semibold cursor-default"
                 style={{ background: "var(--accent-bg)", color: "var(--accent)" }}
               >
-                事项
+                讨论
               </span>
             </nav>
           </div>

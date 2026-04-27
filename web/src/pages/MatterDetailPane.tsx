@@ -616,15 +616,11 @@ export function MatterDetailPane() {
         {/* 顶部 bar：面包屑 + AI 总结 */}
         <div className="mb-4 flex items-center justify-between gap-3">
           <nav className="flex min-w-0 items-center gap-1.5 text-sm text-slate-500">
-            <Link to="/" className="shrink-0 hover:text-slate-800">事项</Link>
+            <Link to="/" className="shrink-0 hover:text-slate-800">Pivot</Link>
             <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-300" />
             {matter.category && (
-              <>
-                <span className="shrink-0 truncate text-slate-600">{matter.category}</span>
-                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-300" />
-              </>
+              <span className="shrink-0 truncate text-slate-600">{matter.category}</span>
             )}
-            <span className="truncate text-slate-800">{matter.title}</span>
           </nav>
           <Button
             type="button"

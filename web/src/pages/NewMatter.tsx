@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Layout } from "@/components/Layout";
+import { OwnerPicker } from "@/components/matter/OwnerPicker";
 import { formatSaveStatus, useDraftAutosave } from "@/hooks/useDraftAutosave";
 
 const NEW_CATEGORY_OPTION = "__new_category__";
@@ -31,7 +32,10 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [title, setTitle] = useState("");
   const [initialType, setInitialType] = useState<DocType>("think");
   const [body, setBody] = useState("");
-  const [owner, setOwner] = useState<string>(me.pinyin ?? "");
+  // owner 存飞书 open_id（和 CreateFileDialog 一致），ownerDisplayName 仅用于
+  // OwnerPicker 关闭后渲染中文名，避免显示裸 open_id。两者都进 draft 持久化。
+  const [owner, setOwner] = useState<string>(me.open_id);
+  const [ownerDisplayName, setOwnerDisplayName] = useState<string>(me.name);
   const [stage, setStage] = useState<"idle" | "generating" | "submitting">("idle");
   const submitting = stage !== "idle";
   const [draftId, setDraftId] = useState<string | null>(null);
@@ -68,11 +72,15 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
           } else {
             setCategory(cats[0]);
           }
-          const payload = candidate.matter_payload ?? {};
-          const dt = String((payload as Record<string, unknown>).doc_type ?? "");
+          const payload = (candidate.matter_payload ?? {}) as Record<string, unknown>;
+          const dt = String(payload.doc_type ?? "");
           if (dt === "act" || dt === "think") setInitialType(dt);
-          const ow = String((payload as Record<string, unknown>).owner ?? "");
-          if (ow) setOwner(ow);
+          const ow = String(payload.owner ?? "");
+          if (ow) {
+            setOwner(ow);
+            const od = String(payload.owner_display ?? "");
+            setOwnerDisplayName(od || (ow === me.open_id ? me.name : ""));
+          }
         } else if (cats.length === 0) {
           setCategoryMode("create");
         } else {
@@ -94,11 +102,14 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
       body_md: body,
       matter_payload: {
         doc_type: initialType,
-        ...(owner.trim() ? { owner: owner.trim() } : {}),
+        ...(owner ? { owner, owner_display: ownerDisplayName } : {}),
       },
     }),
     enabled: draftLoaded && isDirty && stage === "idle",
-    deps: [draftLoaded, isDirty, stage, title, category, body, initialType, owner],
+    deps: [
+      draftLoaded, isDirty, stage,
+      title, category, body, initialType, owner, ownerDisplayName,
+    ],
   });
 
   const categoryOptions = category.trim() && !availableCategories.includes(category.trim())
@@ -171,7 +182,7 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
           type: initialType,
           summary,
           body: body.trim(),
-          owner: owner.trim() || undefined,
+          owner: owner || undefined,
         },
       });
       if (draftId) {
@@ -360,13 +371,16 @@ export function NewMatter({ me, onLogout }: { me: Me; onLogout: () => void }) {
                 </div>
                 {initialType === "act" && (
                   <div className="grid gap-2">
-                    <Label htmlFor="owner">Owner（执行人 · 可选；默认你自己）</Label>
-                    <Input
-                      id="owner"
+                    <Label>Owner（执行人 · 默认你自己）</Label>
+                    <OwnerPicker
                       value={owner}
-                      onChange={(e) => setOwner(e.target.value)}
-                      placeholder={me.pinyin ?? "pinyin"}
-                      className="h-11 rounded-xl bg-slate-100/90"
+                      onChange={(openId, name) => {
+                        setOwner(openId);
+                        setOwnerDisplayName(name);
+                      }}
+                      sessionOpenId={me.open_id}
+                      sessionName={me.name}
+                      displayName={ownerDisplayName}
                     />
                   </div>
                 )}

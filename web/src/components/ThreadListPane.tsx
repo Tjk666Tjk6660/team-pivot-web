@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, NavLink, useLocation } from "react-router-dom";
+import {  NavLink, useLocation } from "react-router-dom";
 import {
   ChevronDown,
   ChevronRight,
   FileText,
   FolderTree,
-  Plus,
   Star,
   Trash2,
 } from "lucide-react";
@@ -85,16 +84,6 @@ export function ThreadListPane({
 
   return (
     <div className="flex h-full flex-col bg-transparent px-3 py-3 md:px-3 md:py-4">
-      <Button
-        asChild
-        className="h-11 w-full justify-start rounded-xl bg-blue-600 px-4 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
-      >
-        <Link to="/new">
-          <Plus className="h-4 w-4" />
-          新事项
-        </Link>
-      </Button>
-
       <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
         {matters !== null && favorites.length > 0 && (
           <Section
