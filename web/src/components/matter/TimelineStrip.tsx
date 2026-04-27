@@ -10,14 +10,17 @@ import { TYPE_VISUAL, shortFile } from "./timeline-config";
 // - 每行起点标注方向箭头（→ / ←）
 // - 每个节点下方只显示相对时间（多久前）；完整信息在 hover 的 title 提示里
 
-const PAD_X = 28;
+const PAD_X = 64;
 const PAD_Y = 14;
 const H_SPACING_TARGET = 120; // 每节点理想水平间距（要容纳 status chip "planning → executing"）
 const ROW_V = 96;             // 行基线垂直间距（要容纳 type + 时间 + chip 三行标签）
 const ARC_R = ROW_V / 2;
-const DOT_SIZE = 16;
-const LABEL_H = 60;           // type + time + chip 合计高度
+const DOT_SIZE = 24;
+const LABEL_H = 86;           // type + time + chip 合计高度
 const MIN_PER_ROW = 2;
+const LINE_COLOR = "#cbd5e1";
+const MOBILE_PER_ROW_BREAKPOINT = 560;
+const MOBILE_PER_ROW = 3;
 
 type Position = {
   x: number;
@@ -35,10 +38,20 @@ type Layout = {
   arcR: number;
 };
 
+type ConnectorArrow = {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+};
+
 function computeLayout(count: number, width: number): Layout {
   const inner = Math.max(width - PAD_X * 2, 0);
   // 根据容器宽度决定每行放几个节点
-  let perRow = Math.max(Math.floor(inner / H_SPACING_TARGET) + 1, MIN_PER_ROW);
+  let perRow =
+    width < MOBILE_PER_ROW_BREAKPOINT
+      ? MOBILE_PER_ROW
+      : Math.max(Math.floor(inner / H_SPACING_TARGET) + 1, MIN_PER_ROW);
   perRow = Math.min(perRow, Math.max(count, MIN_PER_ROW));
   const hSpacing = perRow > 1 ? inner / (perRow - 1) : 0;
   const rows = Math.max(Math.ceil(count / perRow), 1);
@@ -66,12 +79,69 @@ function buildPath(positions: Position[], arcR: number): string {
     if (prev.row === curr.row) {
       d += ` L ${curr.x} ${curr.y}`;
     } else {
-      // 行转折：用半圆弧。prev.ltr=true 时弧线向右鼓（sweep=1 顺时针），否则向左鼓
       const sweep = prev.ltr ? 1 : 0;
       d += ` A ${arcR} ${arcR} 0 0 ${sweep} ${curr.x} ${curr.y}`;
     }
   }
   return d;
+}
+
+function buildConnectorArrows(
+  positions: Position[],
+  arcR: number,
+): ConnectorArrow[] {
+  const arrows: ConnectorArrow[] = [];
+  const arrowLen = 18;
+
+  for (let i = 1; i < positions.length; i++) {
+    const prev = positions[i - 1];
+    const curr = positions[i];
+    if (prev.row === curr.row) {
+      const dir = curr.x >= prev.x ? 1 : -1;
+      const cx = (prev.x + curr.x) / 2;
+      arrows.push({
+        x1: cx - (dir * arrowLen) / 2,
+        y1: curr.y,
+        x2: cx + (dir * arrowLen) / 2,
+        y2: curr.y,
+      });
+    } else {
+      const x = prev.x + (prev.ltr ? arcR : -arcR);
+      const y = (prev.y + curr.y) / 2;
+      const ux = 0;
+      const uy = 1;
+      arrows.push({
+        x1: x - (ux * arrowLen) / 2,
+        y1: y - (uy * arrowLen) / 2,
+        x2: x + (ux * arrowLen) / 2,
+        y2: y + (uy * arrowLen) / 2,
+      });
+    }
+  }
+
+  return arrows;
+}
+
+function arrowHeadPoints(arrow: ConnectorArrow): string {
+  const size = 11;
+  const dx = arrow.x2 - arrow.x1;
+  const dy = arrow.y2 - arrow.y1;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const px = -uy;
+  const py = ux;
+  const tipX = arrow.x2;
+  const tipY = arrow.y2;
+  const baseX = tipX - ux * size;
+  const baseY = tipY - uy * size;
+  const half = size * 0.48;
+
+  return [
+    `${tipX},${tipY}`,
+    `${baseX + px * half},${baseY + py * half}`,
+    `${baseX - px * half},${baseY - py * half}`,
+  ].join(" ");
 }
 
 export function TimelineStrip({
@@ -102,6 +172,9 @@ export function TimelineStrip({
 
   const layout = width > 0 ? computeLayout(items.length, width) : null;
   const d = layout ? buildPath(layout.positions, layout.arcR) : "";
+  const connectorArrows = layout
+    ? buildConnectorArrows(layout.positions, layout.arcR)
+    : [];
 
   return (
     <div
@@ -121,11 +194,18 @@ export function TimelineStrip({
             <path
               d={d}
               fill="none"
-              stroke="#cbd5e1"
+              stroke={LINE_COLOR}
               strokeWidth={2}
               strokeLinecap="round"
               strokeLinejoin="round"
             />
+            {connectorArrows.map((arrow, i) => (
+              <polygon
+                key={`connector-arrow-${i}`}
+                points={arrowHeadPoints(arrow)}
+                fill={LINE_COLOR}
+              />
+            ))}
           </svg>
 
           {/* 每行起点方向箭头 */}
@@ -139,7 +219,7 @@ export function TimelineStrip({
             return (
               <div
                 key={`arrow-${r}`}
-                className="pointer-events-none absolute text-[11px] font-medium text-[var(--text-fade)]"
+                className="pointer-events-none absolute hidden text-[11px] font-medium text-[var(--text-fade)]"
                 style={{
                   left: pos.x + dx,
                   top: pos.y - 8,
@@ -171,11 +251,12 @@ export function TimelineStrip({
               >
                 <span
                   className={cn(
-                    "block h-4 w-4 rounded-full ring-2 ring-white transition-transform",
-                    cfg.dot,
+                    "flex h-6 w-6 items-center justify-center rounded-full border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-sm)] transition-transform",
                     active && "scale-125 shadow-[var(--shadow-lg)]",
                   )}
-                />
+                >
+                  <span className={cn("block h-3.5 w-3.5 rounded-full", cfg.dot)} />
+                </span>
                 <span
                   className={cn(
                     "mt-1 text-[10px] font-semibold uppercase tracking-wide",
@@ -183,6 +264,9 @@ export function TimelineStrip({
                   )}
                 >
                   {item.type} #{i + 1}
+                </span>
+                <span className="max-w-full truncate text-[10px] font-medium text-[var(--text-soft)]">
+                  {item.creator}
                 </span>
                 <span className="text-[10px] text-[var(--text-mute)]">
                   {relativeTime(item.created_at)}

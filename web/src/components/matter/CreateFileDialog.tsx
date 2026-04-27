@@ -688,9 +688,9 @@ function VerificationsEditor({
   return (
     <div className="space-y-2 rounded-md border border-[var(--line)] p-2">
       {verifications.map((v, i) => (
-        <div key={i} className="grid grid-cols-12 gap-2 rounded-md bg-[var(--surface-alt)] p-2">
+        <div key={i} className="grid grid-cols-[1fr_auto] gap-2 rounded-md bg-[var(--surface-alt)] p-2 sm:grid-cols-12">
           <select
-            className="col-span-5 rounded-md border border-[var(--line-strong)] bg-[var(--surface)] px-2 py-1 font-mono text-[11px]"
+            className="col-span-1 min-w-0 rounded-md border border-[var(--line-strong)] bg-[var(--surface)] px-2 py-1 font-mono text-[11px] sm:col-span-5"
             value={v.target}
             onChange={(e) => update(i, { target: e.target.value })}
           >
@@ -701,7 +701,7 @@ function VerificationsEditor({
             ))}
           </select>
           <select
-            className="col-span-3 rounded-md border border-[var(--line-strong)] bg-[var(--surface)] px-2 py-1 text-xs"
+            className="col-span-1 min-w-0 rounded-md border border-[var(--line-strong)] bg-[var(--surface)] px-2 py-1 text-xs sm:col-span-3"
             value={v.judgement}
             onChange={(e) => update(i, { judgement: e.target.value as Judgement })}
           >
@@ -710,7 +710,7 @@ function VerificationsEditor({
             <option value="cancelled">cancelled</option>
           </select>
           <Input
-            className="col-span-3 h-7 text-xs"
+            className="col-span-1 h-8 min-w-0 text-xs sm:col-span-3 sm:h-7"
             value={v.comment}
             onChange={(e) => update(i, { comment: e.target.value })}
             placeholder="comment*"
@@ -718,7 +718,7 @@ function VerificationsEditor({
           <button
             type="button"
             onClick={() => remove(i)}
-            className="col-span-1 text-xs text-[var(--text-fade)] hover:text-[var(--danger-500)]"
+            className="col-span-1 row-span-3 min-h-8 self-stretch rounded-md text-xs text-[var(--text-fade)] hover:bg-[var(--surface)] hover:text-[var(--danger-500)] sm:row-span-1"
             title="移除"
           >
             ×

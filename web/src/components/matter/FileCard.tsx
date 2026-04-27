@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -76,10 +76,33 @@ export function FileCard({
 }) {
   const cfg = TYPE_VISUAL[item.type];
   const [expanded, setExpanded] = useState(false);
+  const [canExpand, setCanExpand] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const allowed = ALLOWED_TYPES_BY_STATUS[matterStatus];
   const allowThink = allowed.includes("think");
   const allowAct = allowed.includes("act");
   const allowVerify = allowed.includes("verify");
+
+  useEffect(() => {
+    setExpanded(false);
+  }, [item.file]);
+
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el) {
+      setCanExpand(false);
+      return;
+    }
+
+    const measure = () => {
+      setCanExpand(el.scrollHeight > COLLAPSE_HEIGHT + 1);
+    };
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [item.body]);
 
   return (
     <article
@@ -213,8 +236,9 @@ export function FileCard({
       {item.body && (
         <>
           <div
+            ref={bodyRef}
             style={
-              expanded
+              expanded || !canExpand
                 ? undefined
                 : { maxHeight: COLLAPSE_HEIGHT, overflow: "hidden" }
             }
@@ -227,13 +251,15 @@ export function FileCard({
               {item.body}
             </Markdown>
           </div>
-          <button
-            type="button"
-            onClick={() => setExpanded((v) => !v)}
-            className="mt-1 text-xs text-[var(--accent)] hover:underline"
-          >
-            {expanded ? "收起 ↑" : "展开全文 ↓"}
-          </button>
+          {canExpand && (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="mt-1 text-xs text-[var(--accent)] hover:underline"
+            >
+              {expanded ? "收起 ↑" : "展开全文 ↓"}
+            </button>
+          )}
         </>
       )}
 
@@ -335,7 +361,7 @@ function MentionPopover({
       {open && (
         <div
           className={cn(
-            "absolute top-full z-50 mt-2 w-[22rem] rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] p-3 shadow-[var(--shadow-lg)]",
+            "absolute top-full z-50 mt-2 max-h-[calc(100vh-8rem)] w-[calc(100vw-2rem)] max-w-[22rem] overflow-y-auto rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] p-3 shadow-[var(--shadow-lg)] sm:max-h-none sm:w-[22rem] sm:overflow-visible",
             align === "right" ? "right-0" : "left-0",
           )}
         >

@@ -6,6 +6,7 @@ import {
   ArrowUp,
   Bot,
   ChevronRight,
+  Maximize2,
   Minimize2,
   Sparkles,
   Star,
@@ -212,6 +213,7 @@ export function MatterDetailPane() {
   });
   const [aiOpen, setAiOpen] = useState(false);
   const [aiMinimized, setAiMinimized] = useState(false);
+  const [aiFullscreen, setAiFullscreen] = useState(false);
   const [pendingAIOrigin, setPendingAIOrigin] = useState<string | null>(null);
   const [aiFillToken, setAiFillToken] = useState(0);
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -299,6 +301,7 @@ export function MatterDetailPane() {
     setConfirmDeleteOpen(false);
     setResultConfirmOpen(false);
     setReviewedConfirmOpen(false);
+    setAiFullscreen(false);
     setPendingAIOrigin(null);
     setHighlight(null);
   }, [matter_id]);
@@ -711,6 +714,7 @@ export function MatterDetailPane() {
                     setAiMinimized(false);
                   } else {
                     setAiOpen(false);
+                    setAiFullscreen(false);
                   }
                 } else {
                   openMatterAIAssistant();
@@ -996,7 +1000,14 @@ export function MatterDetailPane() {
             </button>
           )}
           {!aiMinimized && (
-            <aside className="fixed inset-0 z-50 flex min-h-0 flex-col overflow-hidden bg-[var(--surface)] xl:static xl:inset-auto xl:z-auto xl:w-[480px] xl:shrink-0 xl:border-l xl:border-[var(--line)]">
+            <aside
+              className={cn(
+                "fixed inset-0 z-50 flex min-h-0 flex-col overflow-hidden bg-[var(--surface)]",
+                aiFullscreen
+                  ? "xl:fixed xl:inset-0 xl:z-50 xl:w-auto"
+                  : "xl:static xl:inset-auto xl:z-auto xl:w-[480px] xl:shrink-0 xl:border-l xl:border-[var(--line)]",
+              )}
+            >
               <div className="flex items-center justify-between border-b border-[var(--line)] px-4 py-3">
                 <div className="flex items-center gap-2 text-sm font-medium text-[var(--text)]">
                   <Bot className="h-4 w-4 text-[var(--accent)]" />
@@ -1017,10 +1028,25 @@ export function MatterDetailPane() {
                     type="button"
                     variant="ghost"
                     size="icon"
+                    className="hidden h-8 w-8 rounded-[var(--r-sm)] text-[var(--text-mute)] hover:bg-[var(--surface-alt)] xl:inline-flex"
+                    onClick={() => setAiFullscreen((v) => !v)}
+                    title={aiFullscreen ? "退出全屏" : "全屏"}
+                  >
+                    {aiFullscreen ? (
+                      <Minimize2 className="h-4 w-4" />
+                    ) : (
+                      <Maximize2 className="h-4 w-4" />
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
                     className="h-8 w-8 rounded-[var(--r-sm)] text-[var(--text-mute)] hover:bg-[var(--surface-alt)]"
                     onClick={() => {
                       setAiOpen(false);
                       setAiMinimized(false);
+                      setAiFullscreen(false);
                     }}
                     title="关闭"
                   >
@@ -1179,7 +1205,7 @@ function MatterJumpControl({
   onBottom: () => void;
 }) {
   return (
-    <div className="fixed bottom-6 right-5 z-40 flex w-11 flex-col items-center overflow-hidden rounded-full border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-lg)] sm:bottom-8 sm:right-7">
+    <div className="fixed bottom-28 right-3 z-40 flex w-11 flex-col items-center overflow-hidden rounded-full border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-lg)] sm:bottom-8 sm:right-7">
       <button
         type="button"
         disabled={atTop}
