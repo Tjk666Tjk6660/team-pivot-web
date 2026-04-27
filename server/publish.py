@@ -286,6 +286,34 @@ def _resolve_comments_mentions(
     return out
 
 
+def _extract_notify_mentions(
+    comments: list[dict] | None,
+) -> tuple[list[str] | None, str | None]:
+    """Pull raw 圈人 open_ids + 留言 out of the bundled comments[0] payload.
+
+    Frontend (CreateFileDialog) folds @-mentions into the file's first comment
+    because the matter file API does not have dedicated top-level mention
+    fields (see CreateFileDialog.tsx 圈人 + 留言 hack). The Feishu notifier,
+    however, needs the *raw* open_ids to fill `<at id="…">` markdown tags
+    (schema 2.0) and to deliver per-recipient DMs.
+
+    This helper teases that data back out before _resolve_comments_mentions
+    rewrites open_ids to pinyin for index storage. Safe to call with None / [].
+    """
+    if not comments:
+        return None, None
+    first = comments[0] or {}
+    raw = first.get("mentions")
+    if not isinstance(raw, list) or not raw:
+        return None, None
+    open_ids = [str(x) for x in raw if x]
+    if not open_ids:
+        return None, None
+    body = first.get("body")
+    text = str(body).strip() if isinstance(body, str) else None
+    return open_ids, (text or None)
+
+
 def _lookup_thread_title(workspace: Workspace, category: str, slug: str) -> str:
     detail = get_thread(workspace.discussions_dir, workspace.index_dir, category, slug)
     if detail is not None and detail.meta.title:
@@ -371,6 +399,15 @@ def publish_matter_create(
             item_input["comments"], users, author=user.pinyin,
         )
 
+    # Frontend (CreateFileDialog) bundles 圈人 + 留言 into comments[0] because
+    # matter has no top-level mention field. Extract raw open_ids + 留言 from
+    # the original (un-resolved) initial_item so the Feishu notifier can fire
+    # both the group card's <at> tags and the per-recipient DM. Without this,
+    # mentions silently fail to notify.
+    notify_mention_open_ids, notify_mention_comments = _extract_notify_mentions(
+        initial_item.get("comments")
+    )
+
     item = _build_timeline_item(
         item_input,
         file_rel=file_rel,
@@ -417,8 +454,8 @@ def publish_matter_create(
             author_name=user.name,
             filename=filename,
             body=md_body,
-            mention_open_ids=None,
-            mention_comments=None,
+            mention_open_ids=notify_mention_open_ids,
+            mention_comments=notify_mention_comments,
         )
     return {
         "matter_id": matter_id,
@@ -480,6 +517,12 @@ def publish_matter_append(
             item_input["comments"], users, author=user.pinyin,
         )
 
+    # Same mention bundling extraction as publish_matter_create — frontend
+    # ships 圈人留言 in comments[0] and we need raw open_ids for the notifier.
+    notify_mention_open_ids, notify_mention_comments = _extract_notify_mentions(
+        item_body.get("comments")
+    )
+
     item = _build_timeline_item(
         item_input,
         file_rel=file_rel,
@@ -519,8 +562,8 @@ def publish_matter_append(
             author_name=user.name,
             filename=filename,
             body=md_body,
-            mention_open_ids=None,
-            mention_comments=None,
+            mention_open_ids=notify_mention_open_ids,
+            mention_comments=notify_mention_comments,
         )
         sc = item.get("status_change")
         if sc:

@@ -64,6 +64,44 @@ def test_reply_card_header_carries_author():
     assert "**文件**：002_ken_reply_xxx.md" in md
 
 
+def test_thread_card_uses_schema2_at_tag_for_mentions():
+    """Regression: 6-field thread/reply card must use schema 2.0 `<at id=...>`,
+    not legacy `<at user_id=...>`. Feishu silently ignores user_id, so the
+    @-tag never lights up red dots / pushes — i.e. 圈人 → 收不到通知。
+    """
+    card = build_thread_card(
+        category="c",
+        thread_slug="s",
+        title="T",
+        author_name="a",
+        filename="f.md",
+        thread_url="http://x",
+        mention_open_ids=["ou_alice00000000000", "ou_bob000000000000000"],
+    )
+    md = card["body"]["elements"][0]["content"]
+    assert '<at id="ou_alice00000000000"></at>' in md
+    assert '<at id="ou_bob000000000000000"></at>' in md
+    assert "user_id=" not in md, (
+        "schema 1.0 `user_id` attribute leaked back in — Feishu will "
+        "silently drop the @-tag and the mention notification will fail."
+    )
+
+
+def test_reply_card_uses_schema2_at_tag_for_mentions():
+    card = build_reply_card(
+        category="c",
+        thread_slug="s",
+        thread_title="T",
+        author_name="a",
+        filename="002_a_reply.md",
+        thread_url="http://x",
+        mention_open_ids=["ou_carol0000000000000"],
+    )
+    md = card["body"]["elements"][0]["content"]
+    assert '<at id="ou_carol0000000000000"></at>' in md
+    assert "user_id=" not in md
+
+
 def test_card_no_author_row():
     """No **作者** row — author lives in header / 操作."""
     card = build_thread_card(

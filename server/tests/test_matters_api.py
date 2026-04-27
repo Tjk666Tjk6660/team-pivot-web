@@ -704,6 +704,157 @@ def test_notifier_is_called_on_append_and_status_change(db, users, tmp_path):
     assert tf.endswith(".md") and "act" in tf, f"unexpected trigger_filename: {tf!r}"
 
 
+def test_create_and_append_propagate_bundled_mentions_to_notifier(db, users, tmp_path):
+    """Regression: 圈人飞书没发通知。
+
+    Frontend (CreateFileDialog) 把 @-mentions 折成 comments[0] 上传。早先的
+    publish_matter_create / publish_matter_append 给 notifier 写死
+    mention_open_ids=None，导致群卡片不带 <at> 块、被圈人也没 DM。这条用例
+    锁住"comments[0].mentions 必须透传到 notify_new_thread / notify_new_reply"。
+    """
+    calls: list[tuple[str, dict]] = []
+
+    class RecordingNotifier:
+        def notify_new_thread(self, **kw): calls.append(("new_thread", kw))
+        def notify_new_reply(self, **kw):  calls.append(("new_reply", kw))
+        def notify_status_change(self, **kw): calls.append(("status_change", kw))
+        def notify_standalone_mention(self, **kw): calls.append(("standalone_mention", kw))
+
+    workspace = _WorkspaceStub(tmp_path)
+    users.upsert_from_feishu(open_id="ou_1", union_id=None, name="邓柯", avatar_url="")
+    users.update_profile("ou_1", pinyin="dengke")
+    sessions = SessionStore(db)
+    sid = sessions.create("ou_1")
+    current_user = make_current_user(sessions, users, ApiTokenRepo(db))
+
+    from fastapi import FastAPI
+    app = FastAPI()
+    app.include_router(
+        build_router(
+            workspace, users, ContactRepo(db), RecordingNotifier(),
+            ReadStateRepo(db), FavoriteRepo(db), current_user,
+        )
+    )
+    c = TestClient(app)
+    c.cookies.set("sid", sid)
+
+    # create with bundled mention
+    r = c.post("/api/matters", json={
+        "category": "Pivot", "title": "M",
+        "initial_file": {
+            "type": "think", "summary": "s", "body": "",
+            "comments": [
+                {"body": "请关注一下", "mentions": ["ou_alice000000000000", "ou_bob00000000000000"]},
+            ],
+        },
+    })
+    assert r.status_code == 200, r.text
+    matter_id = r.json()["matter_id"]
+
+    new_thread_kw = next(kw for t, kw in calls if t == "new_thread")
+    assert new_thread_kw["mention_open_ids"] == ["ou_alice000000000000", "ou_bob00000000000000"]
+    assert new_thread_kw["mention_comments"] == "请关注一下"
+
+    # append with bundled mention
+    calls.clear()
+    r2 = c.post(f"/api/matters/{matter_id}/files", json={
+        "type": "act", "summary": "go",
+        "status_change": {"from": "planning", "to": "executing"},
+        "comments": [
+            {"body": "你来跟一下进度", "mentions": ["ou_carol00000000000000"]},
+        ],
+    })
+    assert r2.status_code == 200, r2.text
+
+    new_reply_kw = next(kw for t, kw in calls if t == "new_reply")
+    assert new_reply_kw["mention_open_ids"] == ["ou_carol00000000000000"]
+    assert new_reply_kw["mention_comments"] == "你来跟一下进度"
+
+    # sanity: 没 comments 时 notifier 仍然不带 mention，行为不变
+    calls.clear()
+    r3 = c.post(f"/api/matters/{matter_id}/files", json={
+        "type": "think", "summary": "no-mention",
+    })
+    assert r3.status_code == 200, r3.text
+    new_reply_kw2 = next(kw for t, kw in calls if t == "new_reply")
+    assert new_reply_kw2["mention_open_ids"] is None
+    assert new_reply_kw2["mention_comments"] is None
+
+
+def test_comment_route_does_not_pass_unknown_kwargs_to_notifier(db, users, tmp_path):
+    """Regression: publish_matter_comment used to pass post_excerpt="" to
+    notify_standalone_mention, which the Feishu / NoOp notifier protocol
+    does not declare. RecordingNotifier(**kwargs) mocks ate the extra arg
+    silently, but the real FeishuNotifier raised TypeError → 500 in prod.
+
+    Use a strict notifier whose signatures match the Notifier protocol
+    exactly (no **kwargs) so any future drift fails this test loudly.
+    """
+    class StrictNotifier:
+        def __init__(self):
+            self.calls = []
+
+        def notify_new_thread(
+            self, *, category, slug, title, author_name, filename,
+            body=None, mention_open_ids=None, mention_comments=None,
+        ):
+            self.calls.append("new_thread")
+
+        def notify_new_reply(
+            self, *, category, slug, thread_title, author_name, filename,
+            body=None, mention_open_ids=None, mention_comments=None,
+        ):
+            self.calls.append("new_reply")
+
+        def notify_status_change(
+            self, *, category, slug, thread_title, from_state, to_state,
+            author_name, reason,
+            trigger_type=None, trigger_summary=None, trigger_filename=None,
+        ):
+            self.calls.append("status_change")
+
+        def notify_standalone_mention(
+            self, *, category, slug, thread_title, target_filename,
+            author_name, mention_open_ids, mention_comments,
+        ):
+            self.calls.append("standalone_mention")
+
+    workspace = _WorkspaceStub(tmp_path)
+    users.upsert_from_feishu(open_id="ou_1", union_id=None, name="邓柯", avatar_url="")
+    users.update_profile("ou_1", pinyin="dengke")
+    sessions = SessionStore(db)
+    sid = sessions.create("ou_1")
+    current_user = make_current_user(sessions, users, ApiTokenRepo(db))
+
+    from fastapi import FastAPI
+    app = FastAPI()
+    notifier = StrictNotifier()
+    app.include_router(
+        build_router(
+            workspace, users, ContactRepo(db), notifier,
+            ReadStateRepo(db), FavoriteRepo(db), current_user,
+        )
+    )
+    c = TestClient(app)
+    c.cookies.set("sid", sid)
+
+    r = c.post("/api/matters", json={
+        "category": "Pivot", "title": "M",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+    target_file = r.json()["initial_timeline_item"]["file"]
+
+    # Standalone comment with mention — used to TypeError on post_excerpt arg.
+    r2 = c.post(f"/api/matters/{matter_id}/comments", json={
+        "target_file": target_file,
+        "body": "请关注一下",
+        "mentions": ["ou_x000000000000000000"],
+    })
+    assert r2.status_code == 200, r2.text
+    assert "standalone_mention" in notifier.calls
+
+
 def test_full_lifecycle_planning_to_reviewed(client):
     r = client.post("/api/matters", json={
         "category": "Pivot", "title": "Lifecycle",

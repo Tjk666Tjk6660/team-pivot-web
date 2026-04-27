@@ -546,8 +546,11 @@ def _build_card_6fields(
 
     info_rows: list[str] = []
     if mention_open_ids:
+        # Schema 2.0 markdown tag uses `<at id="...">`. The legacy `user_id`
+        # attribute is silently ignored by Feishu — the @-tag never fires red
+        # dots / pushes. Keep this aligned with build_standalone_mention_card.
         info_rows.append(
-            " ".join(f'<at user_id="{oid}"></at>' for oid in mention_open_ids)
+            " ".join(f'<at id="{oid}"></at>' for oid in mention_open_ids)
         )
     info_rows.append(f"**项目**：{category}")
     info_rows.append(f"**主题**：{thread_title}")
