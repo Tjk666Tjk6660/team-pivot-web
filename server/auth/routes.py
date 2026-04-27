@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import secrets
-from urllib.parse import unquote, urlencode
+from urllib.parse import unquote, urlencode, urlparse
 
 from fastapi import APIRouter, Cookie, HTTPException, Request
 
@@ -53,9 +53,19 @@ def build_router(
         if not next_value:
             return post_login_redirect
         next_value = unquote(next_value)
+        parsed = urlparse(next_value)
+        if parsed.scheme or parsed.netloc:
+            allowed = urlparse(post_login_redirect)
+            if (
+                parsed.scheme in ("http", "https")
+                and parsed.scheme == allowed.scheme
+                and parsed.netloc == allowed.netloc
+            ):
+                return next_value
+            return post_login_redirect
         if not next_value.startswith("/") or next_value.startswith("//"):
             return post_login_redirect
-        return next_value
+        return post_login_redirect.rstrip("/") + next_value
 
     def _issue_state(next_value: str | None = None) -> str:
         return signer.dumps({

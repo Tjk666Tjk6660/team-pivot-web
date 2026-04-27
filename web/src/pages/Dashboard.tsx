@@ -21,6 +21,7 @@ import {
   fetchWorkspaceStatus,
   refreshWorkspace,
   saveAIConversation,
+  SessionExpiredError,
   setMatterFavorite,
   streamAIChat,
   type AIToolUse,
@@ -529,6 +530,9 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       }
     } catch (e) {
       const errText = e instanceof Error ? e.message : String(e);
+      if (e instanceof SessionExpiredError) {
+        toast.error(errText);
+      }
       setAiThreads((prev) => {
         const existing = prev[threadKey] ?? emptyAIThreadState();
         return {

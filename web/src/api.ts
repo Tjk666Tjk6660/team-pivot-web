@@ -7,6 +7,38 @@ export type Me = {
   needs_setup: boolean;
 };
 
+export class SessionExpiredError extends Error {
+  constructor() {
+    super("登录已失效，正在跳转登录页。");
+    this.name = "SessionExpiredError";
+  }
+}
+
+let loginRedirectStarted = false;
+
+function isSessionExpiredDetail(detail: unknown): boolean {
+  return detail === "invalid_token" || detail === "not logged in";
+}
+
+function redirectToLogin(): void {
+  if (loginRedirectStarted || typeof window === "undefined") return;
+  loginRedirectStarted = true;
+  const current = window.location.href;
+  const next = window.location.pathname.startsWith("/login")
+    ? window.location.origin + "/"
+    : current;
+  window.location.assign(`/login?next=${encodeURIComponent(next)}`);
+}
+
+async function throwIfSessionExpired(resp: Response): Promise<void> {
+  if (resp.status !== 401) return;
+  const body = await resp.clone().json().catch(() => ({}));
+  if (isSessionExpiredDetail((body as { detail?: unknown }).detail)) {
+    redirectToLogin();
+    throw new SessionExpiredError();
+  }
+}
+
 export async function fetchMe(): Promise<Me | null> {
   const r = await fetch("/me", { credentials: "include" });
   if (r.status === 401) return null;
@@ -24,6 +56,7 @@ export async function updateProfile(
     body: JSON.stringify(body),
   });
   if (!r.ok) {
+    await throwIfSessionExpired(r);
     const detail = await r.json().catch(() => ({ detail: r.statusText }));
     throw new Error(detail.detail || `/me/profile failed: ${r.status}`);
   }
@@ -111,6 +144,7 @@ export async function fetchMatters(query?: {
   if (query?.q) params.set("q", query.q);
   const qs = params.toString() ? `?${params}` : "";
   const r = await fetch(`/api/matters${qs}`, { credentials: "include" });
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`/api/matters failed: ${r.status}`);
   const body = (await r.json()) as { items: MatterSummary[] };
   return body.items;
@@ -120,6 +154,7 @@ export async function fetchMatter(matterId: string): Promise<MatterDetail> {
   const r = await fetch(`/api/matters/${encodeURIComponent(matterId)}`, {
     credentials: "include",
   });
+  await throwIfSessionExpired(r);
   if (r.status === 404) throw new Error("matter not found");
   if (!r.ok) throw new Error(`fetch matter failed: ${r.status}`);
   return (await r.json()) as MatterDetail;
@@ -152,6 +187,7 @@ export async function createMatter(body: {
     body: JSON.stringify(body),
   });
   if (!r.ok) {
+    await throwIfSessionExpired(r);
     const d = await r.json().catch(() => ({ detail: r.statusText }));
     const detail = typeof d.detail === "string"
       ? d.detail
@@ -193,6 +229,7 @@ export async function appendMatterFile(
     },
   );
   if (!r.ok) {
+    await throwIfSessionExpired(r);
     const d = await r.json().catch(() => ({ detail: r.statusText }));
     const detail = typeof d.detail === "string"
       ? d.detail
@@ -221,6 +258,7 @@ export async function appendMatterResult(
     },
   );
   if (!r.ok) {
+    await throwIfSessionExpired(r);
     const d = await r.json().catch(() => ({ detail: r.statusText }));
     const detail = typeof d.detail === "string"
       ? d.detail
@@ -251,6 +289,7 @@ export async function setMatterFavorite(
     },
   );
   if (!r.ok) {
+    await throwIfSessionExpired(r);
     const d = await r.json().catch(() => ({ detail: r.statusText }));
     const detail = typeof d.detail === "string"
       ? d.detail
@@ -274,6 +313,7 @@ export async function appendMatterComment(
     },
   );
   if (!r.ok) {
+    await throwIfSessionExpired(r);
     const d = await r.json().catch(() => ({ detail: r.statusText }));
     const detail = typeof d.detail === "string"
       ? d.detail
@@ -332,6 +372,7 @@ export type WorkspaceMirrorConfig = {
 
 export async function fetchWorkspaceStatus(): Promise<WorkspaceStatus> {
   const r = await fetch("/api/workspace/status", { credentials: "include" });
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`/api/workspace/status failed: ${r.status}`);
   return (await r.json()) as WorkspaceStatus;
 }
@@ -339,6 +380,7 @@ export async function fetchWorkspaceStatus(): Promise<WorkspaceStatus> {
 export async function fetchWorkspaceMirror(): Promise<WorkspaceMirrorConfig> {
   const r = await fetch("/api/workspace/mirror", { credentials: "include" });
   if (!r.ok) {
+    await throwIfSessionExpired(r);
     const d = await r.json().catch(() => ({ detail: r.statusText }));
     throw new Error(d.detail || `/api/workspace/mirror failed: ${r.status}`);
   }
@@ -347,6 +389,7 @@ export async function fetchWorkspaceMirror(): Promise<WorkspaceMirrorConfig> {
 
 export async function fetchAppHome(): Promise<AppHomePayload> {
   const r = await fetch("/api/app/home", { credentials: "include" });
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`/api/app/home failed: ${r.status}`);
   return (await r.json()) as AppHomePayload;
 }
@@ -382,6 +425,7 @@ export async function searchContacts(q: string): Promise<Contact[]> {
   const r = await fetch(`/api/contacts?q=${encodeURIComponent(q)}&limit=20`, {
     credentials: "include",
   });
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`/api/contacts failed: ${r.status}`);
   const body = (await r.json()) as { items: Contact[] };
   return body.items;
@@ -396,6 +440,7 @@ export async function syncContacts(): Promise<{ ok: true; synced: number; total:
 
 export async function fetchDrafts(): Promise<Draft[]> {
   const r = await fetch("/api/drafts", { credentials: "include" });
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`/api/drafts failed: ${r.status}`);
   const body = (await r.json()) as { items: Draft[] };
   return body.items;
@@ -403,6 +448,7 @@ export async function fetchDrafts(): Promise<Draft[]> {
 
 export async function fetchDraft(id: string): Promise<Draft> {
   const r = await fetch(`/api/drafts/${id}`, { credentials: "include" });
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`fetch draft failed: ${r.status}`);
   return (await r.json()) as Draft;
 }
@@ -424,6 +470,7 @@ export async function createDraft(body: {
     body: JSON.stringify(body),
   });
   if (!r.ok) {
+    await throwIfSessionExpired(r);
     const d = await r.json().catch(() => ({ detail: r.statusText }));
     throw new Error(d.detail || `create draft failed: ${r.status}`);
   }
@@ -449,6 +496,7 @@ export async function updateDraft(
     body: JSON.stringify(body),
   });
   if (!r.ok) {
+    await throwIfSessionExpired(r);
     const d = await r.json().catch(() => ({ detail: r.statusText }));
     throw new Error(d.detail || `update draft failed: ${r.status}`);
   }
@@ -460,6 +508,7 @@ export async function deleteDraft(id: string): Promise<void> {
     method: "DELETE",
     credentials: "include",
   });
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`delete draft failed: ${r.status}`);
 }
 
@@ -471,6 +520,7 @@ export async function publishDraft(
     credentials: "include",
   });
   if (!r.ok) {
+    await throwIfSessionExpired(r);
     const d = await r.json().catch(() => ({ detail: r.statusText }));
     throw new Error(d.detail || `publish failed: ${r.status}`);
   }
@@ -526,6 +576,7 @@ async function adminFetch(url: string, init?: RequestInit): Promise<Response> {
       throw new AdminRequiredError();
     }
   }
+  await throwIfSessionExpired(r);
   return r;
 }
 
@@ -601,6 +652,7 @@ export async function fetchAIConversation(
     `/api/ai/matters/${encodeURIComponent(matter_id)}/conversation`,
     { credentials: "include" },
   );
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`fetch conversation failed: ${r.status}`);
   return (await r.json()) as AIConversation;
 }
@@ -619,6 +671,7 @@ export async function saveAIConversation(
       body: JSON.stringify({ messages, reply_target }),
     },
   );
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`save conversation failed: ${r.status}`);
 }
 
@@ -662,6 +715,10 @@ export async function* streamAIChat(
   );
   if (!resp.ok) {
     const d = await resp.json().catch(() => ({ detail: resp.statusText }));
+    if (resp.status === 401 && isSessionExpiredDetail(d.detail)) {
+      redirectToLogin();
+      throw new SessionExpiredError();
+    }
     const detail = Array.isArray(d.detail)
       ? d.detail
         .map((item: unknown) => {
@@ -725,6 +782,7 @@ export async function refreshWorkspace(): Promise<WorkspaceStatus> {
     method: "POST",
     credentials: "include",
   });
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`/api/workspace/refresh failed: ${r.status}`);
   const body = (await r.json()) as { ok: boolean; head: string | null };
   return { ready: true, path: "", head: body.head };
@@ -744,6 +802,7 @@ export type ApiTokenCreated = ApiTokenSummary & { token: string };
 
 export async function fetchApiTokens(): Promise<ApiTokenSummary[]> {
   const r = await fetch("/api/tokens", { credentials: "include" });
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`/api/tokens failed: ${r.status}`);
   const body = (await r.json()) as { items: ApiTokenSummary[] };
   return body.items;
@@ -760,6 +819,7 @@ export async function createApiToken(
     body: JSON.stringify({ name, ttl_days }),
   });
   if (!r.ok) {
+    await throwIfSessionExpired(r);
     const d = await r.json().catch(() => ({ detail: r.statusText }));
     throw new Error(d.detail || `create token failed: ${r.status}`);
   }
@@ -768,5 +828,6 @@ export async function createApiToken(
 
 export async function deleteApiToken(id: string): Promise<void> {
   const r = await fetch(`/api/tokens/${id}`, { method: "DELETE", credentials: "include" });
+  await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`delete token failed: ${r.status}`);
 }
