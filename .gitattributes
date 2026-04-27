@@ -1,0 +1,9 @@
+# Force LF on shell scripts so they work on Linux servers regardless of
+# the contributor's autocrlf setting. Without this, Windows-side commits
+# of .sh files end up with CRLF and fail on Linux with cryptic errors.
+*.sh text eol=lf
+
+# Same for env.init template / .gitignore / lib.sh-style files in
+# migration test bundle (they're sourced by bash on Linux).
+scripts/migration-test/env.init.example text eol=lf
+scripts/migration-test/lib.sh text eol=lf

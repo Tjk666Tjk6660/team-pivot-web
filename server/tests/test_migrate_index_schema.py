@@ -1065,13 +1065,17 @@ def test_preflight_rejects_non_main_branch(tmp_path):
 
 
 def test_build_users_repo_with_explicit_db_path_resolves_pinyin(tmp_path):
-    """--db-path lets the script point at any SQLite (e.g. a production
-    data.db readonly snapshot) regardless of cwd's .env DATA_DIR."""
+    """--db-path lets the script point at any SQLite. The script opens it
+    via file:URI?mode=ro (read-only) so it's safe to point at a live
+    production data.db without risking schema migrations / DELETE side
+    effects from server.db.Database's constructor."""
     from scripts.migrate_index_schema import _build_users_repo
     from server.db import Database
     from server.users import UserRepo
 
-    # Build a tiny SQLite with one registered user
+    # Build a tiny SQLite with one registered user (this uses Database, which
+    # is the writable path — fine for test fixture setup, but the migration
+    # script itself never goes through Database).
     db_path = tmp_path / "snapshot.db"
     db = Database(db_path)
     repo = UserRepo(db)
@@ -1089,16 +1093,48 @@ def test_build_users_repo_with_explicit_db_path_resolves_pinyin(tmp_path):
     assert u.pinyin == "testuser"
 
 
-def test_build_users_repo_with_missing_db_path_returns_none(tmp_path):
-    """A nonexistent --db-path → None (mentions degrade to open_id)."""
+def test_build_users_repo_opens_db_in_readonly_mode(tmp_path):
+    """**Critical safety invariant:** when --db-path points at a real SQLite,
+    the script must NOT be able to write to it. Any attempt to INSERT /
+    UPDATE / DELETE / DDL via the returned object's underlying connection
+    must error with sqlite3.OperationalError("readonly database")."""
+    import sqlite3
     from scripts.migrate_index_schema import _build_users_repo
-    # Nonexistent path; Database constructor opens a fresh empty SQLite there
-    # rather than raising, so this actually returns a UserRepo on an empty DB.
-    # That's the documented degraded-but-acceptable behavior; the test below
-    # covers the other path: invalid permissions / unreadable file.
-    db_path = tmp_path / "definitely-not-a-db" / "data.db"
+    from server.db import Database
+
+    db_path = tmp_path / "snapshot.db"
+    Database(db_path)   # initialize schema via the writable path
+
+    view = _build_users_repo(db_path)
+    assert view is not None
+
+    # Reach the underlying read-only URI and try to write — must error.
+    # We bypass the public API (which only exposes SELECT) to verify the
+    # underlying connection itself refuses writes.
+    conn = sqlite3.connect(view._uri, uri=True)   # type: ignore[attr-defined]
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="readonly|read-only"):
+            conn.execute(
+                "INSERT INTO users (open_id, name, created_at) VALUES (?, ?, ?)",
+                ("ou_should_fail", "x", 0.0),
+            )
+        with pytest.raises(sqlite3.OperationalError, match="readonly|read-only"):
+            conn.execute("DELETE FROM users")
+        with pytest.raises(sqlite3.OperationalError, match="readonly|read-only"):
+            conn.execute("ALTER TABLE users ADD COLUMN evil TEXT")
+    finally:
+        conn.close()
+
+
+def test_build_users_repo_does_not_create_missing_db(tmp_path):
+    """Pointing --db-path at a non-existent file must NOT create an empty
+    SQLite there — that was the old behavior with `Database(path)`. With
+    URI mode=ro, sqlite3 errors instead of creating, and `_build_users_repo`
+    returns None (mentions degrade to open_id literal)."""
+    from scripts.migrate_index_schema import _build_users_repo
+    db_path = tmp_path / "does-not-exist.db"
+    assert not db_path.exists()
     repo = _build_users_repo(db_path)
-    # Either a valid empty UserRepo (parent dir created) or None — both are
-    # safe degraded modes (no crashes). Just assert no exception escapes.
-    if repo is not None:
-        assert repo.get_by_any_id("ou_anything_at_all_xxxxxxxxxx") is None
+    assert repo is None
+    # Critical: the path must STILL not exist — we didn't auto-create
+    assert not db_path.exists()

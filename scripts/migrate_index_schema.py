@@ -846,25 +846,72 @@ def _commit_migration(workspace: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
+class _ReadOnlyUserView:
+    """Read-only minimal view of the users table for mention pinyin resolution.
+
+    **Why this isn't `UserRepo(Database(path))`:** `server.db.Database.__init__`
+    runs `CREATE TABLE IF NOT EXISTS` + `_migrate(conn)` on construction, and
+    `_migrate` may `ALTER TABLE` and even `DELETE FROM ai_conversations` on
+    schema-version mismatch. If the migration operator points `--db-path` at a
+    live production `data.db` whose schema lags the current code, those side
+    effects would clobber production rows.
+
+    This view bypasses `Database` entirely, opens the SQLite via the
+    `file:...?mode=ro` URI (sqlite3 errors on any DDL/DML attempt), and exposes
+    only `get_by_any_id` — the single method `_resolve_mentions_for_index`
+    actually calls.
+    """
+
+    def __init__(self, db_path: Path) -> None:
+        import sqlite3 as _sqlite3
+        self._sqlite3 = _sqlite3
+        # Resolve to absolute, sqlite URI requires forward slashes
+        abs_path = Path(db_path).resolve().as_posix()
+        self._uri = f"file:{abs_path}?mode=ro"
+        # Probe-connect once to fail fast on missing file / unreadable DB
+        # (mode=ro errors instead of creating, unlike default sqlite3.connect).
+        conn = _sqlite3.connect(self._uri, uri=True)
+        conn.close()
+
+    def get_by_any_id(self, id_: str):
+        if not id_:
+            return None
+        from server.users import _row_to_user
+        conn = self._sqlite3.connect(self._uri, uri=True)
+        try:
+            conn.row_factory = self._sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM users WHERE open_id=? OR union_id=? OR pinyin=?",
+                (id_, id_, id_),
+            ).fetchone()
+        finally:
+            conn.close()
+        return _row_to_user(row) if row else None
+
+
 def _build_users_repo(db_path: Path | None = None) -> object | None:
-    """Construct a UserRepo for mention pinyin resolution.
+    """Construct a read-only users view for mention pinyin resolution.
 
-    When `db_path` is given, use it directly (typical for test rehearsal where
-    operator copies a production data.db readonly snapshot to the test machine).
-    Otherwise fall back to `.env`'s `DATA_DIR`/data.db (production runs).
+    `db_path` is required when called from CLI with `--db-path`; the env-derived
+    fallback uses `.env`'s `DATA_DIR/data.db` so operators running on the prod
+    server itself (where DATA_DIR points at the live db) don't have to copy.
 
-    Returns None on any failure — mention resolution then falls back to open_id
-    literals, an acceptable degraded mode.
+    **Read-only invariant:** every code path here goes through
+    `_ReadOnlyUserView`, which opens the SQLite via `file:...?mode=ro`. The
+    underlying file is never written, never schema-migrated, never locked for
+    write — safe to point at a live production data.db.
+
+    Returns None on any failure (e.g., file missing, unreadable, no users table)
+    — mention resolution then falls back to open_id literals, the documented
+    degraded mode.
     """
     try:
-        from server.db import Database
-        from server.users import UserRepo
         if db_path is not None:
-            return UserRepo(Database(db_path))
+            return _ReadOnlyUserView(db_path)
         from server.config import load_config  # local import (avoids hard dep)
         cfg = load_config()
         data_dir = Path(cfg.data_dir).resolve()
-        return UserRepo(Database(data_dir / "data.db"))
+        return _ReadOnlyUserView(data_dir / "data.db")
     except Exception:
         return None
 
