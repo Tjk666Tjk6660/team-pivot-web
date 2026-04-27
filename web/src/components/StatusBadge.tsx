@@ -41,9 +41,9 @@ export function StatusBadge({
     <Badge
       variant={cfg.variant}
       className={cn(
-        "gap-1.5 rounded-[var(--r-sm)] border px-2 py-1 text-[11px] font-semibold leading-none",
+        "gap-1.5 rounded-[var(--r-sm)] border-transparent px-2 py-1 text-[11px] font-semibold leading-none",
         cfg.variant === "blue" &&
-          "border-[color-mix(in_srgb,var(--info-500)_36%,var(--line))] bg-[color-mix(in_srgb,var(--info-500)_12%,var(--surface))] text-[var(--info-500)]",
+          "bg-[color-mix(in_srgb,var(--info-500)_12%,var(--surface))] text-[var(--info-500)]",
         className,
       )}
     >

@@ -130,7 +130,14 @@ export function ThreadListPane({
                     }
                     className="min-w-0 flex-1"
                   >
-                    <div className="truncate text-sm font-medium text-[var(--text)]">
+                    <div
+                      className="truncate text-sm font-medium text-[var(--text)]"
+                      title={
+                        d.type === "proposal"
+                          ? d.title?.trim() || "(untitled)"
+                          : `Reply: ${d.thread_key ?? ""}`
+                      }
+                    >
                       {d.type === "proposal"
                         ? d.title?.trim() || "(untitled)"
                         : `Reply: ${d.thread_key ?? ""}`}
@@ -246,7 +253,7 @@ function MatterRow({ matter }: { matter: MatterSummary }) {
         to={`/m/${encodeURIComponent(matter.id)}`}
         className={({ isActive }) =>
           cn(
-            "group mx-0 block rounded-[var(--r-sm)] border-l-2 border-transparent px-3 py-2.5 pl-4 text-[var(--text)] transition-colors duration-150 hover:border-[var(--accent-soft)] hover:bg-[var(--surface-alt)] hover:text-[var(--text)] hover:shadow-[inset_0_0_0_1px_var(--line-soft)]",
+            "group mx-0 block rounded-[var(--r-sm)] border-l-2 border-transparent px-3 py-2.5 pl-4 text-[var(--text)] transition-colors duration-150 hover:border-[var(--accent-soft)] hover:bg-[var(--accent-bg)] hover:text-[var(--text)]",
             isActive &&
               "border-[var(--accent)] bg-[var(--accent-bg)] text-[var(--text)] hover:bg-[var(--accent-bg)]",
           )
@@ -254,29 +261,34 @@ function MatterRow({ matter }: { matter: MatterSummary }) {
       >
         {({ isActive }) => (
           <>
-            <div className="flex items-center gap-2">
+            <div className="flex items-start gap-2">
               {matter.unread_count > 0 && (
                 <Badge variant="red" className="shrink-0">
                   {matter.unread_count}
                 </Badge>
               )}
-              <span className="truncate text-[14px] font-medium text-[var(--text)] group-hover:text-[var(--text)]">
+              <span
+                className="line-clamp-2 min-w-0 flex-1 text-[14px] font-medium leading-5 text-[var(--text)] transition-colors group-hover:text-[var(--accent)]"
+                title={matter.title}
+              >
                 {matter.title}
               </span>
-              <span className="ml-auto shrink-0">
+            </div>
+            <div className="mt-1 flex items-center gap-2">
+              <div
+                className={cn(
+                  "min-w-0 flex-1 truncate text-[10px] leading-5 text-[var(--text-mute)] group-hover:text-[var(--text-soft)] md:text-[11px]",
+                  isActive && "text-[var(--accent)]",
+                )}
+              >
+                {meta}
+              </div>
+              <span className="shrink-0">
                 <StatusBadge
                   status={matter.current_status}
                   className="h-5 px-2 text-[10.5px] transition-transform duration-150 group-hover:translate-x-0.5"
                 />
               </span>
-            </div>
-            <div
-              className={cn(
-                "mt-1 truncate text-[10px] leading-5 text-[var(--text-mute)] group-hover:text-[var(--text-soft)] md:text-[11px]",
-                isActive && "text-[var(--accent)]",
-              )}
-            >
-              {meta}
             </div>
           </>
         )}
