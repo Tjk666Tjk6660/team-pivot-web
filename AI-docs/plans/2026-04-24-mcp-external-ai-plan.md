@@ -51,6 +51,34 @@
 
 调研中顺带确认 Cursor 的 `~/.cursor/mcp.json` **不使用 `type` 字段**（直接 `{url, headers}` 即可，传输由 Cursor 自动判断）。Phase 8.1 的 `cursorDeepLink` 生成器无需改结构（深链本身就不含 `type`），但需确认生成的 JSON 片段里**不要塞 `"type": "sse"` 之类的字段**。
 
+### 变更 3：发布时把"是否附加状态迁移"作为用户必问项
+
+**之前怎么做**：设计文档 V2 §五 写明"`create_file` 调用前必须在对话里出人话草稿，等用户确认"，但**没把"是否附加 status_change"列为用户必须做的选择**——AI 自己决定要不要带 `status_change`。MCP `CreateFileIn.status_change` 也只是一个普通可选字段，没有任何 schema description 引导。
+
+**为什么不够**：
+
+- 状态迁移是**用户的产品决定**，不是 AI 替用户决定的事。AI 自作主张附加迁移会改变 matter 状态，影响其他协作者看到的视图
+- 反过来 AI 漏附加迁移，用户也会失望（"明明该转 executing 了 AI 没帮我转"）
+- 没有 schema description，AI 客户端拿不到**当前状态有哪些合法迁移路径**，只能靠 AI 反查 `matter_status.py`
+- 实测：写 act 时希望同时 `planning → executing`，AI 默认没带，体感破窗
+
+**改成怎么做**：把"必问状态迁移"作为 V2 §五 协议的第三条硬约定（与"调用前对话预览"、"返回 `view_url + summary_for_ai`" 并列），三层落地：
+
+1. **Schema 层**（`server/mcp/schemas.py`）：
+   - `CreateFileIn.status_change` / `StatusChangeIn` 加 `description`，把字段含义、迁移规则表、"调用前必问用户"协议直接写进去
+   - 新增 `AvailableTransition`（`to / trigger_type / label`）模型
+   - `MatterSnapshot`（或 `ResolveContextOut` / `GetMatterOut`）新增 `available_transitions: list[AvailableTransition]` 字段
+2. **工具描述层**（`server/mcp/tools.py`）：`create_file` 工具的 description 加硬协议条款 ——
+   > 调用前如果当前 matter 状态存在合法迁移路径（来自 `available_transitions`），AI **必须**在对话里把"是否附加状态迁移"作为明确选项问用户，得到答复后再决定 `status_change` 字段是否传。**绝不可静默附加，也绝不可静默跳过。**
+3. **上下文返回层**（`server/mcp/tools.py`）：`resolve_context` / `get_matter` 基于 `matter_status.ALLOWED_TRANSITIONS` + `TRIGGER_TYPES_BY_TRANSITION` 计算并填充 `available_transitions`；`build_user_facing_summary` 末尾附一句"当前可触发迁移：xxx"，让普通用户从 AI 开场白里就能看到选项。
+
+**影响范围**：
+
+- `server/mcp/schemas.py`：新增 `AvailableTransition`；加 description；`MatterSnapshot`（或 `ResolveContextOut`/`GetMatterOut`）加字段
+- `server/mcp/tools.py`：`build_user_facing_summary`、`resolve_context` / `get_matter` 的返回组装；`create_file` 工具 description
+- **不动 backend**（`matter_status.py` 已有所需常量）
+- **不动 web**（这是 MCP 协议层约定，跟 web 端发布路径无关——web 有自己的状态切换 UI）
+
 ---
 
 ## 文件结构
@@ -1215,15 +1243,26 @@ def tool_get_matter(payload: dict, client: MatterApiClient) -> dict:
 - [ ] **Step 2：写 tool_read_files**
 
 ```python
+MAX_FILES_PER_READ = 5
+MAX_TOTAL_CHARS_PER_READ = 50_000
+
+
 def tool_read_files(payload: dict, client: MatterApiClient) -> dict:
     input_ = ReadFilesIn.model_validate(payload)
     if not input_.paths:
         raise ToolError(400, "paths must not be empty")
+    if len(input_.paths) > MAX_FILES_PER_READ:
+        raise ToolError(
+            400,
+            f"too_many_files: requested {len(input_.paths)}, max is {MAX_FILES_PER_READ}. "
+            f"Call again in batches.",
+        )
     data = client.get_matter(input_.matter_id)
     timeline = data.get("timeline") or []
     by_path = {t.get("file"): t for t in timeline}
 
     results: list[FileContent] = []
+    total_chars = 0
     for p in input_.paths:
         item = by_path.get(p)
         if item is None:
@@ -1233,6 +1272,13 @@ def tool_read_files(payload: dict, client: MatterApiClient) -> dict:
         if len(body) > 20000:
             body = body[:20000]
             truncated = True
+        total_chars += len(body)
+        if total_chars > MAX_TOTAL_CHARS_PER_READ:
+            raise ToolError(
+                400,
+                f"body_too_large: total chars would exceed {MAX_TOTAL_CHARS_PER_READ}. "
+                f"Pick fewer / smaller files, or request one at a time.",
+            )
         results.append(FileContent(
             file_path=p,
             type=item.get("type", ""),
@@ -1290,6 +1336,36 @@ def test_read_files_rejects_unknown_path():
     with pytest.raises(ToolError) as ei:
         tool_read_files({"matter_id": "a", "paths": ["xxx.md"]}, client)
     assert ei.value.status == 404
+
+
+def test_read_files_rejects_too_many_files():
+    client = MagicMock(spec=MatterApiClient)
+    with pytest.raises(ToolError) as ei:
+        tool_read_files(
+            {"matter_id": "a", "paths": [f"{i}.md" for i in range(10)]},
+            client,
+        )
+    assert ei.value.status == 400
+    assert "too_many_files" in ei.value.detail
+
+
+def test_read_files_rejects_body_too_large():
+    client = MagicMock(spec=MatterApiClient)
+    # 5 files, each 15K chars (truncated to 15K since under 20K),
+    # total 75K > 50K limit
+    timeline = [
+        {"file": f"{i}.md", "type": "think", "summary": "",
+         "body": "x" * 15000, "created_at": "", "creator": "u", "owner": "u"}
+        for i in range(5)
+    ]
+    client.get_matter.return_value = {"matter": {"id": "a"}, "timeline": timeline}
+    with pytest.raises(ToolError) as ei:
+        tool_read_files(
+            {"matter_id": "a", "paths": [f"{i}.md" for i in range(5)]},
+            client,
+        )
+    assert ei.value.status == 400
+    assert "body_too_large" in ei.value.detail
 
 
 def test_read_files_truncates_long_body():

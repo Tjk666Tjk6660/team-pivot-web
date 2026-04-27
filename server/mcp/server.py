@@ -90,12 +90,18 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
                 description=(
                     "Create a new timeline item (think/act/verify/result/insight) in "
                     "a matter. "
-                    "PROTOCOL: BEFORE calling this tool, you MUST present the draft "
+                    "PROTOCOL (1/3): BEFORE calling this tool, you MUST present the draft "
                     "content to the user in natural language in the chat and wait for "
                     "explicit approval ('ok', 'go', etc). The tool approval dialog is "
                     "the final confirmation. "
-                    "After success, relay the returned `summary_for_ai` message "
-                    "verbatim to the user."
+                    "PROTOCOL (2/3): If matter_snapshot.available_transitions (returned by "
+                    "resolve_context / get_matter) is non-empty, you MUST also ask the user "
+                    "whether to attach a status transition this time — show each option's "
+                    "label + target status, and let the user pick one or skip. Set the "
+                    "`status_change` field ONLY after the user explicitly opts in; otherwise "
+                    "leave it null. Never silently attach, never silently skip. "
+                    "PROTOCOL (3/3): After success, relay the returned `summary_for_ai` "
+                    "message verbatim to the user."
                 ),
                 inputSchema=CreateFileIn.model_json_schema(),
             ),

@@ -1,9 +1,13 @@
 /**
  * Streamable HTTP MCP endpoint (single URL, both GET + POST).
- * In dev we serve from the same origin; in prod it's behind pivot.enclaws.ai.
+ *
+ * Dev: hit the FastAPI backend directly on :8000 — the Vite dev server's
+ * SPA fallback swallows `.well-known/oauth-*` probes, which makes external
+ * MCP clients fail auth handshake. Prod is same-origin behind a real proxy.
  */
-const MCP_URL =
-  typeof window !== "undefined"
+const MCP_URL = import.meta.env.DEV
+  ? "http://127.0.0.1:8000/mcp"
+  : typeof window !== "undefined"
     ? `${window.location.origin}/mcp`
     : "https://pivot.enclaws.ai/mcp";
 

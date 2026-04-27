@@ -8,7 +8,6 @@ import { toast } from "sonner";
 import type { DocType, Judgement, MatterStatus, MentionBlock, TimelineItem } from "@/api";
 import { Button } from "@/components/ui/button";
 import { CopyForAIButton } from "@/components/CopyForAIButton";
-import { Input } from "@/components/ui/input";
 import {
   MentionField,
   emptyMention,

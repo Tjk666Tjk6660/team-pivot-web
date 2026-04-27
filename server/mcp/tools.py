@@ -4,6 +4,10 @@ import logging
 
 import httpx
 
+from server.matter_status import (
+    ALLOWED_TRANSITIONS,
+    TRIGGER_TYPES_BY_TRANSITION,
+)
 from server.mcp.context import (
     ContextUrlError,
     build_user_facing_summary,
@@ -11,6 +15,7 @@ from server.mcp.context import (
     parse_context_url,
 )
 from server.mcp.schemas import (
+    AvailableTransition,
     CreateFileIn,
     CreateFileOut,
     FileContent,
@@ -26,6 +31,44 @@ from server.mcp.schemas import (
     ResolveContextOut,
     TimelineItem,
 )
+
+
+# Human-readable labels for each (from, to) transition. Used in
+# AvailableTransition.label and in user_facing_summary so the user sees a
+# product-level prompt rather than a raw status name.
+_TRANSITION_LABELS: dict[tuple[str, str], str] = {
+    ("planning", "executing"): "开始执行",
+    ("planning", "paused"): "暂停",
+    ("executing", "paused"): "暂停",
+    ("executing", "finished"): "完成",
+    ("executing", "cancelled"): "取消",
+    ("paused", "planning"): "回到规划",
+    ("paused", "executing"): "继续执行",
+    ("finished", "reviewed"): "复盘归档",
+    ("cancelled", "reviewed"): "复盘归档",
+}
+
+
+def _compute_available_transitions(current_status: str) -> list[AvailableTransition]:
+    out: list[AvailableTransition] = []
+    for to in ALLOWED_TRANSITIONS.get(current_status, frozenset()):
+        for trigger in sorted(
+            TRIGGER_TYPES_BY_TRANSITION.get((current_status, to), frozenset())
+        ):
+            label = _TRANSITION_LABELS.get((current_status, to), to)
+            out.append(AvailableTransition(to=to, trigger_type=trigger, label=label))
+    out.sort(key=lambda x: (x.to, x.trigger_type))
+    return out
+
+
+def _format_transitions_hint(transitions: list[AvailableTransition]) -> str:
+    if not transitions:
+        return ""
+    parts = [
+        f"{t.label}（→{t.to}，需 type={t.trigger_type}）"
+        for t in transitions
+    ]
+    return f" 当前可触发的状态迁移：{'、'.join(parts)}。要随这次发布一起切换状态吗？"
 
 log = logging.getLogger(__name__)
 
@@ -54,12 +97,16 @@ class MatterApiClient:
     def __init__(self, base_url: str, token: str):
         self._base = base_url.rstrip("/")
         self._headers = {"Authorization": f"Bearer {token}"}
+        # MCP → Matter API is always a loopback / intranet call. Bypass the
+        # system proxy (HTTP_PROXY / HTTPS_PROXY / Windows proxy) so that
+        # client-side proxies like Clash don't intercept 127.0.0.1 traffic
+        # and return 502. See docs/designs — Phase 6 E2E hit the same issue.
+        self._client = httpx.Client(trust_env=False, timeout=10.0)
 
     def get_matter(self, matter_id: str) -> dict:
-        resp = httpx.get(
+        resp = self._client.get(
             f"{self._base}/api/matters/{matter_id}",
             headers=self._headers,
-            timeout=10.0,
         )
         if resp.status_code == 404:
             raise ToolError(404, "matter_not_found")
@@ -83,11 +130,10 @@ class MatterApiClient:
             params["owner"] = owner
         if q:
             params["q"] = q
-        resp = httpx.get(
+        resp = self._client.get(
             f"{self._base}/api/matters",
             headers=self._headers,
             params=params,
-            timeout=10.0,
         )
         if resp.status_code == 401:
             raise ToolError(401, "invalid_token")
@@ -102,7 +148,7 @@ class MatterApiClient:
         will contain a `__validation_errors__` key with the error payload.
         Otherwise it's the normal success response with `item` and `matter` keys.
         """
-        resp = httpx.post(
+        resp = self._client.post(
             f"{self._base}/api/matters/{matter_id}/files",
             headers={**self._headers, "Content-Type": "application/json"},
             json=body,
@@ -144,7 +190,11 @@ def tool_resolve_context(
         if not found:
             raise ToolError(404, "file_not_in_matter")
 
+    current_status = matter.get("current_status", "unknown")
+    transitions = _compute_available_transitions(current_status)
+
     summary_text = build_user_facing_summary(matter, file_path, timeline)
+    summary_text += _format_transitions_hint(transitions)
 
     result = ResolveContextOut(
         matter_id=matter_id,
@@ -152,8 +202,9 @@ def tool_resolve_context(
         matter_snapshot=MatterSnapshot(
             id=matter.get("id", matter_id),
             title=matter.get("title", ""),
-            current_status=matter.get("current_status", "unknown"),
+            current_status=current_status,
             updated_at=matter.get("updated_at", ""),
+            available_transitions=transitions,
         ),
         user_facing_summary=summary_text,
     )
@@ -198,12 +249,14 @@ def tool_get_matter(payload: dict, client: MatterApiClient) -> dict:
         clean = {k: v for k, v in item.items() if k != "body"}
         timeline.append(TimelineItem.model_validate(clean).model_dump(mode="json"))
 
+    current_status = matter.get("current_status", "unknown")
     return GetMatterOut(
         matter=MatterSnapshot(
             id=matter.get("id", input_.matter_id),
             title=matter.get("title", ""),
-            current_status=matter.get("current_status", "unknown"),
+            current_status=current_status,
             updated_at=matter.get("updated_at", ""),
+            available_transitions=_compute_available_transitions(current_status),
         ),
         timeline=timeline,
     ).model_dump(mode="json")
@@ -297,11 +350,18 @@ def tool_create_file(
     view_url = build_view_url(web_base_url, input_.matter_id, file_path)
 
     title = matter.get("title") or input_.matter_id
-    file_count = matter.get("file_count") or "?"
-    summary_ai = (
-        f"✅ 已提交。这是 matter「{title}」的第 {file_count} 篇。"
-        f"点这里查看：{view_url}"
-    )
+    file_count = matter.get("file_count")
+    if isinstance(file_count, int) and file_count > 0:
+        summary_ai = (
+            f"✅ 已提交。这是 matter「{title}」的第 {file_count} 篇。"
+            f"点这里查看：{view_url}"
+        )
+    else:
+        # POST /api/matters/{id}/files doesn't include file_count; fall back
+        # to a version that doesn't pretend to know the sequence number.
+        summary_ai = (
+            f"✅ 已提交到 matter「{title}」。点这里查看：{view_url}"
+        )
 
     return CreateFileOut(
         ok=True,

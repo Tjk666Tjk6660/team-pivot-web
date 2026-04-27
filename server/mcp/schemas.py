@@ -9,11 +9,25 @@ class ResolveContextIn(BaseModel):
     url: str = Field(description="A Pivot URL copied from the Web, e.g. https://pivot.enclaws.ai/m/auth-redesign/f/005_xxx.md")
 
 
+class AvailableTransition(BaseModel):
+    to: str = Field(description="Target status this matter can transition to from its current status.")
+    trigger_type: str = Field(description="The file type that must be used to trigger this transition (one of: act, think, result, insight).")
+    label: str = Field(description="Short human-readable label of this transition (e.g., '开始执行', '暂停', '完成', '取消', '复盘归档'). AI MAY show this verbatim when asking the user whether to attach a status_change.")
+
+
 class MatterSnapshot(BaseModel):
     id: str
     title: str
     current_status: str
     updated_at: str
+    available_transitions: list[AvailableTransition] = Field(
+        default_factory=list,
+        description=(
+            "Legal status transitions from current_status, each with the file type required to trigger it. "
+            "BEFORE calling create_file, if this list is non-empty, the AI MUST ask the user whether to "
+            "attach a status_change. Never silently attach, never silently skip — let the user decide."
+        ),
+    )
 
 
 class ResolveContextOut(BaseModel):
@@ -100,8 +114,16 @@ class VerificationIn(BaseModel):
 
 
 class StatusChangeIn(BaseModel):
-    from_: str = Field(alias="from")
-    to: str
+    from_: str = Field(
+        alias="from",
+        description="Must equal matter.current_status; otherwise backend returns 422 status_change_from_mismatch.",
+    )
+    to: str = Field(
+        description=(
+            "Target status. Must equal one of matter_snapshot.available_transitions[].to, "
+            "AND the file's `type` must equal that transition's required trigger_type."
+        ),
+    )
 
     model_config = {"populate_by_name": True}
 
@@ -116,7 +138,17 @@ class CreateFileIn(BaseModel):
     owner: str | None = None
     verifications: list[VerificationIn] | None = None
     outcome: str | None = None  # finished | cancelled (result only)
-    status_change: StatusChangeIn | None = None
+    status_change: StatusChangeIn | None = Field(
+        default=None,
+        description=(
+            "OPTIONAL status transition to attach with this file. "
+            "PROTOCOL: BEFORE calling create_file, if matter_snapshot.available_transitions is non-empty, "
+            "the AI MUST explicitly ask the user whether to attach a status transition — show the user "
+            "each option's label + target status, and let the user choose. "
+            "Set this field ONLY after the user explicitly opts in; otherwise leave it null. "
+            "Never silently attach, never silently skip."
+        ),
+    )
 
 
 class CreateFileOut(BaseModel):
