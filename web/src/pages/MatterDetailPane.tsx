@@ -47,7 +47,6 @@ import {
 } from "@/components/ui/dialog";
 import {
   shortFile,
-  STATUS_DESC,
   TYPE_VISUAL,
 } from "@/components/matter/timeline-config";
 import { HomeWelcomePane } from "@/pages/HomeWelcomePane";
@@ -432,7 +431,6 @@ export function MatterDetailPane() {
   }
 
   const { matter, timeline } = data;
-  const allowed = STATUS_DESC[matter.current_status];
   const canGenerateResult = matter.current_status === "executing";
   const canGenerateInsight =
     matter.current_status === "finished" ||
@@ -838,13 +836,6 @@ export function MatterDetailPane() {
                 )}
               </div>
             </div>
-
-            <div className="mt-3 rounded-[var(--r-sm)] bg-[var(--surface-alt)] px-3 py-2 text-xs text-[var(--text-soft)]">
-              <span className="font-semibold text-[var(--text)]">
-                状态语义：
-              </span>
-              {allowed}
-            </div>
           </header>
 
           {/* ==== 时间轴 ==== */}
@@ -854,7 +845,7 @@ export function MatterDetailPane() {
                 时间轴 · {timeline.length}
               </h2>
               <span className="text-[11px] text-[var(--text-mute)]">
-                按 created_at 升序 · 点圆点跳转到文件卡片
+                按时间升序 · 点节点跳到对应卡片
               </span>
             </div>
             <TimelineStrip
