@@ -100,11 +100,6 @@ export function FileCard({
           <span>
             作者 <span className="font-medium text-slate-700">{item.creator}</span>
           </span>
-          {item.creator !== item.owner && (
-            <span>
-              · 执行 <span className="font-medium text-slate-700">{item.owner}</span>
-            </span>
-          )}
           <span>·</span>
           <span title={formatFullDateTime(item.created_at)}>{relativeTime(item.created_at)}</span>
         </div>
