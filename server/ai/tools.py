@@ -68,7 +68,7 @@ class AITools:
                 "function": {
                     "name": "list_matters",
                     "description": (
-                        "列出 workspace 下所有 matter（事项）。无入参。"
+                        "列出 workspace 下所有 matter（讨论）。无入参。"
                         "每条返回 matter_id / title / current_status / updated_at,"
                         "按 updated_at 降序排列。"
                         "用于跨 matter 汇总场景（如『近期都讨论了什么』『X / Y / Z 现在啥状态』）"
@@ -129,7 +129,7 @@ class AITools:
                 "function": {
                     "name": "read_matter_index",
                     "description": (
-                        "读取某个 matter（事项）的 index YAML 全文。"
+                        "读取某个 matter（讨论）的 index YAML 全文。"
                         "matter index 包含 matter 元信息（status / owner）和"
                         "时间线（按时间顺序排列的全部文件 + summary + 类型 + 状态变更等）,"
                         "是了解 matter 全貌的最佳入口。"

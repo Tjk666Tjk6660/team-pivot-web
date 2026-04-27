@@ -366,7 +366,7 @@ export function CreateFileForm({
       )}
 
       {isResult && (
-        <FieldRow label="outcome" required hint="事项最终客观结果；发布后 executing → outcome">
+        <FieldRow label="outcome" required hint="讨论最终客观结果；发布后 executing → outcome">
           <div className="flex gap-5 text-sm">
             <label className="flex items-center gap-1.5">
               <input
@@ -532,14 +532,14 @@ export function CreateFileForm({
 
       {reviewedTransition && (
         <div className="rounded-md border border-[color-mix(in_srgb,var(--danger-500)_24%,var(--line))] bg-[color-mix(in_srgb,var(--danger-500)_10%,var(--surface))] px-3 py-2 text-xs text-[var(--danger-600)]">
-          ⚠ 这条 insight 提交后会推进事项到 <span className="font-mono">reviewed</span>
+          ⚠ 这条 insight 提交后会推进讨论到 <span className="font-mono">reviewed</span>
           （{matterStatus} → reviewed）。归档后不再允许新增任何文件，操作不可撤销。
         </div>
       )}
 
       {isResult && (
         <div className="rounded-md border border-[color-mix(in_srgb,var(--danger-500)_24%,var(--line))] bg-[color-mix(in_srgb,var(--danger-500)_10%,var(--surface))] px-3 py-2 text-xs text-[var(--danger-600)]">
-          ⚠ 这条 result 提交后会收口事项
+          ⚠ 这条 result 提交后会收口讨论
           （<span className="font-mono">executing</span> → <span className="font-mono">{form.outcome}</span>）。
           收口后不再允许新增 act / verify / 执行性 think，只剩 insight 可追加，操作不可撤销。
         </div>

@@ -70,7 +70,7 @@ export function ResultConfirmDialog({
         {phase === "confirm" ? (
           <>
             <DialogHeader>
-              <DialogTitle>⚠ 生成 Result 是事项正式收口</DialogTitle>
+              <DialogTitle>⚠ 生成 Result 是讨论正式收口</DialogTitle>
               <DialogDescription className="text-xs">
                 发布 Result 后：
               </DialogDescription>
@@ -138,7 +138,7 @@ export function ResultConfirmDialog({
                 <Input
                   value={summary}
                   onChange={(e) => setSummary(e.target.value)}
-                  placeholder="写下事项的最终判断"
+                  placeholder="写下讨论的最终判断"
                 />
               </div>
 

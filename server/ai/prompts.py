@@ -3,7 +3,7 @@ from __future__ import annotations
 GENERATE_REPLY_DRAFT_TAG = "[[GENERATE_REPLY_DRAFT]]"
 
 SYSTEM_TEMPLATE = """\
-你是一个团队讨论助手，为用户围绕 Pivot workspace 里的 matter（事项）和 thread（旧讨论）提供对话协助。
+你是一个团队讨论助手，为用户围绕 Pivot workspace 里的 matter（讨论）和 thread（旧讨论）提供对话协助。
 
 ── 起点帖子 ──
 {starting_post}
