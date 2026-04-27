@@ -602,18 +602,60 @@ def test_notifier_is_called_on_append_and_status_change(db, users, tmp_path):
     status_change must trigger notify_status_change."""
     calls: list[tuple[str, dict]] = []
 
+    # Mirror FeishuNotifier signatures exactly (no **kwargs sponge): if a
+    # caller passes an unexpected kwarg, the call raises TypeError under test
+    # the same way it does in production, instead of being silently swallowed.
+    # (Regression guard for the post_excerpt='' bug — was hidden because the
+    # mock used to be **kwargs.)
     class RecordingNotifier:
-        def notify_new_thread(self, **kwargs):
-            calls.append(("new_thread", kwargs))
+        def notify_new_thread(
+            self, *, category, slug, title, author_name, filename,
+            body=None, mention_open_ids=None, mention_comments=None,
+        ):
+            calls.append(("new_thread", {
+                "category": category, "slug": slug, "title": title,
+                "author_name": author_name, "filename": filename, "body": body,
+                "mention_open_ids": mention_open_ids,
+                "mention_comments": mention_comments,
+            }))
 
-        def notify_new_reply(self, **kwargs):
-            calls.append(("new_reply", kwargs))
+        def notify_new_reply(
+            self, *, category, slug, thread_title, author_name, filename,
+            body=None, mention_open_ids=None, mention_comments=None,
+        ):
+            calls.append(("new_reply", {
+                "category": category, "slug": slug, "thread_title": thread_title,
+                "author_name": author_name, "filename": filename, "body": body,
+                "mention_open_ids": mention_open_ids,
+                "mention_comments": mention_comments,
+            }))
 
-        def notify_status_change(self, **kwargs):
-            calls.append(("status_change", kwargs))
+        def notify_status_change(
+            self, *, category, slug, thread_title, from_state, to_state,
+            author_name, reason,
+            trigger_type=None, trigger_summary=None, trigger_filename=None,
+        ):
+            calls.append(("status_change", {
+                "category": category, "slug": slug,
+                "thread_title": thread_title, "from_state": from_state,
+                "to_state": to_state, "author_name": author_name,
+                "reason": reason, "trigger_type": trigger_type,
+                "trigger_summary": trigger_summary,
+                "trigger_filename": trigger_filename,
+            }))
 
-        def notify_standalone_mention(self, **kwargs):
-            calls.append(("standalone_mention", kwargs))
+        def notify_standalone_mention(
+            self, *, category, slug, thread_title, target_filename,
+            author_name, mention_open_ids, mention_comments,
+        ):
+            calls.append(("standalone_mention", {
+                "category": category, "slug": slug,
+                "thread_title": thread_title,
+                "target_filename": target_filename,
+                "author_name": author_name,
+                "mention_open_ids": mention_open_ids,
+                "mention_comments": mention_comments,
+            }))
 
     workspace = _WorkspaceStub(tmp_path)
     users.upsert_from_feishu(open_id="ou_1", union_id=None, name="邓柯", avatar_url="")

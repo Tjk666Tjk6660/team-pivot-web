@@ -615,7 +615,6 @@ def publish_matter_comment(
             author_name=user.name,
             mention_open_ids=list(mentions),
             mention_comments=body,
-            post_excerpt="",
         )
 
     return {"matter_id": matter_id, "target_file": target_file, "at": now}
