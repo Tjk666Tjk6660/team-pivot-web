@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Pivot · 状态与文档类型流程</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root {
+    --bg: #fafafa;
+    --surface: #ffffff;
+    --line: #e6e6ea;
+    --line-soft: #f0f0f3;
+    --text: #1f2328;
+    --text-soft: #555;
+    --text-mute: #888;
+
+    --planning: #3b82f6;
+    --executing: #10b981;
+    --paused: #f59e0b;
+    --finished: #6366f1;
+    --cancelled: #94a3b8;
+    --reviewed: #64748b;
+
+    --think: #3b82f6;
+    --act: #10b981;
+    --verify: #8b5cf6;
+    --result: #ef4444;
+    --insight: #eab308;
+
+    --ok-bg: #ecfdf5;
+    --ok-fg: #065f46;
+    --no-bg: #fef2f2;
+    --no-fg: #b91c1c;
+    --warn-bg: #fffbeb;
+    --warn-fg: #92400e;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.65 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    padding: 32px 16px 64px;
+  }
+  main {
+    max-width: 1080px;
+    margin: 0 auto;
+  }
+  header {
+    margin-bottom: 32px;
+  }
+  h1 {
+    margin: 0 0 8px;
+    font-size: 26px;
+    letter-spacing: -0.01em;
+  }
+  header p {
+    color: var(--text-soft);
+    margin: 0;
+  }
+  section {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 22px 24px;
+    margin-top: 20px;
+  }
+  h2 {
+    margin: 0 0 12px;
+    font-size: 17px;
+    font-weight: 600;
+  }
+  h2 .num {
+    color: var(--text-mute);
+    font-weight: 400;
+    margin-right: 6px;
+    font-size: 13px;
+  }
+  p { margin: 0 0 8px; color: var(--text-soft); }
+
+  /* ---- state machine ---- */
+  .sm-wrap {
+    overflow-x: auto;
+    margin: 12px -8px 4px;
+    padding: 0 8px;
+  }
+  .sm {
+    min-width: 720px;
+    width: 100%;
+    height: 360px;
+    display: block;
+  }
+  .state {
+    cursor: default;
+  }
+  .state rect {
+    fill: var(--surface);
+    stroke-width: 2;
+  }
+  .state text {
+    font: 600 13px sans-serif;
+    fill: var(--text);
+    text-anchor: middle;
+    dominant-baseline: middle;
+  }
+  .state .desc {
+    font: 11px sans-serif;
+    fill: var(--text-mute);
+    font-weight: 400;
+  }
+  .state.planning rect { stroke: var(--planning); }
+  .state.executing rect { stroke: var(--executing); }
+  .state.paused rect { stroke: var(--paused); }
+  .state.finished rect { stroke: var(--finished); }
+  .state.cancelled rect { stroke: var(--cancelled); }
+  .state.reviewed rect { stroke: var(--reviewed); }
+  .arrow { stroke: #aab; stroke-width: 1.5; fill: none; marker-end: url(#tri); }
+  .arrow.dashed { stroke-dasharray: 4 3; }
+  .arrow.self { stroke-dasharray: 2 3; opacity: 0.65; stroke-width: 1.3; }
+  .arrow.via-think { stroke: var(--think); }
+  .arrow.via-result { stroke: var(--result); }
+  .arrow.via-insight { stroke: var(--insight); }
+  .arrow.via-any { stroke: var(--executing); }
+  .arrow-label {
+    font: 600 11px sans-serif;
+    fill: var(--text);
+    text-anchor: middle;
+    paint-order: stroke;
+    stroke: var(--surface);
+    stroke-width: 4;
+  }
+  .arrow-label.self {
+    font-size: 10px;
+    fill: var(--text-mute);
+    font-weight: 500;
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-soft);
+  }
+  .legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .legend i {
+    display: inline-block;
+    width: 18px;
+    height: 0;
+    border-top: 2px solid;
+  }
+  .legend i.dashed { border-top-style: dashed; }
+
+  /* ---- doc type cards ---- */
+  .types {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-top: 8px;
+  }
+  .type {
+    border: 1px solid var(--line);
+    border-left-width: 5px;
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: var(--surface);
+  }
+  .type.think    { border-left-color: var(--think); }
+  .type.act      { border-left-color: var(--act); }
+  .type.verify   { border-left-color: var(--verify); }
+  .type.result   { border-left-color: var(--result); }
+  .type.insight  { border-left-color: var(--insight); }
+  .type h3 {
+    margin: 0 0 4px;
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .type h3 .role {
+    margin-left: 6px;
+    font-weight: 400;
+    text-transform: none;
+    color: var(--text-mute);
+    font-size: 12px;
+    letter-spacing: 0;
+  }
+  .type p {
+    margin: 0;
+    color: var(--text-soft);
+    font-size: 13px;
+  }
+
+  /* ---- matrix ---- */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 8px;
+    font-size: 13px;
+  }
+  th, td {
+    border: 1px solid var(--line);
+    padding: 8px 10px;
+    text-align: center;
+  }
+  th {
+    background: var(--bg);
+    font-weight: 600;
+  }
+  th.row, td.row {
+    text-align: left;
+    font-weight: 600;
+  }
+  td.ok    { background: var(--ok-bg);   color: var(--ok-fg); }
+  td.no    { background: var(--no-bg);   color: var(--no-fg); }
+  td.cond  { background: var(--warn-bg); color: var(--warn-fg); }
+  td.note  { background: var(--bg); color: var(--text-mute); font-size: 12px; text-align: left; }
+
+  .pill {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #fff;
+    margin-right: 4px;
+    vertical-align: middle;
+  }
+  .pill.think    { background: var(--think); }
+  .pill.act      { background: var(--act); }
+  .pill.verify   { background: var(--verify); }
+  .pill.result   { background: var(--result); }
+  .pill.insight  { background: var(--insight); color: #543b00; }
+
+  /* ---- transition rules ---- */
+  .trans {
+    list-style: none;
+    padding: 0;
+    margin: 8px 0 0;
+  }
+  .trans li {
+    padding: 9px 12px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    margin-bottom: 6px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .trans .from, .trans .to {
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    color: #fff;
+    font-size: 12px;
+  }
+  .trans .arr { color: var(--text-mute); }
+  .trans .by { color: var(--text-soft); margin-left: 6px; }
+  .from.planning, .to.planning   { background: var(--planning); }
+  .from.executing, .to.executing { background: var(--executing); }
+  .from.paused, .to.paused       { background: var(--paused); }
+  .from.finished, .to.finished   { background: var(--finished); }
+  .from.cancelled, .to.cancelled { background: var(--cancelled); }
+  .from.reviewed, .to.reviewed   { background: var(--reviewed); }
+
+  /* ---- ops ---- */
+  .ops {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 12px;
+    margin-top: 8px;
+  }
+  .op {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px 14px;
+    background: var(--surface);
+  }
+  .op h3 {
+    margin: 0 0 6px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .op p { margin: 0 0 6px; font-size: 13px; color: var(--text-soft); }
+  .op ul { margin: 0; padding-left: 18px; font-size: 13px; color: var(--text-soft); }
+  .op code {
+    background: var(--line-soft);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 12px;
+  }
+
+  footer {
+    margin-top: 32px;
+    color: var(--text-mute);
+    font-size: 12px;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Pivot · 状态与文档类型流程</h1>
+    <p>matter 怎么从想法走到收口，每一步用什么类型的文档推进。基于 <code>AI-docs/pivot-product.md</code>。</p>
+  </header>
+
+  <!-- ====== 1. 状态机 ====== -->
+  <section>
+    <h2><span class="num">1</span>matter 状态机</h2>
+    <p>一件事从被提出到正式收口要走过的 6 个状态。状态机回答"这件事现在推进到哪儿"，不回答"用什么文档推进"。</p>
+    <p>实箭头是状态迁移；虚线 ⟲ 是<strong>停留</strong>——比如 planning 期间可以创建 act 但<strong>不一定</strong>就要进 executing；finished / cancelled 之后可以创建 insight 但<strong>不一定</strong>立刻收口为 reviewed。是否推进，由触发文件本身的 <code>status_change</code> 字段说了算。</p>
+    <div class="sm-wrap">
+      <svg class="sm" viewBox="0 0 900 400" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="tri" viewBox="0 0 10 10" refX="9" refY="5"
+                  markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#aab"/>
+          </marker>
+        </defs>
+
+        <!-- ⟲ planning 自循环:think/act/verify 可以不推进 -->
+        <path class="arrow self via-any" d="M 100 90 Q 80 30 120 30 Q 165 30 140 90"/>
+        <text class="arrow-label self" x="120" y="22">think / act / verify ⟲ 可不推进</text>
+
+        <!-- planning -->
+        <g class="state planning">
+          <rect x="40" y="90" width="160" height="64" rx="8"/>
+          <text x="120" y="116">planning</text>
+          <text x="120" y="136" class="desc">计划中：澄清目标 / 方案</text>
+        </g>
+
+        <!-- ⟲ executing 自循环:think/act/verify 持续推进 -->
+        <path class="arrow self via-any" d="M 340 90 Q 320 30 360 30 Q 405 30 380 90"/>
+        <text class="arrow-label self" x="360" y="22">think / act / verify ⟲ 持续推进</text>
+
+        <!-- executing -->
+        <g class="state executing">
+          <rect x="280" y="90" width="160" height="64" rx="8"/>
+          <text x="360" y="116">executing</text>
+          <text x="360" y="136" class="desc">执行中：行动 / 验证</text>
+        </g>
+
+        <!-- paused -->
+        <g class="state paused">
+          <rect x="160" y="280" width="160" height="64" rx="8"/>
+          <text x="240" y="306">paused</text>
+          <text x="240" y="326" class="desc">暂挂：等待恢复</text>
+        </g>
+
+        <!-- ⟲ finished 自循环:insight 可以不收口 -->
+        <path class="arrow self via-insight" d="M 580 60 Q 555 5 600 5 Q 645 5 620 60"/>
+        <text class="arrow-label self" x="600" y="20">insight ⟲ 可不收口</text>
+
+        <!-- finished -->
+        <g class="state finished">
+          <rect x="520" y="60" width="160" height="64" rx="8"/>
+          <text x="600" y="86">finished</text>
+          <text x="600" y="106" class="desc">事项完成</text>
+        </g>
+
+        <!-- cancelled -->
+        <g class="state cancelled">
+          <rect x="520" y="160" width="160" height="64" rx="8"/>
+          <text x="600" y="186">cancelled</text>
+          <text x="600" y="206" class="desc">事项取消</text>
+        </g>
+
+        <!-- ⟲ cancelled 自循环:insight 可以不收口(放下方避开 finished 自循环) -->
+        <path class="arrow self via-insight" d="M 580 224 Q 555 280 600 280 Q 645 280 620 224"/>
+        <text class="arrow-label self" x="600" y="296">insight ⟲ 可不收口</text>
+
+        <!-- reviewed -->
+        <g class="state reviewed">
+          <rect x="720" y="110" width="140" height="64" rx="8"/>
+          <text x="790" y="136">reviewed</text>
+          <text x="790" y="156" class="desc">已复盘收口</text>
+        </g>
+
+        <!-- ============ 状态间迁移箭头 ============ -->
+        <!-- planning -> executing -->
+        <path class="arrow via-any" d="M 200 122 L 280 122"/>
+        <text class="arrow-label" x="240" y="114">act</text>
+
+        <!-- planning <-> paused -->
+        <path class="arrow via-think" d="M 130 154 Q 130 240 195 280"/>
+        <text class="arrow-label" x="120" y="220">think</text>
+        <path class="arrow via-think dashed" d="M 200 300 Q 165 200 110 154"/>
+
+        <!-- executing <-> paused -->
+        <path class="arrow via-think" d="M 320 154 Q 290 240 290 280"/>
+        <text class="arrow-label" x="295" y="225">think</text>
+        <path class="arrow via-think dashed" d="M 310 300 Q 350 220 350 154"/>
+
+        <!-- executing -> finished -->
+        <path class="arrow via-result" d="M 440 105 L 520 88"/>
+        <text class="arrow-label" x="475" y="88">result</text>
+
+        <!-- executing -> cancelled -->
+        <path class="arrow via-result" d="M 440 138 L 520 178"/>
+        <text class="arrow-label" x="475" y="170">result</text>
+
+        <!-- finished -> reviewed -->
+        <path class="arrow via-insight" d="M 680 100 Q 720 105 720 130"/>
+        <text class="arrow-label" x="710" y="105">insight</text>
+
+        <!-- cancelled -> reviewed -->
+        <path class="arrow via-insight" d="M 680 180 Q 720 175 725 150"/>
+        <text class="arrow-label" x="710" y="180">insight</text>
+      </svg>
+    </div>
+    <div class="legend">
+      <span><i style="border-color:var(--think)"></i>think 触发</span>
+      <span><i style="border-color:var(--executing)"></i>act 触发</span>
+      <span><i style="border-color:var(--result)"></i>result 触发</span>
+      <span><i style="border-color:var(--insight)"></i>insight 触发</span>
+      <span><i class="dashed" style="border-color:#aab"></i>恢复 / 反向</span>
+      <span><i style="border-top:1.5px dotted #888;opacity:.7"></i>⟲ 自循环（建文档但不推进状态）</span>
+    </div>
+  </section>
+
+  <!-- ====== 2. 文档类型 ====== -->
+  <section>
+    <h2><span class="num">2</span>文档类型</h2>
+    <p>5 种类型，回答"这份文档承担什么作用"。跟状态机正交，状态不会因为新增某类文档而自动改变。</p>
+    <div class="types">
+      <div class="type think">
+        <h3>think <span class="role">分析</span></h3>
+        <p>承载分析、澄清、方案推演和取舍讨论。也用于触发 paused 与 paused → 恢复。</p>
+      </div>
+      <div class="type act">
+        <h3>act <span class="role">行动</span></h3>
+        <p>承载行动方案、执行记录、任务拆解。creator 和 owner 可不同（小组长创建、组员负责）。</p>
+      </div>
+      <div class="type verify">
+        <h3>verify <span class="role">验证</span></h3>
+        <p>对一组 act 给出 passed / failed / cancelled 判断 + 简短评价，结构化字段为 <code>verifications[]</code>。</p>
+      </div>
+      <div class="type result">
+        <h3>result <span class="role">结果</span></h3>
+        <p>matter 的最终结论。一个 matter 只能有一个有效 result，<code>outcome</code> = finished / cancelled，触发状态迁移。</p>
+      </div>
+      <div class="type insight">
+        <h3>insight <span class="role">复盘</span></h3>
+        <p>事项收口后的复盘、经验、共识。只能在 finished / cancelled 状态下新增，触发 reviewed。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== 3. 允许矩阵 ====== -->
+  <section>
+    <h2><span class="num">3</span>状态 × 文档类型 允许矩阵</h2>
+    <p>每个状态下哪些文档类型可以新建。绿色允许、红色禁止、黄色有条件。</p>
+    <table>
+      <thead>
+        <tr>
+          <th class="row">状态 \ 类型</th>
+          <th><span class="pill think">think</span></th>
+          <th><span class="pill act">act</span></th>
+          <th><span class="pill verify">verify</span></th>
+          <th><span class="pill result">result</span></th>
+          <th><span class="pill insight">insight</span></th>
+          <th class="note">备注</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="row" style="color:var(--planning)">planning</td>
+          <td class="ok">允许</td>
+          <td class="ok">允许</td>
+          <td class="ok">允许</td>
+          <td class="no">禁止</td>
+          <td class="no">禁止</td>
+          <td class="note">事项还在计划阶段，暂无最终结果可言</td>
+        </tr>
+        <tr>
+          <td class="row" style="color:var(--executing)">executing</td>
+          <td class="ok">允许</td>
+          <td class="ok">允许</td>
+          <td class="ok">允许</td>
+          <td class="cond">条件</td>
+          <td class="no">禁止</td>
+          <td class="note">result 仅在准备正式结束时才允许创建</td>
+        </tr>
+        <tr>
+          <td class="row" style="color:var(--paused)">paused</td>
+          <td class="ok">允许</td>
+          <td class="no">禁止</td>
+          <td class="no">禁止</td>
+          <td class="no">禁止</td>
+          <td class="no">禁止</td>
+          <td class="note">暂挂期间只接受 think，等待恢复</td>
+        </tr>
+        <tr>
+          <td class="row" style="color:var(--finished)">finished</td>
+          <td class="no">禁止</td>
+          <td class="no">禁止</td>
+          <td class="no">禁止</td>
+          <td class="no">禁止</td>
+          <td class="ok">允许</td>
+          <td class="note">事项已完成，只允许复盘</td>
+        </tr>
+        <tr>
+          <td class="row" style="color:var(--cancelled)">cancelled</td>
+          <td class="no">禁止</td>
+          <td class="no">禁止</td>
+          <td class="no">禁止</td>
+          <td class="no">禁止</td>
+          <td class="ok">允许</td>
+          <td class="note">事项已取消，只允许复盘</td>
+        </tr>
+        <tr>
+          <td class="row" style="color:var(--reviewed)">reviewed</td>
+          <td class="no">禁止</td>
+          <td class="no">禁止</td>
+          <td class="no">禁止</td>
+          <td class="no">禁止</td>
+          <td class="no">禁止</td>
+          <td class="note">原则上不再新增任何文件</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ====== 4. 状态迁移规则 ====== -->
+  <section>
+    <h2><span class="num">4</span>状态迁移规则</h2>
+    <p>每条迁移由哪种文档触发。<code>status_change</code> 字段写在触发文件上。</p>
+    <ul class="trans">
+      <li>
+        <span class="from planning">planning</span><span class="arr">→</span><span class="to executing">executing</span>
+        <span class="by">由一篇 <span class="pill act">act</span> 触发，事项正式进入执行</span>
+      </li>
+      <li>
+        <span class="from planning">planning</span><span class="arr">→</span><span class="to paused">paused</span>
+        <span class="by">由一篇 <span class="pill think">think</span> 触发，说明为什么暂停</span>
+      </li>
+      <li>
+        <span class="from executing">executing</span><span class="arr">→</span><span class="to paused">paused</span>
+        <span class="by">由一篇 <span class="pill think">think</span> 触发，说明卡在哪里</span>
+      </li>
+      <li>
+        <span class="from paused">paused</span><span class="arr">→</span><span class="to planning">planning</span>
+        <span class="by">由一篇 <span class="pill think">think</span> 触发，说明为什么可以恢复</span>
+      </li>
+      <li>
+        <span class="from paused">paused</span><span class="arr">→</span><span class="to executing">executing</span>
+        <span class="by">由一篇 <span class="pill think">think</span> 触发，说明恢复后回到执行</span>
+      </li>
+      <li>
+        <span class="from executing">executing</span><span class="arr">→</span><span class="to finished">finished</span>
+        <span class="by">由一篇 <span class="pill result">result</span>（<code>outcome=finished</code>）触发</span>
+      </li>
+      <li>
+        <span class="from executing">executing</span><span class="arr">→</span><span class="to cancelled">cancelled</span>
+        <span class="by">由一篇 <span class="pill result">result</span>（<code>outcome=cancelled</code>）触发</span>
+      </li>
+      <li>
+        <span class="from finished">finished</span><span class="arr">→</span><span class="to reviewed">reviewed</span>
+        <span class="by">由一篇 <span class="pill insight">insight</span> 触发，整个生命周期收口</span>
+      </li>
+      <li>
+        <span class="from cancelled">cancelled</span><span class="arr">→</span><span class="to reviewed">reviewed</span>
+        <span class="by">由一篇 <span class="pill insight">insight</span> 触发</span>
+      </li>
+    </ul>
+  </section>
+
+  <!-- ====== 5. 关键操作要点 ====== -->
+  <section>
+    <h2><span class="num">5</span>关键操作要点</h2>
+    <div class="ops">
+      <div class="op">
+        <h3>新文件从已有文件长出来</h3>
+        <p>除事项第一篇外，新 think / act / verify 都从某个文件卡片发起。系统自动把当前文件写入新文件的 <code>quote</code>。</p>
+        <ul>
+          <li>第一篇允许直接创建（通常是 think，也可以是 act），无 quote</li>
+          <li>verify 内容可覆盖多个 act（通过 <code>verifications[]</code>），但入口仍挂在某个文件卡上</li>
+        </ul>
+      </div>
+
+      <div class="op">
+        <h3>creator 与 owner 分工</h3>
+        <p>所有文件都有这两个字段：<code>creator</code> 是创建者，<code>owner</code> 是责任人。</p>
+        <ul>
+          <li>think / verify / insight：默认 creator = owner</li>
+          <li>act：可以不同（小组长创建，组员负责执行）</li>
+          <li>verify.owner = 判断责任人，未必是被验证 act 的执行者</li>
+        </ul>
+      </div>
+
+      <div class="op">
+        <h3>verify 的 judgement</h3>
+        <p>每条 <code>verifications[i]</code> 必须给出三选一结果 + 简短评价：</p>
+        <ul>
+          <li><code>passed</code>：交付结果成立</li>
+          <li><code>failed</code>：当前结果不可接受</li>
+          <li><code>cancelled</code>：明确不再推进，正式记录</li>
+        </ul>
+      </div>
+
+      <div class="op">
+        <h3>result 是事项级的特例</h3>
+        <p>matter 只能有一个有效 result，对象就是 matter 本身。</p>
+        <ul>
+          <li>quote / refer 可以为空</li>
+          <li>不要求建立在某篇 verify 之上（系统不强制"先验证后结束"）</li>
+          <li>入口建议放在详情页顶部，作为页面级动作，明示这是收口操作</li>
+        </ul>
+      </div>
+
+      <div class="op">
+        <h3>暂停与恢复都用 think</h3>
+        <p>paused 不是执行结果，而是对当前局面的判断。所以触发暂停 / 恢复都用 think。</p>
+        <ul>
+          <li>暂停 think：写清为什么暂停 / 卡在哪里 / 什么条件可以恢复</li>
+          <li>恢复 think：写清为什么可以恢复 / 之前的条件如何变化 / 回到 planning 还是 executing</li>
+        </ul>
+      </div>
+
+      <div class="op">
+        <h3>正文不强约束，结构靠 index</h3>
+        <p>5 种文档类型的正文都没有强制模板，只是推荐写法。真正的硬约束在：</p>
+        <ul>
+          <li>index 中的结构化字段（<code>type / quote / verifications / outcome / status_change</code>）</li>
+          <li>当前状态下允许的文档类型</li>
+          <li>合法的 status_change 路径</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    源文档：AI-docs/pivot-product.md · 本页只是快速索引，细节以原文档为准
+  </footer>
+</main>
+</body>
+</html>
