@@ -83,6 +83,11 @@ export function NewMatter({ me }: { me: Me }) {
   // immediately demote the source. Without this guard, the very same body
   // value passing through onChange would still cost one onUserEdit call.
   const lastAIWriteRef = useRef<string | null>(null);
+  // Used to scroll the user back to the form after AI fills the body.
+  // On narrow screens the AIPane stacks below the form, so after the AI
+  // generates the draft the user otherwise stays at the AIPane section
+  // and doesn't notice the body got filled.
+  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     Promise.all([fetchMatters(), fetchDrafts()])
@@ -206,6 +211,22 @@ export function NewMatter({ me }: { me: Me }) {
       } else if (trimmed !== titleAndBodyDirty.title) {
         setAiTitleSuggestion(trimmed);
       }
+    }
+    // On narrow screens AIPane stacks below the form. Scroll the body
+    // textarea into view so the user notices the AI fill landed and can
+    // immediately review/publish. requestAnimationFrame waits one frame
+    // so the body state has flushed and the textarea has been re-rendered
+    // with the new content height.
+    if (
+      typeof window !== "undefined" &&
+      !window.matchMedia("(min-width: 768px)").matches
+    ) {
+      requestAnimationFrame(() => {
+        bodyRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+      });
     }
     return true;
   };
@@ -544,6 +565,7 @@ export function NewMatter({ me }: { me: Me }) {
                       可以让 AI 帮你起草（右侧），也可以直接在这里写。
                     </p>
                     <Textarea
+                      ref={bodyRef}
                       id="body"
                       value={body}
                       onChange={(e) => onBodyChange(e.target.value)}
