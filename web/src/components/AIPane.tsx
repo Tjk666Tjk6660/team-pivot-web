@@ -16,10 +16,12 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { useDashboard, type AIMsg } from "@/pages/Dashboard";
+import {
+  GENERATE_REPLY_DRAFT_TAG as GENERATE_TAG,
+  useDashboard,
+  type AIMsg,
+} from "@/pages/Dashboard";
 import type { AIToolUse } from "@/api";
-
-const GENERATE_TAG = "[[GENERATE_REPLY_DRAFT]]";
 
 // Rotating hints shown while AI is streaming.
 const STREAMING_HINTS = [

@@ -104,6 +104,10 @@ function emptyAIThreadState(): AIThreadState {
   };
 }
 
+// Sentinel that AIPane's "生成草稿" button prefixes onto the user message
+// to trigger the AI's <draft>-emitting branch. Mirrored in AIPane.tsx.
+export const GENERATE_REPLY_DRAFT_TAG = "[[GENERATE_REPLY_DRAFT]]";
+
 // Matches `<draft>...</draft>` with an optional `type="..."` attribute.
 // The captured type (or "think" when omitted) drives future doc-type branches.
 const DRAFT_RE = /<draft(?:\s+type="([^"]*)")?\s*>([\s\S]*?)<\/draft>/i;
@@ -519,6 +523,19 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
 
       const extracted = extractDraft(accumulated);
       let finalContent = accumulated;
+      // Quality-gate invariant: AI failure must NEVER promote body_source
+      // to "ai". onUseDraftAsReply (the only entry to applyAIDraft) is only
+      // invoked from the `extracted && extracted.type === "think"` branch
+      // below — empty / malformed / errored streams skip it entirely, so
+      // body / body_source on the consumer side stays untouched.
+      const userRequestedDraft = trimmed.startsWith(GENERATE_REPLY_DRAFT_TAG);
+      if (userRequestedDraft && !extracted) {
+        // GENERATE was triggered but the AI didn't produce a usable <draft>.
+        // Surface this explicitly so the user knows nothing was filled in.
+        toast.warning(
+          "AI 没有给出可用草稿，请补充更多上下文后再试一次",
+        );
+      }
       if (extracted) {
         if (extracted.type !== "think") {
           finalContent = extracted.rest
@@ -573,8 +590,16 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       }
     } catch (e) {
       const errText = e instanceof Error ? e.message : String(e);
+      const aborted =
+        e instanceof DOMException && e.name === "AbortError";
       if (e instanceof SessionExpiredError) {
         toast.error(errText);
+      } else if (!aborted) {
+        // Surface stream errors so the user notices — without this they would
+        // only see a small "_错误：…_" annotation in the message bubble. Caller
+        // may retry by sending the same message again; body / body_source on
+        // any consuming form stays untouched per the failure-fallback contract.
+        toast.error(`AI 调用失败：${errText}`);
       }
       setAiThreads((prev) => {
         const existing = prev[threadKey] ?? emptyAIThreadState();
