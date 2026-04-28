@@ -13,6 +13,12 @@ import {
   type TimelineItem,
   type Verification,
 } from "@/api";
+import {
+  computeAtPublish,
+  onUserEdit,
+  type BodySource,
+} from "@/lib/bodySource";
+import type { GateResult } from "@/hooks/useConfirmPublishQuality";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -47,6 +53,8 @@ type FormState = {
   actPromote: boolean;
   outcome: Outcome;
   mentions: MentionBlock;
+  body_source: BodySource;
+  body_source_snapshot?: string;
 };
 
 export type FormSnapshot = {
@@ -59,6 +67,8 @@ export type FormSnapshot = {
   status_change?: StatusChange;
   outcome?: Outcome;
   mentions?: MentionBlock;
+  body_source?: BodySource;
+  body_source_snapshot?: string;
 };
 
 function initialFormState(
@@ -95,6 +105,8 @@ function initialFormState(
     actPromote,
     outcome: initial?.outcome ?? "finished",
     mentions: initial?.mentions ?? emptyMention(),
+    body_source: initial?.body_source ?? "manual",
+    body_source_snapshot: initial?.body_source_snapshot,
   };
 }
 
@@ -111,6 +123,10 @@ export function CreateFileForm({
   onFormBlur,
   onDeleteDraft,
   initial,
+  confirmPublishQuality,
+  onSendToAI,
+  isAIBusy,
+  busyTitle,
 }: {
   context: CreateFormContext;
   matterStatus: MatterStatus;
@@ -128,6 +144,16 @@ export function CreateFileForm({
   onFormBlur?: (snapshot: FormSnapshot) => void | Promise<void>;
   onDeleteDraft?: () => void | Promise<void>;
   initial?: Partial<FormSnapshot>;
+  // Quality gate (only the parent has the dialog mounted; pass it down).
+  // think/act/verify call this; result/insight bypass it (decided in submit()).
+  confirmPublishQuality?: (args: {
+    bodySource: BodySource;
+    blockedByAIBusy: boolean;
+    busyTitle?: string;
+  }) => Promise<GateResult>;
+  onSendToAI?: (body: string) => void;
+  isAIBusy?: boolean;
+  busyTitle?: string;
 }) {
   const actFiles = useMemo(
     () => timeline.filter((t) => t.type === "act"),
@@ -227,6 +253,8 @@ export function CreateFileForm({
     status_change: computeStatusChange(),
     outcome: isResult ? form.outcome : undefined,
     mentions: form.mentions.open_ids.length > 0 ? form.mentions : undefined,
+    body_source: form.body_source,
+    body_source_snapshot: form.body_source_snapshot,
   });
 
   const handleContainerBlur = (e: React.FocusEvent<HTMLDivElement>) => {
@@ -333,6 +361,31 @@ export function CreateFileForm({
       ];
     }
 
+    // Quality gate: think / act / verify only. result + insight skip the
+    // dialog entirely (v1 scope, see design §四) — they also do NOT carry
+    // body_source into NewFileIn so the post frontmatter omits the field.
+    const qualityGated = isThink || isAct || isVerify;
+    if (qualityGated && confirmPublishQuality) {
+      const finalSource = computeAtPublish(
+        {
+          body_source: form.body_source,
+          body_source_snapshot: form.body_source_snapshot,
+        },
+        form.body,
+      );
+      const gate = await confirmPublishQuality({
+        bodySource: finalSource,
+        blockedByAIBusy: !!isAIBusy,
+        busyTitle,
+      });
+      if (gate === "cancel") return;
+      if (gate === "send_to_ai") {
+        onSendToAI?.(form.body);
+        return;
+      }
+      body.body_source = finalSource;
+    }
+
     setStage("publishing");
     try {
       const ok = await onSubmit(body);
@@ -429,7 +482,19 @@ export function CreateFileForm({
         <Textarea
           rows={4}
           value={form.body}
-          onChange={(e) => setForm((p) => ({ ...p, body: e.target.value }))}
+          onChange={(e) => {
+            const next = e.target.value;
+            setForm((p) => {
+              const nextSource = onUserEdit(
+                {
+                  body_source: p.body_source,
+                  body_source_snapshot: p.body_source_snapshot,
+                },
+                next,
+              );
+              return { ...p, body: next, ...nextSource };
+            });
+          }}
           placeholder={isAct ? "## Summary / What To Do / Notes …" : "写下详细内容 …"}
         />
       </FieldRow>

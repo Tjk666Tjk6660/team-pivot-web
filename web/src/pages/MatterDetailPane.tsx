@@ -41,6 +41,8 @@ import {
   CreateFileForm,
   type FormSnapshot,
 } from "@/components/matter/CreateFileDialog";
+import { useConfirmPublishQuality } from "@/hooks/useConfirmPublishQuality";
+import { applyAIDraft } from "@/lib/bodySource";
 import {
   Dialog,
   DialogContent,
@@ -106,6 +108,8 @@ export function MatterDetailPane() {
   const [searchParams, setSearchParams] = useSearchParams();
   const draftIdFromUrl = searchParams.get("draft");
   const { reloadLists, toggleMatterFavorite, ai } = useDashboard();
+  const { dialog: qualityDialog, confirm: confirmPublishQuality } =
+    useConfirmPublishQuality();
   const { effectiveStyle: markdownStyle } = useMarkdownStyle();
   const [data, setData] = useState<MatterDetailData | null | undefined>(
     undefined,
@@ -503,6 +507,9 @@ export function MatterDetailPane() {
     if (snap.mentions && snap.mentions.open_ids.length > 0) {
       payload.mentions = snap.mentions;
     }
+    if (snap.body_source) payload.body_source = snap.body_source;
+    if (snap.body_source_snapshot)
+      payload.body_source_snapshot = snap.body_source_snapshot;
     return payload;
   };
 
@@ -589,7 +596,10 @@ export function MatterDetailPane() {
     content: string,
     replyTo: string,
     summary?: string,
+    _aiTitle?: string,
   ): Promise<boolean> => {
+    // Reply path doesn't use the <title> hint — that's NewMatter only.
+    void _aiTitle;
     if (!matter_id) return false;
     if (!pendingCreate) {
       const status = matter.current_status;
@@ -613,10 +623,16 @@ export function MatterDetailPane() {
     // 跟着 body 一起覆盖 summary（如果 AI 这次返回了 <summary> 块）。
     // 没返回时保留旧 summary（一般也是空,fallback 到发布时的 onGenerateSummary）。
     const trimmedSummary = summary?.trim();
+    // AI <draft> reached us → the only path that promotes body_source to "ai".
+    // Snapshot the AI body so future user edits can be judged against it via
+    // computeAtPublish at submit time (one-way state machine, see design §二.2).
+    const aiState = applyAIDraft(content);
     const nextInitial: Partial<FormSnapshot> = {
       ...(pendingInitial ?? {}),
       body: content,
       ...(trimmedSummary ? { summary: trimmedSummary } : {}),
+      body_source: aiState.body_source,
+      body_source_snapshot: aiState.body_source_snapshot,
     };
     const matter_payload = buildMatterPayload(
       pendingCreate.type,
@@ -631,6 +647,8 @@ export function MatterDetailPane() {
         status_change: nextInitial.status_change,
         outcome: nextInitial.outcome,
         mentions: nextInitial.mentions,
+        body_source: aiState.body_source,
+        body_source_snapshot: aiState.body_source_snapshot,
       },
     );
     try {
@@ -686,6 +704,7 @@ export function MatterDetailPane() {
 
   return (
     <div className="relative flex h-full min-h-0">
+      {qualityDialog}
       {/* 左：主内容 */}
       <div ref={contentScrollRef} className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-5xl px-3 py-3 sm:px-5 sm:py-5">
@@ -985,6 +1004,24 @@ export function MatterDetailPane() {
                   onDeleteDraft={
                     pendingDraftId
                       ? () => setConfirmDeleteOpen(true)
+                      : undefined
+                  }
+                  confirmPublishQuality={confirmPublishQuality}
+                  onSendToAI={(b) => {
+                    ai.setInput(threadKey, b);
+                    setAiOpen(true);
+                    toast.success(
+                      "内容已填入 AI 输入框，可以继续追加说明再发送",
+                    );
+                  }}
+                  isAIBusy={
+                    !!ai.activeStream &&
+                    ai.activeStream.threadKey !== threadKey
+                  }
+                  busyTitle={
+                    ai.activeStream &&
+                    ai.activeStream.threadKey !== threadKey
+                      ? ai.activeStream.title
                       : undefined
                   }
                 />
