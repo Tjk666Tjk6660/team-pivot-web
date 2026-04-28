@@ -19,6 +19,12 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { OwnerPicker } from "@/components/matter/OwnerPicker";
 import { AIPane } from "@/components/AIPane";
+import {
+  MentionField,
+  emptyMention,
+  isMentionValid,
+} from "@/components/MentionField";
+import type { MentionBlock } from "@/api";
 import { formatSaveStatus, useDraftAutosave } from "@/hooks/useDraftAutosave";
 import {
   applyAIDraft,
@@ -56,14 +62,15 @@ export function NewMatter({ me }: { me: Me }) {
   const [aiSummary, setAiSummary] = useState<string>("");
   const [owner, setOwner] = useState<string>(me.open_id);
   const [ownerDisplayName, setOwnerDisplayName] = useState<string>(me.name);
+  const [mentions, setMentions] = useState<MentionBlock>(() => emptyMention());
   const [stage, setStage] = useState<"idle" | "generating" | "submitting">("idle");
   const submitting = stage !== "idle";
   const [draftId, setDraftId] = useState<string | null>(null);
   const [draftLoaded, setDraftLoaded] = useState(false);
-  // On narrow screens AIPane is a fullscreen overlay toggled by the
-  // "AI 助手" button (mirrors the reply path UX). On md+ it's always-on as
-  // the right column, so this flag is irrelevant there.
-  const [aiOpen, setAiOpen] = useState(false);
+  // AIPane open state — default true so the assistant is visible the moment
+  // the page loads. On md+ it's the permanent right column; on narrow it's a
+  // fullscreen overlay the user can dismiss via the X.
+  const [aiOpen, setAiOpen] = useState(true);
 
   const { ai } = useDashboard();
   const { dialog: qualityDialog, confirm: confirmPublishQuality } =
@@ -135,6 +142,19 @@ export function NewMatter({ me }: { me: Me }) {
           if (typeof payload.ai_summary === "string") {
             setAiSummary(payload.ai_summary);
           }
+          const rawMentions = payload.mentions as
+            | { open_ids?: unknown; comments?: unknown }
+            | undefined;
+          if (
+            rawMentions &&
+            Array.isArray(rawMentions.open_ids) &&
+            typeof rawMentions.comments === "string"
+          ) {
+            setMentions({
+              open_ids: rawMentions.open_ids as string[],
+              comments: rawMentions.comments,
+            });
+          }
         } else if (cats.length === 0) {
           setCategoryMode("create");
         } else {
@@ -163,6 +183,7 @@ export function NewMatter({ me }: { me: Me }) {
           ? { body_source_snapshot: bodyState.body_source_snapshot }
           : {}),
         ...(aiSummary ? { ai_summary: aiSummary } : {}),
+        ...(mentions.open_ids.length > 0 ? { mentions } : {}),
       },
     }),
     enabled: draftLoaded && isDirty && stage === "idle",
@@ -170,6 +191,7 @@ export function NewMatter({ me }: { me: Me }) {
       draftLoaded, isDirty, stage,
       title, category, body, initialType, owner, ownerDisplayName,
       bodyState.body_source, bodyState.body_source_snapshot, aiSummary,
+      mentions.open_ids.length, mentions.comments,
     ],
   });
 
@@ -317,6 +339,19 @@ export function NewMatter({ me }: { me: Me }) {
           body: body.trim(),
           owner: owner || undefined,
           body_source: sourceForBackend,
+          // Match CreateFileDialog's encoding: matter has no top-level
+          // mention concept, so the @-mentioned recipients ride on the
+          // first comment alongside the user-typed sentence.
+          ...(mentions.open_ids.length > 0
+            ? {
+                comments: [
+                  {
+                    body: mentions.comments.trim(),
+                    mentions: mentions.open_ids,
+                  },
+                ],
+              }
+            : {}),
         },
       });
       if (draftId) {
@@ -335,8 +370,11 @@ export function NewMatter({ me }: { me: Me }) {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) return toast.error("title 必填");
+    if (!title.trim()) return toast.error("标题必填");
     if (!body.trim()) return toast.error("正文必填（AI 将基于此生成 summary）");
+    if (!isMentionValid(mentions)) {
+      return toast.error("圈人后必须填一句话");
+    }
 
     const finalSource = computeAtPublish(bodyState, body);
     const active = ai.activeStream;
@@ -411,7 +449,7 @@ export function NewMatter({ me }: { me: Me }) {
               )}
             </div>
             <p className="max-w-2xl text-sm leading-7 text-[var(--text-soft)]">
-              这里直接进入 matter 的起草区。点开右上角的 <span className="font-semibold">AI 助手</span> 可以让 AI 帮你起草，也可以直接手写正文；表单会自动保存草稿，不需要额外操作。
+              和右侧 AI 助手讨论后让它起草，或者直接手写。表单会自动保存草稿。
             </p>
           </div>
 
@@ -433,13 +471,13 @@ export function NewMatter({ me }: { me: Me }) {
               {/* Category */}
               <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
                 <div className="space-y-2">
-                  <div className="section-kicker">Category</div>
+                  <div className="section-kicker">种类</div>
                   <p className="text-sm leading-6 text-[var(--text-mute)]">
-                    从已有分类里选择，或者当场创建一个新的分类。
+                    选已有，或新建一个。
                   </p>
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="category">Category</Label>
+                  <Label htmlFor="category">种类</Label>
                   <select
                     id="category"
                     value={categoryMode === "create" ? NEW_CATEGORY_OPTION : category}
@@ -471,7 +509,7 @@ export function NewMatter({ me }: { me: Me }) {
                         <Input
                           value={newCategory}
                           onChange={(e) => setNewCategory(e.target.value)}
-                          placeholder="输入新的 category"
+                          placeholder="输入新种类名称"
                           maxLength={20}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") {
@@ -485,7 +523,7 @@ export function NewMatter({ me }: { me: Me }) {
                         </Button>
                       </div>
                       <p className="text-xs leading-5 text-[var(--text-mute)]">
-                        支持中文，最长 20 个字符；不能包含 <span className="font-mono">/ \ : * ? " &lt; &gt; |</span> 或换行。
+                        最长 20 字；不能含 <span className="font-mono">/ \ : * ? " &lt; &gt; |</span> 或换行。
                       </p>
                     </div>
                   )}
@@ -497,8 +535,8 @@ export function NewMatter({ me }: { me: Me }) {
               {/* Title */}
               <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
                 <div className="space-y-2">
-                  <div className="section-kicker">Title</div>
-                  <p className="text-sm leading-6 text-[var(--text-mute)]">标题决定 matter 在左侧目录里的可读性，尽量写成一个完整的主题句。</p>
+                  <div className="section-kicker">标题</div>
+                  <p className="text-sm leading-6 text-[var(--text-mute)]">写一句完整的主题句。</p>
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="title">标题</Label>
@@ -529,8 +567,7 @@ export function NewMatter({ me }: { me: Me }) {
                 <div className="space-y-2">
                   <div className="section-kicker">首篇文件</div>
                   <p className="text-sm leading-6 text-[var(--text-mute)]">
-                    适合直接写提案、背景、判断和待讨论问题，类型为 <span className="font-mono">think</span> 或{" "}
-                    <span className="font-mono">act</span>。默认 think。
+                    <span className="font-mono">think</span> 写判断 / 方案，<span className="font-mono">act</span> 推进行动。默认 think。
                   </p>
                 </div>
                 <div className="space-y-3">
@@ -585,6 +622,25 @@ export function NewMatter({ me }: { me: Me }) {
                       />
                     </div>
                   )}
+                </div>
+              </div>
+
+              <div className="editor-divider border-t" />
+
+              {/* Mentions: identical encoding to CreateFileDialog — recipients
+                  ride on the first comment along with the user-typed sentence. */}
+              <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+                <div className="space-y-2">
+                  <div className="section-kicker">圈人</div>
+                  <p className="text-sm leading-6 text-[var(--text-mute)]">
+                    可选。圈到的人会在飞书里收到通知。
+                  </p>
+                </div>
+                <div>
+                  <MentionField
+                    value={mentions}
+                    onChange={setMentions}
+                  />
                 </div>
               </div>
 
