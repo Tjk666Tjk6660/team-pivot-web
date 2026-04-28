@@ -774,6 +774,7 @@ export async function* streamAIChat(
   messages: ChatMessage[],
   reply_target: string | null,
   signal?: AbortSignal,
+  mode: "reply" | "new-matter" = "reply",
 ): AsyncGenerator<AIStreamEvent> {
   const resp = await fetch(
     `/api/ai/matters/${encodeURIComponent(matter_id)}/chat`,
@@ -781,7 +782,7 @@ export async function* streamAIChat(
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages, reply_target }),
+      body: JSON.stringify({ messages, reply_target, mode }),
       signal,
     },
   );
