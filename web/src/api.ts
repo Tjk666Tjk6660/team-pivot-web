@@ -167,6 +167,7 @@ export type InitialFileIn = {
   body?: string;
   owner?: string | null;
   comments?: { body: string; mentions?: string[] }[];
+  body_source?: "ai" | "manual";
 };
 
 export type NewMatterResponse = {
@@ -209,6 +210,7 @@ export type NewFileIn = {
   verifications?: Verification[];
   outcome?: Outcome;
   status_change?: StatusChange;
+  body_source?: "ai" | "manual";
 };
 
 export type AppendFileResponse = {
@@ -772,6 +774,7 @@ export async function* streamAIChat(
   messages: ChatMessage[],
   reply_target: string | null,
   signal?: AbortSignal,
+  mode: "reply" | "new-matter" = "reply",
 ): AsyncGenerator<AIStreamEvent> {
   const resp = await fetch(
     `/api/ai/matters/${encodeURIComponent(matter_id)}/chat`,
@@ -779,7 +782,7 @@ export async function* streamAIChat(
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages, reply_target }),
+      body: JSON.stringify({ messages, reply_target, mode }),
       signal,
     },
   );

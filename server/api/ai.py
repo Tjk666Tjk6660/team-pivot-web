@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 
-from typing import Callable
+from typing import Callable, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -15,7 +15,7 @@ from server.ai.context import (
     build_starting_post_block,
     truncate_messages,
 )
-from server.ai.prompts import build_system_prompt
+from server.ai.prompts import build_new_matter_system_prompt, build_system_prompt
 from server.ai.tools import AITools
 from server.ai_conversations import AIConversationRepo
 from server.auth.admin import require_admin
@@ -56,6 +56,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=200)
     reply_target: str | None = Field(default=None, max_length=300)
+    mode: Literal["reply", "new-matter"] = "reply"
 
 
 class AISettingsUpdate(BaseModel):
@@ -193,17 +194,20 @@ def build_router(
         min_rounds = _get_int(settings, _KEY_MIN_ROUNDS, _DEFAULT_MIN_ROUNDS)
         max_rounds = _get_int(settings, _KEY_MAX_ROUNDS, _DEFAULT_MAX_ROUNDS)
 
-        if not body.reply_target:
-            raise HTTPException(400, "缺少起点帖子（reply_target）")
-
-        try:
-            starting_block = build_starting_post_block(
-                workspace.discussions_dir, workspace.index_dir, body.reply_target
-            )
-        except ContextTooLongError as e:
-            raise HTTPException(422, str(e))
-
-        system_prompt = build_system_prompt(starting_block)
+        if body.mode == "new-matter":
+            # NewMatter mode: no matter context yet; AI helps draft the first
+            # document. reply_target is irrelevant and ignored if present.
+            system_prompt = build_new_matter_system_prompt()
+        else:
+            if not body.reply_target:
+                raise HTTPException(400, "缺少起点帖子（reply_target）")
+            try:
+                starting_block = build_starting_post_block(
+                    workspace.discussions_dir, workspace.index_dir, body.reply_target
+                )
+            except ContextTooLongError as e:
+                raise HTTPException(422, str(e))
+            system_prompt = build_system_prompt(starting_block)
         user_history = [{"role": m.role, "content": m.content} for m in body.messages]
 
         tools_handler = AITools(workspace.discussions_dir, workspace.index_dir)
