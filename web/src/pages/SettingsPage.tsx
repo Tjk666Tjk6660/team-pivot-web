@@ -10,6 +10,8 @@ import {
   type ApiTokenSummary,
 } from "@/api";
 import { Button } from "@/components/ui/button";
+import { MarkdownStyleSwitcher } from "@/components/markdown/MarkdownStyleSwitcher";
+import { useMarkdownStyle } from "@/components/markdown/MarkdownStyleProvider";
 import { Card } from "@/components/ui/card";
 import {
   Dialog,
@@ -54,11 +56,55 @@ export function SettingsPage() {
           </h1>
         </div>
       </header>
-      <main className="mx-auto max-w-3xl space-y-8 px-6 py-8">
+      <main className="mx-auto max-w-3xl space-y-7 px-6 py-8">
+        <ReadingPreferencesSection />
         <ExternalAILinkSection />
         <ApiTokensSection />
       </main>
     </div>
+  );
+}
+
+// ── Reading Preferences ─────────────────────────────────────────────────────
+
+function ReadingPreferencesSection() {
+  const { styles, effectiveStyle, userStyle, systemDefaultStyle } =
+    useMarkdownStyle();
+  const active = styles.find((style) => style.id === effectiveStyle);
+  const system = styles.find((style) => style.id === systemDefaultStyle);
+
+  return (
+    <section>
+      <SectionHeading title="阅读偏好" />
+      <Card className="rounded-[var(--r-md)] border-[var(--line)] p-0 shadow-none">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0 px-6 py-5">
+            <div className="text-[15px] font-semibold text-[var(--text)]">
+              Matter 正文 Markdown 主题
+            </div>
+            <p className="mt-1 max-w-xl text-[12.5px] leading-5 text-muted-foreground">
+              只影响 matter 文档正文的 Markdown 渲染，不影响 AI 回复、编辑器或页面整体主题。
+            </p>
+            <p className="mt-2 text-[12.5px] text-muted-foreground">
+              当前使用：
+              <span className="font-semibold text-[var(--text)]">
+                {active?.label ?? effectiveStyle}
+              </span>
+              {userStyle ? (
+                <span className="ml-2">个人默认</span>
+              ) : (
+                <span className="ml-2">
+                  跟随系统默认{system ? `（${system.label}）` : ""}
+                </span>
+              )}
+            </p>
+          </div>
+          <div className="px-6 py-5">
+            <MarkdownStyleSwitcher align="right" />
+          </div>
+        </div>
+      </Card>
+    </section>
   );
 }
 
@@ -67,15 +113,17 @@ export function SettingsPage() {
 function ExternalAILinkSection() {
   return (
     <section>
-      <h2 className="mb-3 text-sm font-semibold">外部 AI 接入</h2>
-      <Card className="p-0">
+      <SectionHeading title="外部 AI 接入" />
+      <Card className="overflow-hidden rounded-[var(--r-md)] border-[var(--line)] p-0 shadow-none">
         <Link
           to="/settings/external-ai"
-          className="flex items-center justify-between px-6 py-4 text-sm hover:bg-accent/50"
+          className="flex items-center justify-between px-6 py-4 text-sm hover:bg-[var(--surface-alt)]"
         >
           <div>
-            <div className="font-medium">连接 Claude Code / Cursor / Codex / Claude Desktop</div>
-            <p className="mt-1 text-xs text-muted-foreground">
+            <div className="text-[15px] font-semibold text-[var(--text)]">
+              连接 Claude Code / Cursor / Codex / Claude Desktop
+            </div>
+            <p className="mt-1 text-[12.5px] text-muted-foreground">
               让外部 AI 客户端通过 MCP 读写 Pivot 内容
             </p>
           </div>
@@ -116,22 +164,10 @@ function ApiTokensSection() {
 
   return (
     <section>
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-3 flex items-start justify-between gap-4">
         <div>
-          <h2
-            className="text-[20px] font-semibold"
-            style={{
-              fontFamily: "var(--font-serif)",
-              letterSpacing: "var(--letter-tight)",
-              color: "var(--text)",
-            }}
-          >
-            API Token
-          </h2>
-          <p
-            className="mt-1 text-[13px] leading-[1.6]"
-            style={{ fontFamily: "var(--font-serif)", color: "var(--text-soft)" }}
-          >
+          <SectionHeading title="API Token" className="mb-1" />
+          <p className="text-[12.5px] leading-5 text-muted-foreground">
             个人访问令牌。给脚本或 CLI 用。撤销后即刻失效。
           </p>
         </div>
@@ -149,7 +185,7 @@ function ApiTokensSection() {
           新建 Token
         </Button>
       </div>
-      <Card className="p-6">
+      <Card className="rounded-[var(--r-md)] border-[var(--line)] p-6 shadow-none">
         <p className="mb-4 text-xs text-muted-foreground">
           供 Team Pivot VS Code 插件等外部 API 客户端使用。Token 拥有当前账号的全部 API 权限（不含设置页面），请妥善保管。
         </p>
@@ -210,6 +246,22 @@ function ApiTokensSection() {
 
       <NewTokenDialog token={newToken} onClose={() => setNewToken(null)} />
     </section>
+  );
+}
+
+function SectionHeading({
+  title,
+  className = "mb-3",
+}: {
+  title: string;
+  className?: string;
+}) {
+  return (
+    <h2
+      className={`${className} text-[14px] font-semibold text-[var(--text)]`}
+    >
+      {title}
+    </h2>
   );
 }
 
