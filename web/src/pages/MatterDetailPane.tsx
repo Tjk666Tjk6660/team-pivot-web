@@ -676,6 +676,16 @@ export function MatterDetailPane() {
     }
     setPendingInitial(nextInitial);
     setAiFillToken((v) => v + 1);
+    // On narrow viewports (< xl), AIPane is a fullscreen overlay that hides
+    // the form/draft card. After a successful draft fill the user wants to
+    // see the result, so minimize the pane back to the bottom button — a
+    // tap on it reopens the chat without losing state.
+    if (
+      typeof window !== "undefined" &&
+      !window.matchMedia("(min-width: 1280px)").matches
+    ) {
+      setAiMinimized(true);
+    }
     return true;
   };
 
