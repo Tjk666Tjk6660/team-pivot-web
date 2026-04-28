@@ -91,14 +91,40 @@ export function codexCliCommand(token: string): string {
 
 
 /**
- * Claude Desktop: NOT a JSON config paste. Users must add via the UI.
- * We give them copy-pasteable URL + Token, and instructions on where to paste.
+ * Claude Desktop: paste the JSON snippet into `claude_desktop_config.json`.
+ *
+ * The in-app "Add custom connector" UI runs an OAuth client_id/secret flow
+ * that Pivot's PAT-only MCP backend cannot satisfy, so users must edit the
+ * config file directly. Bridges HTTP→stdio via `mcp-remote` (npx) so older
+ * Claude Desktop builds (stdio-only) work alongside newer ones.
  */
-export function claudeDesktopConnectionInfo(token: string): string {
-  return [`URL: ${MCP_URL}`, `Authorization: Bearer ${token}`].join("\n");
+export function claudeDesktopJsonSnippet(token: string): string {
+  return JSON.stringify(
+    {
+      mcpServers: {
+        pivot: {
+          command: "npx",
+          args: [
+            "-y",
+            "mcp-remote",
+            MCP_URL,
+            "--header",
+            `Authorization: Bearer ${token}`,
+          ],
+        },
+      },
+    },
+    null,
+    2,
+  );
 }
 
 
 export const CLAUDE_DESKTOP_UI_HINT =
-  '打开 Claude Desktop → Settings → Connectors → "Add custom connector"，' +
-  "把上面的 URL 和 Authorization header 粘进去，保存即可。";
+  "点下面按钮复制 JSON，然后：" +
+  "① 文件管理器地址栏粘 %APPDATA%\\Claude\\claude_desktop_config.json " +
+  "（macOS：~/Library/Application Support/Claude/claude_desktop_config.json）" +
+  "回车，没这个文件就新建。" +
+  "② 把复制的内容合并到文件里——已有 mcpServers 字段就把 pivot 那段并进去，没有就整段写入。" +
+  "③ 完全退出 Claude Desktop（任务栏托盘也要退出）后重开。" +
+  "需要本机装 Node.js。";

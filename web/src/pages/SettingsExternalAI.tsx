@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import {
   CLAUDE_DESKTOP_UI_HINT,
   claudeCodePrompt,
-  claudeDesktopConnectionInfo,
+  claudeDesktopJsonSnippet,
   codexCliCommand,
   cursorDeepLink,
 } from "./settings/clientConfigs";
@@ -129,13 +129,13 @@ export function SettingsExternalAI() {
             <Button
               onClick={async () =>
                 copy(
-                  claudeDesktopConnectionInfo(
+                  claudeDesktopJsonSnippet(
                     await ensureToken("Claude Desktop"),
                   ),
                 )
               }
             >
-              复制 URL + Token
+              复制 MCP 配置 JSON
             </Button>
           </Card>
         </div>
