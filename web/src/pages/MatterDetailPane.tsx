@@ -1009,6 +1009,17 @@ export function MatterDetailPane() {
                   confirmPublishQuality={confirmPublishQuality}
                   onSendToAI={(b) => {
                     ai.setInput(threadKey, b);
+                    // Seed the reply target so AIPane's Send/Generate are
+                    // not stuck at "未指定起点帖子" disabled state. Use the
+                    // draft's quote — for think/act/verify this is always
+                    // the file the user is replying to.
+                    if (pendingCreate?.quote) {
+                      ai.setReplyTarget(
+                        matter.id,
+                        threadKey,
+                        pendingCreate.quote,
+                      );
+                    }
                     setAiOpen(true);
                     toast.success(
                       "内容已填入 AI 输入框，可以继续追加说明再发送",
