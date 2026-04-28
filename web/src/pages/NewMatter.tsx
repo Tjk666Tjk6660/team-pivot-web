@@ -88,6 +88,10 @@ export function NewMatter({ me }: { me: Me }) {
   // generates the draft the user otherwise stays at the AIPane section
   // and doesn't notice the body got filled.
   const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+  // Outer scroll container on narrow screens. We reset its scrollTop after
+  // an AI fill so the user lands on the form (which is at the top), rather
+  // than relying on scrollIntoView which races React's render commit.
+  const pageScrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     Promise.all([fetchMatters(), fetchDrafts()])
@@ -212,21 +216,25 @@ export function NewMatter({ me }: { me: Me }) {
         setAiTitleSuggestion(trimmed);
       }
     }
-    // On narrow screens AIPane stacks below the form. Scroll the body
-    // textarea into view so the user notices the AI fill landed and can
-    // immediately review/publish. requestAnimationFrame waits one frame
-    // so the body state has flushed and the textarea has been re-rendered
-    // with the new content height.
+    // On narrow screens AIPane stacks below the form, so after an AI fill
+    // we want the user back at the form. Scroll the page container's
+    // scrollTop to 0 — works reliably regardless of React's render commit
+    // timing (which scrollIntoView races against).
     if (
       typeof window !== "undefined" &&
       !window.matchMedia("(min-width: 768px)").matches
     ) {
-      requestAnimationFrame(() => {
-        bodyRef.current?.scrollIntoView({
-          behavior: "smooth",
-          block: "center",
-        });
-      });
+      const target = pageScrollRef.current;
+      if (target) {
+        target.scrollTo({ top: 0, behavior: "smooth" });
+      }
+      // Briefly highlight the body so the user notices it was filled.
+      // setTimeout (not rAF) so the scroll has a moment to start before we
+      // pull focus to the textarea (some mobile browsers cancel the scroll
+      // animation on focus).
+      window.setTimeout(() => {
+        bodyRef.current?.focus({ preventScroll: true });
+      }, 350);
     }
     return true;
   };
@@ -367,7 +375,10 @@ export function NewMatter({ me }: { me: Me }) {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-y-auto md:flex-row md:overflow-hidden">
+    <div
+      ref={pageScrollRef}
+      className="flex h-full min-h-0 flex-col overflow-y-auto md:flex-row md:overflow-hidden"
+    >
       {qualityDialog}
       {/* On narrow screens the outer container is the sole scroller so the
           page reads as one continuous flow (form, then AIPane below). On md+
