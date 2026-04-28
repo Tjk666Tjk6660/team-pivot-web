@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -48,6 +48,7 @@ class InitialFileIn(BaseModel):
     body: str = Field(default="", max_length=50000)
     owner: str | None = Field(default=None, max_length=50)
     comments: list[CommentIn] | None = None
+    body_source: Literal["ai", "manual"] | None = None
 
 
 class NewMatterBody(BaseModel):
@@ -75,6 +76,7 @@ class NewFileBody(BaseModel):
     verifications: list[dict] | None = None
     outcome: str | None = Field(default=None, max_length=20)
     status_change: dict | None = None
+    body_source: Literal["ai", "manual"] | None = None
 
 
 class NewResultBody(BaseModel):
@@ -210,6 +212,8 @@ def build_router(
             "owner": body.initial_file.owner,
             "comments": _comments_to_dict(body.initial_file.comments),
         }
+        if body.initial_file.body_source is not None:
+            initial["body_source"] = body.initial_file.body_source
         _preflight_initial(initial)
         try:
             result = publish_matter_create(
@@ -381,6 +385,8 @@ def _body_to_item_preview(body: NewFileBody, *, user: User) -> dict:
         out["outcome"] = body.outcome
     if body.status_change is not None:
         out["status_change"] = dict(body.status_change)
+    if body.body_source is not None:
+        out["body_source"] = body.body_source
     return out
 
 

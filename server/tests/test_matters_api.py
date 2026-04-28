@@ -100,6 +100,79 @@ def test_create_matter_happy_path(client, event_bucket):
     assert "matter.file_appended" in topics
 
 
+def test_create_matter_writes_body_source_when_provided(client):
+    from server.posts import read_post
+
+    r = client.post("/api/matters", json={
+        "category": "Pivot",
+        "title": "AI-co Matter",
+        "initial_file": {
+            "type": "think",
+            "summary": "AI 协作产出",
+            "body": "正文",
+            "body_source": "ai",
+        },
+    })
+    assert r.status_code == 200, r.text
+
+    ws = client.workspace
+    md = next((ws.discussions_dir / "Pivot" / r.json()["matter_id"]).glob(
+        "001_dengke_think_*.md"
+    ))
+    post = read_post(md)
+    assert post.frontmatter.get("body_source") == "ai"
+
+
+def test_create_matter_omits_body_source_when_absent(client):
+    from server.posts import read_post
+
+    r = client.post("/api/matters", json={
+        "category": "Pivot",
+        "title": "Plain Matter",
+        "initial_file": {
+            "type": "think",
+            "summary": "无来源标记",
+            "body": "正文",
+        },
+    })
+    assert r.status_code == 200, r.text
+
+    ws = client.workspace
+    md = next((ws.discussions_dir / "Pivot" / r.json()["matter_id"]).glob(
+        "001_dengke_think_*.md"
+    ))
+    post = read_post(md)
+    assert "body_source" not in post.frontmatter
+
+
+def test_append_file_writes_body_source_manual(client):
+    from server.posts import read_post
+
+    r0 = client.post("/api/matters", json={
+        "category": "Pivot",
+        "title": "Append Test",
+        "initial_file": {"type": "think", "summary": "起点", "body": "起点正文"},
+    })
+    matter_id = r0.json()["matter_id"]
+    quote_file = r0.json()["file"]
+
+    r = client.post(f"/api/matters/{matter_id}/files", json={
+        "type": "think",
+        "summary": "回复",
+        "body": "手写回复",
+        "quote": quote_file,
+        "body_source": "manual",
+    })
+    assert r.status_code == 200, r.text
+
+    ws = client.workspace
+    md = next((ws.discussions_dir / "Pivot" / matter_id).glob(
+        "002_dengke_think_*.md"
+    ))
+    post = read_post(md)
+    assert post.frontmatter.get("body_source") == "manual"
+
+
 def test_create_matter_rejects_result_as_initial(client):
     r = client.post("/api/matters", json={
         "category": "Pivot",

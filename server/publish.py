@@ -387,6 +387,8 @@ def publish_matter_create(
     md_body = initial_item.get("body") or ""
     md_body = _ensure_h1(md_body, title)
     md_fm = {"type": doc_type, "author": user.pinyin, "created": now}
+    if initial_item.get("body_source") in ("ai", "manual"):
+        md_fm["body_source"] = initial_item["body_source"]
     md_path = thread_dir / filename
 
     # Resolve comments[].mentions from open_id → pinyin (or keep open_id when
@@ -534,6 +536,8 @@ def publish_matter_append(
 
     md_body = item_body.get("body") or ""
     md_fm = {"type": doc_type, "author": user.pinyin, "created": now}
+    if item_body.get("body_source") in ("ai", "manual"):
+        md_fm["body_source"] = item_body["body_source"]
     md_path = thread_dir / filename
 
     log.info(

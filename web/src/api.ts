@@ -167,6 +167,7 @@ export type InitialFileIn = {
   body?: string;
   owner?: string | null;
   comments?: { body: string; mentions?: string[] }[];
+  body_source?: "ai" | "manual";
 };
 
 export type NewMatterResponse = {
@@ -209,6 +210,7 @@ export type NewFileIn = {
   verifications?: Verification[];
   outcome?: Outcome;
   status_change?: StatusChange;
+  body_source?: "ai" | "manual";
 };
 
 export type AppendFileResponse = {
