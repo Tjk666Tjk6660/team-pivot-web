@@ -449,11 +449,11 @@ export function NewMatter({ me }: { me: Me }) {
           the form column gets its own internal scroll so it can be tall
           without pushing AIPane out of the side panel. */}
       <div className="min-h-0 flex-1 md:overflow-y-auto">
-        {/* Form fills the form-column width so the layout dynamically reflows
-            as the AIPane is opened/closed/fullscreened. The inner field grid
-            (lg:grid-cols-[220px_minmax(0,1fr)]) keeps content readable even
-            when the column is wide. */}
-        <div className="w-full space-y-4 px-3 py-4 sm:px-5 sm:py-5 md:space-y-6">
+        {/* Cap the form at max-w-5xl and center it. The cap keeps the layout
+            readable when the user closes / fullscreen-toggles AIPane on a
+            big monitor; the column is otherwise free to grow up to that
+            width. */}
+        <div className="mx-auto w-full max-w-5xl space-y-4 px-3 py-4 sm:px-5 sm:py-5 md:space-y-6">
           <Button
             asChild
             variant="ghost"
@@ -495,18 +495,21 @@ export function NewMatter({ me }: { me: Me }) {
           </div>
 
           {/* AI assistant trigger: shown when AIPane is closed on either
-              breakpoint. (When aiOpen=true the panel is visible so the
-              button is redundant.) */}
+              breakpoint. Auto-width so it doesn't stretch across the form
+              when the user closes the side panel. */}
           {!aiOpen && (
-            <Button
-              type="button"
-              variant="outline"
-              className="flex w-full items-center justify-center gap-2 rounded-[var(--r-md)]"
-              onClick={() => setAiOpen(true)}
-            >
-              <Sparkles className="h-4 w-4 text-[var(--accent)]" />
-              AI 助手 · 帮你起草
-            </Button>
+            <div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="inline-flex items-center gap-2 rounded-[var(--r-md)]"
+                onClick={() => setAiOpen(true)}
+              >
+                <Sparkles className="h-4 w-4 text-[var(--accent)]" />
+                打开 AI 助手
+              </Button>
+            </div>
           )}
 
           <Card className="paper-panel rounded-[1.25rem] border sm:rounded-[1.75rem]">
@@ -520,7 +523,9 @@ export function NewMatter({ me }: { me: Me }) {
                   </p>
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="category">种类</Label>
+                  <Label htmlFor="category" className="sr-only">
+                    种类
+                  </Label>
                   <select
                     id="category"
                     value={categoryMode === "create" ? NEW_CATEGORY_OPTION : category}
@@ -582,7 +587,9 @@ export function NewMatter({ me }: { me: Me }) {
                   <p className="text-sm leading-6 text-[var(--text-mute)]">写一句完整的主题句。</p>
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="title">标题</Label>
+                  <Label htmlFor="title" className="sr-only">
+                    标题
+                  </Label>
                   <Input
                     id="title"
                     value={title}
@@ -636,9 +643,6 @@ export function NewMatter({ me }: { me: Me }) {
                     <Label htmlFor="body">
                       正文（markdown）<span className="text-[var(--danger-500)]"> *</span>
                     </Label>
-                    <p className="text-xs text-[var(--text-mute)]">
-                      可以让 AI 帮你起草（右侧），也可以直接在这里写。
-                    </p>
                     <Textarea
                       ref={bodyRef}
                       id="body"
