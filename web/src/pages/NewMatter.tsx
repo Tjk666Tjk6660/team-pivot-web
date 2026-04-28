@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, Bot, Sparkles, X } from "lucide-react";
+import { ArrowLeft, Bot, Maximize2, Minimize2, Sparkles, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   createMatter,
@@ -24,7 +24,7 @@ import {
   emptyMention,
   isMentionValid,
 } from "@/components/MentionField";
-import type { MentionBlock } from "@/api";
+import { searchContacts, type MentionBlock } from "@/api";
 import { formatSaveStatus, useDraftAutosave } from "@/hooks/useDraftAutosave";
 import {
   applyAIDraft,
@@ -71,6 +71,13 @@ export function NewMatter({ me }: { me: Me }) {
   // the page loads. On md+ it's the permanent right column; on narrow it's a
   // fullscreen overlay the user can dismiss via the X.
   const [aiOpen, setAiOpen] = useState(true);
+  // md+ only: toggle the side panel into a fullscreen workspace. Mirrors the
+  // reply-path AIPane behavior so the chrome looks consistent.
+  const [aiFullscreen, setAiFullscreen] = useState(false);
+  // Resolved open_id → display-name map for the mention chips. MentionField
+  // mutates this in place when the user picks from the dropdown, but on
+  // draft restore we only have open_ids — fetch the names lazily.
+  const [resolvedNames, setResolvedNames] = useState<Record<string, string>>({});
 
   const { ai } = useDashboard();
   const { dialog: qualityDialog, confirm: confirmPublishQuality } =
@@ -165,6 +172,36 @@ export function NewMatter({ me }: { me: Me }) {
       .finally(() => setDraftLoaded(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Resolve newly-restored open_ids → display names so mention chips show
+  // "@李帅" instead of "@ou_737f4". Mirrors the same effect inside
+  // CreateFileForm. Per-id failures are swallowed; the chip falls back to a
+  // sliced open_id, which is acceptable.
+  useEffect(() => {
+    const missing = mentions.open_ids.filter((oid) => !(oid in resolvedNames));
+    if (missing.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const fresh: Record<string, string> = {};
+      for (const oid of missing) {
+        try {
+          const results = await searchContacts(oid);
+          const found = results.find((c) => c.open_id === oid);
+          if (found) fresh[oid] = found.name;
+        } catch {
+          /* per-id failure does not block the rest */
+        }
+      }
+      if (cancelled || Object.keys(fresh).length === 0) return;
+      setResolvedNames((prev) => ({ ...prev, ...fresh }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // resolvedNames is intentionally omitted — it's only ever extended, so
+    // including it would create a redundant re-run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mentions.open_ids]);
 
   const isDirty = title.trim().length > 0 || body.trim().length > 0;
   const { status: draftStatus } = useDraftAutosave({
@@ -453,18 +490,20 @@ export function NewMatter({ me }: { me: Me }) {
             </p>
           </div>
 
-          {/* AI assistant trigger: only on narrow screens. On md+ the AIPane
-              is permanently visible as the right column, so this button is
-              hidden to avoid duplication. */}
-          <Button
-            type="button"
-            variant="outline"
-            className="md:hidden flex w-full items-center justify-center gap-2 rounded-[var(--r-md)]"
-            onClick={() => setAiOpen(true)}
-          >
-            <Sparkles className="h-4 w-4 text-[var(--accent)]" />
-            AI 助手 · 帮你起草
-          </Button>
+          {/* AI assistant trigger: shown when AIPane is closed on either
+              breakpoint. (When aiOpen=true the panel is visible so the
+              button is redundant.) */}
+          {!aiOpen && (
+            <Button
+              type="button"
+              variant="outline"
+              className="flex w-full items-center justify-center gap-2 rounded-[var(--r-md)]"
+              onClick={() => setAiOpen(true)}
+            >
+              <Sparkles className="h-4 w-4 text-[var(--accent)]" />
+              AI 助手 · 帮你起草
+            </Button>
+          )}
 
           <Card className="paper-panel rounded-[1.25rem] border sm:rounded-[1.75rem]">
             <form onSubmit={submit} className="space-y-6 p-4 sm:p-8">
@@ -640,6 +679,7 @@ export function NewMatter({ me }: { me: Me }) {
                   <MentionField
                     value={mentions}
                     onChange={setMentions}
+                    resolvedNames={resolvedNames}
                   />
                 </div>
               </div>
@@ -662,49 +702,73 @@ export function NewMatter({ me }: { me: Me }) {
         </div>
       </div>
 
-      {/* AI assistant: fullscreen overlay on narrow screens (toggled by the
-          "AI 助手" button), persistent right column on md+. Mirrors the
-          reply path UX in MatterDetailPane. */}
-      <aside
-        className={cn(
-          "flex min-h-0 flex-col overflow-hidden bg-[var(--surface)]",
-          // Narrow: fullscreen overlay, controlled by aiOpen.
-          aiOpen ? "fixed inset-0 z-50" : "hidden",
-          // md+: ignore aiOpen, render as permanent right column.
-          "md:static md:flex md:h-full md:w-[420px] md:shrink-0 md:border-l md:border-l-[var(--line)] md:p-3 md:sm:p-4",
-        )}
-      >
-        {/* Mobile-only header with close button. md+ doesn't need it
-            because the panel is always present beside the form. */}
-        <div
-          className="flex items-center justify-between border-b border-[var(--line)] px-4 py-3 md:hidden"
+      {/* AI assistant: fullscreen overlay on narrow when aiOpen=true; on md+
+          a 420px side panel by default, fullscreen-toggleable. Header chrome
+          mirrors MatterDetailPane's reply AIPane (Bot label + fullscreen
+          toggle + close). */}
+      {aiOpen && (
+        <aside
+          className={cn(
+            "flex min-h-0 flex-col overflow-hidden bg-[var(--surface)]",
+            // Narrow: always fixed fullscreen overlay (no toggle needed).
+            "fixed inset-0 z-50",
+            // md+: choose between fullscreen overlay and side panel.
+            aiFullscreen
+              ? "md:fixed md:inset-0 md:z-50 md:w-auto"
+              : "md:static md:inset-auto md:z-auto md:w-[420px] md:shrink-0 md:border-l md:border-[var(--line)]",
+          )}
         >
-          <div className="flex items-center gap-2 text-sm font-medium text-[var(--text)]">
-            <Bot className="h-4 w-4 text-[var(--accent)]" />
-            AI 助手
+          <div className="flex items-center justify-between border-b border-[var(--line)] px-4 py-3">
+            <div className="flex items-center gap-2 text-sm font-medium text-[var(--text)]">
+              <Bot className="h-4 w-4 text-[var(--accent)]" />
+              AI 助手
+            </div>
+            <div className="flex items-center gap-1">
+              {/* Fullscreen toggle is md+ only — on narrow the panel is
+                  already fullscreen. */}
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="hidden h-8 w-8 rounded-[var(--r-sm)] text-[var(--text-mute)] hover:bg-[var(--surface-alt)] md:inline-flex"
+                onClick={() => setAiFullscreen((v) => !v)}
+                title={aiFullscreen ? "退出全屏" : "全屏"}
+              >
+                {aiFullscreen ? (
+                  <Minimize2 className="h-4 w-4" />
+                ) : (
+                  <Maximize2 className="h-4 w-4" />
+                )}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-[var(--r-sm)] text-[var(--text-mute)] hover:bg-[var(--surface-alt)]"
+                onClick={() => {
+                  setAiOpen(false);
+                  setAiFullscreen(false);
+                }}
+                title="关闭"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setAiOpen(false)}
-            className="rounded-[var(--r-sm)] p-1 text-[var(--text-mute)] hover:bg-[var(--surface-alt)] hover:text-[var(--text)]"
-            aria-label="关闭 AI 助手"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="min-h-0 flex-1 p-3 sm:p-4 md:p-0">
-          <AIPane
-            mode="new-matter"
-            matter_id={NEW_MATTER_PSEUDO_ID}
-            threadKey={threadKey}
-            threadTitle={title.trim() || "新讨论"}
-            // Treat any existing body as "draft already filled" so AIPane
-            // asks the overwrite confirm before AI replaces user content.
-            hasReplyDraft={!!body.trim()}
-            onUseDraftAsReply={handleAIDraft}
-          />
-        </div>
-      </aside>
+          <div className="min-h-0 flex-1 p-3 sm:p-4">
+            <AIPane
+              mode="new-matter"
+              matter_id={NEW_MATTER_PSEUDO_ID}
+              threadKey={threadKey}
+              threadTitle={title.trim() || "新讨论"}
+              // Treat any existing body as "draft already filled" so AIPane
+              // asks the overwrite confirm before AI replaces user content.
+              hasReplyDraft={!!body.trim()}
+              onUseDraftAsReply={handleAIDraft}
+            />
+          </div>
+        </aside>
+      )}
     </div>
   );
 }
