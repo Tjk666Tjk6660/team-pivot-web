@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Bot, Sparkles, X } from "lucide-react";
+import { cn } from "@/lib/utils";
 import {
   createMatter,
   deleteDraft,
@@ -30,7 +31,6 @@ import { newMatterThreadKey, useDashboard } from "@/pages/Dashboard";
 
 const NEW_CATEGORY_OPTION = "__new_category__";
 const CATEGORY_PATTERN = /^[^/\\:*?"<>|\t\n\r]{1,20}$/;
-const NARROW_HINT_KEY = "pivot:newmatter:hint-dismissed";
 // Special matter_id sent to /api/ai/matters/{id}/chat in new-matter mode.
 // Backend ignores it because the chat handler now branches on `mode` rather
 // than looking up the matter; we keep a stable string for log readability.
@@ -60,19 +60,10 @@ export function NewMatter({ me }: { me: Me }) {
   const submitting = stage !== "idle";
   const [draftId, setDraftId] = useState<string | null>(null);
   const [draftLoaded, setDraftLoaded] = useState(false);
-  const [showNarrowHint, setShowNarrowHint] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    return !window.localStorage.getItem(NARROW_HINT_KEY);
-  });
-
-  const dismissNarrowHint = () => {
-    setShowNarrowHint(false);
-    try {
-      window.localStorage.setItem(NARROW_HINT_KEY, "1");
-    } catch {
-      // localStorage may be disabled; the hint reappearing is harmless.
-    }
-  };
+  // On narrow screens AIPane is a fullscreen overlay toggled by the
+  // "AI 助手" button (mirrors the reply path UX). On md+ it's always-on as
+  // the right column, so this flag is irrelevant there.
+  const [aiOpen, setAiOpen] = useState(false);
 
   const { ai } = useDashboard();
   const { dialog: qualityDialog, confirm: confirmPublishQuality } =
@@ -216,25 +207,21 @@ export function NewMatter({ me }: { me: Me }) {
         setAiTitleSuggestion(trimmed);
       }
     }
-    // On narrow screens AIPane stacks below the form, so after an AI fill
-    // we want the user back at the form. Scroll the page container's
-    // scrollTop to 0 — works reliably regardless of React's render commit
-    // timing (which scrollIntoView races against).
+    // On narrow screens AIPane is a fullscreen overlay; close it after a
+    // successful fill so the user lands back on the form (mirrors how the
+    // reply path auto-minimizes its AIPane in MatterDetailPane).
     if (
       typeof window !== "undefined" &&
       !window.matchMedia("(min-width: 768px)").matches
     ) {
-      const target = pageScrollRef.current;
-      if (target) {
-        target.scrollTo({ top: 0, behavior: "smooth" });
-      }
-      // Briefly highlight the body so the user notices it was filled.
-      // setTimeout (not rAF) so the scroll has a moment to start before we
-      // pull focus to the textarea (some mobile browsers cancel the scroll
-      // animation on focus).
+      setAiOpen(false);
+      // Scroll page back to top + briefly focus the body so the user sees
+      // what AI just wrote. setTimeout > rAF — gives the overlay-close
+      // animation a moment to commit before we re-focus.
       window.setTimeout(() => {
+        pageScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
         bodyRef.current?.focus({ preventScroll: true });
-      }, 350);
+      }, 50);
     }
     return true;
   };
@@ -366,8 +353,10 @@ export function NewMatter({ me }: { me: Me }) {
     if (gate === "cancel") return;
     if (gate === "send_to_ai") {
       ai.setInput(threadKey, body);
-      // AIPane is always visible in the right column on this page; no toggle
-      // needed. On narrow screens the user may need to scroll/expand it.
+      // On narrow screens AIPane is hidden behind a button; force it open
+      // so the user can see the content was filled and continue chatting.
+      // On md+ the right column is always visible; setAiOpen is harmless.
+      setAiOpen(true);
       toast.success("内容已填入 AI 输入框，可以继续追加说明再发送");
       return;
     }
@@ -422,31 +411,22 @@ export function NewMatter({ me }: { me: Me }) {
               )}
             </div>
             <p className="max-w-2xl text-sm leading-7 text-[var(--text-soft)]">
-              这里直接进入 matter 的起草区。你可以和右侧 AI 助手讨论后让它起草，也可以直接手写正文；表单会自动保存草稿，不需要额外操作。
+              这里直接进入 matter 的起草区。点开右上角的 <span className="font-semibold">AI 助手</span> 可以让 AI 帮你起草，也可以直接手写正文；表单会自动保存草稿，不需要额外操作。
             </p>
           </div>
 
-          {showNarrowHint && (
-            <div
-              className="flex items-start justify-between gap-2 rounded-[var(--r-md)] px-3 py-2 text-xs leading-5 md:hidden"
-              style={{
-                background:
-                  "color-mix(in srgb, var(--accent) 12%, var(--surface))",
-                border: "1px solid var(--accent-soft)",
-                color: "var(--text)",
-              }}
-            >
-              <span>💬 AI 助手可以帮你起草——下滑到底部展开 AI 区域</span>
-              <button
-                type="button"
-                onClick={dismissNarrowHint}
-                className="shrink-0 text-[var(--text-mute)] hover:text-[var(--text)]"
-                aria-label="关闭提示"
-              >
-                ×
-              </button>
-            </div>
-          )}
+          {/* AI assistant trigger: only on narrow screens. On md+ the AIPane
+              is permanently visible as the right column, so this button is
+              hidden to avoid duplication. */}
+          <Button
+            type="button"
+            variant="outline"
+            className="md:hidden flex w-full items-center justify-center gap-2 rounded-[var(--r-md)]"
+            onClick={() => setAiOpen(true)}
+          >
+            <Sparkles className="h-4 w-4 text-[var(--accent)]" />
+            AI 助手 · 帮你起草
+          </Button>
 
           <Card className="paper-panel rounded-[1.25rem] border sm:rounded-[1.75rem]">
             <form onSubmit={submit} className="space-y-6 p-4 sm:p-8">
@@ -626,22 +606,48 @@ export function NewMatter({ me }: { me: Me }) {
         </div>
       </div>
 
-      {/* AI assistant column. PC: fixed-width right column; narrow: stacks
-          below the form so the user lands on the form first. */}
+      {/* AI assistant: fullscreen overlay on narrow screens (toggled by the
+          "AI 助手" button), persistent right column on md+. Mirrors the
+          reply path UX in MatterDetailPane. */}
       <aside
-        className="flex min-h-[26rem] shrink-0 flex-col border-t bg-[var(--surface)] p-3 sm:p-4 md:h-full md:w-[420px] md:border-l md:border-t-0"
-        style={{ borderColor: "var(--line)" }}
+        className={cn(
+          "flex min-h-0 flex-col overflow-hidden bg-[var(--surface)]",
+          // Narrow: fullscreen overlay, controlled by aiOpen.
+          aiOpen ? "fixed inset-0 z-50" : "hidden",
+          // md+: ignore aiOpen, render as permanent right column.
+          "md:static md:flex md:h-full md:w-[420px] md:shrink-0 md:border-l md:border-l-[var(--line)] md:p-3 md:sm:p-4",
+        )}
       >
-        <AIPane
-          mode="new-matter"
-          matter_id={NEW_MATTER_PSEUDO_ID}
-          threadKey={threadKey}
-          threadTitle={title.trim() || "新讨论"}
-          // Treat any existing body as "draft already filled" so AIPane shows
-          // the overwrite confirm before AI replaces user-typed content.
-          hasReplyDraft={!!body.trim()}
-          onUseDraftAsReply={handleAIDraft}
-        />
+        {/* Mobile-only header with close button. md+ doesn't need it
+            because the panel is always present beside the form. */}
+        <div
+          className="flex items-center justify-between border-b border-[var(--line)] px-4 py-3 md:hidden"
+        >
+          <div className="flex items-center gap-2 text-sm font-medium text-[var(--text)]">
+            <Bot className="h-4 w-4 text-[var(--accent)]" />
+            AI 助手
+          </div>
+          <button
+            type="button"
+            onClick={() => setAiOpen(false)}
+            className="rounded-[var(--r-sm)] p-1 text-[var(--text-mute)] hover:bg-[var(--surface-alt)] hover:text-[var(--text)]"
+            aria-label="关闭 AI 助手"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 p-3 sm:p-4 md:p-0">
+          <AIPane
+            mode="new-matter"
+            matter_id={NEW_MATTER_PSEUDO_ID}
+            threadKey={threadKey}
+            threadTitle={title.trim() || "新讨论"}
+            // Treat any existing body as "draft already filled" so AIPane
+            // asks the overwrite confirm before AI replaces user content.
+            hasReplyDraft={!!body.trim()}
+            onUseDraftAsReply={handleAIDraft}
+          />
+        </div>
       </aside>
     </div>
   );
