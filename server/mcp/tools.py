@@ -15,6 +15,8 @@ from server.mcp.context import (
     parse_context_url,
 )
 from server.mcp.schemas import (
+    AddCommentIn,
+    AddCommentOut,
     AvailableTransition,
     CreateFileIn,
     CreateFileOut,
@@ -193,6 +195,37 @@ class MatterApiClient:
             # Defensive: backend already auto-disambiguates slugs, but the
             # MatterAlreadyExistsError handler exists for safety. Surface it.
             raise ToolError(409, "matter_already_exists")
+        if resp.status_code == 422:
+            return {"__validation_errors__": resp.json()}
+        resp.raise_for_status()
+        return resp.json()
+
+    def post_comment(self, matter_id: str, body: dict) -> dict:
+        """POST a comment (with optional mentions) to /api/matters/{id}/comments.
+
+        Backend distinguishes two flavors of 404 via `detail.code`:
+        `matter_not_found` vs `comment_target_not_found`. We surface the
+        specific code so the AI can tell the user which one is wrong.
+        Validation errors come back as `__validation_errors__`.
+        """
+        resp = self._client.post(
+            f"{self._base}/api/matters/{matter_id}/comments",
+            headers={**self._headers, "Content-Type": "application/json"},
+            json=body,
+            timeout=15.0,
+        )
+        if resp.status_code == 401:
+            raise ToolError(401, "invalid_token")
+        if resp.status_code == 403:
+            raise ToolError(403, "forbidden")
+        if resp.status_code == 404:
+            detail = resp.json().get("detail") if resp.headers.get(
+                "content-type", "",
+            ).startswith("application/json") else None
+            code = (
+                detail.get("code") if isinstance(detail, dict) else None
+            ) or "not_found"
+            raise ToolError(404, code)
         if resp.status_code == 422:
             return {"__validation_errors__": resp.json()}
         resp.raise_for_status()
@@ -460,5 +493,51 @@ def tool_create_matter(
         title=title,
         view_url=view_url,
         first_file=first_file,
+        summary_for_ai=summary_ai,
+    ).model_dump(mode="json")
+
+
+def tool_add_comment(
+    payload: dict,
+    client: MatterApiClient,
+    web_base_url: str,
+) -> dict:
+    """Append a comment (with optional @-mention) to an existing file.
+
+    Returns success + view_url + summary_for_ai, or {errors: ...} when the
+    backend rejects with 422 so the AI can fix and retry.
+    """
+    input_ = AddCommentIn.model_validate(payload)
+
+    api_body: dict = {
+        "target_file": input_.target_file,
+        "body": input_.body,
+    }
+    if input_.mentions:
+        api_body["mentions"] = list(input_.mentions)
+
+    resp = client.post_comment(input_.matter_id, api_body)
+
+    if "__validation_errors__" in resp:
+        return {"errors": resp["__validation_errors__"]}
+
+    view_url = build_view_url(web_base_url, input_.matter_id, input_.target_file)
+    if input_.mentions:
+        summary_ai = (
+            f"✅ 已在「{input_.matter_id}」的 {input_.target_file} 下追加 @ 提及。"
+            f"点这里查看：{view_url}"
+        )
+    else:
+        summary_ai = (
+            f"✅ 已在「{input_.matter_id}」的 {input_.target_file} 下追加评论。"
+            f"点这里查看：{view_url}"
+        )
+
+    return AddCommentOut(
+        ok=True,
+        matter_id=input_.matter_id,
+        target_file=input_.target_file,
+        at=resp.get("at", ""),
+        view_url=view_url,
         summary_for_ai=summary_ai,
     ).model_dump(mode="json")

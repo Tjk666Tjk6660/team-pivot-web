@@ -489,3 +489,120 @@ def test_create_file_mentions_translate_to_top_level_comments():
         "body": "想听听你的意见",
         "mentions": ["dengke"],
     }]
+
+
+# ---------- add_comment ----------
+
+from server.mcp.tools import tool_add_comment
+
+
+def _ok_comment_response() -> dict:
+    return {
+        "matter_id": "x",
+        "target_file": "discussions/Pivot/x/001_a_think_b.md",
+        "at": "2026-04-28T10:00:00Z",
+    }
+
+
+def test_add_comment_with_mention_passes_through_to_api():
+    """`mentions` in input becomes `mentions` in api_body, and body is the comment."""
+    client = MagicMock(spec=MatterApiClient)
+    client.post_comment.return_value = _ok_comment_response()
+    tool_add_comment(
+        {
+            "matter_id": "x",
+            "target_file": "discussions/Pivot/x/001_a_think_b.md",
+            "body": "请帮我 review 这条",
+            "mentions": ["dengke", "yzy"],
+        },
+        client,
+        "https://pivot",
+    )
+    sent_matter_id = client.post_comment.call_args[0][0]
+    sent_body = client.post_comment.call_args[0][1]
+    assert sent_matter_id == "x"
+    assert sent_body == {
+        "target_file": "discussions/Pivot/x/001_a_think_b.md",
+        "body": "请帮我 review 这条",
+        "mentions": ["dengke", "yzy"],
+    }
+
+
+def test_add_comment_without_mentions_omits_field():
+    """A plain note must not ship a `mentions` key (avoids backend confusion)."""
+    client = MagicMock(spec=MatterApiClient)
+    client.post_comment.return_value = _ok_comment_response()
+    tool_add_comment(
+        {
+            "matter_id": "x",
+            "target_file": "discussions/Pivot/x/001_a_think_b.md",
+            "body": "记一笔",
+        },
+        client,
+        "https://pivot",
+    )
+    sent_body = client.post_comment.call_args[0][1]
+    assert "mentions" not in sent_body
+
+
+def test_add_comment_success_returns_view_url_and_summary():
+    """Output exposes a view_url for the file and a relay-able Chinese summary."""
+    client = MagicMock(spec=MatterApiClient)
+    client.post_comment.return_value = _ok_comment_response()
+    out = tool_add_comment(
+        {
+            "matter_id": "x",
+            "target_file": "discussions/Pivot/x/001_a_think_b.md",
+            "body": "请 review",
+            "mentions": ["dengke"],
+        },
+        client,
+        "https://pivot.enclaws.ai",
+    )
+    assert out["ok"] is True
+    assert out["matter_id"] == "x"
+    assert out["target_file"] == "discussions/Pivot/x/001_a_think_b.md"
+    assert out["view_url"] == (
+        "https://pivot.enclaws.ai/m/x/f/"
+        "discussions/Pivot/x/001_a_think_b.md"
+    )
+    # With mentions, the summary mentions "@ 提及"; without it, just "评论".
+    assert "@ 提及" in out["summary_for_ai"]
+    assert out["view_url"] in out["summary_for_ai"]
+
+
+def test_add_comment_validation_errors_returned_as_data():
+    """422 surfaces as `{errors: ...}` so AI can iterate, not raise ToolError."""
+    client = MagicMock(spec=MatterApiClient)
+    client.post_comment.return_value = {
+        "__validation_errors__": {"detail": {"code": "body_required"}},
+    }
+    out = tool_add_comment(
+        {
+            "matter_id": "x",
+            "target_file": "discussions/Pivot/x/001_a_think_b.md",
+            "body": "x",
+        },
+        client,
+        "https://pivot",
+    )
+    assert "errors" in out
+    assert "ok" not in out
+
+
+def test_add_comment_404_raises_with_specific_code():
+    """The matter / target-file 404 distinction is preserved for the AI."""
+    client = MagicMock(spec=MatterApiClient)
+    client.post_comment.side_effect = ToolError(404, "comment_target_not_found")
+    with pytest.raises(ToolError) as ei:
+        tool_add_comment(
+            {
+                "matter_id": "x",
+                "target_file": "missing.md",
+                "body": "hi",
+            },
+            client,
+            "https://pivot",
+        )
+    assert ei.value.status == 404
+    assert ei.value.detail == "comment_target_not_found"

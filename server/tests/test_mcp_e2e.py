@@ -442,6 +442,72 @@ async def _run_mcp_create_matter_with_mention(
                 return _parse_tool_result(cm_res)
 
 
+async def _run_mcp_add_comment(
+    base_url: str, token: str, matter_id: str, target_file: str,
+) -> dict:
+    """Append a @-mention comment to an existing file via MCP."""
+    client = httpx.AsyncClient(
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=httpx.Timeout(10.0, read=30.0),
+        follow_redirects=True,
+        trust_env=False,
+    )
+    url = f"{base_url}/mcp"
+    async with client:
+        async with streamable_http_client(url, http_client=client) as (r, w, _):
+            async with ClientSession(r, w) as session:
+                await session.initialize()
+                ac_res = await session.call_tool(
+                    "add_comment",
+                    {
+                        "matter_id": matter_id,
+                        "target_file": target_file,
+                        "body": "请帮我 review 这条",
+                        "mentions": ["dengke"],
+                    },
+                )
+                return _parse_tool_result(ac_res)
+
+
+def test_mcp_e2e_add_comment_with_mention(live_server):
+    """add_comment with mentions persists onto an existing file's comments[].
+
+    Reuses the seeded matter from the fixture so we exercise the
+    "@ 提及 on an already-existing file" path that the Web's @ 提及 button
+    targets.
+    """
+    info = live_server
+    result = asyncio.run(_run_mcp_add_comment(
+        info["mcp_base_url"], info["token"],
+        info["matter_id"], info["initial_file"],
+    ))
+    assert result.get("ok") is True, result
+    assert result["matter_id"] == info["matter_id"]
+    assert result["target_file"] == info["initial_file"]
+    assert "@ 提及" in result["summary_for_ai"]
+
+    with httpx.Client(
+        base_url=info["api_base_url"],
+        headers={"Authorization": f"Bearer {info['token']}"},
+        timeout=5.0,
+        trust_env=False,
+    ) as http:
+        r = http.get(f"/api/matters/{info['matter_id']}")
+        assert r.status_code == 200, r.text
+        data = r.json()
+
+    timeline = data.get("timeline") or []
+    initial = next((t for t in timeline if t.get("file") == info["initial_file"]), None)
+    assert initial is not None, "seeded initial file missing from timeline"
+    comments = initial.get("comments") or []
+    # The mention round-trips on the file as a new comment with body + mentions.
+    assert any(
+        c.get("body") == "请帮我 review 这条"
+        and "dengke" in (c.get("mentions") or [])
+        for c in comments
+    ), comments
+
+
 def test_mcp_e2e_create_matter_with_mention(live_server):
     """create_matter with mentions persists the comment + @ on the initial file.
 
@@ -491,7 +557,7 @@ def test_mcp_e2e_full_flow(live_server):
     # Handshake + tool discovery
     assert result["server_name"] == "pivot-mcp"
     assert {"resolve_context", "list_matters", "get_matter", "read_files",
-            "create_file", "create_matter"} <= result["tool_names"]
+            "create_file", "create_matter", "add_comment"} <= result["tool_names"]
 
     # resolve_context
     resolved = result["resolved"]

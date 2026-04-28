@@ -18,6 +18,7 @@ from server.api_tokens import ApiTokenRepo
 from server.mcp.auth import McpAuthError, authenticate
 from server.mcp.runtime import current_user_token, set_user_token
 from server.mcp.schemas import (
+    AddCommentIn,
     CreateFileIn,
     CreateMatterIn,
     GetMatterIn,
@@ -28,6 +29,7 @@ from server.mcp.schemas import (
 from server.mcp.tools import (
     MatterApiClient,
     ToolError,
+    tool_add_comment,
     tool_create_file,
     tool_create_matter,
     tool_get_matter,
@@ -152,6 +154,29 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
                 ),
                 inputSchema=CreateMatterIn.model_json_schema(),
             ),
+            Tool(
+                name="add_comment",
+                description=(
+                    "Append a comment (with optional @-mention) to an EXISTING file "
+                    "inside a matter. This is the equivalent of the Web's '@ 提及' "
+                    "button — it adds a comment under a file, not a new timeline item. "
+                    "Common user phrasings: \"@ X\", \"圈下 X 看一下这条\", "
+                    "\"对 <file> 留言\", \"通知 X review 这条 think\". "
+                    "Use `create_file` instead when the user wants to add a new "
+                    "timeline item (think/act/verify/result/insight); use `create_matter` "
+                    "when they want a brand-new matter. "
+                    "PROTOCOL (1/3): BEFORE calling, present the draft (target_file, "
+                    "body, mentions) to the user in chat and wait for explicit approval. "
+                    "If you don't know the target_file path yet, call get_matter first "
+                    "and ask the user which file. "
+                    "PROTOCOL (2/3): If the backend rejects with 422 (`{errors: ...}`), "
+                    "surface the field-level errors to the user — do NOT silently retry "
+                    "with guessed pinyin. "
+                    "PROTOCOL (3/3): After success, relay the returned `summary_for_ai` "
+                    "message verbatim to the user, including the view_url."
+                ),
+                inputSchema=AddCommentIn.model_json_schema(),
+            ),
         ]
 
     @mcp_server.call_tool()
@@ -189,6 +214,10 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
             elif name == "create_matter":
                 out = await anyio.to_thread.run_sync(
                     partial(tool_create_matter, arguments, client, web_base_url)
+                )
+            elif name == "add_comment":
+                out = await anyio.to_thread.run_sync(
+                    partial(tool_add_comment, arguments, client, web_base_url)
                 )
             else:
                 raise ToolError(404, f"unknown_tool: {name}")

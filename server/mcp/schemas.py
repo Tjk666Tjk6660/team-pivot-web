@@ -244,3 +244,55 @@ class CreateMatterOut(BaseModel):
     summary_for_ai: str = Field(
         description="A human-friendly confirmation message the AI MUST relay verbatim to the user."
     )
+
+
+# ---------- add_comment ----------
+
+class AddCommentIn(BaseModel):
+    """Append a comment (optionally with @-mention) to an EXISTING file in a matter.
+
+    Distinct from `create_file` (creates a new timeline item) and from
+    `create_matter`'s `mentions` (which rides on the initial file). This is
+    the equivalent of clicking the "@ 提及" button on an already-existing
+    file card in the Web UI.
+    """
+
+    matter_id: str = Field(
+        description="ID of the matter that owns the target file. Get from resolve_context / list_matters / get_matter.",
+    )
+    target_file: str = Field(
+        min_length=1,
+        max_length=500,
+        description=(
+            "Full file path within the matter (e.g. "
+            "'discussions/Pivot/some-slug/003_alice_think_abc.md'). Call "
+            "get_matter first to look up which files exist."
+        ),
+    )
+    body: str = Field(
+        min_length=1,
+        max_length=2000,
+        description=(
+            "Comment text. If `mentions` is set, this same text becomes the "
+            "@ DM message delivered to the targets — i.e. body doubles as 'say'."
+        ),
+    )
+    mentions: list[str] | None = Field(
+        default=None,
+        description=(
+            "OPTIONAL list of @ targets (pinyin / name / open_id). Backend "
+            "resolves; unresolvable entries cause 422. Omit / null for a "
+            "plain comment without notification."
+        ),
+    )
+
+
+class AddCommentOut(BaseModel):
+    ok: bool
+    matter_id: str
+    target_file: str
+    at: str = Field(description="ISO timestamp the comment was recorded at.")
+    view_url: str
+    summary_for_ai: str = Field(
+        description="A human-friendly confirmation message the AI MUST relay verbatim to the user."
+    )
