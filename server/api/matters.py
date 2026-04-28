@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Literal
 
@@ -9,6 +10,7 @@ from pydantic import BaseModel, Field
 from server.auth.deps import require_profile
 from server.contacts import ContactRepo
 from server.favorites import FavoriteRepo
+from server.file_reads import FileReadRepo, ReaderEntry
 from server.inbox import (
     compute_matter_unread_counts,
     latest_matter_post_filename,
@@ -106,6 +108,7 @@ def build_router(
     notifier: Notifier,
     read_states: ReadStateRepo,
     favorites: FavoriteRepo,
+    file_reads: FileReadRepo,
     current_user: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
@@ -157,7 +160,29 @@ def build_router(
         key = f"{category}/{matter_id}" if category else matter_id
         rendered["matter"]["category"] = category
         rendered["matter"]["favorite"] = favorites.has(user.open_id, key)
+        _inject_readers(rendered["timeline"], matter_id, file_reads, users, contacts)
         return rendered
+
+    @router.post("/matters/{matter_id}/files/{filename}/read")
+    def mark_file_read(
+        matter_id: str,
+        filename: str,
+        user: User = Depends(current_user),
+    ):
+        data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
+        if data is None:
+            raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
+        if not _timeline_has_file(data, filename):
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "file_not_in_matter"},
+            )
+        entry = file_reads.mark(user.open_id, matter_id, filename)
+        return {
+            "matter_id": matter_id,
+            "filename": filename,
+            "first_read_at": _ts_to_iso(entry.first_read_at),
+        }
 
     @router.post("/matters/{matter_id}/read")
     def mark_read(matter_id: str, user: User = Depends(current_user)):
@@ -529,3 +554,52 @@ def _read_item_body(workspace: Workspace, file_rel: str) -> str:
         return read_post(path).body
     except Exception:
         return ""
+
+
+def _timeline_has_file(data: dict, filename: str) -> bool:
+    """Match by basename so the API accepts `01-decision.md` against
+    `discussions/<cat>/<matter>/01-decision.md`."""
+    for item in data.get("timeline") or []:
+        rel = item.get("file") or ""
+        if rel.endswith("/" + filename) or rel == filename:
+            return True
+    return False
+
+
+def _ts_to_iso(ts: float) -> str:
+    return (
+        datetime.fromtimestamp(ts, tz=timezone.utc)
+        .astimezone()
+        .isoformat(timespec="seconds")
+    )
+
+
+def _inject_readers(
+    timeline: list[dict],
+    matter_id: str,
+    file_reads: FileReadRepo,
+    users: UserRepo,
+    contacts: ContactRepo,
+) -> None:
+    by_file = file_reads.list_for_matter(matter_id)
+    for item in timeline:
+        rel = item.get("file") or ""
+        basename = rel.rsplit("/", 1)[-1]
+        readers_raw = by_file.get(basename, [])
+        item["readers_count"] = len(readers_raw)
+        item["readers"] = [
+            _reader_to_dict(r, users, contacts) for r in readers_raw
+        ]
+
+
+def _reader_to_dict(
+    entry: ReaderEntry,
+    users: UserRepo,
+    contacts: ContactRepo,
+) -> dict:
+    return {
+        "open_id": entry.open_id,
+        "name": resolve_id(entry.open_id, users, contacts),
+        "avatar_url": resolve_avatar_url(entry.open_id, users, contacts),
+        "first_read_at": _ts_to_iso(entry.first_read_at),
+    }

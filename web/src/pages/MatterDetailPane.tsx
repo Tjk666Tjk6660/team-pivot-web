@@ -115,6 +115,7 @@ export function MatterDetailPane() {
   );
   const [sessionOpenId, setSessionOpenId] = useState<string>("");
   const [sessionName, setSessionName] = useState<string>("");
+  const [sessionAvatarUrl, setSessionAvatarUrl] = useState<string>("");
   const [pendingCreate, setPendingCreate] = useState<{
     type: DocType;
     quote: string | null;
@@ -374,10 +375,12 @@ export function MatterDetailPane() {
       .then((me) => {
         setSessionOpenId(me?.open_id ?? "");
         setSessionName(me?.name ?? "");
+        setSessionAvatarUrl(me?.avatar_url ?? "");
       })
       .catch(() => {
         setSessionOpenId("");
         setSessionName("");
+        setSessionAvatarUrl("");
       });
   }, []);
 
@@ -915,6 +918,11 @@ export function MatterDetailPane() {
                 }}
                 highlighted={highlight === item.file}
                 markdownStyle={markdownStyle}
+                me={{
+                  open_id: sessionOpenId,
+                  name: sessionName,
+                  avatar_url: sessionAvatarUrl || null,
+                }}
               />
             ))}
             {pendingCreate && (
