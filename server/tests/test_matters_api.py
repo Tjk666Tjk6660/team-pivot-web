@@ -892,6 +892,100 @@ def test_create_and_append_propagate_bundled_mentions_to_notifier(db, users, tmp
     assert new_reply_kw2["mention_comments"] is None
 
 
+def test_mcp_name_mentions_resolve_to_open_ids_for_notifier(db, users, tmp_path):
+    """MCP lets AI pass natural strings (邓柯 / Tank) instead of raw open_ids;
+    the notifier needs the actual open_id to deliver Feishu DMs. Resolution
+    happens via ContactRepo on the publish path. Web's path (real open_ids)
+    must keep working unchanged.
+    """
+    calls: list[tuple[str, dict]] = []
+
+    class RecordingNotifier:
+        def notify_new_thread(self, **kw): calls.append(("new_thread", kw))
+        def notify_new_reply(self, **kw):  calls.append(("new_reply", kw))
+        def notify_status_change(self, **kw): calls.append(("status_change", kw))
+        def notify_standalone_mention(self, **kw): calls.append(("standalone_mention", kw))
+
+    workspace = _WorkspaceStub(tmp_path)
+    users.upsert_from_feishu(open_id="ou_creator", union_id=None, name="作者", avatar_url="")
+    users.update_profile("ou_creator", pinyin="zuozhe")
+    sessions = SessionStore(db)
+    sid = sessions.create("ou_creator")
+    current_user = make_current_user(sessions, users, ApiTokenRepo(db))
+
+    contacts = ContactRepo(db)
+    contacts.upsert_many([
+        {"open_id": "ou_dengke", "union_id": "on_dengke",
+         "name": "邓柯", "en_name": "Tank"},
+        {"open_id": "ou_alice",
+         "name": "李四", "en_name": "Alice"},
+    ])
+
+    from fastapi import FastAPI
+    app = FastAPI()
+    app.include_router(
+        build_router(
+            workspace, users, contacts, RecordingNotifier(),
+            ReadStateRepo(db), FavoriteRepo(db), current_user,
+        )
+    )
+    c = TestClient(app)
+    c.cookies.set("sid", sid)
+
+    r = c.post("/api/matters", json={
+        "category": "Pivot", "title": "MCP Mention Resolution",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+    target_file = r.json()["initial_timeline_item"]["file"]
+
+    # Case 1: AI passes Chinese name → notifier gets resolved open_id
+    calls.clear()
+    r2 = c.post(f"/api/matters/{matter_id}/comments", json={
+        "target_file": target_file,
+        "body": "请 review 这条",
+        "mentions": ["邓柯"],
+    })
+    assert r2.status_code == 200, r2.text
+    sm = next(kw for t, kw in calls if t == "standalone_mention")
+    assert sm["mention_open_ids"] == ["ou_dengke"]
+
+    # Case 2: AI passes English alias → resolved
+    calls.clear()
+    c.post(f"/api/matters/{matter_id}/comments", json={
+        "target_file": target_file, "body": "x", "mentions": ["Alice"],
+    })
+    sm2 = next(kw for t, kw in calls if t == "standalone_mention")
+    assert sm2["mention_open_ids"] == ["ou_alice"]
+
+    # Case 3: Web path (real open_id, in contacts) unchanged
+    calls.clear()
+    c.post(f"/api/matters/{matter_id}/comments", json={
+        "target_file": target_file, "body": "y", "mentions": ["ou_dengke"],
+    })
+    sm3 = next(kw for t, kw in calls if t == "standalone_mention")
+    assert sm3["mention_open_ids"] == ["ou_dengke"]
+
+    # Case 4: Unresolvable name → notifier NOT called for this comment
+    # (whole call still succeeds, but DM dispatch is silently dropped).
+    calls.clear()
+    r5 = c.post(f"/api/matters/{matter_id}/comments", json={
+        "target_file": target_file, "body": "hi",
+        "mentions": ["不存在的人"],
+    })
+    assert r5.status_code == 200
+    assert not any(t == "standalone_mention" for t, _ in calls)
+
+    # Case 5: Mixed — one resolves, one doesn't → notifier gets only resolved
+    calls.clear()
+    c.post(f"/api/matters/{matter_id}/comments", json={
+        "target_file": target_file, "body": "mixed",
+        "mentions": ["邓柯", "不存在的人"],
+    })
+    sm5 = next(kw for t, kw in calls if t == "standalone_mention")
+    assert sm5["mention_open_ids"] == ["ou_dengke"]
+
+
 def test_comment_route_does_not_pass_unknown_kwargs_to_notifier(db, users, tmp_path):
     """Regression: publish_matter_comment used to pass post_excerpt="" to
     notify_standalone_mention, which the Feishu / NoOp notifier protocol

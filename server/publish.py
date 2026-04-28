@@ -286,6 +286,43 @@ def _resolve_comments_mentions(
     return out
 
 
+def _resolve_mention_strings_to_open_ids(
+    values: list[str] | None,
+    contacts: ContactRepo | None,
+) -> list[str]:
+    """Convert any user-supplied mention strings (open_id / union_id / name /
+    en_name) to actual Feishu open_ids for the notifier.
+
+    Web's MentionField always emits real open_ids, so this used to be a no-op
+    pass-through — but MCP tools accept name/pinyin from AI, and the Feishu
+    notifier silently dropped every DM whose `<at id="…">` payload wasn't a
+    real open_id. We resolve via ContactRepo (the table also covers users
+    who only exist as Feishu contacts and never logged into Pivot).
+
+    Unresolvable entries that LOOK like Feishu IDs (`ou_…` / `on_…`) pass
+    through — guards against stale contact sync when the Web client supplied
+    a real but uncached open_id. Anything else (name strings AI couldn't
+    resolve) is dropped with a warning rather than raised, matching the
+    lenient semantics of _resolve_mentions_for_index.
+    """
+    if not values:
+        return []
+    if contacts is None:
+        return [v for v in values if v]
+    out: list[str] = []
+    for v in values:
+        if not v:
+            continue
+        c = contacts.lookup_for_mention(v)
+        if c is not None:
+            out.append(c.open_id)
+        elif v.startswith(("ou_", "on_")):
+            out.append(v)
+        else:
+            log.warning("mention_unresolvable input=%r (skipped)", v)
+    return out
+
+
 def _extract_notify_mentions(
     comments: list[dict] | None,
 ) -> tuple[list[str] | None, str | None]:
@@ -455,7 +492,9 @@ def publish_matter_create(
             author_name=user.name,
             filename=filename,
             body=md_body,
-            mention_open_ids=notify_mention_open_ids,
+            mention_open_ids=_resolve_mention_strings_to_open_ids(
+                notify_mention_open_ids, contacts,
+            ) or None,
             mention_comments=notify_mention_comments,
         )
     return {
@@ -564,7 +603,9 @@ def publish_matter_append(
             author_name=user.name,
             filename=filename,
             body=md_body,
-            mention_open_ids=notify_mention_open_ids,
+            mention_open_ids=_resolve_mention_strings_to_open_ids(
+                notify_mention_open_ids, contacts,
+            ) or None,
             mention_comments=notify_mention_comments,
         )
         sc = item.get("status_change")
@@ -654,13 +695,17 @@ def publish_matter_comment(
         matter_title = matter_meta.get("title") or matter_id
         category = _derive_category_from_timeline(data) or "matters"
         target_basename = (target_file or "").rsplit("/", 1)[-1] or target_file
-        notifier.notify_standalone_mention(
-            category=category, slug=matter_id, thread_title=matter_title,
-            target_filename=target_basename,
-            author_name=user.name,
-            mention_open_ids=list(mentions),
-            mention_comments=body,
+        resolved_open_ids = _resolve_mention_strings_to_open_ids(
+            list(mentions), contacts,
         )
+        if resolved_open_ids:
+            notifier.notify_standalone_mention(
+                category=category, slug=matter_id, thread_title=matter_title,
+                target_filename=target_basename,
+                author_name=user.name,
+                mention_open_ids=resolved_open_ids,
+                mention_comments=body,
+            )
 
     return {"matter_id": matter_id, "target_file": target_file, "at": now}
 

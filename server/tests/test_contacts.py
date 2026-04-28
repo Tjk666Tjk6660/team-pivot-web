@@ -91,3 +91,69 @@ def test_upsert_from_login_preserves_en_name(contacts):
     assert c.name == "张三（已激活）"
     assert c.en_name == "Zhang San"
     assert c.avatar_url == "new.png"
+
+
+# ---------- lookup_for_mention ----------
+
+def test_lookup_for_mention_by_open_id(contacts):
+    contacts.upsert_many([{"open_id": "ou_1", "name": "邓柯", "en_name": "Tank"}])
+    c = contacts.lookup_for_mention("ou_1")
+    assert c is not None and c.open_id == "ou_1"
+
+
+def test_lookup_for_mention_by_union_id(contacts):
+    contacts.upsert_many([
+        {"open_id": "ou_1", "union_id": "on_1", "name": "邓柯"},
+    ])
+    c = contacts.lookup_for_mention("on_1")
+    assert c is not None and c.open_id == "ou_1"
+
+
+def test_lookup_for_mention_by_unique_name(contacts):
+    """User says '邓柯' in chat — backend resolves to ou_1 even though
+    Web's MentionField would have sent the open_id directly."""
+    contacts.upsert_many([
+        {"open_id": "ou_1", "name": "邓柯"},
+        {"open_id": "ou_2", "name": "李四"},
+    ])
+    c = contacts.lookup_for_mention("邓柯")
+    assert c is not None and c.open_id == "ou_1"
+
+
+def test_lookup_for_mention_by_unique_en_name(contacts):
+    contacts.upsert_many([
+        {"open_id": "ou_1", "name": "邓柯", "en_name": "Tank"},
+        {"open_id": "ou_2", "name": "李四", "en_name": "Li Si"},
+    ])
+    c = contacts.lookup_for_mention("Tank")
+    assert c is not None and c.open_id == "ou_1"
+
+
+def test_lookup_for_mention_ambiguous_name_returns_none(contacts):
+    """Two contacts share '张三' — return None so the caller can ask the user
+    to disambiguate (rather than randomly picking one)."""
+    contacts.upsert_many([
+        {"open_id": "ou_a", "name": "张三"},
+        {"open_id": "ou_b", "name": "张三"},
+    ])
+    assert contacts.lookup_for_mention("张三") is None
+
+
+def test_lookup_for_mention_unknown_returns_none(contacts):
+    contacts.upsert_many([{"open_id": "ou_1", "name": "邓柯"}])
+    assert contacts.lookup_for_mention("不在通讯录里的人") is None
+
+
+def test_lookup_for_mention_empty_returns_none(contacts):
+    assert contacts.lookup_for_mention("") is None
+
+
+def test_lookup_for_mention_id_match_wins_over_homonym_name(contacts):
+    """If a value happens to be both a valid open_id AND someone's name,
+    the open_id match takes precedence (it's the unambiguous form)."""
+    contacts.upsert_many([
+        {"open_id": "alice", "name": "Different Person"},
+        {"open_id": "ou_2", "name": "alice"},
+    ])
+    c = contacts.lookup_for_mention("alice")
+    assert c is not None and c.open_id == "alice"

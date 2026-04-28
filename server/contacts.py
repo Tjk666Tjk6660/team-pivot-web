@@ -38,6 +38,39 @@ class ContactRepo:
             ).fetchone()
         return _row(row) if row else None
 
+    def lookup_for_mention(self, value: str) -> Contact | None:
+        """Resolve a user-supplied identifier to a Contact for @-mention dispatch.
+
+        Web's MentionField always emits real open_ids, but MCP lets AI pass
+        natural strings like "邓柯" or "Alice" that came out of the user's
+        chat. The Feishu notifier needs the actual open_id to deliver DMs,
+        so we look up here.
+
+        Match order:
+          1. open_id / union_id (exact ID — always unique)
+          2. name / en_name (only when result is unique; 重名 → None)
+
+        Returns None for: empty input, no match, or ambiguous name match.
+        Callers should treat None as "skip this mention" (log + drop), never
+        as an exception, so one bad name does not fail an entire publish call.
+        """
+        if not value:
+            return None
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM contacts WHERE open_id=? OR union_id=?",
+                (value, value),
+            ).fetchone()
+            if row is not None:
+                return _row(row)
+            rows = conn.execute(
+                "SELECT * FROM contacts WHERE name=? OR en_name=?",
+                (value, value),
+            ).fetchall()
+            if len(rows) == 1:
+                return _row(rows[0])
+        return None
+
     def get_many(self, open_ids: list[str]) -> dict[str, Contact]:
         if not open_ids:
             return {}
