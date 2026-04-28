@@ -449,7 +449,11 @@ export function NewMatter({ me }: { me: Me }) {
           the form column gets its own internal scroll so it can be tall
           without pushing AIPane out of the side panel. */}
       <div className="min-h-0 flex-1 md:overflow-y-auto">
-        <div className="mx-auto w-full max-w-4xl space-y-4 px-3 py-4 sm:px-5 sm:py-5 md:space-y-6">
+        {/* Form fills the form-column width so the layout dynamically reflows
+            as the AIPane is opened/closed/fullscreened. The inner field grid
+            (lg:grid-cols-[220px_minmax(0,1fr)]) keeps content readable even
+            when the column is wide. */}
+        <div className="w-full space-y-4 px-3 py-4 sm:px-5 sm:py-5 md:space-y-6">
           <Button
             asChild
             variant="ghost"
