@@ -508,6 +508,117 @@ def test_append_file_comments_mentions_resolved(client, users):
     assert appended["comments"][0]["mentions"] == ["tangkun"]
 
 
+def test_create_matter_resolves_owner_open_id_to_pinyin(client, users):
+    """创建 matter 时,前端 OwnerPicker 提交注册用户的 open_id;
+    index 落盘前必须解析为 pinyin,与 creator 同格式。
+    回归 2026-04-27 报告的 owner=ou_xxx 落盘 bug。"""
+    users.upsert_from_feishu(open_id="ou_2", union_id=None, name="刘昱", avatar_url="")
+    users.update_profile("ou_2", pinyin="liuyu")
+
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {
+            "type": "act",
+            "summary": "执行",
+            "body": "",
+            "owner": "ou_2",   # 前端 OwnerPicker 提交 open_id
+        },
+    })
+    assert r.status_code == 200, r.text
+    matter_id = r.json()["matter_id"]
+
+    from server.matter_index import read_matter_index, matter_index_path
+    raw = read_matter_index(matter_index_path(client.workspace.index_dir, matter_id))
+    assert raw["timeline"][0]["owner"] == "liuyu", raw["timeline"][0]
+    assert raw["timeline"][0]["creator"] == "dengke"
+
+
+def test_create_matter_keeps_owner_open_id_for_unregistered(client):
+    """owner 选了未注册联系人(无 pinyin)时保留 open_id 原文,
+    与 mentions 兜底语义一致。"""
+    unregistered = "ou_unregistered_0000000000000001"
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {
+            "type": "act",
+            "summary": "执行",
+            "body": "",
+            "owner": unregistered,
+        },
+    })
+    assert r.status_code == 200, r.text
+    matter_id = r.json()["matter_id"]
+
+    from server.matter_index import read_matter_index, matter_index_path
+    raw = read_matter_index(matter_index_path(client.workspace.index_dir, matter_id))
+    assert raw["timeline"][0]["owner"] == unregistered, raw["timeline"][0]
+
+
+def test_append_file_resolves_owner_open_id_to_pinyin(client, users):
+    """append act/verify 路径同样要把 owner 转 pinyin。
+    没有这一步,前端 OwnerPicker 选别人 → owner 落 ou_xxx。"""
+    users.upsert_from_feishu(open_id="ou_2", union_id=None, name="刘昱", avatar_url="")
+    users.update_profile("ou_2", pinyin="liuyu")
+
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {"type": "act", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+
+    r2 = client.post(f"/api/matters/{matter_id}/files", json={
+        "type": "act", "summary": "execute",
+        "owner": "ou_2",
+        "status_change": {"from": "planning", "to": "executing"},
+    })
+    assert r2.status_code == 200, r2.text
+
+    from server.matter_index import read_matter_index, matter_index_path
+    raw = read_matter_index(matter_index_path(client.workspace.index_dir, matter_id))
+    assert raw["timeline"][1]["owner"] == "liuyu", raw["timeline"][1]
+
+
+def test_verifications_received_verified_by_uses_pinyin(client, users):
+    """verify 文件触发反向写入 act.verifications_received[].verified_by
+    时,verified_by 从 verify 的 owner 派生。owner 已是 pinyin → verified_by
+    也是 pinyin。这是 owner 修复的衍生效果。"""
+    users.upsert_from_feishu(open_id="ou_2", union_id=None, name="刘昱", avatar_url="")
+    users.update_profile("ou_2", pinyin="liuyu")
+
+    # 1) 建 matter,初始 act 触发 planning → executing
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {
+            "type": "act", "summary": "first act", "body": "",
+            "status_change": {"from": "planning", "to": "executing"},
+        },
+    })
+    matter_id = r.json()["matter_id"]
+    target_act = r.json()["initial_timeline_item"]["file"]
+
+    # 2) 追加 verify,owner 选别人 (ou_2 = liuyu),verifications 指向 act
+    r2 = client.post(f"/api/matters/{matter_id}/files", json={
+        "type": "verify",
+        "summary": "checked",
+        "owner": "ou_2",
+        "verifications": [
+            {"target": target_act, "judgement": "passed", "comment": "ok"},
+        ],
+    })
+    assert r2.status_code == 200, r2.text
+
+    from server.matter_index import read_matter_index, matter_index_path
+    raw = read_matter_index(matter_index_path(client.workspace.index_dir, matter_id))
+    # verify item 自身的 owner 是 pinyin
+    verify_item = raw["timeline"][1]
+    assert verify_item["owner"] == "liuyu"
+    # 反向写到 act 上的 verifications_received[].verified_by 也是 pinyin
+    act_item = raw["timeline"][0]
+    received = act_item.get("verifications_received") or []
+    assert len(received) == 1
+    assert received[0]["verified_by"] == "liuyu", received[0]
+
+
 def test_append_file_comments_have_author(client):
     """嵌入评论(随 POST /files 一起提交)写入 index 时必须带 author=发文者pinyin，
     与独立 POST /comments 路径一致。回归 2026-04-26 报告的 author 缺失 bug。"""

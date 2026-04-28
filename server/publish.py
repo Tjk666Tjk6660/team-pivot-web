@@ -413,6 +413,7 @@ def publish_matter_create(
         file_rel=file_rel,
         creator=user.pinyin,
         now_iso=now,
+        users=users,
     )
 
     log.info(
@@ -528,6 +529,7 @@ def publish_matter_append(
         file_rel=file_rel,
         creator=user.pinyin,
         now_iso=now,
+        users=users,
     )
 
     md_body = item_body.get("body") or ""
@@ -666,18 +668,45 @@ def publish_matter_comment(
 # --- matter helpers -----------------------------------------------------------
 
 
+def _resolve_owner_for_index(
+    value: str | None, users: UserRepo | None
+) -> str | None:
+    """Resolve a frontend-submitted owner identifier into the on-disk index
+    form. Frontend (`OwnerPicker`) submits the chosen contact's `open_id`
+    because that's the canonical key in the contacts table, but on-disk we
+    want the same shape as `creator` — pinyin for registered users; raw
+    value (open_id, when the chosen contact hasn't logged in yet) as the
+    fallback. Mirrors `_resolve_mentions_for_index` and the
+    `creator/owner` same-format invariant.
+
+    Without this resolution, picking another person as owner used to land
+    the bare `ou_xxxxxxxxxxxxxxxx` open_id into the matter index, which
+    propagates further into `verifications_received.verified_by` (derived
+    from the verify file's owner in `matter_index._reverse_write_verifications`)."""
+    if not value:
+        return None
+    if users:
+        u = users.get_by_any_id(value)
+        if u and u.pinyin:
+            return u.pinyin
+    return value
+
+
 def _build_timeline_item(
     body: dict,
     *,
     file_rel: str,
     creator: str,
     now_iso: str,
+    users: UserRepo | None = None,
 ) -> dict:
+    raw_owner = body.get("owner")
+    resolved_owner = _resolve_owner_for_index(raw_owner, users) if raw_owner else None
     item: dict = {
         "file": file_rel,
         "created_at": now_iso,
         "creator": creator,
-        "owner": body.get("owner") or creator,
+        "owner": resolved_owner or creator,
         "type": body.get("type"),
         "summary": body.get("summary") or "",
     }
