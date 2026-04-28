@@ -6,3 +6,8 @@
 # env.init templates are sourced by bash on Linux — must be LF
 scripts/migration-test/env.init.example text eol=lf
 scripts/migration-prod/env.init.example text eol=lf
+
+# uv-managed lockfile — machine-generated, must stay LF so Linux/Windows
+# checkouts produce identical content (otherwise `uv sync` keeps dirtying it
+# on Windows checkouts due to autocrlf flipping LF↔CRLF)
+uv.lock text eol=lf
