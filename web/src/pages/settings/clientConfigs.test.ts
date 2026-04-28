@@ -24,12 +24,25 @@ describe("clientConfigs", () => {
     expect("type" in cfg).toBe(false);
   });
 
-  it("codex cli command uses bearer-token-env-var", () => {
-    const cmd = codexCliCommand("pvt_xxx");
-    expect(cmd).toMatch(/codex mcp add pivot/);
-    expect(cmd).toContain("--bearer-token-env-var PIVOT_TOKEN");
-    // Token goes into env var, not onto the command line.
-    expect(cmd).toContain('export PIVOT_TOKEN="pvt_xxx"');
+  it("codex prompt instructs the AI to register the MCP via env-var bearer token", () => {
+    const prompt = codexCliCommand("pvt_xxx");
+    // Prompt must carry the actual codex CLI invocation for the AI to run.
+    expect(prompt).toMatch(/codex mcp add pivot/);
+    expect(prompt).toContain("--bearer-token-env-var PIVOT_TOKEN");
+    // Token reaches the AI so it can plug it into the env-var step.
+    expect(prompt).toContain('export PIVOT_TOKEN="pvt_xxx"');
+  });
+
+  it("codex prompt orchestrates the persistence step interactively", () => {
+    const prompt = codexCliCommand("pvt_xxx");
+    // AI must ASK before persisting (don't silently mutate the user's profile).
+    expect(prompt).toMatch(/要不要让 PIVOT_TOKEN 永久生效/);
+    // All three shell options must be available for the AI to pick from after detection.
+    expect(prompt).toContain("~/.bashrc");
+    expect(prompt).toContain("~/.zshrc");
+    expect(prompt).toContain("SetEnvironmentVariable");
+    // Plain-text storage warning must be present so the AI surfaces it.
+    expect(prompt).toContain("明文");
   });
 
   it("claude desktop info has url+token and hint tells users to use UI", () => {

@@ -49,16 +49,43 @@ export function cursorDeepLink(token: string): string {
 
 
 /**
- * Codex: CLI command the user pastes into their terminal.
- * Codex detects Streamable HTTP from the presence of `url`.
- * Bearer token is passed via env var so it doesn't hit shell history.
+ * Codex: a natural-language prompt the user pastes into the Codex AI chat
+ * (NOT into a raw terminal). The AI then runs `codex mcp add` for them and
+ * orchestrates the optional shell-profile persistence step interactively —
+ * detecting OS/shell, asking for confirmation, and surfacing the safety
+ * trade-off before writing the token to disk.
+ *
+ * Mirrors the `claudeCodePrompt` pattern: keep MCP onboarding AI-orchestrated
+ * across all clients so users never need raw shell knowledge.
  */
 export function codexCliCommand(token: string): string {
   return [
-    `# 1) 先设置 token 到环境变量（避免进 shell 历史）:`,
-    `export PIVOT_TOKEN="${token}"`,
-    `# 2) 添加 MCP 服务器:`,
-    `codex mcp add pivot --url ${MCP_URL} --bearer-token-env-var PIVOT_TOKEN`,
+    `请帮我把下面的 MCP 服务器加到 Codex 配置里。`,
+    ``,
+    `服务器名: pivot`,
+    `URL: ${MCP_URL}`,
+    `Bearer token: ${token}`,
+    ``,
+    `请按以下步骤完成：`,
+    ``,
+    `1) 临时设环境变量并注册 MCP（token 通过 env var 传，避免进 shell 历史）：`,
+    `   export PIVOT_TOKEN="${token}"`,
+    `   codex mcp add pivot --url ${MCP_URL} --bearer-token-env-var PIVOT_TOKEN`,
+    ``,
+    `2) 注册成功后问我："要不要让 PIVOT_TOKEN 永久生效（下次开终端也能用）？"`,
+    ``,
+    `3) 如果我说「是」：`,
+    `   - 先检测我的 shell 和操作系统（zsh / bash / PowerShell 等），告诉我检测结果让我确认`,
+    `   - 提醒我："这会把 token 明文写进用户级位置，仅推荐个人开发机使用"`,
+    `   - 我确认后，用对应命令写入配置：`,
+    `     * bash       → echo 'export PIVOT_TOKEN="${token}"' >> ~/.bashrc`,
+    `     * zsh        → echo 'export PIVOT_TOKEN="${token}"' >> ~/.zshrc`,
+    `     * PowerShell → [Environment]::SetEnvironmentVariable("PIVOT_TOKEN", "${token}", "User")`,
+    `   - 告诉我新开终端后才会生效`,
+    ``,
+    `4) 如果我说「否」，告诉我每次启动 Codex 前需要先 export PIVOT_TOKEN。`,
+    ``,
+    `全程用中文跟我交流。`,
   ].join("\n");
 }
 

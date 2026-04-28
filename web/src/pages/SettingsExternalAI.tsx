@@ -109,13 +109,15 @@ export function SettingsExternalAI() {
 
           <Card className="space-y-2 p-4">
             <h3 className="font-medium">Codex</h3>
-            <p className="text-sm text-muted-foreground">终端粘贴 CLI 命令</p>
+            <p className="text-sm text-muted-foreground">
+              粘到 Codex 对话里，AI 会帮你注册 MCP 并询问是否永久生效
+            </p>
             <Button
               onClick={async () =>
                 copy(codexCliCommand(await ensureToken("Codex")))
               }
             >
-              复制 CLI 命令
+              复制 Codex 提示语
             </Button>
           </Card>
 
