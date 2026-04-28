@@ -345,6 +345,71 @@ async def _run_mcp_flow(base_url: str, token: str, matter_id: str) -> dict:
                 }
 
 
+async def _run_mcp_create_matter(base_url: str, token: str) -> dict:
+    """Create a brand-new Matter through MCP, then verify it via list/get."""
+    client = httpx.AsyncClient(
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=httpx.Timeout(10.0, read=30.0),
+        follow_redirects=True,
+        trust_env=False,
+    )
+    url = f"{base_url}/mcp"
+    async with client:
+        async with streamable_http_client(url, http_client=client) as (r, w, _):
+            async with ClientSession(r, w) as session:
+                await session.initialize()
+
+                cm_res = await session.call_tool(
+                    "create_matter",
+                    {
+                        "category": "Pivot",
+                        "title": "E2ECreatedByMcp",
+                        "type": "think",
+                        "summary": "通过 MCP 创建的新 Matter",
+                        "body": "# E2E\n\n正文",
+                    },
+                )
+                created = _parse_tool_result(cm_res)
+
+                # Verify via get_matter on the returned matter_id.
+                gm_res = await session.call_tool(
+                    "get_matter", {"matter_id": created["matter_id"]},
+                )
+                got = _parse_tool_result(gm_res)
+
+                return {"created": created, "got": got}
+
+
+def test_mcp_e2e_create_matter(live_server):
+    """End-to-end create_matter: through MCP → backend writes to disk → readable.
+
+    Proves the new tool routes to the backend, parses flat → nested input,
+    composes a sensible view_url, and the resulting Matter is queryable.
+    """
+    info = live_server
+    result = asyncio.run(_run_mcp_create_matter(
+        info["mcp_base_url"], info["token"],
+    ))
+
+    created = result["created"]
+    assert created.get("ok") is True, created
+    assert created["category"] == "Pivot"
+    assert created["title"] == "E2ECreatedByMcp"
+    assert created["matter_id"]
+    assert created["view_url"] == f"{info['api_base_url']}/m/{created['matter_id']}"
+    assert created["first_file"].endswith(".md")
+    assert "E2ECreatedByMcp" in created["summary_for_ai"]
+    assert created["view_url"] in created["summary_for_ai"]
+
+    # Newly created matter is in `planning` and has exactly one file.
+    got = result["got"]
+    assert got["matter"]["current_status"] == "planning"
+    assert got["matter"]["title"] == "E2ECreatedByMcp"
+    assert len(got["timeline"]) == 1
+    assert got["timeline"][0]["type"] == "think"
+    assert got["timeline"][0]["summary"] == "通过 MCP 创建的新 Matter"
+
+
 def test_mcp_e2e_full_flow(live_server):
     """End-to-end: resolve_context -> get_matter -> create_file -> get_matter.
 
@@ -359,7 +424,7 @@ def test_mcp_e2e_full_flow(live_server):
     # Handshake + tool discovery
     assert result["server_name"] == "pivot-mcp"
     assert {"resolve_context", "list_matters", "get_matter", "read_files",
-            "create_file"} <= result["tool_names"]
+            "create_file", "create_matter"} <= result["tool_names"]
 
     # resolve_context
     resolved = result["resolved"]

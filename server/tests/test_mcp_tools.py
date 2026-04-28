@@ -268,3 +268,122 @@ def test_create_file_serializes_status_change_from_field():
     )
     sent_body = client.post_file.call_args[0][1]
     assert sent_body["status_change"] == {"from": "executing", "to": "finished"}
+
+
+from server.mcp.tools import tool_create_matter
+
+
+def test_create_matter_success_returns_summary_and_view_url():
+    client = MagicMock(spec=MatterApiClient)
+    client.post_matter.return_value = {
+        "matter_id": "new-feature",
+        "matter": {"id": "new-feature", "title": "New Feature",
+                   "current_status": "planning"},
+        "initial_timeline_item": {"file": "discussions/Pivot/new-feature/001_x_think_y.md",
+                                  "type": "think"},
+        "file": "discussions/Pivot/new-feature/001_x_think_y.md",
+    }
+    out = tool_create_matter(
+        {
+            "category": "Pivot",
+            "title": "New Feature",
+            "type": "think",
+            "summary": "新需求",
+            "body": "# New Feature\n\n正文",
+        },
+        client,
+        "https://pivot.enclaws.ai",
+    )
+    assert out["ok"] is True
+    assert out["matter_id"] == "new-feature"
+    assert out["category"] == "Pivot"
+    assert out["title"] == "New Feature"
+    assert out["view_url"] == "https://pivot.enclaws.ai/m/new-feature"
+    assert out["first_file"].endswith(".md")
+    assert "New Feature" in out["summary_for_ai"]
+    assert "Pivot" in out["summary_for_ai"]
+
+
+def test_create_matter_flat_input_becomes_nested_api_body():
+    """MCP exposes flat schema; backend wants {category, title, initial_file{...}}."""
+    client = MagicMock(spec=MatterApiClient)
+    client.post_matter.return_value = {
+        "matter_id": "x", "matter": {"id": "x", "title": "X"},
+        "file": "discussions/Pivot/x/001_a_think_b.md",
+        "initial_timeline_item": {"file": "discussions/Pivot/x/001_a_think_b.md"},
+    }
+    tool_create_matter(
+        {
+            "category": "Pivot",
+            "title": "X",
+            "type": "think",
+            "summary": "s",
+            "body": "b",
+            "owner": "alice",
+        },
+        client,
+        "https://pivot",
+    )
+    sent_body = client.post_matter.call_args[0][0]
+    assert sent_body["category"] == "Pivot"
+    assert sent_body["title"] == "X"
+    assert sent_body["initial_file"] == {
+        "type": "think", "summary": "s", "body": "b", "owner": "alice",
+    }
+
+
+def test_create_matter_omits_owner_when_null():
+    client = MagicMock(spec=MatterApiClient)
+    client.post_matter.return_value = {
+        "matter_id": "x", "matter": {"id": "x", "title": "X"},
+        "file": "f.md", "initial_timeline_item": {"file": "f.md"},
+    }
+    tool_create_matter(
+        {"category": "Pivot", "title": "X", "type": "think",
+         "summary": "s", "body": "b"},
+        client,
+        "https://pivot",
+    )
+    sent_body = client.post_matter.call_args[0][0]
+    assert "owner" not in sent_body["initial_file"]
+
+
+def test_create_matter_validation_errors_returned_as_data():
+    client = MagicMock(spec=MatterApiClient)
+    client.post_matter.return_value = {
+        "__validation_errors__": {"detail": {"code": "title_required"}},
+    }
+    out = tool_create_matter(
+        {"category": "Pivot", "title": "", "type": "think",
+         "summary": "s", "body": "b"},
+        client,
+        "https://pivot",
+    )
+    assert "errors" in out
+    assert "ok" not in out
+
+
+def test_create_matter_401_raises():
+    client = MagicMock(spec=MatterApiClient)
+    client.post_matter.side_effect = ToolError(401, "invalid_token")
+    with pytest.raises(ToolError) as ei:
+        tool_create_matter(
+            {"category": "Pivot", "title": "X", "type": "think",
+             "summary": "s", "body": "b"},
+            client,
+            "https://pivot",
+        )
+    assert ei.value.status == 401
+
+
+def test_create_matter_403_raises():
+    client = MagicMock(spec=MatterApiClient)
+    client.post_matter.side_effect = ToolError(403, "forbidden")
+    with pytest.raises(ToolError) as ei:
+        tool_create_matter(
+            {"category": "Pivot", "title": "X", "type": "think",
+             "summary": "s", "body": "b"},
+            client,
+            "https://pivot",
+        )
+    assert ei.value.status == 403

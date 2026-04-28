@@ -19,6 +19,7 @@ from server.mcp.auth import McpAuthError, authenticate
 from server.mcp.runtime import current_user_token, set_user_token
 from server.mcp.schemas import (
     CreateFileIn,
+    CreateMatterIn,
     GetMatterIn,
     ListMattersIn,
     ReadFilesIn,
@@ -28,6 +29,7 @@ from server.mcp.tools import (
     MatterApiClient,
     ToolError,
     tool_create_file,
+    tool_create_matter,
     tool_get_matter,
     tool_list_matters,
     tool_read_files,
@@ -109,6 +111,24 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
                 ),
                 inputSchema=CreateFileIn.model_json_schema(),
             ),
+            Tool(
+                name="create_matter",
+                description=(
+                    "Create a new Matter (with its first timeline file) in the given "
+                    "category. The new Matter starts in `planning` status; to advance "
+                    "status, use `create_file` with `status_change` afterwards. "
+                    "PROTOCOL (1/3): BEFORE calling this tool, you MUST present the draft "
+                    "to the user in natural language in chat — title, category, summary, "
+                    "and body — and wait for explicit approval ('ok', 'go', '发吧', etc). "
+                    "The tool approval dialog is the FINAL confirmation, not the first. "
+                    "PROTOCOL (2/3): If the backend rejects with 422 (`{errors: ...}` in "
+                    "the response), surface the field-level errors to the user and ask "
+                    "them to revise — do NOT silently retry with guessed fixes. "
+                    "PROTOCOL (3/3): After success, relay the returned `summary_for_ai` "
+                    "message verbatim to the user, including the view_url."
+                ),
+                inputSchema=CreateMatterIn.model_json_schema(),
+            ),
         ]
 
     @mcp_server.call_tool()
@@ -142,6 +162,10 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
             elif name == "create_file":
                 out = await anyio.to_thread.run_sync(
                     partial(tool_create_file, arguments, client, web_base_url)
+                )
+            elif name == "create_matter":
+                out = await anyio.to_thread.run_sync(
+                    partial(tool_create_matter, arguments, client, web_base_url)
                 )
             else:
                 raise ToolError(404, f"unknown_tool: {name}")

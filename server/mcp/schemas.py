@@ -158,3 +158,40 @@ class CreateFileOut(BaseModel):
     summary_for_ai: str = Field(
         description="A human-friendly confirmation message the AI MUST relay verbatim to the user."
     )
+
+
+# ---------- create_matter ----------
+
+class CreateMatterIn(BaseModel):
+    category: str = Field(
+        description="Matter category, e.g. 'Pivot'. Used for on-disk placement under discussions/<category>/<slug>/.",
+    )
+    title: str = Field(
+        description="Matter title. Backend generates the matter_id (slug) from this; collisions are auto-disambiguated with a timestamp suffix.",
+    )
+    type: str = Field(
+        description="First timeline file type. Typically 'think'; backend's planning-state validator rejects types other than think/act for the initial file.",
+    )
+    summary: str = Field(
+        description="One-line summary of the matter, surfaced in list views.",
+    )
+    body: str = Field(
+        default="",
+        description="Markdown body of the first timeline file.",
+    )
+    owner: str | None = Field(
+        default=None,
+        description="Optional owner pinyin. Leave null to default to the creator.",
+    )
+
+
+class CreateMatterOut(BaseModel):
+    ok: bool
+    matter_id: str
+    category: str
+    title: str
+    view_url: str
+    first_file: str
+    summary_for_ai: str = Field(
+        description="A human-friendly confirmation message the AI MUST relay verbatim to the user."
+    )
