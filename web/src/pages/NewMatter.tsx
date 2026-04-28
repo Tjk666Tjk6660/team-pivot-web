@@ -369,7 +369,11 @@ export function NewMatter({ me }: { me: Me }) {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto md:flex-row md:overflow-hidden">
       {qualityDialog}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      {/* On narrow screens the outer container is the sole scroller so the
+          page reads as one continuous flow (form, then AIPane below). On md+
+          the form column gets its own internal scroll so it can be tall
+          without pushing AIPane out of the side panel. */}
+      <div className="min-h-0 flex-1 md:overflow-y-auto">
         <div className="mx-auto w-full max-w-4xl space-y-4 px-3 py-4 sm:px-5 sm:py-5 md:space-y-6">
           <Button
             asChild
@@ -622,7 +626,9 @@ export function NewMatter({ me }: { me: Me }) {
           matter_id={NEW_MATTER_PSEUDO_ID}
           threadKey={threadKey}
           threadTitle={title.trim() || "新讨论"}
-          hasReplyDraft={false}
+          // Treat any existing body as "draft already filled" so AIPane shows
+          // the overwrite confirm before AI replaces user-typed content.
+          hasReplyDraft={!!body.trim()}
           onUseDraftAsReply={handleAIDraft}
         />
       </aside>
