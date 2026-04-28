@@ -41,6 +41,7 @@ export function AIPane({
   pendingReplyTarget,
   onPendingReplyTargetConsumed,
   hasReplyDraft,
+  mode = "reply",
 }: {
   matter_id: string;
   threadKey: string;
@@ -49,11 +50,14 @@ export function AIPane({
     content: string,
     replyTo: string,
     summary?: string,
+    title?: string,
   ) => Promise<boolean>;
   pendingReplyTarget?: string | null;
   onPendingReplyTargetConsumed?: () => void;
   hasReplyDraft: boolean;
+  mode?: "reply" | "new-matter";
 }) {
+  const isNewMatter = mode === "new-matter";
   const { ai } = useDashboard();
   const state = ai.getThreadState(threadKey);
   const { messages, replyTarget, input, streaming, loading, loaded } = state;
@@ -126,23 +130,33 @@ export function AIPane({
       rawText: input,
       hasReplyDraft,
       onUseDraftAsReply,
+      mode,
     });
   };
 
   const handleGenerateDraft = async () => {
-    if (blockedByOtherThread || !replyTarget) return;
-    const target = replyTarget.split("/").pop() ?? replyTarget;
+    if (blockedByOtherThread) return;
+    if (!isNewMatter && !replyTarget) return;
+    const generatePrompt = isNewMatter
+      ? `${GENERATE_TAG} 请根据以上对话，为这个新 matter 生成首篇 think 文档：完整正文必须用 <draft type="think">...</draft> 标签包裹；同时额外用 <summary>...</summary> 标签包裹一句不超过 80 字的中文 summary（用最精简的语言概括这篇 matter 推进 / 判断 / 结论了什么，不要加引号或前后解释）；以及用 <title>...</title> 标签包裹一句不超过 30 字的 matter 标题建议。三段都必须出现。`
+      : (() => {
+          const target = replyTarget!.split("/").pop() ?? replyTarget!;
+          return `${GENERATE_TAG} 请根据以上对话，生成针对「${target}」的完整回复正文，整个正文必须用 <draft type="think">...</draft> 标签包裹；同时额外用 <summary>...</summary> 标签包裹一句不超过 80 字的中文 summary（用最精简的语言概括这篇文件推进 / 判断 / 结论了什么，不要加引号，也不要前后解释）。`;
+        })();
     await ai.sendMessage({
       matter_id,
       threadKey,
       threadTitle,
-      rawText: `${GENERATE_TAG} 请根据以上对话，生成针对「${target}」的完整回复正文，整个正文必须用 <draft type="think">...</draft> 标签包裹；同时额外用 <summary>...</summary> 标签包裹一句不超过 80 字的中文 summary（用最精简的语言概括这篇文件推进 / 判断 / 结论了什么，不要加引号，也不要前后解释）。`,
+      rawText: generatePrompt,
       hasReplyDraft,
       onUseDraftAsReply,
+      mode,
     });
   };
 
-  const noTarget = !replyTarget;
+  // In new-matter mode there's no starting post, so the reply-target gate
+  // doesn't apply. In reply mode, both Send and Generate require a target.
+  const noTarget = !isNewMatter && !replyTarget;
   const noUserMsg = messages.filter((m) => m.role === "user").length === 0;
   const interactionsDisabled = blockedByOtherThread || loading;
   const sendDisabled =
@@ -175,7 +189,7 @@ export function AIPane({
         </div>
       )}
 
-      {replyTarget && (
+      {!isNewMatter && replyTarget && (
         <div
           className="shrink-0 rounded-[var(--r-sm)] px-3 py-2 text-[11.5px]"
           style={{
@@ -212,9 +226,11 @@ export function AIPane({
             className="pt-4 text-center text-[11.5px] font-serif-body italic"
             style={{ color: "var(--text-mute)" }}
           >
-            {noTarget
-              ? "还未指定起点帖子。请从某条帖子卡片上点击「AI 回复」进入。"
-              : "可以先提问、总结，或者让 AI 帮你生成回复草稿。"}
+            {isNewMatter
+              ? "和 AI 说说你想发起的讨论吧，或者直接在左侧写正文。"
+              : noTarget
+                ? "还未指定起点帖子。请从某条帖子卡片上点击「AI 回复」进入。"
+                : "可以先提问、总结，或者让 AI 帮你生成回复草稿。"}
           </p>
         )}
         {messages.map((m, idx) => {
@@ -277,7 +293,9 @@ export function AIPane({
                     ? "未指定起点帖子"
                     : noUserMsg
                       ? "请先和 AI 至少聊一句"
-                      : "根据当前讨论生成完整回复草稿"
+                      : isNewMatter
+                        ? "根据当前讨论生成新 matter 首篇草稿"
+                        : "根据当前讨论生成完整回复草稿"
               }
             >
               <Sparkles className="mr-1.5 h-3.5 w-3.5" />
@@ -339,9 +357,11 @@ export function AIPane({
             placeholder={
               blockedByOtherThread
                 ? `「${activeThreadTitle}」正在输出，请稍后…`
-                : noTarget
-                  ? "未指定起点帖子（请从某条帖子点击「AI 回复」进入）"
-                  : "询问问题、提炼结论，或让 AI 帮你生成这条回复…"
+                : isNewMatter
+                  ? "和 AI 描述你想发起的讨论，或让 AI 帮你起草首篇文档…"
+                  : noTarget
+                    ? "未指定起点帖子（请从某条帖子点击「AI 回复」进入）"
+                    : "询问问题、提炼结论，或让 AI 帮你生成这条回复…"
             }
             rows={4}
             disabled={blockedByOtherThread || streaming || noTarget}

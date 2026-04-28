@@ -85,7 +85,9 @@ type DashboardContext = {
         content: string,
         replyTo: string,
         summary?: string,
+        title?: string,
       ) => Promise<boolean>;
+      mode?: "reply" | "new-matter";
     }) => Promise<void>;
   };
 };
@@ -108,22 +110,52 @@ const DRAFT_RE = /<draft(?:\s+type="([^"]*)")?\s*>([\s\S]*?)<\/draft>/i;
 // Optional `<summary>...</summary>` produced by the same AI call so the
 // publish step doesn't need a second AI round-trip to summarise.
 const SUMMARY_RE = /<summary>([\s\S]*?)<\/summary>/i;
+// Optional `<title>...</title>` produced in new-matter mode for the matter
+// title suggestion. Reply mode does not request it.
+const TITLE_RE = /<title>([\s\S]*?)<\/title>/i;
 
-function extractDraft(
-  text: string,
-): { draft: string; rest: string; type: string; summary?: string } | null {
+function extractDraft(text: string): {
+  draft: string;
+  rest: string;
+  type: string;
+  summary?: string;
+  title?: string;
+} | null {
   const m = text.match(DRAFT_RE);
   if (!m) return null;
   const summaryMatch = text.match(SUMMARY_RE);
-  // Strip both blocks from `rest` so the user-facing AI message doesn't
-  // show the raw <draft>/<summary> tags after streaming completes.
-  const rest = text.replace(DRAFT_RE, "").replace(SUMMARY_RE, "").trim();
+  const titleMatch = text.match(TITLE_RE);
+  // Strip all three blocks from `rest` so the user-facing AI message doesn't
+  // show the raw tags after streaming completes.
+  const rest = text
+    .replace(DRAFT_RE, "")
+    .replace(SUMMARY_RE, "")
+    .replace(TITLE_RE, "")
+    .trim();
   return {
     draft: m[2].trim(),
     rest,
     type: (m[1] || "think").toLowerCase(),
     summary: summaryMatch ? summaryMatch[1].trim() || undefined : undefined,
+    title: titleMatch ? titleMatch[1].trim() || undefined : undefined,
   };
+}
+
+// Virtual threadKey for NewMatter conversations: __newmatter__:<draftId>.
+// Bound to a draft so the same composer reopened later resumes the same chat.
+const NEW_MATTER_THREAD_PREFIX = "__newmatter__:";
+
+export function newMatterThreadKey(draftId: string): string {
+  return `${NEW_MATTER_THREAD_PREFIX}${draftId}`;
+}
+
+export function isNewMatterThreadKey(key: string): boolean {
+  return key.startsWith(NEW_MATTER_THREAD_PREFIX);
+}
+
+function newMatterDraftIdFromKey(key: string): string | null {
+  if (!isNewMatterThreadKey(key)) return null;
+  return key.slice(NEW_MATTER_THREAD_PREFIX.length);
 }
 
 export function useDashboard() {
@@ -355,6 +387,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     rawText,
     hasReplyDraft,
     onUseDraftAsReply,
+    mode = "reply",
   }: {
     matter_id: string;
     threadKey: string;
@@ -365,7 +398,9 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       content: string,
       replyTo: string,
       summary?: string,
+      title?: string,
     ) => Promise<boolean>;
+    mode?: "reply" | "new-matter";
   }) => {
     const trimmed = rawText.trim();
     if (!trimmed) return;
@@ -378,12 +413,14 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
 
     const current = aiThreadsRef.current[threadKey] ?? emptyAIThreadState();
     if (current.streaming) return;
-    if (!current.replyTarget) {
+    if (mode === "reply" && !current.replyTarget) {
       toast.error("未找到起点帖子，请从某条帖子上点击「AI 回复」进入");
       return;
     }
 
-    const currentReplyTarget = current.replyTarget;
+    // new-matter mode has no replyTarget; use empty string when calling
+    // onUseDraftAsReply (handler ignores it).
+    const currentReplyTarget = current.replyTarget ?? "";
     const userMsg: AIMsg = {
       id: current.nextId,
       role: "user",
@@ -421,7 +458,9 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       for await (const ev of streamAIChat(
         matter_id,
         historyForApi,
-        currentReplyTarget,
+        mode === "new-matter" ? null : currentReplyTarget,
+        undefined,
+        mode,
       )) {
         if (ev.kind === "delta") {
           accumulated += ev.delta;
@@ -494,6 +533,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
               extracted.draft,
               currentReplyTarget,
               extracted.summary,
+              extracted.title,
             );
             finalContent = extracted.rest
               ? `${extracted.rest}\n\n_${ok ? "✅" : "⚠️"} ${ok ? "草稿已填入回复框" : "填入草稿失败"}_`
@@ -558,6 +598,32 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // One-shot cleanup of orphan __newmatter__: threads. A NewMatter draft can
+  // be deleted (via publish or manual remove) while its AIPane conversation
+  // sits in the in-memory ai store keyed by draftId. On Dashboard mount, drop
+  // any such thread whose draftId is no longer in the latest drafts list so
+  // the store doesn't accumulate dead entries across sessions.
+  const orphanCleanupDoneRef = useRef(false);
+  useEffect(() => {
+    if (orphanCleanupDoneRef.current) return;
+    if (drafts === null) return;
+    orphanCleanupDoneRef.current = true;
+    const liveIds = new Set(drafts.map((d) => d.id));
+    setAiThreads((prev) => {
+      let changed = false;
+      const next: Record<string, AIThreadState> = {};
+      for (const [k, v] of Object.entries(prev)) {
+        const draftId = newMatterDraftIdFromKey(k);
+        if (draftId && !liveIds.has(draftId)) {
+          changed = true;
+          continue;
+        }
+        next[k] = v;
+      }
+      return changed ? next : prev;
+    });
+  }, [drafts]);
 
   // Subscribe to SSE matter events + visibility/reconnect resume signals.
   // Both list-mutating events and resume should converge on a single debounced
