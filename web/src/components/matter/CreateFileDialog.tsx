@@ -313,6 +313,38 @@ export function CreateFileForm({
       return;
     }
 
+    // Quality gate must run BEFORE the (potentially slow) summary AI call.
+    // Order matters for two reasons:
+    //   1. If the user cancels or sends to AI, we waste no AI summary call.
+    //   2. We never enter the "generating" stage in those branches, so an
+    //      early return doesn't leave the form stuck with submitting=true
+    //      (this previously froze the form on "send_to_ai" → no buttons).
+    //
+    // result/insight bypass the gate per design §四 — they also do NOT carry
+    // body_source into NewFileIn so the post frontmatter omits the field.
+    const qualityGated = isThink || isAct || isVerify;
+    let publishSource: BodySource | undefined;
+    if (qualityGated && confirmPublishQuality) {
+      const finalSource = computeAtPublish(
+        {
+          body_source: form.body_source,
+          body_source_snapshot: form.body_source_snapshot,
+        },
+        form.body,
+      );
+      const gate = await confirmPublishQuality({
+        bodySource: finalSource,
+        blockedByAIBusy: !!isAIBusy,
+        busyTitle,
+      });
+      if (gate === "cancel") return;
+      if (gate === "send_to_ai") {
+        onSendToAI?.(form.body);
+        return;
+      }
+      publishSource = finalSource;
+    }
+
     let summary = form.summary.trim();
     // form.summary 已有值时直接用——通常由 AIPane【生成草稿】流程在回填 body
     // 时同步回填 summary,跳过这次 AI 调用,免去发布时再等一次。
@@ -360,31 +392,7 @@ export function CreateFileForm({
         },
       ];
     }
-
-    // Quality gate: think / act / verify only. result + insight skip the
-    // dialog entirely (v1 scope, see design §四) — they also do NOT carry
-    // body_source into NewFileIn so the post frontmatter omits the field.
-    const qualityGated = isThink || isAct || isVerify;
-    if (qualityGated && confirmPublishQuality) {
-      const finalSource = computeAtPublish(
-        {
-          body_source: form.body_source,
-          body_source_snapshot: form.body_source_snapshot,
-        },
-        form.body,
-      );
-      const gate = await confirmPublishQuality({
-        bodySource: finalSource,
-        blockedByAIBusy: !!isAIBusy,
-        busyTitle,
-      });
-      if (gate === "cancel") return;
-      if (gate === "send_to_ai") {
-        onSendToAI?.(form.body);
-        return;
-      }
-      body.body_source = finalSource;
-    }
+    if (publishSource) body.body_source = publishSource;
 
     setStage("publishing");
     try {
