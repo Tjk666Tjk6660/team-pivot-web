@@ -26,7 +26,7 @@ export function PublishQualityConfirmDialog({
   onSendToAI,
   onCancel,
 }: PublishQualityConfirmDialogProps) {
-  const sendButtonLabel = blockedByAIBusy ? "加入 AI 队列" : "发送给 AI 助手";
+  const sendButtonLabel = blockedByAIBusy ? "加入 AI 队列" : "进行 AI 讨论";
   const sendHint = blockedByAIBusy
     ? `内容已填入输入框，等当前对话${busyTitle ? `「${busyTitle}」` : ""}完成后再发送`
     : "把当前内容塞进 AI 助手输入框，继续讨论或让 AI 帮你改写";
@@ -78,7 +78,7 @@ export function PublishQualityConfirmDialog({
               className="rounded-[var(--r-md)]"
               onClick={onForcePublish}
             >
-              强行发布
+              立即发布
             </Button>
           </div>
         </DialogFooter>
