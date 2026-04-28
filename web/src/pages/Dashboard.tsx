@@ -199,7 +199,10 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const [aiThreads, setAiThreads] = useState<Record<string, AIThreadState>>({});
   const [activeAIStream, setActiveAIStream] = useState<ActiveAIStream>(null);
-  const isThreadView = location.pathname.startsWith("/m/");
+  // Routes that take the full main pane on narrow screens. `/m/` is the
+  // matter detail view; `/new` is the NewMatter composer (also a full pane).
+  const isThreadView =
+    location.pathname.startsWith("/m/") || location.pathname.startsWith("/new");
   const layoutRef = useRef<HTMLDivElement>(null);
   const aiThreadsRef = useRef<Record<string, AIThreadState>>({});
   const activeAIStreamRef = useRef<ActiveAIStream>(null);

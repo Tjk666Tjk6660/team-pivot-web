@@ -36,8 +36,8 @@ export function App() {
           <Route element={<Dashboard me={me} onLogout={doLogout} />}>
             <Route path="/" element={<MatterDetailEmpty />} />
             <Route path="/m/:matter_id" element={<MatterDetailPane />} />
+            <Route path="/new" element={<NewMatter me={me} />} />
           </Route>
-          <Route path="/new" element={<NewMatter me={me} onLogout={doLogout} />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/settings/external-ai" element={<SettingsExternalAI />} />
           <Route path="/admin" element={<AdminPage />} />
