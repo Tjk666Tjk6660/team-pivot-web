@@ -63,3 +63,13 @@ def test_update_profile_empty_github_clears_field(users):
     users.update_profile("ou_1", github_username="ken-d")
     u = users.update_profile("ou_1", github_username="")
     assert u is not None and u.github_username is None
+
+
+def test_update_markdown_style_persists_user_preference(users):
+    users.upsert_from_feishu(open_id="ou_1", union_id=None, name="x", avatar_url="")
+
+    u = users.update_markdown_style("ou_1", "neon-dark")
+
+    assert u is not None and u.markdown_style == "neon-dark"
+    got = users.get("ou_1")
+    assert got is not None and got.markdown_style == "neon-dark"

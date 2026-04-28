@@ -4,6 +4,7 @@ export type Me = {
   avatar_url: string;
   pinyin: string | null;
   github_username: string | null;
+  markdown_style: string | null;
   needs_setup: boolean;
 };
 
@@ -628,6 +629,75 @@ export async function updateWorkspaceAdminConfig(body: {
   if (!r.ok) {
     const d = await r.json().catch(() => ({ detail: r.statusText }));
     throw new Error(d.detail || `update workspace config failed: ${r.status}`);
+  }
+}
+
+export type MarkdownStyleMeta = {
+  id: string;
+  label: string;
+  description: string;
+  tone: "light" | "dark";
+};
+
+export type MarkdownStylesPayload = {
+  styles: MarkdownStyleMeta[];
+  system_default_style: string | null;
+  user_style: string | null;
+  effective_style: string;
+  builtin_default_style: string;
+};
+
+export type AdminMarkdownSettings = {
+  styles: MarkdownStyleMeta[];
+  system_default_style: string | null;
+  effective_system_default_style: string;
+};
+
+export async function fetchMarkdownStyles(): Promise<MarkdownStylesPayload> {
+  const r = await fetch("/api/markdown/styles", { credentials: "include" });
+  await throwIfSessionExpired(r);
+  if (!r.ok) throw new Error(`/api/markdown/styles failed: ${r.status}`);
+  return (await r.json()) as MarkdownStylesPayload;
+}
+
+export async function updateMyMarkdownStyle(style: string): Promise<{
+  user_style: string;
+  effective_style: string;
+}> {
+  const r = await fetch("/api/me/markdown-style", {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ style }),
+  });
+  if (!r.ok) {
+    await throwIfSessionExpired(r);
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `update markdown style failed: ${r.status}`);
+  }
+  return (await r.json()) as { user_style: string; effective_style: string };
+}
+
+export async function fetchAdminMarkdownSettings(): Promise<AdminMarkdownSettings> {
+  const r = await adminFetch("/api/admin/markdown-settings");
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `/api/admin/markdown-settings failed: ${r.status}`);
+  }
+  return (await r.json()) as AdminMarkdownSettings;
+}
+
+export async function updateAdminMarkdownSettings(body: {
+  system_default_style: string;
+}): Promise<void> {
+  const r = await adminFetch("/api/admin/markdown-settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `update markdown settings failed: ${r.status}`);
   }
 }
 

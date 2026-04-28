@@ -83,6 +83,9 @@ CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_open_id);
 
 
 def _migrate(conn) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+    if "markdown_style" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN markdown_style TEXT")
     cols = {row[1] for row in conn.execute("PRAGMA table_info(drafts)")}
     if "mentions_json" not in cols:
         conn.execute("ALTER TABLE drafts ADD COLUMN mentions_json TEXT")

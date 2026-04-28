@@ -166,6 +166,231 @@
 .prose-pivot tr:nth-child(even) td { background: rgba(244, 241, 232, 0.4); }
 .prose-pivot input[type="checkbox"] { @apply mr-1.5 align-middle; }
 
+/* Matter Markdown render themes. These modifiers are only applied to
+   matter document bodies; AI replies and home Markdown keep base prose. */
+.prose-pivot--code-light {
+  background: #ffffff;
+  color: #24292f;
+  border: 1px solid #d0d7de;
+  border-radius: var(--r-md);
+  padding: 18px;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.7;
+}
+.prose-pivot--code-light h1,
+.prose-pivot--code-light h2 {
+  border-bottom: 1px solid #d8dee4;
+  color: #1f2328;
+  padding-bottom: 0.35em;
+}
+.prose-pivot--code-light h1 { font-size: 1.65em; font-weight: 700; }
+.prose-pivot--code-light h2 { font-size: 1.34em; font-weight: 700; }
+.prose-pivot--code-light h3 { color: #24292f; font-size: 1.12em; font-weight: 700; }
+.prose-pivot--code-light code { background: rgba(175,184,193,0.20); border-color: transparent; color: #24292f; }
+.prose-pivot--code-light pre { background: #f6f8fa; border-color: transparent; }
+.prose-pivot--code-light blockquote { border-left-color: #d0d7de; color: #57606a; font-style: normal; }
+.prose-pivot--code-light th { background: #f6f8fa; border-color: #d0d7de; color: #24292f; }
+.prose-pivot--code-light td { border-color: #d0d7de; }
+.prose-pivot--code-light tr:nth-child(even) td { background: #f6f8fa; }
+.prose-pivot--code-light a { color: #0969da; }
+
+.prose-pivot--collab-blue {
+  background: #f3f7ff;
+  color: #1f2329;
+  border: 1px solid #c9d9ff;
+  border-radius: var(--r-md);
+  padding: 20px;
+  font-family: var(--font-sans);
+  font-size: 15.5px;
+  line-height: 1.82;
+}
+.prose-pivot--collab-blue h1 {
+  color: #17315f;
+  font-size: 1.7em;
+  font-weight: 800;
+}
+.prose-pivot--collab-blue h2 {
+  border-left: 5px solid #3370ff;
+  background: linear-gradient(90deg, rgba(51,112,255,0.12), transparent);
+  color: #245bdb;
+  font-size: 1.36em;
+  font-weight: 800;
+  padding: 0.18em 0 0.18em 0.65em;
+}
+.prose-pivot--collab-blue h3 { color: #245bdb; font-size: 1.12em; font-weight: 760; }
+.prose-pivot--collab-blue code { background: #e8f0ff; border-color: #c9d9ff; color: #c42f2f; }
+.prose-pivot--collab-blue pre { background: #edf3ff; border-color: #c9d9ff; border-radius: var(--r-md); }
+.prose-pivot--collab-blue blockquote {
+  background: #eaf1ff;
+  border-left-color: #bacefd;
+  border-radius: var(--r-sm);
+  color: #4e5969;
+  font-style: normal;
+  padding: 0.6em 1em;
+}
+.prose-pivot--collab-blue th { background: #dde8ff; border-color: #c9d9ff; color: #17315f; }
+.prose-pivot--collab-blue td { border-color: #c9d9ff; }
+.prose-pivot--collab-blue tr:nth-child(even) td { background: #eaf1ff; }
+.prose-pivot--collab-blue a { color: #3370ff; }
+
+.prose-pivot--page-brown {
+  background: #fffdf7;
+  color: #3b3328;
+  border: 1px solid #e5d8bd;
+  border-radius: var(--r-md);
+  padding: 24px;
+  font-family: Georgia, "Times New Roman", "Noto Serif SC", serif;
+  font-size: 17px;
+  line-height: 1.9;
+}
+.prose-pivot--page-brown h1 {
+  border-bottom: 3px double #cdb991;
+  color: #221911;
+  font-size: 1.8em;
+  font-weight: 700;
+  padding-bottom: 0.42em;
+}
+.prose-pivot--page-brown h2 {
+  border-bottom: 1px solid #d9c7a5;
+  color: #6d3d1d;
+  font-size: 1.42em;
+  font-weight: 700;
+  padding-bottom: 0.32em;
+}
+.prose-pivot--page-brown h3 { color: #4a3221; font-size: 1.14em; font-weight: 700; }
+.prose-pivot--page-brown code { background: #f3e7d1; border-color: #e0c9a4; color: #743a17; }
+.prose-pivot--page-brown pre { background: #2e241b; border-color: #2e241b; color: #f6ead6; }
+.prose-pivot--page-brown pre code { color: #f6ead6; }
+.prose-pivot--page-brown blockquote {
+  background: #fbf3e4;
+  border-left-color: #c1a16c;
+  color: #6f5a40;
+  padding: 0.65em 1em;
+}
+.prose-pivot--page-brown th { background: #f0dfc0; border-color: #d7c29a; color: #382514; }
+.prose-pivot--page-brown td { border-color: #d7c29a; }
+.prose-pivot--page-brown tr:nth-child(even) td { background: #fcf7ee; }
+.prose-pivot--page-brown a { color: #9b3f1b; }
+
+.prose-pivot--solarized-light {
+  background: #fdf6e3;
+  color: #586e75;
+  border: 1px solid #d8cfb4;
+  border-radius: var(--r-md);
+  padding: 20px;
+  font-family: "Avenir Next", var(--font-sans);
+  font-size: 15.5px;
+  line-height: 1.78;
+}
+.prose-pivot--solarized-light h1 { color: #073642; font-size: 1.7em; font-weight: 760; }
+.prose-pivot--solarized-light h2 {
+  border-bottom: 1px solid #e1d8bd;
+  color: #cb4b16;
+  font-size: 1.38em;
+  font-weight: 760;
+  padding-bottom: 0.35em;
+}
+.prose-pivot--solarized-light h3 { color: #859900; font-size: 1.1em; font-weight: 740; }
+.prose-pivot--solarized-light code { background: #eee8d5; border-color: #ddd4bb; color: #d33682; }
+.prose-pivot--solarized-light pre { background: #073642; border-color: #073642; }
+.prose-pivot--solarized-light pre code { color: #eee8d5; }
+.prose-pivot--solarized-light blockquote {
+  background: #fbf1d3;
+  border-left-color: #b58900;
+  color: #657b83;
+  font-style: normal;
+  padding: 0.58em 0.95em;
+}
+.prose-pivot--solarized-light th { background: #eee8d5; border-color: #d8cfb4; color: #073642; }
+.prose-pivot--solarized-light td { border-color: #d8cfb4; }
+.prose-pivot--solarized-light tr:nth-child(even) td { background: #fbf1d3; }
+.prose-pivot--solarized-light a { color: #268bd2; }
+
+.prose-pivot--neon-dark {
+  background: #282a36;
+  color: #f8f8f2;
+  border: 1px solid #44475a;
+  border-radius: var(--r-md);
+  padding: 20px;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.76;
+}
+.prose-pivot--neon-dark h1 {
+  border-bottom: 1px solid #44475a;
+  color: #ff79c6;
+  font-size: 1.78em;
+  font-weight: 820;
+  padding-bottom: 0.35em;
+}
+.prose-pivot--neon-dark h2 {
+  border-left: 5px solid #bd93f9;
+  color: #8be9fd;
+  font-size: 1.42em;
+  font-weight: 800;
+  padding-left: 0.6em;
+}
+.prose-pivot--neon-dark h3 { color: #50fa7b; font-size: 1.12em; font-weight: 760; }
+.prose-pivot--neon-dark strong { color: #ffffff; }
+.prose-pivot--neon-dark code { background: #44475a; border-color: #55586c; color: #ffb86c; }
+.prose-pivot--neon-dark pre { background: #191a21; border-color: #44475a; }
+.prose-pivot--neon-dark pre code { color: #f8f8f2; }
+.prose-pivot--neon-dark blockquote {
+  background: #343746;
+  border-left-color: #ffb86c;
+  border-radius: var(--r-sm);
+  color: #e4e5f1;
+  font-style: normal;
+  padding: 0.65em 1em;
+}
+.prose-pivot--neon-dark th { background: #343746; border-color: #44475a; color: #8be9fd; }
+.prose-pivot--neon-dark td { border-color: #44475a; }
+.prose-pivot--neon-dark tr:nth-child(even) td { background: #2f3140; }
+.prose-pivot--neon-dark a { color: #8be9fd; }
+
+.prose-pivot--nord-dark {
+  background: #2e3440;
+  color: #d8dee9;
+  border: 1px solid #4c566a;
+  border-radius: var(--r-md);
+  padding: 20px;
+  font-family: var(--font-sans);
+  font-size: 15.5px;
+  line-height: 1.8;
+}
+.prose-pivot--nord-dark h1 {
+  border-bottom: 1px solid #4c566a;
+  color: #eceff4;
+  font-size: 1.78em;
+  font-weight: 780;
+  padding-bottom: 0.35em;
+}
+.prose-pivot--nord-dark h2 {
+  border-bottom: 1px solid #4c566a;
+  color: #88c0d0;
+  font-size: 1.42em;
+  font-weight: 760;
+  padding-bottom: 0.35em;
+}
+.prose-pivot--nord-dark h3 { color: #a3be8c; font-size: 1.1em; font-weight: 740; }
+.prose-pivot--nord-dark strong { color: #eceff4; }
+.prose-pivot--nord-dark code { background: #3b4252; border-color: #4c566a; color: #ebcb8b; }
+.prose-pivot--nord-dark pre { background: #242933; border-color: #4c566a; }
+.prose-pivot--nord-dark pre code { color: #e5e9f0; }
+.prose-pivot--nord-dark blockquote {
+  background: #3b4252;
+  border-left-color: #81a1c1;
+  border-radius: var(--r-sm);
+  color: #d8dee9;
+  font-style: normal;
+  padding: 0.65em 1em;
+}
+.prose-pivot--nord-dark th { background: #3b4252; border-color: #4c566a; color: #eceff4; }
+.prose-pivot--nord-dark td { border-color: #4c566a; }
+.prose-pivot--nord-dark tr:nth-child(even) td { background: #343b49; }
+.prose-pivot--nord-dark a { color: #88c0d0; }
+
 @layer utilities {
   .font-serif-body { font-family: var(--font-body); }
   .font-ui { font-family: var(--font-ui); }

@@ -1,16 +1,19 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Bot, FolderGit2, Lock, ShieldCheck, Users } from "lucide-react";
+import { ArrowLeft, Bot, FolderGit2, Lock, Palette, ShieldCheck, Users } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import {
   AdminRequiredError,
   clearAdminPassword,
+  fetchAdminMarkdownSettings,
   fetchAISettings,
   fetchWorkspaceAdminConfig,
   setAdminPassword,
   syncContacts,
+  updateAdminMarkdownSettings,
   updateAISettings,
   updateWorkspaceAdminConfig,
+  type MarkdownStyleMeta,
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,6 +33,15 @@ const SUGGESTED_MODELS = [
   "openai/gpt-4o",
   "google/gemini-flash-1.5",
 ];
+
+const MARKDOWN_STYLE_SWATCHES: Record<string, { bg: string; accent: string; code: string }> = {
+  "code-light": { bg: "#ffffff", accent: "#0969da", code: "#f6f8fa" },
+  "collab-blue": { bg: "#f3f7ff", accent: "#3370ff", code: "#dbe8ff" },
+  "page-brown": { bg: "#fffdf7", accent: "#9b3f1b", code: "#2e241b" },
+  "solarized-light": { bg: "#fdf6e3", accent: "#cb4b16", code: "#073642" },
+  "neon-dark": { bg: "#282a36", accent: "#ff79c6", code: "#191a21" },
+  "nord-dark": { bg: "#2e3440", accent: "#88c0d0", code: "#242933" },
+};
 
 export function AdminPage() {
   const [unlocked, setUnlocked] = useState(false);
@@ -96,6 +108,7 @@ export function AdminPage() {
               <SyncContactsSection onAdminLost={() => setUnlocked(false)} />
             </div>
             <div className="space-y-6">
+              <MarkdownSettingsSection onAdminLost={() => setUnlocked(false)} />
               <AISettingsSection onAdminLost={() => setUnlocked(false)} />
             </div>
           </div>
@@ -374,6 +387,188 @@ function WorkspaceConfigSection({ onAdminLost }: { onAdminLost: () => void }) {
 }
 
 // ── AI settings ──────────────────────────────────────────────────────────────
+
+function MarkdownSettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
+  const [styles, setStyles] = useState<MarkdownStyleMeta[]>([]);
+  const [systemDefaultStyle, setSystemDefaultStyle] = useState("");
+  const [effectiveStyle, setEffectiveStyle] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  useEffect(() => {
+    fetchAdminMarkdownSettings()
+      .then((s) => {
+        setStyles(s.styles);
+        setSystemDefaultStyle(
+          s.system_default_style || s.effective_system_default_style,
+        );
+        setEffectiveStyle(s.effective_system_default_style);
+      })
+      .catch((e) => {
+        if (e instanceof AdminRequiredError) {
+          toast.error("管理员密码已失效，请重新输入");
+          onAdminLost();
+        } else {
+          toast.error(e instanceof Error ? e.message : String(e));
+        }
+      })
+      .finally(() => setLoading(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const save = async () => {
+    if (!systemDefaultStyle) {
+      toast.error("请选择系统默认 Markdown 主题");
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateAdminMarkdownSettings({
+        system_default_style: systemDefaultStyle,
+      });
+      setEffectiveStyle(systemDefaultStyle);
+      toast.success("Markdown 默认主题已保存");
+    } catch (e) {
+      if (e instanceof AdminRequiredError) {
+        onAdminLost();
+      } else {
+        toast.error(e instanceof Error ? e.message : String(e));
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const selectedStyle = styles.find((s) => s.id === systemDefaultStyle);
+
+  return (
+    <section>
+      <Card className="shadow-[var(--shadow-sm)]">
+        <CardHeader className="pb-4">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Palette className="h-4 w-4" />
+            Markdown 正文主题
+          </CardTitle>
+          <CardDescription>
+            设置 matter 文档正文的系统默认 Markdown 渲染主题；用户个人选择优先。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          {loading ? (
+            <p className="text-sm text-muted-foreground">加载中...</p>
+          ) : (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="markdown-default-style">系统默认主题</Label>
+                <div className="relative">
+                  <button
+                    id="markdown-default-style"
+                    type="button"
+                    onClick={() => setMenuOpen((v) => !v)}
+                    className="flex min-h-12 w-full items-center gap-3 rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface-alt)] px-3 py-2 text-left transition hover:border-[var(--accent-soft)] hover:bg-[var(--surface)]"
+                  >
+                    {selectedStyle && <MarkdownAdminSwatch style={selectedStyle} />}
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-semibold text-[var(--text)]">
+                        {selectedStyle?.label ?? "未选择"}
+                        {selectedStyle && (
+                          <span className="ml-2 rounded-full bg-[var(--surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-mute)] ring-1 ring-[var(--line)]">
+                            {selectedStyle.tone === "dark" ? "暗色" : "亮色"}
+                          </span>
+                        )}
+                      </span>
+                      {selectedStyle && (
+                        <span className="mt-0.5 block truncate text-xs text-[var(--text-mute)]">
+                          {selectedStyle.description}
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-[11px] text-[var(--text-mute)]">▼</span>
+                  </button>
+
+                  {menuOpen && (
+                    <div className="absolute left-0 right-0 top-full z-50 mt-2 max-h-80 overflow-y-auto rounded-[var(--r-md)] border border-[var(--line-strong)] bg-[var(--surface)] p-2 shadow-[var(--shadow-lg)]">
+                      {styles.map((style) => (
+                        <button
+                          key={style.id}
+                          type="button"
+                          onClick={() => {
+                            setSystemDefaultStyle(style.id);
+                            setMenuOpen(false);
+                          }}
+                          className={`flex w-full items-center gap-3 rounded-[var(--r-sm)] px-2.5 py-2.5 text-left transition ${
+                            systemDefaultStyle === style.id
+                              ? "bg-[color-mix(in_srgb,var(--accent-bg)_62%,var(--surface))] ring-1 ring-[var(--accent-soft)]"
+                              : "hover:bg-[var(--surface-alt)]"
+                          }`}
+                        >
+                          <MarkdownAdminSwatch style={style} />
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--text)]">
+                              {style.label}
+                              <span className="rounded-full bg-[var(--surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-mute)] ring-1 ring-[var(--line)]">
+                                {style.tone === "dark" ? "暗色" : "亮色"}
+                              </span>
+                              {systemDefaultStyle === style.id && (
+                                <span className="rounded-full bg-[var(--surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent)] ring-1 ring-[var(--accent-soft)]">
+                                  已选
+                                </span>
+                              )}
+                            </span>
+                            <span className="mt-0.5 block text-[11px] leading-4 text-[var(--text-mute)]">
+                              {style.description}
+                            </span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  当前生效系统默认：
+                  {styles.find((s) => s.id === effectiveStyle)?.label ?? effectiveStyle}
+                </p>
+              </div>
+              <div className="flex justify-end border-t pt-4">
+                <Button onClick={save} disabled={saving}>
+                  {saving ? "保存中..." : "保存"}
+                </Button>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
+function MarkdownAdminSwatch({ style }: { style: MarkdownStyleMeta }) {
+  const swatch = MARKDOWN_STYLE_SWATCHES[style.id] ?? {
+    bg: "#ffffff",
+    accent: "var(--accent)",
+    code: "var(--surface-alt)",
+  };
+  return (
+    <span
+      className="relative h-9 w-11 shrink-0 overflow-hidden rounded-[7px] ring-1 ring-[var(--line)]"
+      style={{ background: swatch.bg }}
+      aria-hidden
+    >
+      <span
+        className="absolute left-2 right-2 top-2 h-1 rounded-full"
+        style={{ background: swatch.accent }}
+      />
+      <span
+        className="absolute left-2 top-[17px] h-1 w-4 rounded-full opacity-80"
+        style={{ background: swatch.accent }}
+      />
+      <span
+        className="absolute bottom-2 left-2 right-2 h-2 rounded-[4px]"
+        style={{ background: swatch.code }}
+      />
+    </span>
+  );
+}
 
 function AISettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
   const [baseUrl, setBaseUrl] = useState("");

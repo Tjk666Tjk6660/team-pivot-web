@@ -20,6 +20,10 @@ import {
   isMentionValid,
 } from "@/components/MentionField";
 import { cn } from "@/lib/utils";
+import {
+  getMarkdownStyleClass,
+  type MarkdownStyleId,
+} from "@/components/markdown/markdownStyles";
 import { relativeTime, formatFullDateTime } from "@/lib/time";
 import {
   ALLOWED_TYPES_BY_STATUS,
@@ -65,6 +69,7 @@ export function FileCard({
   onJump,
   registerRef,
   highlighted,
+  markdownStyle,
 }: {
   item: TimelineItem;
   index: number;
@@ -76,6 +81,7 @@ export function FileCard({
   onJump: (file: string) => void;
   registerRef?: (el: HTMLDivElement | null) => void;
   highlighted?: boolean;
+  markdownStyle: MarkdownStyleId;
 }) {
   const cfg = TYPE_VISUAL[item.type];
   const [expanded, setExpanded] = useState(false);
@@ -245,7 +251,10 @@ export function FileCard({
                 ? undefined
                 : { maxHeight: COLLAPSE_HEIGHT, overflow: "hidden" }
             }
-            className="prose-pivot mt-3 max-w-none text-[13.5px] leading-7 text-[var(--text-soft)]"
+            className={cn(
+              "prose-pivot mt-3 max-w-none text-[var(--text-soft)]",
+              getMarkdownStyleClass(markdownStyle),
+            )}
           >
             <Markdown
               remarkPlugins={[remarkGfm]}

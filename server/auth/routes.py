@@ -32,6 +32,7 @@ def _user_dict(u: User) -> dict:
         "avatar_url": u.avatar_url,
         "pinyin": u.pinyin,
         "github_username": u.github_username,
+        "markdown_style": u.markdown_style,
         "needs_setup": u.needs_setup,
     }
 

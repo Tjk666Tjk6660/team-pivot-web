@@ -19,6 +19,7 @@ class User:
     avatar_url: str
     pinyin: str | None
     github_username: str | None
+    markdown_style: str | None
     created_at: float
 
     @property
@@ -109,6 +110,14 @@ class UserRepo:
                 raise ValueError(str(e)) from e
         return self.get(open_id)
 
+    def update_markdown_style(self, open_id: str, markdown_style: str) -> User | None:
+        with self._db.connect() as conn:
+            conn.execute(
+                "UPDATE users SET markdown_style=? WHERE open_id=?",
+                (markdown_style, open_id),
+            )
+        return self.get(open_id)
+
 
 def _row_to_user(row: sqlite3.Row) -> User:
     return User(
@@ -118,5 +127,6 @@ def _row_to_user(row: sqlite3.Row) -> User:
         avatar_url=row["avatar_url"],
         pinyin=row["pinyin"],
         github_username=row["github_username"],
+        markdown_style=row["markdown_style"],
         created_at=row["created_at"],
     )

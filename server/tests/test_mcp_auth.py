@@ -26,6 +26,7 @@ def _mk_user(open_id: str = "ou_abc") -> User:
         avatar_url="",
         pinyin="test",
         github_username=None,
+        markdown_style=None,
         created_at=0.0,
     )
 

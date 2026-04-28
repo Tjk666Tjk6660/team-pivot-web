@@ -15,6 +15,7 @@ from server.api.drafts import build_router as build_drafts_router
 from server.api.inbox import build_router as build_inbox_router
 from server.api.matters import build_router as build_matters_router
 from server.api.matters_events import build_router as build_matters_events_router
+from server.api.markdown_styles import build_router as build_markdown_styles_router
 from server.api.tokens import build_router as build_tokens_router
 from server.api.workspace import build_router as build_workspace_router
 from server.api_tokens import ApiTokenRepo
@@ -154,6 +155,9 @@ def create_app() -> FastAPI:
         workspace, settings, ai_conversations, current_user_dep, current_user_cookie_dep,
     ))
     app.include_router(build_app_home_router(workspace, current_user_dep))
+    app.include_router(build_markdown_styles_router(
+        settings, users, current_user_dep, current_user_cookie_dep,
+    ))
     app.include_router(build_tokens_router(api_tokens, current_user_cookie_dep))
 
     # MCP Streamable HTTP endpoint for external AI clients. PAT auth is

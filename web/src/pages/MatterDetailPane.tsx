@@ -32,6 +32,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { AIPane } from "@/components/AIPane";
 import { CopyForAIButton } from "@/components/CopyForAIButton";
+import { MarkdownStyleSwitcher } from "@/components/markdown/MarkdownStyleSwitcher";
+import { useMarkdownStyle } from "@/components/markdown/MarkdownStyleProvider";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TimelineStrip } from "@/components/matter/TimelineStrip";
 import { FileCard } from "@/components/matter/FileCard";
@@ -104,6 +106,7 @@ export function MatterDetailPane() {
   const [searchParams, setSearchParams] = useSearchParams();
   const draftIdFromUrl = searchParams.get("draft");
   const { reloadLists, toggleMatterFavorite, ai } = useDashboard();
+  const { effectiveStyle: markdownStyle } = useMarkdownStyle();
   const [data, setData] = useState<MatterDetailData | null | undefined>(
     undefined,
   );
@@ -860,6 +863,18 @@ export function MatterDetailPane() {
             />
           </section>
 
+          <section className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-2.5 shadow-[var(--shadow-sm)]">
+            <div>
+              <h2 className="text-[13px] font-semibold text-[var(--text)]">
+                正文阅读
+              </h2>
+              <p className="mt-0.5 text-[11px] text-[var(--text-mute)]">
+                仅影响下方 matter 文档正文的 Markdown 渲染
+              </p>
+            </div>
+            <MarkdownStyleSwitcher />
+          </section>
+
           {/* ==== 文件流 ==== */}
           <section className="space-y-3">
             {timeline.map((item, i) => (
@@ -883,6 +898,7 @@ export function MatterDetailPane() {
                   cardRefs.current[item.file] = el;
                 }}
                 highlighted={highlight === item.file}
+                markdownStyle={markdownStyle}
               />
             ))}
             {pendingCreate && (

@@ -10,6 +10,7 @@ import { AdminPage } from "@/pages/AdminPage";
 import { MatterDetailEmpty, MatterDetailPane } from "@/pages/MatterDetailPane";
 import { NewMatter } from "@/pages/NewMatter";
 import { MatterEventsProvider } from "@/events/MatterEventsProvider";
+import { MarkdownStyleProvider } from "@/components/markdown/MarkdownStyleProvider";
 
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
@@ -29,18 +30,20 @@ export function App() {
   if (me.needs_setup) return <ProfileSetup me={me} onDone={setMe} />;
 
   return (
-    <MatterEventsProvider>
-      <Routes>
-        <Route element={<Dashboard me={me} onLogout={doLogout} />}>
-          <Route path="/" element={<MatterDetailEmpty />} />
-          <Route path="/m/:matter_id" element={<MatterDetailPane />} />
-        </Route>
-        <Route path="/new" element={<NewMatter me={me} onLogout={doLogout} />} />
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/settings/external-ai" element={<SettingsExternalAI />} />
-        <Route path="/admin" element={<AdminPage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </MatterEventsProvider>
+    <MarkdownStyleProvider>
+      <MatterEventsProvider>
+        <Routes>
+          <Route element={<Dashboard me={me} onLogout={doLogout} />}>
+            <Route path="/" element={<MatterDetailEmpty />} />
+            <Route path="/m/:matter_id" element={<MatterDetailPane />} />
+          </Route>
+          <Route path="/new" element={<NewMatter me={me} onLogout={doLogout} />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/settings/external-ai" element={<SettingsExternalAI />} />
+          <Route path="/admin" element={<AdminPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </MatterEventsProvider>
+    </MarkdownStyleProvider>
   );
 }
