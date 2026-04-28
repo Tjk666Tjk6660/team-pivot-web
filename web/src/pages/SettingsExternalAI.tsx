@@ -123,7 +123,7 @@ export function SettingsExternalAI() {
 
           <Card className="space-y-2 p-4">
             <h3 className="font-medium">Claude Desktop</h3>
-            <p className="text-sm text-muted-foreground">
+            <p className="whitespace-pre-line text-sm text-muted-foreground">
               {CLAUDE_DESKTOP_UI_HINT}
             </p>
             <Button

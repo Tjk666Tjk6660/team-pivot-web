@@ -121,10 +121,11 @@ export function claudeDesktopJsonSnippet(token: string): string {
 
 
 export const CLAUDE_DESKTOP_UI_HINT =
-  "点下面按钮复制 JSON，然后：" +
+  "点下面按钮复制 JSON，然后：\n" +
   "① 文件管理器地址栏粘 %APPDATA%\\Claude\\claude_desktop_config.json " +
   "（macOS：~/Library/Application Support/Claude/claude_desktop_config.json）" +
-  "回车，没这个文件就新建。" +
-  "② 把复制的内容合并到文件里——已有 mcpServers 字段就把 pivot 那段并进去，没有就整段写入。" +
-  "③ 完全退出 Claude Desktop（任务栏托盘也要退出）后重开。" +
+  "回车，没这个文件就新建。\n" +
+  "② 把复制的内容合并到文件里——已有 mcpServers 字段就把 pivot 那段并进去，没有就整段写入。\n" +
+  "③ 完全退出 Claude Desktop（任务栏托盘也要退出）后重开。\n" +
+  "\n" +
   "需要本机装 Node.js。";
