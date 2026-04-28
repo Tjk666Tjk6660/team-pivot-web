@@ -111,7 +111,14 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
                     "`status_change` field ONLY after the user explicitly opts in; otherwise "
                     "leave it null. Never silently attach, never silently skip. "
                     "PROTOCOL (3/3): After success, relay the returned `summary_for_ai` "
-                    "message verbatim to the user."
+                    "message verbatim to the user. "
+                    "PROTOCOL (mentions): The `mentions` field is OPTIONAL. Only set it "
+                    "when the user explicitly says to notify/圈/@ someone. Names that "
+                    "merely appear in the body are NOT a signal to auto-mention. "
+                    "When the user does ask for it, present the resolved targets + the "
+                    "`say` line in chat first, get confirmation, then call. If the "
+                    "backend can't resolve a name (422), surface it to the user — do "
+                    "not silently retry with guessed pinyin."
                 ),
                 inputSchema=CreateFileIn.model_json_schema(),
             ),
@@ -134,7 +141,14 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
                     "the response), surface the field-level errors to the user and ask "
                     "them to revise — do NOT silently retry with guessed fixes. "
                     "PROTOCOL (3/3): After success, relay the returned `summary_for_ai` "
-                    "message verbatim to the user, including the view_url."
+                    "message verbatim to the user, including the view_url. "
+                    "PROTOCOL (mentions): The `mentions` field is OPTIONAL. Only set it "
+                    "when the user explicitly says to notify/圈/@ someone. Names that "
+                    "merely appear in the body are NOT a signal to auto-mention. "
+                    "When the user does ask for it, present the resolved targets + the "
+                    "`say` line in chat first, get confirmation, then call. If the "
+                    "backend can't resolve a name (422), surface it to the user — do "
+                    "not silently retry with guessed pinyin."
                 ),
                 inputSchema=CreateMatterIn.model_json_schema(),
             ),

@@ -410,6 +410,73 @@ def test_mcp_e2e_create_matter(live_server):
     assert got["timeline"][0]["summary"] == "通过 MCP 创建的新 Matter"
 
 
+async def _run_mcp_create_matter_with_mention(
+    base_url: str, token: str,
+) -> dict:
+    """Create a Matter via MCP with a mentions block; return raw tool result."""
+    client = httpx.AsyncClient(
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=httpx.Timeout(10.0, read=30.0),
+        follow_redirects=True,
+        trust_env=False,
+    )
+    url = f"{base_url}/mcp"
+    async with client:
+        async with streamable_http_client(url, http_client=client) as (r, w, _):
+            async with ClientSession(r, w) as session:
+                await session.initialize()
+                cm_res = await session.call_tool(
+                    "create_matter",
+                    {
+                        "category": "Pivot",
+                        "title": "E2EMentionMcp",
+                        "type": "think",
+                        "summary": "带 @ 的 matter",
+                        "body": "正文",
+                        "mentions": {
+                            "targets": ["dengke"],
+                            "say": "请帮我 review",
+                        },
+                    },
+                )
+                return _parse_tool_result(cm_res)
+
+
+def test_mcp_e2e_create_matter_with_mention(live_server):
+    """create_matter with mentions persists the comment + @ on the initial file.
+
+    The seed user (邓柯, pinyin=dengke) is the only resolvable target in the
+    fixture, so we @ that user. Proves flat mentions block reaches the backend
+    as a nested `comments[]` and the backend records it on the file.
+    """
+    info = live_server
+    created = asyncio.run(_run_mcp_create_matter_with_mention(
+        info["mcp_base_url"], info["token"],
+    ))
+    assert created.get("ok") is True, created
+
+    # Pull the created file and verify the @ + say message round-tripped.
+    with httpx.Client(
+        base_url=info["api_base_url"],
+        headers={"Authorization": f"Bearer {info['token']}"},
+        timeout=5.0,
+        trust_env=False,
+    ) as http:
+        r = http.get(f"/api/matters/{created['matter_id']}")
+        assert r.status_code == 200, r.text
+        data = r.json()
+
+    timeline = data.get("timeline") or []
+    assert len(timeline) == 1
+    initial = timeline[0]
+    comments = initial.get("comments") or []
+    assert len(comments) == 1
+    assert comments[0]["body"] == "请帮我 review"
+    # Mention round-trips as whatever the AI sent (pinyin/name/open_id),
+    # backend stores it as-is and resolves at read-time for display.
+    assert "dengke" in (comments[0].get("mentions") or [])
+
+
 def test_mcp_e2e_full_flow(live_server):
     """End-to-end: resolve_context -> get_matter -> create_file -> get_matter.
 

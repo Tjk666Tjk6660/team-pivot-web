@@ -128,6 +128,34 @@ class StatusChangeIn(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class MentionIn(BaseModel):
+    """One @-mention block attached to a file or matter creation.
+
+    The MCP layer keeps mentions flat (single block) to mirror the Web's
+    `MentionField` UX — most natural-language requests are "@ a few people
+    with one shared message". The MCP tool body translates this into the
+    backend's nested `comments: [{body, mentions}]` shape on the way out.
+    """
+
+    targets: list[str] = Field(
+        min_length=1,
+        description=(
+            "People to @-mention. Each entry can be the user's pinyin, display "
+            "name, or open_id — the backend resolves whichever form it gets. "
+            "Unresolvable entries cause a 422 so the AI can ask the user to "
+            "correct them; never silently drop names."
+        ),
+    )
+    say: str = Field(
+        min_length=1,
+        max_length=500,
+        description=(
+            "One-line message delivered to the mentioned users (Feishu DM "
+            "and Matter detail page). Required whenever `targets` is non-empty."
+        ),
+    )
+
+
 class CreateFileIn(BaseModel):
     matter_id: str
     type: str  # think | act | verify | result | insight
@@ -147,6 +175,16 @@ class CreateFileIn(BaseModel):
             "each option's label + target status, and let the user choose. "
             "Set this field ONLY after the user explicitly opts in; otherwise leave it null. "
             "Never silently attach, never silently skip."
+        ),
+    )
+    mentions: MentionIn | None = Field(
+        default=None,
+        description=(
+            "OPTIONAL @-mention block. PROTOCOL: only set this when the user "
+            "explicitly asks to notify someone (e.g. '通知 X' / '找 X review' / "
+            "'圈 X'). Names that merely appear in the body are NOT a signal to "
+            "auto-mention. Always present the resolved targets + `say` line to "
+            "the user in chat for confirmation before calling."
         ),
     )
 
@@ -182,6 +220,17 @@ class CreateMatterIn(BaseModel):
     owner: str | None = Field(
         default=None,
         description="Optional owner pinyin. Leave null to default to the creator.",
+    )
+    mentions: MentionIn | None = Field(
+        default=None,
+        description=(
+            "OPTIONAL @-mention block attached to the first timeline file. "
+            "PROTOCOL: only set this when the user explicitly asks to notify "
+            "someone (e.g. '通知 X' / '找 X review' / '圈 X'). Names appearing "
+            "in the body are NOT a signal to auto-mention. Always present the "
+            "resolved targets + `say` line to the user for confirmation before "
+            "calling."
+        ),
     )
 
 

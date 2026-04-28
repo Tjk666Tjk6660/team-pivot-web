@@ -387,3 +387,105 @@ def test_create_matter_403_raises():
             "https://pivot",
         )
     assert ei.value.status == 403
+
+
+# ---------- mentions ----------
+
+def _ok_matter_response() -> dict:
+    return {
+        "matter_id": "x", "matter": {"id": "x", "title": "X"},
+        "file": "discussions/Pivot/x/001_a_think_b.md",
+        "initial_timeline_item": {"file": "discussions/Pivot/x/001_a_think_b.md"},
+    }
+
+
+def test_create_matter_mentions_translate_to_initial_file_comment():
+    """Flat MCP `mentions` block becomes nested `initial_file.comments` for backend."""
+    client = MagicMock(spec=MatterApiClient)
+    client.post_matter.return_value = _ok_matter_response()
+    tool_create_matter(
+        {
+            "category": "Pivot", "title": "X", "type": "think",
+            "summary": "s", "body": "b",
+            "mentions": {
+                "targets": ["dengke", "yzy"],
+                "say": "请帮我 review 这个方案",
+            },
+        },
+        client,
+        "https://pivot",
+    )
+    sent_body = client.post_matter.call_args[0][0]
+    assert sent_body["initial_file"]["comments"] == [{
+        "body": "请帮我 review 这个方案",
+        "mentions": ["dengke", "yzy"],
+    }]
+
+
+def test_create_matter_no_mentions_means_no_comments_field():
+    """Avoid sending an empty/null comments field that the backend might reject."""
+    client = MagicMock(spec=MatterApiClient)
+    client.post_matter.return_value = _ok_matter_response()
+    tool_create_matter(
+        {"category": "Pivot", "title": "X", "type": "think",
+         "summary": "s", "body": "b"},
+        client,
+        "https://pivot",
+    )
+    sent_body = client.post_matter.call_args[0][0]
+    assert "comments" not in sent_body["initial_file"]
+
+
+def test_create_matter_mentions_empty_targets_rejected():
+    """Pydantic guards against `targets: []` so AI can't ship an empty mention."""
+    client = MagicMock(spec=MatterApiClient)
+    with pytest.raises(Exception):  # pydantic ValidationError
+        tool_create_matter(
+            {
+                "category": "Pivot", "title": "X", "type": "think",
+                "summary": "s", "body": "b",
+                "mentions": {"targets": [], "say": "hi"},
+            },
+            client,
+            "https://pivot",
+        )
+
+
+def test_create_matter_mentions_empty_say_rejected():
+    """When targets are present, `say` is required (non-empty)."""
+    client = MagicMock(spec=MatterApiClient)
+    with pytest.raises(Exception):  # pydantic ValidationError
+        tool_create_matter(
+            {
+                "category": "Pivot", "title": "X", "type": "think",
+                "summary": "s", "body": "b",
+                "mentions": {"targets": ["dengke"], "say": ""},
+            },
+            client,
+            "https://pivot",
+        )
+
+
+def test_create_file_mentions_translate_to_top_level_comments():
+    """For create_file the comments list is at the request body root, not nested."""
+    client = MagicMock(spec=MatterApiClient)
+    client.post_file.return_value = {
+        "item": {"file": "discussions/Pivot/x/002_a_think_c.md"},
+        "matter": {"title": "X", "file_count": 2},
+    }
+    tool_create_file(
+        {
+            "matter_id": "x", "type": "think", "summary": "s",
+            "mentions": {
+                "targets": ["dengke"],
+                "say": "想听听你的意见",
+            },
+        },
+        client,
+        "https://pivot",
+    )
+    sent_body = client.post_file.call_args[0][1]
+    assert sent_body["comments"] == [{
+        "body": "想听听你的意见",
+        "mentions": ["dengke"],
+    }]

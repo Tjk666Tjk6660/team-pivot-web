@@ -366,6 +366,11 @@ def tool_create_file(
             "from": input_.status_change.from_,
             "to": input_.status_change.to,
         }
+    if input_.mentions is not None:
+        api_body["comments"] = [{
+            "body": input_.mentions.say,
+            "mentions": input_.mentions.targets,
+        }]
 
     resp = client.post_file(input_.matter_id, api_body)
 
@@ -423,6 +428,11 @@ def tool_create_matter(
     }
     if input_.owner is not None:
         api_body["initial_file"]["owner"] = input_.owner
+    if input_.mentions is not None:
+        api_body["initial_file"]["comments"] = [{
+            "body": input_.mentions.say,
+            "mentions": input_.mentions.targets,
+        }]
 
     resp = client.post_matter(api_body)
 
