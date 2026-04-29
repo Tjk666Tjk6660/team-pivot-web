@@ -7,6 +7,7 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 from server.contacts import ContactRepo
+from server.file_reads import FileReadRepo
 from server.events import (
     TOPIC_COMMENT_APPENDED,
     TOPIC_FILE_APPENDED,
@@ -448,6 +449,7 @@ def publish_matter_create(
     contacts: ContactRepo | None = None,
     notifier: Notifier | None = None,
     users: UserRepo | None = None,
+    file_reads: FileReadRepo | None = None,
 ) -> dict:
     """Create a new matter and write its first timeline item.
 
@@ -558,6 +560,11 @@ def publish_matter_create(
         mark_indexed(md_path)
 
     matter_snapshot = read_matter_index(index_path) or {}
+    # Author has obviously already "read" their own freshly-published file —
+    # mark it so the read indicator on their own card isn't stuck at zero
+    # readers, and so the relevance/reader UIs treat it as already-seen.
+    if file_reads is not None:
+        file_reads.mark(user.open_id, matter_id, filename)
     emit(
         TOPIC_MATTER_CREATED,
         matter_id=matter_id,
@@ -597,6 +604,7 @@ def publish_matter_append(
     contacts: ContactRepo | None = None,
     notifier: Notifier | None = None,
     users: UserRepo | None = None,
+    file_reads: FileReadRepo | None = None,
 ) -> dict:
     """Append a new timeline item (think/act/verify/result/insight) to a matter.
 
@@ -677,6 +685,10 @@ def publish_matter_append(
         mark_indexed(md_path)
 
     matter_snapshot = read_matter_index(index_path) or {}
+    # Mark author as having read their own newly-appended file (see
+    # publish_matter_create for rationale).
+    if file_reads is not None:
+        file_reads.mark(user.open_id, matter_id, filename)
     _emit_file_appended(matter_snapshot, item, actor=user.pinyin, now=now)
 
     # Notifier: reuse the existing thread-era methods so Feishu keeps pushing

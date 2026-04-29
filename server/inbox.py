@@ -243,3 +243,61 @@ def compute_matter_unread_counts(
         if count > 0:
             result[key] = count
     return result
+
+
+def compute_matter_unread_breakdown(
+    discussions_root: Path,
+    index_dir: Path,
+    user_open_id: str,
+    read_states: ReadStateRepo,
+    relevance_repo,
+) -> dict[str, tuple[int, int]]:
+    """Returns ``{category/matter_id: (red, gray)}``.
+
+    Red = unread file-level relevance + unread mentions for the user.
+    Gray = the rest of the matter's normal file-level unread (filename >
+    last_read_post_filename, minus the file-level relevance hits already
+    counted in red). Mention rows do not factor into gray — by definition
+    a mention is relevant.
+
+    The two sources are independent SQL/file-system reads:
+      * ``relevance_repo.unread_breakdown_per_matter`` returns
+        {matter_id: (red_files, red_mentions)} (one GROUP BY)
+      * file-system listing + read_state high-water mark gives the
+        traditional "unread file count"
+
+    Composing them:
+        red  = red_files + red_mentions
+        gray = max(total_unread - red_files, 0)
+    """
+    state = read_states.all_for_user(user_open_id)
+    breakdown = relevance_repo.unread_breakdown_per_matter(user_open_id)
+
+    result: dict[str, tuple[int, int]] = {}
+    for index_path in _list_matter_index_paths(index_dir):
+        data = read_matter_index(index_path)
+        if data is None:
+            continue
+        matter_id = str((data.get("matter") or {}).get("id") or "")
+        category = _derive_matter_category(data)
+        if not matter_id or not category:
+            continue
+        tdir = discussions_root / category / matter_id
+        filenames = _post_filenames(tdir, types=_MATTER_CONTENT_TYPES)
+        key = f"{category}/{matter_id}"
+        last_read = state.get(key)
+        unread_count = (
+            len(filenames)
+            if last_read is None
+            else sum(1 for f in filenames if f > last_read)
+        )
+
+        red_files, red_mentions = breakdown.get(matter_id, (0, 0))
+        red = red_files + red_mentions
+        gray = max(unread_count - red_files, 0)
+
+        if red == 0 and gray == 0:
+            continue
+        result[key] = (red, gray)
+
+    return result

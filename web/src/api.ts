@@ -94,7 +94,22 @@ export type TimelineComment = {
   body: string;
   mentions?: string[];
   mentions_display?: string[];
+  // True when the current user is mentioned in this comment AND has not
+  // marked the host file as read (via POST /matters/{id}/files/{f}/read).
+  // Detail interface populates this; missing for old backends or for users
+  // not in the mentions list.
+  mention_unread_for_me?: boolean;
 };
+
+// File-level relevance reasons. Comment-level @ mentions are tracked
+// separately via TimelineComment.mention_unread_for_me, not by this enum.
+export type FileRelevanceReason =
+  | "owner_assigned"
+  | "reply_to_my_file"
+  | "reply_to_my_owned"
+  | "verify_my_file"
+  | "in_my_matter"
+  | "in_my_owned_matter";
 
 export type Reader = {
   open_id: string;
@@ -124,6 +139,9 @@ export type TimelineFileItem = {
   outcome?: Outcome;
   readers_count?: number;
   readers?: Reader[];
+  // File-level relevance reason for the current user. null / missing means
+  // not relevant. Populated by detail interface from relevance_events table.
+  relevance_reason?: FileRelevanceReason | null;
 };
 
 export type TimelineOwnerChangeItem = {
@@ -157,6 +175,11 @@ export type MatterSummary = {
   current_status: MatterStatus;
   created_at: string;
   updated_at: string;
+  // Derived sort key: max(updated_at, latest comment.created_at). Comments
+  // do not bump matter.updated_at (per pivot-product.md), so the list
+  // would otherwise miss matters that just got a new @-mention. Optional
+  // for back-compat with older backends — fall back to updated_at.
+  last_activity_at?: string;
   file_count: number;
   last_file_type: DocType | null;
   last_summary: string | null;
@@ -167,6 +190,12 @@ export type MatterSummary = {
   creator_display?: string | null;
   creator_avatar_url?: string | null;
   unread_count: number;
+  // Red = unread items that are relevant to the current user; gray = the rest
+  // of unread_count. Together they sum to unread_count (red + gray ===
+  // unread_count). Both fields are optional for backwards compatibility — old
+  // backends only return unread_count.
+  red_unread_count?: number;
+  gray_unread_count?: number;
   favorite: boolean;
 };
 
@@ -803,6 +832,42 @@ export async function updateMyMarkdownStyle(style: string): Promise<{
     throw new Error(d.detail || `update markdown style failed: ${r.status}`);
   }
   return (await r.json()) as { user_style: string; effective_style: string };
+}
+
+// ── Per-user preferences (generic KV; keys are server-whitelisted) ──────────
+//
+// Currently used keys:
+//   - "matter_list_filter": "all" | "mine"
+//
+// The server enforces a key whitelist on PUT — sending an unknown key returns
+// 400. fetchPreferences returns the full bag (keys absent from the user's
+// row simply won't appear in the dict).
+
+export type UserPreferences = Record<string, string>;
+
+export async function fetchPreferences(): Promise<UserPreferences> {
+  const r = await fetch("/api/me/preferences", { credentials: "include" });
+  await throwIfSessionExpired(r);
+  if (!r.ok) throw new Error(`/api/me/preferences failed: ${r.status}`);
+  return (await r.json()) as UserPreferences;
+}
+
+export async function setPreference(
+  key: string,
+  value: string,
+): Promise<{ key: string; value: string }> {
+  const r = await fetch(`/api/me/preferences/${encodeURIComponent(key)}`, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value }),
+  });
+  if (!r.ok) {
+    await throwIfSessionExpired(r);
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `set preference failed: ${r.status}`);
+  }
+  return (await r.json()) as { key: string; value: string };
 }
 
 export async function fetchAdminMarkdownSettings(): Promise<AdminMarkdownSettings> {

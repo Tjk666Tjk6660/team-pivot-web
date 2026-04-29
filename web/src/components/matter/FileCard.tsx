@@ -33,6 +33,8 @@ import {
   shortFile,
 } from "./timeline-config";
 import { ReadersRow } from "./ReadersRow";
+import { RelevanceChip } from "./RelevanceChip";
+import { publishListRefresh } from "@/events/listRefresh";
 
 const COLLAPSE_HEIGHT = 208;
 
@@ -105,35 +107,61 @@ export function FileCard({
     setReaders(item.readers ?? []);
   }, [item.readers]);
 
-  // Session-level dedupe: each FileCard instance reports a given file at most
-  // once. Reset on file change so navigating between matters works.
-  const markedRef = useRef(false);
+  // Track whether the card is currently in viewport. Used to decide whether
+  // to auto-fire triggerMark when SSE delivers a new mention mid-session —
+  // the IntersectionObserver only fires on threshold crossings, so a new
+  // unread mention arriving while the card sits visible would otherwise
+  // not get marked-read until the user scrolls or navigates away.
+  const isVisibleRef = useRef(false);
+
   useEffect(() => {
-    markedRef.current = false;
     setExpanded(false);
   }, [item.file]);
 
   const fileBasename = item.file.split("/").pop() ?? item.file;
 
+  // Fire on every "view" — short file scrolled into viewport, or long file
+  // expanded. No client-side session dedupe: backend is idempotent
+  // (file_reads.mark uses INSERT OR IGNORE; mark_all_read_for_file is a
+  // no-op when there are no unread relevance rows). Repeated calls let
+  // mid-session new mentions get cleared as soon as the user looks at
+  // the file again, which is what users expect.
   const triggerMark = () => {
-    if (markedRef.current) return;
     if (!me.open_id) return;
-    markedRef.current = true;
-    const optimistic: Reader = {
-      open_id: me.open_id,
-      name: me.name || me.open_id,
-      avatar_url: me.avatar_url,
-      first_read_at: new Date().toISOString(),
-    };
-    const already = readers.some((r) => r.open_id === me.open_id);
-    if (!already) setReaders((prev) => [...prev, optimistic]);
-    void markFileRead(matterId, fileBasename).catch(() => {
-      // Roll back optimistic insert and allow retry.
-      markedRef.current = false;
-      if (!already) {
-        setReaders((prev) => prev.filter((r) => r.open_id !== me.open_id));
-      }
+    // Optimistic "I've read it" insert. The dedup MUST be inside the
+    // functional updater — the closure-captured `readers` value is stale
+    // when triggerMark fires from a re-attached observer (second viewport
+    // entry, etc.), so a pre-call `readers.some(...)` would happily push
+    // me a second time. functional setState with `prev` reads latest state
+    // atomically. No catch-rollback: if the API fails, the next detail
+    // refetch will replace these readers with the server version.
+    setReaders((prev) => {
+      if (prev.some((r) => r.open_id === me.open_id)) return prev;
+      return [
+        ...prev,
+        {
+          open_id: me.open_id,
+          name: me.name || me.open_id,
+          avatar_url: me.avatar_url,
+          first_read_at: new Date().toISOString(),
+        },
+      ];
     });
+    void markFileRead(matterId, fileBasename)
+      .then(() => {
+        // Tell Dashboard to silently refetch the matters list so the
+        // sidebar's red/gray badges reflect the cleared mention. We do
+        // not go through the SSE/resume channel because that would also
+        // trigger MatterDetailPane to refetch the full detail, replacing
+        // FileCard's optimistic readers state.
+        publishListRefresh();
+      })
+      .catch(() => {
+        // No rollback: if the mark API failed, the next detail refetch
+        // (SSE-driven, visibility resume, etc.) will replace the local
+        // readers with the server-side version, which won't include me
+        // until a successful mark lands.
+      });
   };
 
   useLayoutEffect(() => {
@@ -156,28 +184,63 @@ export function FileCard({
   // Short-form auto-mark: only when the body is fully revealed (no expand
   // affordance). Long-form requires the user to click "展开全文 ↓" — that
   // path is wired on the button onClick below.
+  //
+  // Visibility is detected by absolute pixel height (>= MIN_VISIBLE_PX),
+  // not the original `intersectionRatio >= 0.5`. The ratio approach
+  // breaks for tall cards (long body, many comments, big readers row):
+  // if the card is taller than the viewport, the maximum ratio is
+  // viewport / card and never crosses 0.5, so the observer's callback
+  // never qualifies as "visible" and triggerMark never fires.
+  // Multi-threshold subscription guarantees callbacks at multiple
+  // scroll positions so we don't miss the moment height crosses the cut.
+  // Visibility is also mirrored to isVisibleRef so the comment-update
+  // effect below can decide whether to fire when SSE delivers a new
+  // mention while the card sits statically on screen.
   useEffect(() => {
     if (canExpand) return;
-    if (markedRef.current) return;
     if (!item.body) return;
     const el = cardRef.current;
     if (!el) return;
+    const MIN_VISIBLE_PX = 100;
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
-          if (entry.isIntersecting && entry.intersectionRatio >= 0.5) {
+          const visible =
+            entry.isIntersecting &&
+            entry.intersectionRect.height >= MIN_VISIBLE_PX;
+          isVisibleRef.current = visible;
+          if (visible) {
             triggerMark();
-            observer.disconnect();
             break;
           }
         }
       },
-      { threshold: 0.5 },
+      { threshold: [0, 0.25, 0.5, 0.75, 1] },
     );
     observer.observe(el);
     return () => observer.disconnect();
+    // me.open_id intentionally in deps: on initial mount fetchMe hasn't
+    // resolved yet so me.open_id is "", triggerMark short-circuits, and
+    // the observer is permanently bound to that stale closure (the card
+    // is statically visible after that, never crosses the threshold
+    // again). Adding me.open_id forces a re-attach when fetchMe lands —
+    // the new observer fires immediately on observe(el) with a closure
+    // that sees the populated me, and the mark API actually gets called.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canExpand, item.body, item.file]);
+  }, [canExpand, item.body, item.file, me.open_id]);
+
+  // When the parent re-fetches the matter detail (typically because SSE
+  // pushed a `matter.updated` event), item.comments swaps in place. If the
+  // new comments contain an unread @ to me AND this card is currently in
+  // viewport, fire triggerMark — otherwise the IntersectionObserver, which
+  // only fires on threshold crossings, would leave the new red dot
+  // dangling until the user scrolls or navigates away.
+  useEffect(() => {
+    if (!isVisibleRef.current) return;
+    if (!item.comments.some((c) => c.mention_unread_for_me)) return;
+    triggerMark();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.comments]);
 
   return (
     <article
@@ -214,6 +277,7 @@ export function FileCard({
           <span title={formatFullDateTime(item.created_at)}>
             {relativeTime(item.created_at)}
           </span>
+          <RelevanceChip reason={item.relevance_reason} />
         </div>
         <MentionPopover onSubmit={onAddComment} align="right" />
       </div>

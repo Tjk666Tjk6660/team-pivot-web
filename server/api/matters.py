@@ -12,9 +12,11 @@ from server.contacts import ContactRepo
 from server.favorites import FavoriteRepo
 from server.file_reads import FileReadRepo, ReaderEntry
 from server.inbox import (
+    compute_matter_unread_breakdown,
     compute_matter_unread_counts,
     latest_matter_post_filename,
 )
+from server.relevance_events import RelevanceEventsRepo
 from server.matter_index import (
     ValidationError as MatterIndexValidationError,
     matter_index_path,
@@ -131,6 +133,7 @@ def build_router(
     read_states: ReadStateRepo,
     favorites: FavoriteRepo,
     file_reads: FileReadRepo,
+    relevance_repo: RelevanceEventsRepo,
     current_user: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
@@ -145,9 +148,9 @@ def build_router(
         # Per-user overlays: unread counts + favorites. Keyed by category/slug
         # (matter_id == slug), reusing the thread read_state / favorites tables
         # with no schema change.
-        unread = compute_matter_unread_counts(
+        breakdown = compute_matter_unread_breakdown(
             workspace.discussions_dir, workspace.index_dir,
-            user.open_id, read_states,
+            user.open_id, read_states, relevance_repo,
         )
         favorite_keys = favorites.all_for_user(user.open_id)
 
@@ -165,11 +168,22 @@ def build_router(
                 continue
             category = _matter_category(data)
             key = f"{category}/{summary['id']}" if category else summary["id"]
-            summary["unread_count"] = unread.get(key, 0)
+            red, gray = breakdown.get(key, (0, 0))
+            summary["red_unread_count"] = red
+            summary["gray_unread_count"] = gray
+            # unread_count keeps the "total unread" semantic (red + gray) so
+            # older frontends that read only this field stay correct.
+            summary["unread_count"] = red + gray
             summary["favorite"] = key in favorite_keys
             summary["category"] = category
+            # Derived "any activity" timestamp: matter.updated_at only moves
+            # on file appends; comments do not bump it (per pivot-product.md
+            # design — comments are discussion, not progress). For list
+            # sorting we want comments to count too so that a newly @-ed
+            # matter floats to the top, hence this max() over both sources.
+            summary["last_activity_at"] = _matter_last_activity_at(data)
             items.append(summary)
-        items.sort(key=lambda m: m.get("updated_at") or "", reverse=True)
+        items.sort(key=lambda m: m.get("last_activity_at") or "", reverse=True)
         return {"items": items}
 
     @router.get("/matters/{matter_id}")
@@ -183,6 +197,9 @@ def build_router(
         rendered["matter"]["category"] = category
         rendered["matter"]["favorite"] = favorites.has(user.open_id, key)
         _inject_readers(rendered["timeline"], matter_id, file_reads, users, contacts)
+        _inject_relevance(
+            rendered["timeline"], matter_id, user.open_id, relevance_repo,
+        )
         return rendered
 
     @router.post("/matters/{matter_id}/files/{filename}/read")
@@ -200,6 +217,10 @@ def build_router(
                 detail={"code": "file_not_in_matter"},
             )
         entry = file_reads.mark(user.open_id, matter_id, filename)
+        # Side effect: clear file-level + mention rows on this file. Aligns
+        # mention "已读" with the card-level read trigger; matter-level
+        # POST /matters/{id}/read is intentionally NOT changed, see v3.1 §3.4.
+        relevance_repo.mark_all_read_for_file(user.open_id, matter_id, filename)
         return {
             "matter_id": matter_id,
             "filename": filename,
@@ -272,6 +293,7 @@ def build_router(
                 contacts=contacts,
                 notifier=notifier,
                 users=users,
+                file_reads=file_reads,
             )
         except MatterAlreadyExistsError as e:
             raise HTTPException(
@@ -397,6 +419,7 @@ def build_router(
                 contacts=contacts,
                 notifier=notifier,
                 users=users,
+                file_reads=file_reads,
             )
         except MatterNotFoundError as e:
             raise HTTPException(status_code=404, detail={"code": "matter_not_found"}) from e
@@ -445,6 +468,7 @@ def build_router(
                 contacts=contacts,
                 notifier=notifier,
                 users=users,
+                file_reads=file_reads,
             )
         except MatterNotFoundError as e:
             raise HTTPException(status_code=404, detail={"code": "matter_not_found"}) from e
@@ -633,6 +657,25 @@ def _matter_category(data: dict) -> str | None:
     return parts[1]
 
 
+def _matter_last_activity_at(data: dict) -> str:
+    """Latest ISO timestamp across matter.updated_at + every comment.created_at.
+
+    matter.updated_at only moves on file appends; comments deliberately do
+    not bump it (pivot-product.md treats comments as discussion, not
+    matter progress). Using this derived field for list sort lets a matter
+    that just got a new comment / @-mention float to the top, while
+    leaving the on-disk index schema untouched.
+    """
+    matter = data.get("matter") or {}
+    latest = str(matter.get("updated_at") or "")
+    for item in data.get("timeline") or []:
+        for c in item.get("comments") or []:
+            ca = str(c.get("created_at") or "")
+            if ca > latest:
+                latest = ca
+    return latest
+
+
 def _render_matter_detail(
     workspace: Workspace,
     data: dict,
@@ -819,3 +862,33 @@ def _reader_to_dict(
         "avatar_url": resolve_avatar_url(entry.open_id, users, contacts),
         "first_read_at": _ts_to_iso(entry.first_read_at),
     }
+
+
+def _inject_relevance(
+    timeline: list[dict],
+    matter_id: str,
+    user_open_id: str,
+    relevance_repo: RelevanceEventsRepo,
+) -> None:
+    """Attach `relevance_reason` to each timeline item and
+    `mention_unread_for_me` to each comment, based on the current user's
+    relevance_events rows for this matter. Two SQL reads regardless of
+    timeline length: one for file reasons, one for unread mention keys.
+    """
+    file_reasons = relevance_repo.file_reasons_for_matter(user_open_id, matter_id)
+    unread_mention_keys = relevance_repo.unread_mention_keys_for_matter(
+        user_open_id, matter_id,
+    )
+
+    for item in timeline:
+        rel = item.get("file") or ""
+        basename = rel.rsplit("/", 1)[-1]
+        item["relevance_reason"] = file_reasons.get(basename)
+
+        for comment in item.get("comments") or []:
+            key = (
+                basename,
+                str(comment.get("created_at") or ""),
+                str(comment.get("author") or ""),
+            )
+            comment["mention_unread_for_me"] = key in unread_mention_keys

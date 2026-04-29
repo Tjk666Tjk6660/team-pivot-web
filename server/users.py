@@ -75,6 +75,14 @@ class UserRepo:
             ).fetchone()
         return _row_to_user(row) if row else None
 
+    def all(self) -> list[User]:
+        """Return all registered users. Used by relevance writer / scanner to
+        iterate candidates for compute_relevance against each timeline item.
+        """
+        with self._db.connect() as conn:
+            rows = conn.execute("SELECT * FROM users").fetchall()
+        return [_row_to_user(r) for r in rows]
+
     def list_all(self) -> list[User]:
         """All registered Pivot users, ordered by name. Used by the daily
         report to enumerate everyone (including those without activity in

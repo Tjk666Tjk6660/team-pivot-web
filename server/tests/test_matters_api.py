@@ -17,6 +17,7 @@ from server.favorites import FavoriteRepo
 from server.file_reads import FileReadRepo
 from server.notify import NoOpNotifier
 from server.read_state import ReadStateRepo
+from server.relevance_events import RelevanceEventsRepo
 
 
 class _WorkspaceStub:
@@ -59,7 +60,8 @@ def client(db, users, tmp_path):
     app.include_router(
         build_router(
             workspace, users, ContactRepo(db), NoOpNotifier(),
-            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db), current_user,
+            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
+            RelevanceEventsRepo(db), current_user,
         )
     )
     c = TestClient(app)
@@ -932,7 +934,8 @@ def test_notifier_is_called_on_append_and_status_change(db, users, tmp_path):
     app.include_router(
         build_router(
             workspace, users, ContactRepo(db), RecordingNotifier(),
-            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db), current_user,
+            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
+            RelevanceEventsRepo(db), current_user,
         )
     )
     c = TestClient(app)
@@ -996,7 +999,8 @@ def test_create_and_append_propagate_bundled_mentions_to_notifier(db, users, tmp
     app.include_router(
         build_router(
             workspace, users, ContactRepo(db), RecordingNotifier(),
-            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db), current_user,
+            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
+            RelevanceEventsRepo(db), current_user,
         )
     )
     c = TestClient(app)
@@ -1083,7 +1087,8 @@ def test_mcp_name_mentions_resolve_to_open_ids_for_notifier(db, users, tmp_path)
     app.include_router(
         build_router(
             workspace, users, contacts, RecordingNotifier(),
-            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db), current_user,
+            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
+            RelevanceEventsRepo(db), current_user,
         )
     )
     c = TestClient(app)
@@ -1186,7 +1191,8 @@ def test_comment_with_ambiguous_pinyin_returns_422_with_candidates(db, users, tm
     app.include_router(
         build_router(
             workspace, users, contacts, RecordingNotifier(),
-            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db), current_user,
+            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
+            RelevanceEventsRepo(db), current_user,
         )
     )
     c = TestClient(app)
@@ -1282,7 +1288,8 @@ def test_comment_route_does_not_pass_unknown_kwargs_to_notifier(db, users, tmp_p
     app.include_router(
         build_router(
             workspace, users, ContactRepo(db), notifier,
-            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db), current_user,
+            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
+            RelevanceEventsRepo(db), current_user,
         )
     )
     c = TestClient(app)
@@ -1398,13 +1405,15 @@ def test_mark_file_read_unknown_file_404(client):
 
 def test_get_matter_detail_includes_readers(client):
     matter_id, file1, file2 = _create_matter_with_two_files(client)
-    # No reads yet
+    # Authors are auto-marked as readers of their own files at publish time,
+    # so each freshly-created file starts with exactly one reader (ou_1).
     detail0 = client.get(f"/api/matters/{matter_id}").json()
     for item in detail0["timeline"]:
-        assert item["readers_count"] == 0
-        assert item["readers"] == []
+        assert item["readers_count"] == 1
+        assert len(item["readers"]) == 1
+        assert item["readers"][0]["open_id"] == "ou_1"
 
-    # Mark file1 read
+    # Re-marking by the same user is a no-op — count stays at 1.
     client.post(f"/api/matters/{matter_id}/files/{file1}/read")
     detail1 = client.get(f"/api/matters/{matter_id}").json()
     by_basename = {
@@ -1415,6 +1424,6 @@ def test_get_matter_detail_includes_readers(client):
     assert reader["open_id"] == "ou_1"
     assert reader["name"] == "邓柯"
     assert "first_read_at" in reader
-    # file2 still unread
-    assert by_basename[file2]["readers_count"] == 0
-    assert by_basename[file2]["readers"] == []
+    # file2 unaffected (still just the auto-marked author).
+    assert by_basename[file2]["readers_count"] == 1
+    assert by_basename[file2]["readers"][0]["open_id"] == "ou_1"
