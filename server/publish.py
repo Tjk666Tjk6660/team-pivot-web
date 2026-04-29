@@ -11,6 +11,7 @@ from server.events import (
     TOPIC_COMMENT_APPENDED,
     TOPIC_FILE_APPENDED,
     TOPIC_MATTER_CREATED,
+    TOPIC_MATTER_OWNER_CHANGED,
     TOPIC_RESULT_CREATED,
     TOPIC_STATUS_CHANGED,
     emit,
@@ -21,8 +22,10 @@ from server.index_files import (
     create_thread_index,
 )
 from server.matter_index import (
+    ValidationError as MatterIndexValidationError,
     append_comment as matter_append_comment,
     append_file_item as matter_append_file_item,
+    apply_owner_change as matter_apply_owner_change,
     create_matter_index,
     matter_index_path,
     read_matter_index,
@@ -356,6 +359,7 @@ def publish_matter_create(
     category: str,
     title: str,
     initial_item: dict,
+    matter_owner_open_id: str | None = None,
     contacts: ContactRepo | None = None,
     notifier: Notifier | None = None,
     users: UserRepo | None = None,
@@ -368,11 +372,30 @@ def publish_matter_create(
         body: str  (Markdown body of the MD file)
         owner: str  (optional; defaults to creator)
         comments: list[dict]  (optional)
+
+    `matter_owner_open_id` (matter-level owner, distinct from item-level
+    initial_item.owner) is resolved through the same _resolve_owner_for_index
+    chain as creator/owner. None means "default to creator". Reaching here with
+    an unknown id raises PublishError so the API layer can return 422.
     """
     if not user.pinyin:
         raise PublishError("profile setup required")
     if not title.strip():
         raise PublishError("title required")
+
+    # Resolve matter-level owner. None / empty / equals creator's open_id
+    # all collapse to "owner = creator" so the on-disk owner field is
+    # always a valid pinyin/open_id, never the literal `me.open_id`.
+    # When pointing to someone else, require them to be a registered Pivot
+    # user (has a pinyin). Stricter than file-level owner — matter-level owner
+    # drives "我负责的 Matter" filters and scheduler views, so keeping the
+    # identifier space tight to known users avoids dangling references.
+    matter_owner_pinyin = user.pinyin
+    if matter_owner_open_id and matter_owner_open_id != user.open_id:
+        target_user = users.get_by_any_id(matter_owner_open_id) if users else None
+        if target_user is None or not target_user.pinyin:
+            raise PublishError(f"matter owner not found: {matter_owner_open_id}")
+        matter_owner_pinyin = target_user.pinyin
 
     slug = _make_unique_matter_slug(workspace, title)
     matter_id = slug
@@ -438,6 +461,7 @@ def publish_matter_create(
             title=title,
             initial_item=item,
             now_iso=now,
+            matter_owner=matter_owner_pinyin,
         )
         mark_indexed(md_path)
 
@@ -667,6 +691,85 @@ def publish_matter_comment(
         )
 
     return {"matter_id": matter_id, "target_file": target_file, "at": now}
+
+
+def publish_matter_owner_change(
+    workspace: Workspace,
+    user: User,
+    *,
+    matter_id: str,
+    to_owner_open_id: str,
+    reason: str,
+    status_change: dict | None = None,
+    contacts: ContactRepo | None = None,
+    notifier: Notifier | None = None,
+    users: UserRepo | None = None,
+) -> dict:
+    """Transfer matter-level ownership.
+
+    Writes a single owner_change timeline entry plus updates matter.owner +
+    optional matter.current_status atomically through `apply_owner_change`.
+    The validator inside the writer surfaces all shape errors (reason / stale
+    / etc.) as MatterIndexValidationError; the API layer maps those to 422.
+
+    Emits TOPIC_MATTER_OWNER_CHANGED on success so the SSE channel can refresh
+    affected clients (matter list + open detail page).
+    """
+    if not user.pinyin:
+        raise PublishError("profile setup required")
+
+    index_path = matter_index_path(workspace.index_dir, matter_id)
+    data = read_matter_index(index_path)
+    if data is None:
+        raise MatterNotFoundError(matter_id)
+    matter_block = data.get("matter") or {}
+    from_owner = matter_block.get("owner")  # may be None for unassigned
+
+    # Same strictness as create-time matter owner: require a registered user
+    # (with pinyin), otherwise reject. Permissive contact fallback isn't
+    # appropriate for matter-level owner — see publish_matter_create for why.
+    target_user = users.get_by_any_id(to_owner_open_id) if users else None
+    if target_user is None or not target_user.pinyin:
+        raise PublishError(f"owner_unknown:{to_owner_open_id}")
+    to_owner = target_user.pinyin
+
+    now = _now_iso()
+    item: dict = {
+        "type": "owner_change",
+        "actor": user.pinyin,
+        "from_owner": from_owner,
+        "to_owner": to_owner,
+        "reason": reason,
+    }
+    if status_change is not None:
+        item["status_change"] = dict(status_change)
+
+    with workspace.write_session(
+        message=f"chore: owner change on {matter_id}",
+        author_name=user.name,
+        author_email=f"{user.pinyin}@pivot.local",
+    ):
+        matter_apply_owner_change(index_path, item=item, now_iso=now)
+
+    matter_snapshot = read_matter_index(index_path) or {}
+    emit(
+        TOPIC_MATTER_OWNER_CHANGED,
+        matter_id=matter_id,
+        actor=user.pinyin,
+        at=now,
+        payload={
+            "from_owner": from_owner,
+            "to_owner": to_owner,
+            "reason": reason,
+            "status_change": dict(status_change) if status_change else None,
+        },
+    )
+    return {
+        "matter_id": matter_id,
+        "matter": matter_snapshot.get("matter", {}),
+        "item": item,
+        "at": now,
+    }
 
 
 # --- matter helpers -----------------------------------------------------------
