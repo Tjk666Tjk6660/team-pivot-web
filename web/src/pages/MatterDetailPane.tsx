@@ -309,6 +309,8 @@ export function MatterDetailPane() {
     setConfirmDeleteOpen(false);
     setResultConfirmOpen(false);
     setReviewedConfirmOpen(false);
+    setAiOpen(false);
+    setAiMinimized(false);
     setAiFullscreen(false);
     setPendingAIOrigin(null);
     setHighlight(null);

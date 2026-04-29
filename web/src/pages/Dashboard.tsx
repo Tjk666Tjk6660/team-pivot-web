@@ -36,6 +36,10 @@ import { ThreadListPane } from "@/components/ThreadListPane";
 import { cn } from "@/lib/utils";
 import { useMatterEvents } from "@/events/MatterEventsProvider";
 import { scheduleRefresh } from "@/events/scheduleRefresh";
+import {
+  mergeLoadedAIConversation,
+  setAIReplyTarget,
+} from "@/lib/aiConversationState";
 
 export type AIMsg = ChatMessage & { id: number; toolUses?: AIToolUse[] };
 
@@ -213,6 +217,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const layoutRef = useRef<HTMLDivElement>(null);
   const aiThreadsRef = useRef<Record<string, AIThreadState>>({});
   const activeAIStreamRef = useRef<ActiveAIStream>(null);
+  const aiThreadLoadsInFlightRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     aiThreadsRef.current = aiThreads;
@@ -299,6 +304,8 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   ) => {
     const current = aiThreadsRef.current[threadKey];
     if (current?.loaded || current?.loading) return;
+    if (aiThreadLoadsInFlightRef.current.has(threadKey)) return;
+    aiThreadLoadsInFlightRef.current.add(threadKey);
 
     setAiThreads((prev) => ({
       ...prev,
@@ -312,20 +319,9 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       const conv = await fetchAIConversation(matter_id);
       setAiThreads((prev) => {
         const existing = prev[threadKey] ?? emptyAIThreadState();
-        const mapped: AIMsg[] = conv.messages.map((m, idx) => ({
-          ...m,
-          id: idx + 1,
-        }));
         return {
           ...prev,
-          [threadKey]: {
-            ...existing,
-            loaded: true,
-            loading: false,
-            messages: mapped,
-            replyTarget: conv.reply_target,
-            nextId: mapped.length + 1,
-          },
+          [threadKey]: mergeLoadedAIConversation<AIMsg>(existing, conv),
         };
       });
     } catch {
@@ -337,6 +333,8 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
           loading: false,
         },
       }));
+    } finally {
+      aiThreadLoadsInFlightRef.current.delete(threadKey);
     }
   };
 
@@ -357,10 +355,8 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   ) => {
     setAiThreads((prev) => {
       const existing = prev[threadKey] ?? emptyAIThreadState();
-      const nextState: AIThreadState = {
-        ...existing,
-        replyTarget: value,
-      };
+      const { state: nextState, changed } = setAIReplyTarget(existing, value);
+      if (!changed) return prev;
       queueMicrotask(() =>
         persistThreadConversation(matter_id, threadKey, nextState),
       );
