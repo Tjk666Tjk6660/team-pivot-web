@@ -30,6 +30,30 @@ _ITEM_KEY_ORDER = (
     "status_change",
 )
 
+# Event-type entries (owner_change) have a different shape — no file / body /
+# creator. Use a dedicated key order so on-disk layout stays stable and doesn't
+# get polluted by file-type fields.
+_OWNER_CHANGE_KEY_ORDER = (
+    "type",
+    "created_at",
+    "actor",
+    "from_owner",
+    "to_owner",
+    "reason",
+    "status_change",
+)
+
+# Canonical matter block key order: keep new optional fields (owner) slotted
+# in the same place across writes.
+_MATTER_KEY_ORDER = (
+    "id",
+    "title",
+    "current_status",
+    "owner",
+    "created_at",
+    "updated_at",
+)
+
 
 # ---------- dataclasses (read-only views for callers that want structure) ----------
 
@@ -123,25 +147,33 @@ def create_matter_index(
     title: str,
     initial_item: dict[str, Any],
     now_iso: str,
+    matter_owner: str | None = None,
 ) -> None:
     """Create a new matter index file with a first timeline item.
 
     The matter is born in `planning`. The initial item must be a legal first
     file (type allowed in planning; optionally carrying status_change to flip
     the matter into executing).
+
+    `matter_owner` (matter-level owner, distinct from item-level owner) is
+    written into the matter block when provided. None means "unassigned" and
+    is intentionally absent from the yaml — UI shows "未分配".
     """
     p = Path(path)
     if p.exists():
         raise FileExistsError(p)
+    matter_block: dict[str, Any] = {
+        "id": matter_id,
+        "title": title,
+        "current_status": "planning",
+    }
+    if matter_owner:
+        matter_block["owner"] = matter_owner
+    matter_block["created_at"] = now_iso
+    matter_block["updated_at"] = now_iso
     index: dict[str, Any] = {
         "version": VERSION,
-        "matter": {
-            "id": matter_id,
-            "title": title,
-            "current_status": "planning",
-            "created_at": now_iso,
-            "updated_at": now_iso,
-        },
+        "matter": _reorder(matter_block, _MATTER_KEY_ORDER),
         "timeline": [],
     }
     item = _normalize_item(initial_item, now_iso=now_iso)
@@ -185,6 +217,43 @@ def append_file_item(
     _atomic_write_yaml(p, data)
 
 
+def apply_owner_change(
+    path: Path,
+    *,
+    item: dict[str, Any],
+    now_iso: str,
+) -> None:
+    """Append an owner_change timeline event and atomically update the matter
+    block (owner + optional current_status) in a single yaml write.
+
+    The validator rejects shape errors (reason / from_owner stale / etc.)
+    before any disk write happens, so a successful return means index +
+    matter.owner are both consistent on disk.
+    """
+    p = Path(path)
+    data = read_matter_index(p)
+    if data is None:
+        raise FileNotFoundError(p)
+    normalized = _normalize_item(item, now_iso=now_iso)
+    result = validate_append(data, normalized)
+    if not result.ok:
+        raise ValidationError(result)
+    data.setdefault("timeline", []).append(normalized)
+    matter = data.setdefault("matter", {})
+    # Sync matter.owner to the new owner. None to_owner shouldn't happen
+    # (validator catches it), but be defensive.
+    new_owner = normalized.get("to_owner")
+    if new_owner:
+        matter["owner"] = new_owner
+    # Apply optional combined status_change (e.g., planning → executing).
+    _apply_status_change(data, normalized)
+    matter["updated_at"] = now_iso
+    # Re-order matter block so owner/updated_at stay in their canonical slots
+    # after the in-place mutation above.
+    data["matter"] = _reorder(matter, _MATTER_KEY_ORDER)
+    _atomic_write_yaml(p, data)
+
+
 def append_comment(
     path: Path,
     *,
@@ -216,9 +285,16 @@ def append_comment(
 
 
 def _normalize_item(item: dict[str, Any], *, now_iso: str) -> dict[str, Any]:
-    """Apply defaults + reorder keys for stable on-disk layout."""
+    """Apply defaults + reorder keys for stable on-disk layout.
+
+    Branches at type level: file-type entries get the file-type key order
+    + creator→owner fallback; event-type entries (owner_change) get their
+    own key order and skip the file-only fallbacks (they have no creator).
+    """
     out = dict(item)
     out.setdefault("created_at", now_iso)
+    if out.get("type") == "owner_change":
+        return _reorder(out, _OWNER_CHANGE_KEY_ORDER)
     creator = out.get("creator")
     if creator and not out.get("owner"):
         out["owner"] = creator
