@@ -157,3 +157,61 @@ def test_lookup_for_mention_id_match_wins_over_homonym_name(contacts):
     ])
     c = contacts.lookup_for_mention("alice")
     assert c is not None and c.open_id == "alice"
+
+
+# ---------- pinyin lookup ----------
+# AI clients (MCP) frequently @ people by pinyin. Contacts synced from Feishu
+# only have Chinese `name`; ContactRepo computes pinyin from `name` at write
+# time so the lookup path stays a single SQL.
+
+def test_lookup_for_mention_by_pinyin_unique(contacts):
+    """张菠 only exists in contacts (never logged into Pivot). MCP圈人 with
+    pinyin 'zhangbo' must still resolve to her open_id for Feishu DM."""
+    contacts.upsert_many([
+        {"open_id": "ou_zhangbo", "name": "张菠"},
+        {"open_id": "ou_lisi", "name": "李四"},
+    ])
+    c = contacts.lookup_for_mention("zhangbo")
+    assert c is not None and c.open_id == "ou_zhangbo"
+
+
+def test_lookup_for_mention_pinyin_normalizes_case_and_spaces(contacts):
+    """AIs sometimes capitalize or space-separate pinyin. All of these
+    forms must match the same contact."""
+    contacts.upsert_many([{"open_id": "ou_zhangbo", "name": "张菠"}])
+    for variant in ["zhangbo", "ZhangBo", "Zhang Bo", "zhang bo", "ZHANGBO"]:
+        c = contacts.lookup_for_mention(variant)
+        assert c is not None and c.open_id == "ou_zhangbo", f"failed for {variant!r}"
+
+
+def test_lookup_candidates_pinyin_homonyms_returns_both(contacts):
+    """张菠 / 张博 / 张钵 all reduce to 'zhangbo'. lookup_candidates must
+    return every one so the publish layer can raise AmbiguousMentionError."""
+    contacts.upsert_many([
+        {"open_id": "ou_bo1", "name": "张菠"},
+        {"open_id": "ou_bo2", "name": "张博"},
+        {"open_id": "ou_other", "name": "李四"},
+    ])
+    cs = contacts.lookup_candidates("zhangbo")
+    assert sorted(c.open_id for c in cs) == ["ou_bo1", "ou_bo2"]
+
+
+def test_lookup_for_mention_pinyin_ambiguous_returns_none(contacts):
+    """Same as above viewed through lookup_for_mention — ambiguous → None,
+    callers must disambiguate rather than silently picking one."""
+    contacts.upsert_many([
+        {"open_id": "ou_bo1", "name": "张菠"},
+        {"open_id": "ou_bo2", "name": "张博"},
+    ])
+    assert contacts.lookup_for_mention("zhangbo") is None
+
+
+def test_lookup_candidates_id_match_wins_over_pinyin_homonym(contacts):
+    """If an open_id happens to collide with someone's pinyin (very rare,
+    but possible if a contact open_id was 'zhangbo'), open_id still wins."""
+    contacts.upsert_many([
+        {"open_id": "zhangbo", "name": "Different Person"},
+        {"open_id": "ou_real", "name": "张菠"},
+    ])
+    cs = contacts.lookup_candidates("zhangbo")
+    assert [c.open_id for c in cs] == ["zhangbo"]

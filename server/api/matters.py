@@ -22,6 +22,7 @@ from server.mentions import resolve_avatar_url, resolve_id, resolve_text
 from server.notify import Notifier
 from server.posts import read_post
 from server.publish import (
+    AmbiguousMentionError,
     MatterAlreadyExistsError,
     MatterNotFoundError,
     PublishError,
@@ -226,6 +227,14 @@ def build_router(
                 status_code=409,
                 detail={"code": "matter_already_exists", "message": str(e)},
             ) from e
+        except AmbiguousMentionError as e:
+            # 422 + structured candidate list lets MCP clients show "你想 @
+            # 哪个 zhangbo?" and re-issue with the chosen open_id; collapsed
+            # to PublishError's generic 400 the AI loses the candidates.
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "ambiguous_mention", "ambiguities": e.ambiguities},
+            ) from e
         except PublishError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         return {
@@ -261,6 +270,14 @@ def build_router(
             )
         except MatterNotFoundError as e:
             raise HTTPException(status_code=404, detail={"code": "matter_not_found"}) from e
+        except AmbiguousMentionError as e:
+            # 422 + structured candidate list lets MCP clients show "你想 @
+            # 哪个 zhangbo?" and re-issue with the chosen open_id; collapsed
+            # to PublishError's generic 400 the AI loses the candidates.
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "ambiguous_mention", "ambiguities": e.ambiguities},
+            ) from e
         except PublishError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         return {"item": result["item"], "matter": result["matter"]}
@@ -301,6 +318,14 @@ def build_router(
             )
         except MatterNotFoundError as e:
             raise HTTPException(status_code=404, detail={"code": "matter_not_found"}) from e
+        except AmbiguousMentionError as e:
+            # 422 + structured candidate list lets MCP clients show "你想 @
+            # 哪个 zhangbo?" and re-issue with the chosen open_id; collapsed
+            # to PublishError's generic 400 the AI loses the candidates.
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "ambiguous_mention", "ambiguities": e.ambiguities},
+            ) from e
         except PublishError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         return {"item": result["item"], "matter": result["matter"]}
@@ -330,6 +355,14 @@ def build_router(
             raise HTTPException(
                 status_code=404,
                 detail={"code": "comment_target_not_found", "message": str(e)},
+            ) from e
+        except AmbiguousMentionError as e:
+            # 422 + structured candidate list lets MCP clients show "你想 @
+            # 哪个 zhangbo?" and re-issue with the chosen open_id; collapsed
+            # to PublishError's generic 400 the AI loses the candidates.
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "ambiguous_mention", "ambiguities": e.ambiguities},
             ) from e
         except PublishError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
