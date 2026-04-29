@@ -12,6 +12,7 @@ from server.index_files import (
     append_reply_to_index,
     create_thread_index,
 )
+from server.matter_index import read_matter_index
 from server.posts import mark_indexed, read_post, scan_un_indexed
 
 log = logging.getLogger(__name__)
@@ -28,6 +29,32 @@ def repair_partial_writes(discussions_root: Path, index_dir: Path) -> int:
             log.exception("recovery failed for path=%s", post_path)
             continue
     return fixed
+
+
+def warn_missing_matter_owner(index_dir: Path) -> int:
+    """Log legacy matter indexes that still lack matter.owner.
+
+    This is intentionally read-only. Operators can run the backfill script when
+    they are ready to migrate historical workspace data.
+    """
+    missing = 0
+    for index_path in sorted(Path(index_dir).glob("*.index.yaml")):
+        data = read_matter_index(index_path)
+        if not data:
+            continue
+        matter = data.get("matter")
+        if not isinstance(matter, dict):
+            continue
+        if matter.get("owner"):
+            continue
+        missing += 1
+        log.warning(
+            "recovery: matter index missing matter.owner path=%s matter_id=%s; "
+            "run server/scripts/backfill_matter_owner.py to backfill historical data",
+            index_path,
+            matter.get("id"),
+        )
+    return missing
 
 
 def _repair_post(post_path: Path, discussions_root: Path, index_dir: Path) -> None:

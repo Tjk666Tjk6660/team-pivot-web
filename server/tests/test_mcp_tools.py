@@ -119,6 +119,29 @@ def test_get_matter_strips_bodies():
     assert out["timeline"][0]["file"] == "001.md"
 
 
+def test_get_matter_accepts_owner_change_event():
+    client = MagicMock(spec=MatterApiClient)
+    client.get_matter.return_value = {
+        "matter": {"id": "a", "title": "T", "current_status": "planning", "updated_at": ""},
+        "timeline": [
+            {"file": "001.md", "type": "think", "summary": "s1",
+             "created_at": "", "creator": "u", "owner": "u", "body": "hidden"},
+            {"type": "owner_change", "created_at": "", "actor": "u",
+             "from_owner": "u", "to_owner": "v", "reason": "handoff",
+             "status_change": {"from": "planning", "to": "executing"}},
+        ],
+    }
+
+    out = tool_get_matter({"matter_id": "a"}, client)
+
+    event = out["timeline"][1]
+    assert event["type"] == "owner_change"
+    assert event["file"] is None
+    assert event["actor"] == "u"
+    assert event["to_owner"] == "v"
+    assert event["reason"] == "handoff"
+
+
 def test_read_files_returns_selected_bodies():
     client = MagicMock(spec=MatterApiClient)
     client.get_matter.return_value = {

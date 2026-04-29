@@ -14,6 +14,7 @@ TOPIC_FILE_APPENDED = "matter.file_appended"
 TOPIC_COMMENT_APPENDED = "matter.comment_appended"
 TOPIC_STATUS_CHANGED = "matter.status_changed"
 TOPIC_RESULT_CREATED = "matter.result_created"
+TOPIC_MATTER_OWNER_CHANGED = "matter.owner_changed"
 
 
 @dataclass(frozen=True)

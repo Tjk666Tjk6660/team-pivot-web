@@ -2,6 +2,11 @@ from __future__ import annotations
 
 VALID_DOC_TYPES = frozenset({"think", "act", "verify", "result", "insight"})
 
+# Event-type timeline entries (no MD file, no body, no status × type matrix).
+# Currently only owner_change; kept as a frozenset so adding future event types
+# (e.g., assignment, reminder) doesn't ripple through callers.
+VALID_EVENT_TYPES = frozenset({"owner_change"})
+
 # status × type allow matrix.
 # Literal port of pivot-interface.md "最小服务端校验建议", with two documented deviations
 # from pivot-product.md §五 logged in AI-docs/coding-test-plan/deviations.md:

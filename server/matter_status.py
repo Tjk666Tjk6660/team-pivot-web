@@ -45,3 +45,16 @@ def trigger_types_for(from_state: str, to_state: str) -> frozenset[str]:
 
 def can_file_type_trigger(file_type: str, from_state: str, to_state: str) -> bool:
     return file_type in trigger_types_for(from_state, to_state)
+
+
+# Which event-type timeline entries are allowed to carry each status_change.
+# Sibling of TRIGGER_TYPES_BY_TRANSITION but for events (owner_change etc.) —
+# kept separate so file-type and event-type triggers don't accidentally cross.
+# v1: only owner_change triggering planning → executing ("转交即开始执行").
+EVENT_TRIGGERS_BY_TRANSITION: dict[tuple[str, str], frozenset[str]] = {
+    ("planning", "executing"): frozenset({"owner_change"}),
+}
+
+
+def can_event_type_trigger(event_type: str, from_state: str, to_state: str) -> bool:
+    return event_type in EVENT_TRIGGERS_BY_TRANSITION.get((from_state, to_state), frozenset())

@@ -29,6 +29,7 @@ from server.events import (
     TOPIC_COMMENT_APPENDED,
     TOPIC_FILE_APPENDED,
     TOPIC_MATTER_CREATED,
+    TOPIC_MATTER_OWNER_CHANGED,
     subscribe,
 )
 from server.users import User
@@ -43,6 +44,7 @@ _TOPIC_MAP: dict[str, tuple[str, str]] = {
     TOPIC_MATTER_CREATED: ("matter.created", "created"),
     TOPIC_FILE_APPENDED: ("matter.updated", "file_appended"),
     TOPIC_COMMENT_APPENDED: ("matter.updated", "comment_appended"),
+    TOPIC_MATTER_OWNER_CHANGED: ("matter.updated", "owner_changed"),
 }
 
 # Process-level ring buffer for Last-Event-ID replay. New connections that

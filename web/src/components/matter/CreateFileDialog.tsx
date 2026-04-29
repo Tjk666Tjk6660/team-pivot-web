@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Grip, Maximize2, Minimize2, Plus } from "lucide-react";
 import {
   searchContacts,
+  isTimelineFileItem,
   type DocType,
   type Judgement,
   type MatterStatus,
@@ -10,6 +11,7 @@ import {
   type NewFileIn,
   type Outcome,
   type StatusChange,
+  type TimelineFileItem,
   type TimelineItem,
   type Verification,
 } from "@/api";
@@ -75,7 +77,7 @@ function initialFormState(
   ctx: CreateFormContext,
   sessionOpenId: string,
   sessionName: string,
-  actFiles: TimelineItem[],
+  actFiles: TimelineFileItem[],
   initial?: Partial<FormSnapshot>,
 ): FormState {
   const defaultVerifications: Verification[] =
@@ -156,7 +158,11 @@ export function CreateFileForm({
   busyTitle?: string;
 }) {
   const actFiles = useMemo(
-    () => timeline.filter((t) => t.type === "act"),
+    () => timeline.filter(isTimelineFileItem).filter((t) => t.type === "act"),
+    [timeline],
+  );
+  const fileTimeline = useMemo(
+    () => timeline.filter(isTimelineFileItem),
     [timeline],
   );
   const [form, setForm] = useState<FormState>(() =>
@@ -519,7 +525,7 @@ export function CreateFileForm({
       {!isVerify && !isResult && (
         <FieldRow label="refer" hint={`可选 · 多选上限 ${MAX_REFER}`}>
           <div className="flex flex-wrap gap-1.5">
-            {timeline
+            {fileTimeline
               .filter((x) => x.file !== quote)
               .map((x) => {
                 const selected = form.refer.includes(x.file);
@@ -539,7 +545,7 @@ export function CreateFileForm({
                   </button>
                 );
               })}
-            {timeline.length <= 1 && (
+            {fileTimeline.length <= 1 && (
               <span className="text-xs text-[var(--text-fade)]">（无其它文件）</span>
             )}
           </div>
@@ -834,7 +840,7 @@ function VerificationsEditor({
 }: {
   verifications: Verification[];
   setVerifications: (v: Verification[]) => void;
-  actFiles: TimelineItem[];
+  actFiles: TimelineFileItem[];
 }) {
   if (actFiles.length === 0) {
     return (

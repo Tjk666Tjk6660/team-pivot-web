@@ -59,6 +59,7 @@ from server.file_reads import FileReadRepo
 from server.mcp.server import build_mcp_app
 from server.notify import NoOpNotifier
 from server.read_state import ReadStateRepo
+from server.relevance_events import RelevanceEventsRepo
 from server.users import UserRepo
 
 
@@ -108,7 +109,8 @@ def _build_combined_app(db: Database, users: UserRepo,
     app.include_router(
         build_matters_router(
             workspace, users, ContactRepo(db), NoOpNotifier(),
-            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db), current_user,
+            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
+            RelevanceEventsRepo(db), current_user,
         )
     )
     app.mount("/mcp", mcp_app)
