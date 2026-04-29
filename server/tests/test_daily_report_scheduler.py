@@ -67,9 +67,45 @@ def test_next_fire_at_at_target_returns_tomorrow():
 
 def test_next_fire_at_naive_input_treated_as_china_tz():
     naive = datetime(2026, 4, 29, 8, 0)
-    nxt = _next_fire_at(naive, push_time=time(9, 30))
+    nxt = _next_fire_at(naive, push_time=time(9, 30), push_freq="daily")
     assert nxt.tzinfo is not None
     assert nxt.hour == 9 and nxt.minute == 30
+
+
+# --------------------------------------------------------------------------- #
+# push_freq=weekdays 跳过周末                                                  #
+# --------------------------------------------------------------------------- #
+
+
+def test_next_fire_at_weekdays_skips_friday_to_monday():
+    """Friday 10:00(已过 09:30 目标)→ 候选明天 Sat,weekdays 模式继续推到 Mon。"""
+    fri_after = datetime(2026, 5, 1, 10, 0, tzinfo=CHINA_TZ)  # Fri
+    nxt = _next_fire_at(fri_after, push_time=time(9, 30), push_freq="weekdays")
+    assert nxt == datetime(2026, 5, 4, 9, 30, tzinfo=CHINA_TZ)
+    assert nxt.weekday() == 0  # Mon
+
+
+def test_next_fire_at_weekdays_skips_saturday_to_monday():
+    """Saturday 早晨 → 候选今日(Sat),weekdays 模式应推到 Mon。"""
+    sat = datetime(2026, 5, 2, 8, 0, tzinfo=CHINA_TZ)  # Sat
+    nxt = _next_fire_at(sat, push_time=time(9, 30), push_freq="weekdays")
+    assert nxt == datetime(2026, 5, 4, 9, 30, tzinfo=CHINA_TZ)
+    assert nxt.weekday() == 0
+
+
+def test_next_fire_at_daily_does_not_skip_weekends():
+    """daily 模式无论星期几都按部就班 fire。"""
+    fri_after = datetime(2026, 5, 1, 10, 0, tzinfo=CHINA_TZ)
+    nxt = _next_fire_at(fri_after, push_time=time(9, 30), push_freq="daily")
+    assert nxt == datetime(2026, 5, 2, 9, 30, tzinfo=CHINA_TZ)  # Sat 09:30
+    assert nxt.weekday() == 5
+
+
+def test_next_fire_at_weekdays_normal_weekday_unchanged():
+    """工作日不受 weekdays 模式影响。"""
+    tue_before = datetime(2026, 4, 28, 8, 0, tzinfo=CHINA_TZ)  # Tue
+    nxt = _next_fire_at(tue_before, push_time=time(9, 30), push_freq="weekdays")
+    assert nxt == datetime(2026, 4, 28, 9, 30, tzinfo=CHINA_TZ)
 
 
 # --------------------------------------------------------------------------- #
@@ -190,6 +226,44 @@ async def test_scheduler_invalid_push_time_falls_back(tmp_path):
         notifier=NoOpNotifier(),
     )
     assert sched._read_push_time() == time(9, 30)
+
+
+@pytest.mark.asyncio
+async def test_scheduler_reads_push_freq_from_settings(tmp_path):
+    settings = _stub_settings({"daily_report.push_freq": "daily"})
+    sched = DailyReportScheduler(
+        db_path=tmp_path / "data.db",
+        workspace_index_dir_provider=lambda: tmp_path,
+        settings=settings,
+        notifier=NoOpNotifier(),
+    )
+    assert sched._read_push_freq() == "daily"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_invalid_push_freq_falls_back_to_weekdays(tmp_path):
+    """非法 push_freq 值兜底到 weekdays(默认值)。"""
+    settings = _stub_settings({"daily_report.push_freq": "monthly"})
+    sched = DailyReportScheduler(
+        db_path=tmp_path / "data.db",
+        workspace_index_dir_provider=lambda: tmp_path,
+        settings=settings,
+        notifier=NoOpNotifier(),
+    )
+    assert sched._read_push_freq() == "weekdays"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_default_push_freq_when_unset(tmp_path):
+    """settings 中没设置 push_freq 时,默认 weekdays。"""
+    settings = _stub_settings({})
+    sched = DailyReportScheduler(
+        db_path=tmp_path / "data.db",
+        workspace_index_dir_provider=lambda: tmp_path,
+        settings=settings,
+        notifier=NoOpNotifier(),
+    )
+    assert sched._read_push_freq() == "weekdays"
 
 
 # --------------------------------------------------------------------------- #

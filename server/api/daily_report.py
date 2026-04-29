@@ -18,17 +18,17 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from server.auth.admin import require_admin
 from server.daily_report.config_keys import (
-    KEY_ALLOW_AI_READ_BODY,
     KEY_COMPANY_ENABLED,
     KEY_ENABLED,
     KEY_PERSONAL_ENABLED,
+    KEY_PUSH_FREQ,
     KEY_PUSH_TIME,
     KEY_TIME_WINDOW_HOURS,
 )
@@ -56,7 +56,7 @@ class DailyReportConfig(BaseModel):
         pattern=r"^([01]\d|2[0-3]):[0-5]\d$",
         description="每日定时推送时刻 HH:MM (Asia/Shanghai)",
     )
-    allow_ai_read_body: bool = False
+    push_freq: Literal["daily", "weekdays"] = "weekdays"
 
 
 class TriggerRequest(BaseModel):
@@ -130,9 +130,7 @@ def build_router(
             personal_enabled=_read_bool(settings, KEY_PERSONAL_ENABLED, default=True),
             time_window_hours=_read_int(settings, KEY_TIME_WINDOW_HOURS, default=24),
             push_time=(settings.get(KEY_PUSH_TIME) or "09:30").strip() or "09:30",
-            allow_ai_read_body=_read_bool(
-                settings, KEY_ALLOW_AI_READ_BODY, default=False,
-            ),
+            push_freq=_read_push_freq(settings),
         )
 
     @router.put("/config", dependencies=[Depends(require_admin)])
@@ -145,9 +143,7 @@ def build_router(
         settings.set(KEY_PERSONAL_ENABLED, "1" if body.personal_enabled else "0")
         settings.set(KEY_TIME_WINDOW_HOURS, str(body.time_window_hours))
         settings.set(KEY_PUSH_TIME, body.push_time)
-        settings.set(
-            KEY_ALLOW_AI_READ_BODY, "1" if body.allow_ai_read_body else "0",
-        )
+        settings.set(KEY_PUSH_FREQ, body.push_freq)
         return {"ok": True}
 
     # ------------------ trigger: POST ---------------------- #
@@ -267,3 +263,9 @@ def _read_int(settings: SettingsRepo, key: str, *, default: int) -> int:
         return int(str(raw).strip())
     except (TypeError, ValueError):
         return default
+
+
+def _read_push_freq(settings: SettingsRepo) -> Literal["daily", "weekdays"]:
+    """读 push_freq,坏值兜底到默认 weekdays。"""
+    raw = (settings.get(KEY_PUSH_FREQ) or "weekdays").strip().lower()
+    return "daily" if raw == "daily" else "weekdays"

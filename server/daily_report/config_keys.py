@@ -23,9 +23,10 @@ KEY_TIME_WINDOW_HOURS = "daily_report.time_window_hours"
 # 每日推送时刻(HH:MM,Asia/Shanghai),默认 09:30。in-process scheduler 用。
 KEY_PUSH_TIME = "daily_report.push_time"
 
+# 推送频率:"daily"(每天)| "weekdays"(仅 Mon-Fri,默认)。
+# scheduler 在 weekday >= 5 (Sat/Sun) 时跳过当日触发,不发空卡。
+KEY_PUSH_FREQ = "daily_report.push_freq"
+
 # Category 筛选(逗号分隔的 category 名;空 = 全部)。category 来自 matter
 # 文件路径 discussions/<category>/<slug>/...,不是 index 字段。
 KEY_CATEGORY_FILTER = "daily_report.category_filter"
-
-# AI 正文读取权限(预留,v0.2 暂未启用 tool-use)
-KEY_ALLOW_AI_READ_BODY = "daily_report.allow_ai_read_body"

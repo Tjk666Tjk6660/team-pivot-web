@@ -890,8 +890,17 @@ function DailyReportSection({ onAdminLost }: { onAdminLost: () => void }) {
                   label="总开关"
                   checked={cfg.enabled}
                   onChange={(v) => update({ enabled: v })}
-                  hint="关闭后 systemd timer / 手动触发都跳过"
+                  hint="关闭后定时调度和手动触发都跳过"
                 />
+                <ToggleRow
+                  label="仅工作日推送"
+                  checked={cfg.push_freq === "weekdays"}
+                  onChange={(v) =>
+                    update({ push_freq: v ? "weekdays" : "daily" })
+                  }
+                  hint="开启时周末跳过(避免空卡噪音);关闭则每天发"
+                />
+
                 <ToggleRow
                   label="公司视角报告"
                   checked={cfg.company_enabled}
@@ -904,17 +913,11 @@ function DailyReportSection({ onAdminLost }: { onAdminLost: () => void }) {
                   onChange={(v) => update({ personal_enabled: v })}
                   hint="逐人输入/输出叙述，无活动者合并到一行"
                 />
-                <ToggleRow
-                  label="AI 正文读取（预留）"
-                  checked={cfg.allow_ai_read_body}
-                  onChange={(v) => update({ allow_ai_read_body: v })}
-                  hint="允许 AI 在 summary 不足时下钻读 markdown 正文"
-                />
-              </div>
 
-              <div className="grid gap-4 lg:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="dr-window-hours">统计时间窗口（小时）</Label>
+                <div className="space-y-2 rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] p-3">
+                  <Label htmlFor="dr-window-hours" className="text-sm font-semibold">
+                    统计时间窗口（小时）
+                  </Label>
                   <Input
                     id="dr-window-hours"
                     type="number"
@@ -926,11 +929,13 @@ function DailyReportSection({ onAdminLost }: { onAdminLost: () => void }) {
                     }
                   />
                   <p className="text-xs text-muted-foreground">
-                    默认 24 小时；范围 1-168。
+                    默认 24 小时;范围 1-168
                   </p>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="dr-push-time">每日推送时刻 (HH:MM)</Label>
+                <div className="space-y-2 rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] p-3">
+                  <Label htmlFor="dr-push-time" className="text-sm font-semibold">
+                    每日推送时刻 (HH:MM)
+                  </Label>
                   <Input
                     id="dr-push-time"
                     type="time"
@@ -940,7 +945,7 @@ function DailyReportSection({ onAdminLost }: { onAdminLost: () => void }) {
                     }
                   />
                   <p className="text-xs text-muted-foreground">
-                    主服务进程内置定时,Asia/Shanghai;此处也可立即手动触发。
+                    Asia/Shanghai,主服务进程内置定时
                   </p>
                 </div>
               </div>

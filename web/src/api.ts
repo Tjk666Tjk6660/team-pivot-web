@@ -738,8 +738,8 @@ export type DailyReportConfig = {
   company_enabled: boolean;
   personal_enabled: boolean;
   time_window_hours: number;
-  push_time: string;     // "HH:MM" Asia/Shanghai
-  allow_ai_read_body: boolean;
+  push_time: string;                // "HH:MM" Asia/Shanghai
+  push_freq: "daily" | "weekdays";  // 默认 weekdays(仅周一到周五)
 };
 
 export type DailyReportLastRun = {

@@ -25,7 +25,11 @@ from datetime import datetime, time, timedelta
 from pathlib import Path
 from typing import Callable
 
-from server.daily_report.config_keys import KEY_ENABLED, KEY_PUSH_TIME
+from server.daily_report.config_keys import (
+    KEY_ENABLED,
+    KEY_PUSH_FREQ,
+    KEY_PUSH_TIME,
+)
 from server.daily_report.runner import run_daily_report
 from server.daily_report.window import CHINA_TZ
 from server.notify import Notifier
@@ -34,6 +38,7 @@ from server.settings import SettingsRepo
 log = logging.getLogger("server.daily_report.scheduler")
 
 DEFAULT_PUSH_TIME = "09:30"
+DEFAULT_PUSH_FREQ = "weekdays"
 
 
 class DailyReportScheduler:
@@ -94,6 +99,7 @@ class DailyReportScheduler:
                 next_fire = _next_fire_at(
                     datetime.now(tz=CHINA_TZ),
                     push_time=self._read_push_time(),
+                    push_freq=self._read_push_freq(),
                 )
                 sleep_secs = max(
                     1.0, (next_fire - datetime.now(tz=CHINA_TZ)).total_seconds(),
@@ -163,6 +169,10 @@ class DailyReportScheduler:
         raw = (self._settings.get(KEY_PUSH_TIME) or DEFAULT_PUSH_TIME).strip()
         return _parse_hhmm(raw)
 
+    def _read_push_freq(self) -> str:
+        raw = (self._settings.get(KEY_PUSH_FREQ) or DEFAULT_PUSH_FREQ).strip().lower()
+        return "daily" if raw == "daily" else "weekdays"
+
     def _is_disabled(self) -> bool:
         raw = (self._settings.get(KEY_ENABLED) or "1").strip().lower()
         return raw in ("0", "false", "off", "no")
@@ -186,12 +196,18 @@ def _parse_hhmm(s: str) -> time:
     return time(9, 30)
 
 
-def _next_fire_at(now_china: datetime, *, push_time: time) -> datetime:
+def _next_fire_at(
+    now_china: datetime,
+    *,
+    push_time: time,
+    push_freq: str = "weekdays",
+) -> datetime:
     """计算下一次 fire 时刻。
 
-    - 若 now < 今天 push_time → 今天 push_time
-    - 若 now >= 今天 push_time → 明天 push_time
-    - 不补跑(主服务挂了过夜恢复后,直到下一个 push_time 才跑;管理员可在
+    - 若 now < 今天 push_time → 今天 push_time(若是工作日 / push_freq=daily)
+    - 若 now >= 今天 push_time → 明天 push_time(同上判断)
+    - push_freq=weekdays 时,跳过 Sat (5) / Sun (6) 直到下个 Mon
+    - 不补跑(主服务挂了过夜恢复后,直到下一个 fire 时刻才跑;管理员可在
       /admin 手动触发补一次)
     """
     if now_china.tzinfo is None:
@@ -200,6 +216,9 @@ def _next_fire_at(now_china: datetime, *, push_time: time) -> datetime:
         hour=push_time.hour, minute=push_time.minute,
         second=0, microsecond=0,
     )
-    if now_china < today_target:
-        return today_target
-    return today_target + timedelta(days=1)
+    candidate = today_target if now_china < today_target else today_target + timedelta(days=1)
+    if push_freq == "weekdays":
+        # 跳过 Sat (5) / Sun (6),最多前推 2 天就一定落到 Mon-Fri
+        while candidate.weekday() >= 5:
+            candidate += timedelta(days=1)
+    return candidate

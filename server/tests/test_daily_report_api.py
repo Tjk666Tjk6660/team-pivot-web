@@ -85,7 +85,7 @@ def test_config_get_returns_defaults_when_empty(app_state):
         "personal_enabled": True,
         "time_window_hours": 24,
         "push_time": "09:30",
-        "allow_ai_read_body": False,
+        "push_freq": "weekdays",
     }
 
 
@@ -112,7 +112,7 @@ def test_config_put_writes_settings_and_round_trips(app_state):
         "personal_enabled": False,
         "time_window_hours": 12,
         "push_time": "08:15",
-        "allow_ai_read_body": True,
+        "push_freq": "daily",
     }
     r = client.put(
         "/api/admin/daily-report/config",
@@ -126,7 +126,7 @@ def test_config_put_writes_settings_and_round_trips(app_state):
     assert settings.get("daily_report.personal_enabled") == "0"
     assert settings.get("daily_report.time_window_hours") == "12"
     assert settings.get("daily_report.push_time") == "08:15"
-    assert settings.get("daily_report.allow_ai_read_body") == "1"
+    assert settings.get("daily_report.push_freq") == "daily"
 
     # GET reflects new values
     r = client.get(
@@ -135,7 +135,7 @@ def test_config_put_writes_settings_and_round_trips(app_state):
     assert r.json()["personal_enabled"] is False
     assert r.json()["time_window_hours"] == 12
     assert r.json()["push_time"] == "08:15"
-    assert r.json()["allow_ai_read_body"] is True
+    assert r.json()["push_freq"] == "daily"
 
 
 def test_config_put_validates_window_hours(app_state):
@@ -146,7 +146,7 @@ def test_config_put_validates_window_hours(app_state):
     bad = {
         "enabled": True, "company_enabled": True, "personal_enabled": True,
         "time_window_hours": 9999, "push_time": "09:30",
-        "allow_ai_read_body": False,
+        "push_freq": "weekdays",
     }
     r = client.put(
         "/api/admin/daily-report/config",
