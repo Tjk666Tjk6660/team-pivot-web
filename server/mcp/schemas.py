@@ -161,8 +161,43 @@ class CreateFileIn(BaseModel):
     type: str  # think | act | verify | result | insight
     summary: str
     body: str = ""
-    quote: str | None = None
-    refer: list[str] | None = None
+    quote: str | None = Field(
+        default=None,
+        description=(
+            "OPTIONAL. Single matter file path that THIS file directly "
+            "replies to / quotes from — equivalent to clicking '回复 X' on "
+            "a card in the Web UI. Path must be one of the timeline file "
+            "paths returned by `get_matter` (e.g. "
+            "'discussions/<category>/<slug>/002_xxx_think_abc.md'). "
+            "Set this when the user phrases the request as a reply: "
+            "\"回复 X 那条\", \"针对 002 说几句\", \"在 X 基础上跟一条\", "
+            "\"reply to <file>\". Use the LATEST file in the timeline as "
+            "the default reply target unless the user names a specific one. "
+            "Distinct from `refer`: `quote` is exactly one strong, direct "
+            "reply target; `refer` is a multi-select context list. "
+            "Leave null for a top-level new entry that doesn't reply to "
+            "anything specific."
+        ),
+    )
+    refer: list[str] | None = Field(
+        default=None,
+        description=(
+            "OPTIONAL. List of matter file paths used as supporting context "
+            "for this file. Up to 4 entries (matches Web MAX_REFER). Paths "
+            "must come from `get_matter`'s timeline. "
+            "Set this ONLY when the user EXPLICITLY names files to reference: "
+            "\"参考一下 001 和 003 来写\", \"把 X 和 Y 一起带着\", \"附上对 X "
+            "的引用\". Do NOT auto-populate refer by inferring from the body "
+            "text — mentioning a topic that happens to overlap with another "
+            "file is NOT a signal to add it. False references pollute the "
+            "matter graph. "
+            "Special case: when `type='verify'`, `refer[]` doubles as a "
+            "cross-matter whitelist — a `verifications[].target` outside the "
+            "current matter's timeline is only accepted if it appears in "
+            "`refer[]`. The user (not the AI) is responsible for that whitelist. "
+            "Leave null/empty unless the user explicitly listed references."
+        ),
+    )
     owner: str | None = Field(
         default=None,
         description=(
