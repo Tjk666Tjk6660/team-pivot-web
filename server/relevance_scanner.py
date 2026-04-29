@@ -8,7 +8,9 @@ IGNORE) lets the scanner report inserted-vs-skipped counts so ops can
 tell whether the real-time writer is healthy.
 
 Run paths:
-  1. startup hook (gated by env RELEVANCE_BACKFILL_ON_STARTUP, default on)
+  1. startup hook — always runs; cold vs warm is derived from whether
+     relevance_events is empty (cold_start writes rows as already-read so
+     historical activity doesn't surface as retroactive unread).
   2. hourly background task (`schedule_hourly_scan`)
   3. CLI: `python -m server.relevance_scanner` for ops / disaster recovery
 """
@@ -18,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time as _time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,7 +39,6 @@ log = logging.getLogger(__name__)
 
 
 HOURLY_INTERVAL_SECONDS = 3600
-ENV_BACKFILL_ON_STARTUP = "RELEVANCE_BACKFILL_ON_STARTUP"
 ENV_SCAN_INTERVAL_MINUTES = "RELEVANCE_SCAN_INTERVAL_MINUTES"
 DEFAULT_SCAN_INTERVAL_MINUTES = 60
 MIN_SCAN_INTERVAL_MINUTES = 1
@@ -61,11 +63,25 @@ def scan_all(
     workspace: Workspace,
     users_repo: UserRepo,
     repo: RelevanceEventsRepo,
+    mark_as_read: bool = False,
 ) -> ScanReport:
-    log.info("relevance scan_all starting index_dir=%s", workspace.index_dir)
+    """Walk every matter and insert any missing relevance rows.
+
+    ``mark_as_read`` — when True, every newly-inserted row is stamped with
+    ``read_at = now`` instead of unread. Intended for the very first
+    cold-start backfill against an empty ``relevance_events`` table, so
+    historical timeline activity doesn't show up as a tsunami of red unread
+    badges on first login. Subsequent scans (periodic compensation, manual
+    re-runs against a non-empty table) leave it False so genuinely-missed
+    events surface as unread, matching the real-time writer."""
+    log.info(
+        "relevance scan_all starting index_dir=%s mark_as_read=%s",
+        workspace.index_dir, mark_as_read,
+    )
     inserted = 0
     skipped = 0
     matters = 0
+    insert_read_at: float | None = _time.time() if mark_as_read else None
 
     users = users_repo.all()
     if not users:
@@ -112,6 +128,7 @@ def scan_all(
                         reason=reason,
                         event_at=item_created_at,
                         actor_pinyin=item_creator,
+                        read_at=insert_read_at,
                     ):
                         inserted += 1
                     else:
@@ -148,6 +165,7 @@ def scan_all(
                         filename,
                         comment_at=comment_at,
                         actor_pinyin=comment_author,
+                        read_at=insert_read_at,
                     ):
                         inserted += 1
                     else:
@@ -158,11 +176,6 @@ def scan_all(
         matters, inserted, skipped,
     )
     return ScanReport(inserted=inserted, skipped=skipped, matters=matters)
-
-
-def is_backfill_on_startup_enabled() -> bool:
-    val = os.getenv(ENV_BACKFILL_ON_STARTUP, "true").strip().lower()
-    return val not in ("0", "false", "no", "off")
 
 
 def get_scan_interval_minutes() -> int:

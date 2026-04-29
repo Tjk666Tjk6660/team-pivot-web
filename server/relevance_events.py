@@ -54,12 +54,17 @@ class RelevanceEventsRepo:
         reason: str,
         event_at: str,
         actor_pinyin: str,
+        read_at: float | None = None,
     ) -> bool:
         """INSERT OR IGNORE a kind='file' row. Returns True if a new row was
-        inserted, False if the PK was already present."""
+        inserted, False if the PK was already present.
+
+        ``read_at`` lets callers pre-mark the row as already-read (used by the
+        cold-start backfill so historical timeline activity doesn't surface
+        as a tsunami of red unread badges). Default ``None`` = unread."""
         return self._insert_or_ignore(
             user_open_id, matter_id, filename, KIND_FILE,
-            reason, event_at, actor_pinyin,
+            reason, event_at, actor_pinyin, read_at,
         )
 
     def insert_mention(
@@ -70,12 +75,15 @@ class RelevanceEventsRepo:
         *,
         comment_at: str,
         actor_pinyin: str,
+        read_at: float | None = None,
     ) -> bool:
         """INSERT OR IGNORE a kind='mention' row. comment_at is the comment
-        created_at ISO string; actor_pinyin is the comment author's pinyin."""
+        created_at ISO string; actor_pinyin is the comment author's pinyin.
+
+        ``read_at`` — see ``insert_file``. Default ``None`` = unread."""
         return self._insert_or_ignore(
             user_open_id, matter_id, filename, KIND_MENTION,
-            REASON_COMMENT_MENTION, comment_at, actor_pinyin,
+            REASON_COMMENT_MENTION, comment_at, actor_pinyin, read_at,
         )
 
     def _insert_or_ignore(
@@ -87,18 +95,30 @@ class RelevanceEventsRepo:
         reason: str,
         event_at: str,
         actor_pinyin: str,
+        read_at: float | None,
     ) -> bool:
         now = time()
         with self._db.connect() as conn:
             cur = conn.execute(
                 "INSERT OR IGNORE INTO relevance_events"
                 " (user_open_id, matter_id, filename, kind, reason,"
-                "  event_at, actor_pinyin, created_at)"
-                " VALUES (?,?,?,?,?,?,?,?)",
+                "  event_at, actor_pinyin, created_at, read_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?)",
                 (user_open_id, matter_id, filename, kind, reason,
-                 event_at, actor_pinyin, now),
+                 event_at, actor_pinyin, now, read_at),
             )
             return cur.rowcount > 0
+
+    def is_empty(self) -> bool:
+        """True if the table holds no rows yet. Used by the startup backfill
+        to decide whether to mark all newly-inserted rows as already-read
+        (true cold start) versus leave them unread (subsequent backfills,
+        which act as compensation for missed real-time writes)."""
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM relevance_events LIMIT 1",
+            ).fetchone()
+        return row is None
 
     # ---------- scanner: explicit exists -> insert ----------
 

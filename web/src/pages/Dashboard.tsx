@@ -219,14 +219,43 @@ function parseListFilter(value: string | undefined): MatterListFilter {
   return value === "mine" ? "mine" : "all";
 }
 
+// Local-storage mirror of the server-side matter_list_filter preference.
+// Read synchronously on first render so the page boots with the right
+// filter (no "全部 → 与我相关" flash on relogin); on every server-pref
+// fetch / write we keep the mirror in sync. Read failures (e.g. private
+// browsing modes) silently fall back to "all" — the server fetch will
+// still correct it after one tick.
+const FILTER_PREF_CACHE_KEY = "pivot.matter_list_filter";
+
+function readCachedListFilter(): MatterListFilter {
+  try {
+    return parseListFilter(
+      localStorage.getItem(FILTER_PREF_CACHE_KEY) ?? undefined,
+    );
+  } catch {
+    return "all";
+  }
+}
+
+function writeCachedListFilter(value: MatterListFilter): void {
+  try {
+    localStorage.setItem(FILTER_PREF_CACHE_KEY, value);
+  } catch {
+    // ignore
+  }
+}
+
 export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const location = useLocation();
   const [matters, setMatters] = useState<MatterSummary[] | null>(null);
   const [drafts, setDrafts] = useState<Draft[] | null>(null);
   // "全部 / 与我相关" filter. Server-persisted via /api/me/preferences so
-  // the choice survives across browsers / devices. Defaults to "all" until
-  // the prefs fetch lands on first mount.
-  const [listFilter, setListFilter] = useState<MatterListFilter>("all");
+  // the choice survives across browsers / devices, with a localStorage
+  // mirror read synchronously here so the page boots with the right value
+  // and doesn't flash from "all" to "mine" on relogin.
+  const [listFilter, setListFilter] = useState<MatterListFilter>(
+    readCachedListFilter,
+  );
   const [workspace, setWorkspace] = useState<WorkspaceStatus | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -692,17 +721,21 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     void load();
   }, [load]);
 
-  // Load persisted filter on mount. Failures are silent; default "all"
-  // already applied so the UI is usable even if prefs endpoint is down.
+  // Reconcile the server-side persisted filter with the synchronously-read
+  // localStorage mirror. Mirror is the source of truth for the boot frame;
+  // server is authoritative across devices and overwrites the mirror on
+  // success. Failures are silent — the cached value remains in effect.
   useEffect(() => {
     let cancelled = false;
     fetchPreferences()
       .then((prefs) => {
         if (cancelled) return;
-        setListFilter(parseListFilter(prefs[FILTER_PREF_KEY]));
+        const fromServer = parseListFilter(prefs[FILTER_PREF_KEY]);
+        setListFilter(fromServer);
+        writeCachedListFilter(fromServer);
       })
       .catch(() => {
-        // ignore — keep default
+        // ignore — keep cached value
       });
     return () => {
       cancelled = true;
@@ -711,10 +744,12 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
 
   const handleListFilterChange = useCallback((next: MatterListFilter) => {
     setListFilter(next);
+    writeCachedListFilter(next);
     setPreference(FILTER_PREF_KEY, next).catch(() => {
-      // server write failed; the in-memory state is still updated so the
-      // current session works. Next session will fall back to whatever the
-      // server has, which is ok — losing one filter toggle is harmless.
+      // server write failed; the in-memory state + local cache are still
+      // updated so the current session works. Next session will fall back
+      // to whatever the server has, which is ok — losing one filter toggle
+      // is harmless.
     });
   }, []);
 

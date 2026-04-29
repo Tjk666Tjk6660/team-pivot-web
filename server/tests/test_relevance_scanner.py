@@ -13,7 +13,6 @@ from server.relevance_scanner import (
     MIN_SCAN_INTERVAL_MINUTES,
     ScanReport,
     get_scan_interval_minutes,
-    is_backfill_on_startup_enabled,
     scan_all,
 )
 from server.users import UserRepo
@@ -367,30 +366,6 @@ def test_scan_skips_legacy_discuss_index_files(workspace, users, relevance_repo)
     assert report.matters == 0
 
 
-# ---------- env switch ----------
-
-
-def test_is_backfill_on_startup_enabled_default_true(monkeypatch):
-    monkeypatch.delenv("RELEVANCE_BACKFILL_ON_STARTUP", raising=False)
-    assert is_backfill_on_startup_enabled() is True
-
-
-@pytest.mark.parametrize(
-    "value", ["false", "FALSE", "0", "no", "off"],
-)
-def test_is_backfill_on_startup_enabled_disable_values(monkeypatch, value):
-    monkeypatch.setenv("RELEVANCE_BACKFILL_ON_STARTUP", value)
-    assert is_backfill_on_startup_enabled() is False
-
-
-@pytest.mark.parametrize(
-    "value", ["true", "TRUE", "1", "yes", "on", ""],
-)
-def test_is_backfill_on_startup_enabled_truthy_values(monkeypatch, value):
-    monkeypatch.setenv("RELEVANCE_BACKFILL_ON_STARTUP", value)
-    assert is_backfill_on_startup_enabled() is True
-
-
 # ---------- scan interval config ----------
 
 
@@ -452,3 +427,129 @@ def test_scan_all_logs_entry(tmp_path, db, caplog):
     assert len(entry_logs) == 1, (
         f"expected one 'scan_all starting' log, got {[r.getMessage() for r in caplog.records]}"
     )
+
+
+# ---------- mark_as_read cold-start backfill ----------
+
+
+def test_repo_is_empty_true_on_fresh_db(relevance_repo):
+    assert relevance_repo.is_empty() is True
+
+
+def test_repo_is_empty_false_after_insert(relevance_repo):
+    relevance_repo.insert_file(
+        "ou_x", "m-x", "01.md",
+        reason="owner_assigned",
+        event_at="2026-04-28T10:00:00+08:00",
+        actor_pinyin="bob",
+    )
+    assert relevance_repo.is_empty() is False
+
+
+def test_scan_with_mark_as_read_inserts_rows_as_already_read(
+    workspace, users, relevance_repo, db,
+):
+    """When startup backfill detects a cold start and passes mark_as_read=True,
+    every newly-written row gets read_at != NULL — so the user's first login
+    after enabling the feature isn't drowned in retroactive unread badges."""
+    alice_id = _register_user(users, pinyin="alice")
+    _register_user(users, pinyin="bob")
+
+    _write_matter(workspace, "m-x", {
+        "matter": {"id": "m-x"},
+        "timeline": [
+            _proposal("alice", file_rel="discussions/cat/m-x/01.md"),
+            _act_with_comments(
+                "bob", "discussions/cat/m-x/02.md",
+                comments=[{
+                    "created_at": "2026-04-28T11:30:00+08:00",
+                    "author": "bob",
+                    "body": "hi",
+                    "mentions": ["alice"],
+                }],
+            ),
+        ],
+    })
+
+    report = scan_all(
+        workspace=workspace, users_repo=users, repo=relevance_repo,
+        mark_as_read=True,
+    )
+    assert report.inserted >= 2
+
+    # All rows for alice land as read → no unread badges anywhere.
+    assert relevance_repo.unread_breakdown_per_matter(alice_id) == {}
+    assert relevance_repo.unread_mention_keys_for_matter(alice_id, "m-x") == set()
+
+    # But the rows DO exist (just stamped read), so file_reasons_for_matter
+    # still returns them — relevance chips work, only the unread aggregation
+    # is suppressed.
+    assert relevance_repo.file_reasons_for_matter(alice_id, "m-x") == {
+        "02.md": "in_my_matter",
+    }
+
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT read_at FROM relevance_events WHERE user_open_id=?",
+            (alice_id,),
+        ).fetchall()
+    assert all(r["read_at"] is not None for r in rows)
+
+
+def test_scan_default_mark_as_read_false_keeps_rows_unread(
+    workspace, users, relevance_repo,
+):
+    """Default behavior (compensation scan, hourly tick, manual rerun on a
+    non-empty table): rows land as unread so genuinely-missed events surface."""
+    alice_id = _register_user(users, pinyin="alice")
+    _register_user(users, pinyin="bob")
+
+    _write_matter(workspace, "m-x", {
+        "matter": {"id": "m-x"},
+        "timeline": [
+            _proposal("alice", file_rel="discussions/cat/m-x/01.md"),
+            _act_with_comments("bob", "discussions/cat/m-x/02.md"),
+        ],
+    })
+
+    report = scan_all(
+        workspace=workspace, users_repo=users, repo=relevance_repo,
+    )
+    assert report.inserted >= 1
+    # Default → unread rows visible in breakdown.
+    assert relevance_repo.unread_breakdown_per_matter(alice_id) == {"m-x": (1, 0)}
+
+
+def test_scan_mark_as_read_does_not_overwrite_existing_rows(
+    workspace, users, relevance_repo,
+):
+    """Idempotency: a second scan with mark_as_read=True against rows already
+    written as unread does NOT flip them to read. The mark_as_read flag only
+    affects rows newly inserted on this run; existing rows are untouched
+    (skipped via INSERT OR IGNORE / exists-check)."""
+    alice_id = _register_user(users, pinyin="alice")
+    _register_user(users, pinyin="bob")
+
+    _write_matter(workspace, "m-x", {
+        "matter": {"id": "m-x"},
+        "timeline": [
+            _proposal("alice", file_rel="discussions/cat/m-x/01.md"),
+            _act_with_comments("bob", "discussions/cat/m-x/02.md"),
+        ],
+    })
+
+    # First scan: writes one unread row.
+    first = scan_all(
+        workspace=workspace, users_repo=users, repo=relevance_repo,
+    )
+    assert first.inserted == 1
+    assert relevance_repo.unread_breakdown_per_matter(alice_id) == {"m-x": (1, 0)}
+
+    # Second scan with mark_as_read=True: skips that row, doesn't touch read_at.
+    second = scan_all(
+        workspace=workspace, users_repo=users, repo=relevance_repo,
+        mark_as_read=True,
+    )
+    assert second.inserted == 0
+    assert second.skipped >= 1
+    assert relevance_repo.unread_breakdown_per_matter(alice_id) == {"m-x": (1, 0)}

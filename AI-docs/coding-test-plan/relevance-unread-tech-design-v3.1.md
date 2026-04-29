@@ -267,12 +267,12 @@ mtime 增量扫几个特殊场景需要绕过缓存：
 
 #### 3.7.4 触发点
 
-- **启动一次**（默认开，`RELEVANCE_BACKFILL_ON_STARTUP=False` 可关）：第一次启动时 cursor 表是空的，走全扫；后续重启时绝大多数 matter mtime 没变，秒级跑完。
-- **每小时定时**：`server/app.py` 注册 hourly task。
+- **启动一次**：是否回灌由 `scan_cursor` 表自决——首次部署 cursor 表为空，自动走全扫；后续重启绝大多数 matter mtime 没变，秒级跑完。不需要单独的配置开关。
+- **每小时定时**：`server/app.py` 注册 hourly task，逻辑跟启动那次一致。
 - **CLI 普通模式**：`python -m server.relevance_scanner`，跟定时任务等价。
-- **CLI 强制全扫**：`python -m server.relevance_scanner --full`，跳过 cursor 比对，给运维做兜底。
+- **CLI 强制全扫**：`python -m server.relevance_scanner --full`，跳过 cursor 比对，给运维做兜底（规则升级 / 修 bug 后刷历史）。
 
-定时任务永远跑全量，启动开关只影响"是否阻塞 startup 等扫一次完成"。
+需要静默上线（不希望首次部署立刻全量回灌）时，运维手段是部署前预先 `INSERT INTO scan_cursor SELECT matter_id, st_mtime_ns, now() FROM ...` 把所有 matter 的 cursor 写满，让 scanner 认为"已初始化、当前是稳态"——但这等同放弃历史 @ 的红点感知，仅在极个别场景有用。默认走自动全扫。
 
 ### 3.8 SSE 与前端
 
@@ -366,7 +366,7 @@ GET /api/matters
   server/db.py                           # +relevance_events, +user_preferences
   server/inbox.py                        # +compute_matter_unread_breakdown
   server/api/matters.py                  # list red/gray;文件级 read 挂清读;详情字段
-  server/app.py                          # startup scan + hourly task
+  server/app.py                          # startup scan + hourly task(由 scan_cursor 表自决是否全扫)
   web/src/api.ts
   web/src/pages/Dashboard.tsx
   web/src/components/matter/FileCard.tsx
@@ -376,7 +376,7 @@ GET /api/matters
 
 - **写入失败兜底**：实时路径异常 swallow + warning，scanner 1h 内补回；监控 `relevance writer error rate`。
 - **PK 6 列字符串性能**：十万行内够用，百万级再换自增 ID + 唯一索引。
-- **启动回灌噪音**：默认开启意味着部署完成时老用户会瞬间收到大量未读红点。低峰部署 + 提前知会；急的话 `RELEVANCE_BACKFILL_ON_STARTUP=False`，改靠 hourly tick 慢慢带。
+- **启动回灌噪音**：首次部署 `scan_cursor` 为空触发全扫，老用户会瞬间收到大量未读红点。低峰窗口部署 + 提前知会；如需静默上线参见 §3.7.4 末尾的预填 cursor 方案。
 
 ## 六、后期扩展
 

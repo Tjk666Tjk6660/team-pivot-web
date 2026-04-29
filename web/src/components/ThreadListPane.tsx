@@ -47,18 +47,14 @@ export function ThreadListPane({
 
   // Filter applied to the matters section (NOT the favorites section —
   // favorites is an explicit per-user pin and shouldn't be hidden by the
-  // 与我相关 toggle). When the user is on a hidden matter's detail page,
-  // we still keep the row visible so they don't lose context mid-scroll;
-  // the active row escapes the filter regardless of red count.
+  // 与我相关 toggle). Strict filter: only matters with red unread > 0.
+  // The currently-viewed matter is NOT exempted — if it has no red, it
+  // disappears from the list but the detail page stays open via the URL.
   const visibleMatters = useMemo(() => {
     if (!matters) return matters;
     if (listFilter !== "mine") return matters;
-    return matters.filter(
-      (m) =>
-        (m.red_unread_count ?? 0) > 0 ||
-        m.id === activeMatterId,
-    );
-  }, [matters, listFilter, activeMatterId]);
+    return matters.filter((m) => (m.red_unread_count ?? 0) > 0);
+  }, [matters, listFilter]);
 
   const grouped = useMemo(
     () => groupByCategory(visibleMatters),
@@ -434,15 +430,15 @@ function FilterToggle({
   value: MatterListFilter;
   onChange: (next: MatterListFilter) => void;
 }) {
-  const options: { key: MatterListFilter; label: string }[] = [
+  const options: { key: MatterListFilter; label: string; hint?: string }[] = [
     { key: "all", label: "全部" },
-    { key: "mine", label: "与我相关" },
+    { key: "mine", label: "与我相关", hint: "只看有未读的相关 matter" },
   ];
   return (
     <div
       role="tablist"
       aria-label="matter 列表筛选"
-      className="mx-2 my-1.5 inline-flex rounded-full bg-[var(--surface-alt)] p-1 text-[12px]"
+      className="mx-2 my-1.5 flex rounded-full bg-[var(--surface-alt)] p-1 text-[12px]"
     >
       {options.map((opt) => {
         const active = value === opt.key;
@@ -452,14 +448,15 @@ function FilterToggle({
             type="button"
             role="tab"
             aria-selected={active}
+            title={opt.hint}
             onClick={() => {
               if (!active) onChange(opt.key);
             }}
             className={cn(
-              "rounded-full px-3.5 py-1 font-medium transition-colors",
+              "flex-1 rounded-full px-3.5 py-1 text-center font-medium transition-all",
               active
-                ? "bg-[var(--surface)] text-[var(--accent)] shadow-[var(--shadow-sm)]"
-                : "text-[var(--text-mute)] hover:text-[var(--text-soft)]",
+                ? "bg-[var(--accent)] text-[var(--accent-ink)] shadow-[0_1px_3px_rgba(0,0,0,0.18)]"
+                : "text-[var(--text-soft)] hover:bg-[var(--surface)] hover:text-[var(--text)] hover:shadow-[0_1px_2px_rgba(0,0,0,0.06)]",
             )}
           >
             {opt.label}

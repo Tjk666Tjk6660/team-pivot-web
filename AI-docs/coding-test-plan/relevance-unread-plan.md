@@ -161,7 +161,7 @@ def scan_all() -> ScanReport:
 ```
 
 触发点：
-- **启动一次**（默认开，env `RELEVANCE_BACKFILL_ON_STARTUP=False` 可关）
+- **启动一次**（恒跑，由 `relevance_events` 是否为空决定 cold/warm 行为）
 - **每小时定时**：`server/app.py` 注册 hourly task
 - **CLI**：`python -m server.relevance_scanner`
 
@@ -212,7 +212,7 @@ def set_preference(key, body, user):
 ### 改 `server/app.py`
 
 - 装配 `RelevanceEventsRepo(db)`、`UserPreferenceRepo(db)`，注入路由。
-- startup hook：`if RELEVANCE_BACKFILL_ON_STARTUP: scan_all()`。
+- startup hook：恒跑 `scan_all(mark_as_read=relevance_events.is_empty())`，cold/warm 由表状态自决。
 - 注册 `relevance_writer.install(...)` 订阅事件总线。
 - 起 hourly task：`asyncio.create_task(_hourly_scan_loop())`。
 
@@ -322,7 +322,7 @@ Phase 1 / 2 / 5 并行；Phase 3 依赖 1+2；Phase 4 依赖 1+2；Phase 6/7 依
 | 风险 | 对策 |
 |---|---|
 | real-time writer 异常 swallow 后 silently 漏写 | scanner hourly 兜底；监控 `relevance writer error rate`，连续异常告警 |
-| 启动回灌噪音（老用户瞬间一片红） | 默认开启 `RELEVANCE_BACKFILL_ON_STARTUP`；低峰部署 + 提前知会用户；急的话临时设 `False`，由首个 hourly tick 慢慢带 |
+| 启动回灌噪音（老用户瞬间一片红） | cold-start（`relevance_events` 为空）时把首扫结果落为 `read_at=now` 已读，避免历史一片红；warm-start 才把 scanner 找到的行视为 writer 漏写、按未读保留 |
 | PK 6 列字符串性能 | 十万行内够用，百万级再换自增 ID + 唯一索引；监控查询 P99 |
 | 同一秒两条评论各 @ 同一人撞 PK | `_now_iso()` 当前精度到秒，第二条 IGNORE。概率极低；需要时把 publish 时间戳精度提到毫秒，表结构不动 |
 | user_preferences 表被滥用 | API 层 key 白名单（本期只 `matter_list_filter`） |
