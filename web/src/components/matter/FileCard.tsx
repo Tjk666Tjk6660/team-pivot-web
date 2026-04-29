@@ -39,6 +39,13 @@ import { publishListRefresh } from "@/events/listRefresh";
 const COLLAPSE_HEIGHT = 208;
 
 const markdownComponents: Components = {
+  table({ node: _node, ...props }) {
+    return (
+      <div className="table-scroll">
+        <table {...props} />
+      </div>
+    );
+  },
   code({ className, children, ...rest }) {
     if (className === "language-mermaid") {
       return <MermaidBlock code={String(children).replace(/\n$/, "")} />;
@@ -249,7 +256,7 @@ export function FileCard({
         registerRef?.(el as HTMLDivElement | null);
       }}
       className={cn(
-        "scroll-mt-24 rounded-[var(--r-md)] border border-[var(--line)] border-l-[6px] bg-[var(--surface)] p-4 shadow-[var(--shadow-sm)] sm:p-5",
+        "min-w-0 scroll-mt-24 overflow-hidden rounded-[var(--r-md)] border border-[var(--line)] border-l-[6px] bg-[var(--surface)] p-4 shadow-[var(--shadow-sm)] sm:p-5",
         cfg.side,
         highlighted && "ring-2 ring-[var(--accent-soft)]",
       )}
@@ -385,7 +392,7 @@ export function FileCard({
                 : { maxHeight: COLLAPSE_HEIGHT, overflow: "hidden" }
             }
             className={cn(
-              "prose-pivot mt-3 max-w-none text-[var(--text-soft)]",
+              "prose-pivot mt-3 min-w-0 max-w-none overflow-hidden text-[var(--text-soft)]",
               getMarkdownStyleClass(markdownStyle),
             )}
           >
