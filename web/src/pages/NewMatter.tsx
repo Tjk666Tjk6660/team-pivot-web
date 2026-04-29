@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ArrowLeft } from "lucide-react";
 import {
@@ -34,6 +34,7 @@ import {
   NewMatterGuidedFlow,
   type ClassicBridgeSnapshot,
 } from "@/pages/NewMatterGuidedFlow";
+import { publishDraftsRefresh } from "@/events/listRefresh";
 
 const NEW_CATEGORY_OPTION = "__new_category__";
 const CATEGORY_PATTERN = /^[^/\\:*?"<>|\t\n\r]{1,20}$/;
@@ -49,7 +50,11 @@ export function NewMatter({ me }: { me: Me }) {
   // mentions, body) across into the guided flow when the user picks
   // "进行 AI 讨论" in the publish quality gate. The guided flow then skips
   // the manual steps and jumps straight to AI drafting.
-  const [mode, setMode] = useState<"guided" | "classic">("guided");
+  const [searchParams] = useSearchParams();
+  const hasDraftParam = !!searchParams.get("draft");
+  const [mode, setMode] = useState<"guided" | "classic">(
+    () => (hasDraftParam ? "classic" : "guided"),
+  );
   const [bridge, setBridge] = useState<ClassicBridgeSnapshot | null>(null);
   if (mode === "guided") {
     return (
@@ -234,7 +239,7 @@ function NewMatterClassicForm({
   }, [mentions.open_ids]);
 
   const isDirty = title.trim().length > 0 || body.trim().length > 0;
-  const { status: draftStatus } = useDraftAutosave({
+  const { status: draftStatus, saveNow } = useDraftAutosave({
     draftId,
     setDraftId,
     type: "proposal",
@@ -267,6 +272,18 @@ function NewMatterClassicForm({
   const onBodyChange = (next: string) => {
     setBody(next);
     setBodyState((s) => onUserEdit(s, next));
+  };
+
+  const handleBackToList = async () => {
+    if (isDirty) {
+      const savedId = await saveNow();
+      if (!savedId) {
+        toast.error("草稿保存失败，请稍后重试");
+        return;
+      }
+      publishDraftsRefresh();
+    }
+    navigate("/");
   };
 
   const categoryOptions = category.trim() && !availableCategories.includes(category.trim())
@@ -361,6 +378,7 @@ function NewMatterClassicForm({
       if (draftId) {
         try {
           await deleteDraft(draftId);
+          publishDraftsRefresh();
         } catch {
           // Draft delete failure does not affect the published matter.
         }
@@ -410,15 +428,14 @@ function NewMatterClassicForm({
       {qualityDialog}
       <div className="mx-auto w-full max-w-4xl space-y-4 px-3 py-4 sm:px-5 sm:py-5 md:space-y-6">
           <Button
-            asChild
+            type="button"
             variant="ghost"
             size="sm"
             className="rounded-[var(--r-md)] px-3 text-[var(--text-soft)] hover:bg-[var(--surface-alt)]"
+            onClick={() => void handleBackToList()}
           >
-            <Link to="/">
               <ArrowLeft className="h-4 w-4" />
               返回 matter 列表
-            </Link>
           </Button>
 
           <div className="space-y-2">

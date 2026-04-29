@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   ArrowLeft,
@@ -13,6 +13,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   createMatter,
+  deleteDraft,
   fetchMatters,
   searchContacts,
   streamAIChat,
@@ -28,6 +29,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { MentionField, emptyMention } from "@/components/MentionField";
 import { OwnerPicker } from "@/components/matter/OwnerPicker";
+import { useDraftAutosave } from "@/hooks/useDraftAutosave";
+import { publishDraftsRefresh } from "@/events/listRefresh";
 
 /** Snapshot the classic form hands to the guided flow when the user picks
  *  "进行 AI 讨论" in the publish quality gate. The guided flow skips the
@@ -150,6 +153,7 @@ export function NewMatterGuidedFlow({
       ? [initialBridge!.category]
       : [],
   );
+  const [draftId, setDraftId] = useState<string | null>(null);
   const [resolvedNames, setResolvedNames] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   // Used during phase=drafting (initial or revision) for streaming preview.
@@ -215,6 +219,65 @@ export function NewMatterGuidedFlow({
 
   const phaseIndex = PHASE_ORDER.indexOf(phase);
   const phaseDisplayIndex = phase === "review" ? 7 : phaseIndex + 1;
+  const draftBody = data.body || streamingBody;
+  const hasDraftContent =
+    data.topic.trim().length > 0 ||
+    data.title.trim().length > 0 ||
+    data.category.trim().length > 0 ||
+    draftBody.trim().length > 0 ||
+    data.summary.trim().length > 0 ||
+    data.mentions.open_ids.length > 0;
+  const draftPayload = () => ({
+    title: data.title.trim() || null,
+    category: data.category.trim() || null,
+    body_md: draftBody,
+    matter_payload: {
+      doc_type: data.docType,
+      summary: data.summary.trim(),
+      matter_owner: data.matterOwner.openId,
+      matter_owner_display: data.matterOwner.name,
+      owner: me.open_id,
+      owner_display: me.name,
+      body_source: draftBody.trim() ? "ai" : "manual",
+      ...(draftBody.trim() ? { body_source_snapshot: draftBody } : {}),
+      ...(data.topic.trim() ? { topic: data.topic.trim() } : {}),
+      ...(data.mentions.open_ids.length > 0 ? { mentions: data.mentions } : {}),
+    },
+  });
+  const { saveNow } = useDraftAutosave({
+    draftId,
+    setDraftId,
+    type: "proposal",
+    payload: draftPayload,
+    enabled: hasDraftContent && !submitting,
+    deps: [
+      hasDraftContent,
+      submitting,
+      data.topic,
+      data.docType,
+      data.category,
+      data.title,
+      data.matterOwner.openId,
+      data.matterOwner.name,
+      data.mentions.open_ids.length,
+      data.mentions.comments,
+      data.body,
+      data.summary,
+      streamingBody,
+    ],
+  });
+
+  const handleBackToList = async () => {
+    if (hasDraftContent) {
+      const savedId = await saveNow();
+      if (!savedId) {
+        toast.error("草稿保存失败，请稍后重试");
+        return;
+      }
+      publishDraftsRefresh();
+    }
+    navigate("/");
+  };
 
   const advanceToNextAI = (next: Phase) => {
     setPhase(next);
@@ -516,6 +579,14 @@ export function NewMatterGuidedFlow({
             : {}),
         },
       });
+      if (draftId) {
+        try {
+          await deleteDraft(draftId);
+          publishDraftsRefresh();
+        } catch {
+          // Draft cleanup failure should not block the successfully published matter.
+        }
+      }
       navigate(`/m/${encodeURIComponent(r.matter_id)}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
@@ -535,15 +606,14 @@ export function NewMatterGuidedFlow({
         <div className="border-b border-[var(--line)] bg-[var(--surface)] px-4 py-3 sm:px-6">
           <div className="flex items-center justify-between gap-3">
             <Button
-              asChild
+              type="button"
               variant="ghost"
               size="sm"
               className="rounded-[var(--r-md)] px-3 text-[var(--text-soft)] hover:bg-[var(--surface-alt)]"
+              onClick={() => void handleBackToList()}
             >
-              <Link to="/">
                 <ArrowLeft className="h-4 w-4" />
                 返回 matter 列表
-              </Link>
             </Button>
             <div className="flex items-center gap-3">
               <span className="text-xs text-[var(--text-mute)]">
