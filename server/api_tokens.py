@@ -20,7 +20,7 @@ MAX_TTL_DAYS = 365
 @dataclass(frozen=True)
 class ApiToken:
     token_hash: str
-    user_open_id: str
+    pivot_user_id: str
     name: str
     created_at: float
     last_used_at: float | None
@@ -46,7 +46,7 @@ class ApiTokenRepo:
     def create(
         self,
         *,
-        user_open_id: str,
+        pivot_user_id: str,
         name: str,
         ttl_days: int = DEFAULT_TTL_DAYS,
     ) -> tuple[str, ApiToken]:
@@ -59,24 +59,24 @@ class ApiTokenRepo:
         with self._db.connect() as conn:
             conn.execute(
                 "INSERT INTO api_tokens"
-                " (token_hash, user_open_id, name, created_at, last_used_at, expires_at)"
+                " (token_hash, pivot_user_id, name, created_at, last_used_at, expires_at)"
                 " VALUES (?,?,?,?,?,?)",
-                (h, user_open_id, name, now, None, expires),
+                (h, pivot_user_id, name, now, None, expires),
             )
         return token, ApiToken(
             token_hash=h,
-            user_open_id=user_open_id,
+            pivot_user_id=pivot_user_id,
             name=name,
             created_at=now,
             last_used_at=None,
             expires_at=expires,
         )
 
-    def list_for_user(self, user_open_id: str) -> list[ApiToken]:
+    def list_for_user(self, pivot_user_id: str) -> list[ApiToken]:
         with self._db.connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM api_tokens WHERE user_open_id=? ORDER BY created_at DESC",
-                (user_open_id,),
+                "SELECT * FROM api_tokens WHERE pivot_user_id=? ORDER BY created_at DESC",
+                (pivot_user_id,),
             ).fetchall()
         return [_row(r) for r in rows]
 
@@ -102,13 +102,13 @@ class ApiTokenRepo:
                 (time(), token_hash),
             )
 
-    def delete_by_short_id(self, user_open_id: str, short_id: str) -> bool:
+    def delete_by_short_id(self, pivot_user_id: str, short_id: str) -> bool:
         if not short_id or len(short_id) < 4:
             return False
         with self._db.connect() as conn:
             cur = conn.execute(
-                "DELETE FROM api_tokens WHERE user_open_id=? AND substr(token_hash,1,8)=?",
-                (user_open_id, short_id),
+                "DELETE FROM api_tokens WHERE pivot_user_id=? AND substr(token_hash,1,8)=?",
+                (pivot_user_id, short_id),
             )
             return cur.rowcount > 0
 
@@ -121,7 +121,7 @@ class ApiTokenRepo:
 def _row(row) -> ApiToken:
     return ApiToken(
         token_hash=row["token_hash"],
-        user_open_id=row["user_open_id"],
+        pivot_user_id=row["pivot_user_id"],
         name=row["name"],
         created_at=row["created_at"],
         last_used_at=row["last_used_at"],

@@ -40,7 +40,7 @@ def _user_from_bearer(
     tok = tokens.lookup_by_plaintext(token)
     if tok is None:
         return None
-    u = users.get(tok.user_open_id)
+    u = users.get(tok.pivot_user_id)
     if u is None:
         return None
     tokens.touch_last_used(tok.token_hash)

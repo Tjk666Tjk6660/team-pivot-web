@@ -82,7 +82,7 @@ def test_create_list_use_revoke_lifecycle(app_and_sid):
 
 def test_expired_token_returns_invalid_token(app_and_sid, db, users):
     app, _, tokens = app_and_sid
-    plaintext, tok = tokens.create(user_open_id="ou_1", name="t1", ttl_days=1)
+    plaintext, tok = tokens.create(pivot_user_id="ou_1", name="t1", ttl_days=1)
     # Force-expire
     with db.connect() as c:
         c.execute(

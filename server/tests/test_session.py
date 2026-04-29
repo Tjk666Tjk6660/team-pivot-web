@@ -16,7 +16,7 @@ def test_create_and_get_roundtrip(store):
     sid = store.create("ou_1")
     s = store.get(sid)
     assert s is not None
-    assert s.user_open_id == "ou_1"
+    assert s.pivot_user_id == "ou_1"
 
 
 def test_get_unknown_returns_none(store):

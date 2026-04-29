@@ -57,7 +57,7 @@ CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name);
 -- exist when SCHEMA runs there).
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
-    user_open_id TEXT NOT NULL,
+    pivot_user_id TEXT NOT NULL,
     expires_at REAL NOT NULL,
     created_at REAL NOT NULL
 );
@@ -76,13 +76,13 @@ CREATE TABLE IF NOT EXISTS ai_conversations (
 );
 CREATE TABLE IF NOT EXISTS api_tokens (
     token_hash TEXT PRIMARY KEY,
-    user_open_id TEXT NOT NULL,
+    pivot_user_id TEXT NOT NULL,
     name TEXT NOT NULL,
     created_at REAL NOT NULL,
     last_used_at REAL,
     expires_at REAL NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_open_id);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(pivot_user_id);
 CREATE TABLE IF NOT EXISTS file_reads (
     user_open_id  TEXT NOT NULL,
     matter_id     TEXT NOT NULL,

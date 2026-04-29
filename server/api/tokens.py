@@ -30,7 +30,7 @@ def build_router(
         user: User = Depends(current_user_cookie_only),
     ):
         plaintext, tok = tokens.create(
-            user_open_id=user.open_id,
+            pivot_user_id=user.open_id,
             name=body.name.strip(),
             ttl_days=body.ttl_days,
         )

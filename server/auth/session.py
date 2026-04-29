@@ -12,9 +12,14 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class Session:
-    user_open_id: str
+    pivot_user_id: str
     expires_at: float
     user_access_token: str | None = None
+
+    # Migration alias: keeps straggler callers using .user_open_id working
+    @property
+    def user_open_id(self) -> str:
+        return self.pivot_user_id
 
 
 class SessionStore:
@@ -24,7 +29,7 @@ class SessionStore:
 
     def create(
         self,
-        user_open_id: str,
+        pivot_user_id: str,
         *,
         user_access_token: str | None = None,
     ) -> str:
@@ -33,11 +38,11 @@ class SessionStore:
         with self._db.connect() as conn:
             conn.execute(
                 "INSERT INTO sessions"
-                " (id, user_open_id, expires_at, created_at, user_access_token)"
+                " (id, pivot_user_id, expires_at, created_at, user_access_token)"
                 " VALUES (?,?,?,?,?)",
-                (sid, user_open_id, now + self._ttl, now, user_access_token),
+                (sid, pivot_user_id, now + self._ttl, now, user_access_token),
             )
-        log.debug("session created sid=%s... user=%s", sid[:8], user_open_id)
+        log.debug("session created sid=%s... user=%s", sid[:8], pivot_user_id)
         return sid
 
     def get(self, sid: str | None) -> Session | None:
@@ -45,7 +50,7 @@ class SessionStore:
             return None
         with self._db.connect() as conn:
             row = conn.execute(
-                "SELECT user_open_id, expires_at, user_access_token"
+                "SELECT pivot_user_id, expires_at, user_access_token"
                 " FROM sessions WHERE id=?",
                 (sid,),
             ).fetchone()
@@ -55,7 +60,7 @@ class SessionStore:
             self.delete(sid)
             return None
         return Session(
-            user_open_id=row["user_open_id"],
+            pivot_user_id=row["pivot_user_id"],
             expires_at=row["expires_at"],
             user_access_token=row["user_access_token"],
         )

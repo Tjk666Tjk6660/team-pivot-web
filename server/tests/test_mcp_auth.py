@@ -31,10 +31,10 @@ def _mk_user(open_id: str = "ou_abc") -> User:
     )
 
 
-def _mk_token(user_open_id: str = "ou_abc") -> ApiToken:
+def _mk_token(pivot_user_id: str = "ou_abc") -> ApiToken:
     return ApiToken(
         token_hash="x" * 64,
-        user_open_id=user_open_id,
+        pivot_user_id=pivot_user_id,
         name="Claude Code",
         created_at=0.0,
         last_used_at=None,

@@ -47,7 +47,7 @@ def authenticate(
     record = tokens.lookup_by_plaintext(token)
     if record is None:
         raise McpAuthError(401, "invalid_token")
-    user = users.get(record.user_open_id)
+    user = users.get(record.pivot_user_id)
     if user is None:
         raise McpAuthError(401, "user_not_found")
     tokens.touch_last_used(record.token_hash)
