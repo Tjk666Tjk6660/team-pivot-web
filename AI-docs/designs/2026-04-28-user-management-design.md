@@ -491,13 +491,38 @@ deleted 用户的 `external_binding` 不删。该外部身份再次扫码 → �
 
 ### 7.1 名字解析的统一入口
 
-所有展示用户名字头像的地方，都走一个统一的"名字解析"入口，按下面的回退顺序找到当前应展示的形态：
+所有展示用户名字头像的地方，都走一个统一的"名字解析"入口。**入参形态统一为字符串引用**，解析器内部不做格式判别，按下列顺序回退，命中即返：
 
-1. 通过外部身份找到对应的 `pivot_user`，使用其当前的显示名、头像、状态
-2. 找不到时（仅限飞书 provider），回退到飞书通讯录镜像 `contacts` 表的姓名头像（"被 @ 但没登录过的飞书同事"）
-3. 仍找不到时，回退到 git frontmatter 里的原始值，状态标记为"未知"
+1. **直查 `pivot_user.id`**（ULID 形态）—— 命中即返当前 `display_name` / `avatar_url` / `status`。
+   这是新内容（迁移上线后写入）的稳态路径。
+2. **未命中 → `external_binding(provider, external_id)` 反查**取出 `pivot_user_id`，再查 `pivot_user`。
+   这是历史内容（含飞书 open_id 字符串）的兼容路径。
+3. **仍未命中（外部身份疑似飞书 open_id）→ 飞书通讯录镜像 `contacts` 兜底**，状态记为 `unknown`（"被 @ 但没登录过的飞书同事"）。
+4. **再不命中 → frontmatter 原值**，状态记为 `unknown`。
+
+整条链全程过 LRU 缓存（按"输入字符串 → DisplayInfo"键值），历史路径的 miss 在第一次解析后被缓存兜走，不会反复 join。
+
+**关键：直查路径不经过 `external_binding`。** 新内容（mention / 作者引用 / 选择器返回值）持久化为 `pivot_user.id`，第 1 步命中即返；只有历史字符串走第 2 步多一次反查。这避免 mention 渲染、thread 列表、post header 在新内容稳态下白白付一次 join，也确保 §13 的"为脱耦做的预留"在引用层真正生效。
 
 返回的状态决定前端渲染样式（见下表）。
+
+### 7.1.1 新内容引用的存储契约
+
+自迁移上线起，下列写入路径**统一持久化 `pivot_user.id`（ULID）**，不再写飞书 open_id：
+
+- post / thread frontmatter 的 `creator`、`owner`
+- post / thread 的 `mentions[]` 与 `comments[].mentions[]`
+- matter `readers[]`
+- 联系人选择器（`OwnerPicker` / `ReadersPopover` / `MentionField`）提交给后端的字段
+- 草稿、收藏、AI 对话、阅读状态等 DB 表的 `pivot_user_id` 列
+
+历史内容里的 open_id / pinyin 字符串**不做回填**，由 §7.1 降级 resolver 兼容；时间窗会随用户改名 / 状态变更自然向 ULID 收敛。
+
+**例外（保持 open_id 不变）：**
+
+- 飞书 DM 发送链路（`notifier.mention_open_ids` / `<at id="ou_…">` 标签）—— 飞书 API 只认 open_id，是发送时的 IM 协议字段，不是身份层引用
+- 飞书通讯录镜像表 `contacts` 自身的主键
+- MCP 接口入参（`name / pinyin / open_id` 三选一）—— 输入容错，进 publish 前由后端 normalize 为 `pivot_user.id`
 
 ### 7.2 渲染规则
 
@@ -554,7 +579,7 @@ deleted 用户的 `external_binding` 不删。该外部身份再次扫码 → �
 |---|---|
 | 1 | 建立 4 张新表 |
 | 2 | 遍历现有飞书用户：每位生成新的 Pivot 用户主数据 + 飞书外部身份绑定，并维护 open_id ↔ pivot_user_id 映射 |
-| 3 | 把所有依赖用户身份的表（session、草稿、阅读状态、收藏、AI 对话、PAT）的外键从飞书 open_id 改为 pivot_user_id；过程中检测无映射的孤儿数据，发现即整体回滚 |
+| 3 | 把所有依赖用户身份的下游表（`drafts` / `read_state` / `favorites` / `sessions` / `ai_conversations` / `api_tokens` / `file_reads`，共 7 张）的外键从飞书 open_id 改为 pivot_user_id；过程中检测无映射的孤儿数据，发现即整体回滚 |
 | 4 | 校验：新 Pivot 用户行数与原飞书用户行数一致；下游表无空外键 |
 | 5 | 把 `--initial-admin` 参数指定的拼音匹配为某位 Pivot 用户，并把其角色置为 admin；命中失败则中止迁移 |
 | 6 | 删除旧 `users` 表 |
@@ -585,6 +610,34 @@ deleted 用户的 `external_binding` 不删。该外部身份再次扫码 → �
 - 单测覆盖：含若干用户与各下游表数据的临时 DB，跑完迁移断言行数对齐、外键全部有效、孤儿为空、初始管理员角色正确；`--dry-run` 模式断言数据未变
 - 回归：迁移后跑全量 pytest baseline
 - 真实数据演练：可在 dev DB 上跑一次 `--dry-run` 预演
+
+### 9.5 迁移前完备性审计（写入 runbook）
+
+迁移前必须双重过一遍，避免漏字段造成数据孤儿或字符串引用悬挂。**单事务回滚只保 FK 一致性，保不了非 FK 的字符串引用**。
+
+**A. FK 字段审计（DB 层）**
+
+- 命令：`git grep -n "user_open_id" -- 'server/db.py'`
+- 比对 §9.1 step 3 的 7 张表清单是否全覆盖；任何新增表若有 `user_open_id` 列必须显式纳入或显式标记"不迁移"
+
+**B. 非 FK 字符串引用审计（展示 / 持久化层）**
+
+- 命令：`git grep -nE "open_id|user_open_id" -- 'server/' 'web/' 'scripts/'`
+- 按下列分类清点每一处：
+
+  | 类别 | 处理 |
+  |---|---|
+  | DB FK / 主键 | 必须随迁移改 |
+  | 磁盘 matter index frontmatter（`creator` / `owner` / `mentions[]` / `readers[]`） | 上线后由新写路径产出 ULID；旧值由 §7.1 resolver 兼容，不回填 |
+  | Markdown body `<at id="…">` 标签 | 不变（飞书 DM 协议字段） |
+  | Notifier `mention_open_ids` | 不变（飞书 API 协议字段） |
+  | MCP 接口入参（name / pinyin / open_id 三选一） | 不变；后端 normalize 为 ULID 后再进 publish |
+  | 前端控件返回值（OwnerPicker / MentionField / ReadersPopover） | 改为提交 `pivot_user.id` |
+  | 日志字符串 | 可不动，但建议同步切换以避免心智污染 |
+
+**C. 上线前再跑一次**
+
+`scripts/audit_user_migration.py` 应扩展为：扫代码 + DB schema diff + 对账 7 张下游表。Runbook §9.3 第 3 步"`--dry-run`"前增加"先跑 audit 脚本，输出报告"。
 
 ---
 
@@ -639,6 +692,7 @@ deleted 用户的 `external_binding` 不删。该外部身份再次扫码 → �
 | 自服务身份合并（用户自己声明"我之前用钉钉登过"） | 本期 §5.3 已支持管理员后台手动合并；让用户自己合并需要双因子验证机制防冒认 | 多 provider 场景实际跑起来后 |
 | 邀请链接的邮件自动发送 | 管理员复制链接自己发；做发件需要 SMTP 配置 | 邀请使用频度高时 |
 | 暂停/删除/升降级的批量操作 | 本期单个用户操作；批量需要更严的二次确认 + 进度反馈 | 实际运维有批量需求时 |
+| 飞书原生用户自助设置邮箱密码作为备份登录方式 | 当前飞书 OAuth 稳定且团队规模可控；管理员可后台为单个飞书用户补发邀请码兜底 | 未来 IM 迁移、对外协作扩大、或飞书 OAuth 故障率成为问题时单独立项 |
 
 ---
 
@@ -672,3 +726,7 @@ deleted 用户的 `external_binding` 不删。该外部身份再次扫码 → �
 - [ ] `--dry-run` 迁移不写入 DB
 - [ ] `--initial-admin` 不传或不命中时迁移中止
 - [ ] 所有新增表有 partial unique / FK / 索引
+- [ ] 迁移上线后新发布的 post / matter frontmatter（`creator` / `owner` / `mentions` / `readers`）实际持久化的是 ULID 而非 open_id（用 `git log --since=$migrate_date --name-only -- 'matters/'` 抽几条新文件 grep `ou_` 应为空）
+- [ ] mention 写入路径有单测断言：`OwnerPicker` / `MentionField` 选定某用户后，提交到后端的 payload 与落盘 frontmatter 同为该用户的 `pivot_user.id`
+- [ ] `file_reads` 表迁移后无 `user_open_id` 残值，所有行 `pivot_user_id` 非空
+- [ ] §7.1 名字解析器：直查路径在新内容上不经过 `external_binding` 反查（profiling 或单测断言 binding repo 调用次数 = 0）

@@ -69,7 +69,8 @@
 | `server/mentions.py` | 新增 `resolve_display_info` 返回带 status 的完整信息 |
 | `server/api/ai.py` / `server/api/contacts.py` / `server/api/workspace.py` | `Depends(require_admin)` → `Depends(require_admin_user)` |
 | `server/users.py` | **保留为 stub**（向后兼容期），实际查询走 PivotUserRepo |
-| `server/drafts.py` / `server/inbox.py` / `server/read_state.py` / `server/favorites.py` / `server/ai_conversations.py` / `server/api_tokens.py` | 字段重命名 `user_open_id` → `pivot_user_id` |
+| `server/drafts.py` / `server/inbox.py` / `server/read_state.py` / `server/favorites.py` / `server/ai_conversations.py` / `server/api_tokens.py` / `server/file_reads.py` | 字段重命名 `user_open_id` → `pivot_user_id` |
+| `server/publish.py` | 新内容写入路径切 ULID：frontmatter `creator` / `owner` / `mentions` / `readers` 持久化 `pivot_user.id`，不再写 pinyin/open_id（保留旧值读兼容） |
 | `server/app.py` | 装配新 repos、新路由 |
 | `pyproject.toml` | 加 `bcrypt>=4.0` |
 
@@ -1632,6 +1633,11 @@ def _seed_legacy_db(path: Path) -> None:
             id TEXT PRIMARY KEY, user_open_id TEXT NOT NULL,
             expires_at REAL NOT NULL, created_at REAL NOT NULL
         );
+        CREATE TABLE file_reads (
+            user_open_id TEXT NOT NULL, matter_id TEXT NOT NULL,
+            filename TEXT NOT NULL, first_read_at REAL NOT NULL,
+            PRIMARY KEY (user_open_id, matter_id, filename)
+        );
     """)
     conn.execute(
         "INSERT INTO users VALUES (?,?,?,?,?,?,?)",
@@ -1644,6 +1650,8 @@ def _seed_legacy_db(path: Path) -> None:
     conn.execute("INSERT INTO drafts VALUES (?,?,?)", ("d1", "ou_alice", "..."))
     conn.execute("INSERT INTO sessions VALUES (?,?,?,?)",
                  ("s1", "ou_alice", 9999.0, 1.0))
+    conn.execute("INSERT INTO file_reads VALUES (?,?,?,?)",
+                 ("ou_bob", "m1", "a.md", 1.5))
     conn.commit()
     conn.close()
 
@@ -1716,6 +1724,22 @@ def test_orphan_fk_aborts(tmp_path):
     result = migrate(db_path=db_path, initial_admin_pinyin="alice", dry_run=False)
     assert not result.success
     assert "orphan" in result.error.lower()
+
+
+def test_orphan_in_file_reads_aborts(tmp_path):
+    """Regression: file_reads was missing from _DOWNSTREAM_TABLES; ensure each
+    listed downstream table is checked for orphans."""
+    db_path = tmp_path / "data.db"
+    _seed_legacy_db(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute("INSERT INTO file_reads VALUES (?,?,?,?)",
+                 ("ou_ghost", "m1", "b.md", 2.0))
+    conn.commit()
+    conn.close()
+    result = migrate(db_path=db_path, initial_admin_pinyin="alice", dry_run=False)
+    assert not result.success
+    assert "orphan" in result.error.lower()
+    assert "file_reads" in result.error.lower()
 
 
 def test_sessions_rewritten_not_cleared(tmp_path):
@@ -1828,7 +1852,7 @@ CREATE TABLE IF NOT EXISTS invite (
 
 _DOWNSTREAM_TABLES = (
     "drafts", "read_state", "favorites", "sessions",
-    "ai_conversations", "api_tokens",
+    "ai_conversations", "api_tokens", "file_reads",
 )
 
 
@@ -3481,16 +3505,19 @@ git commit -m "feat(admin): add /api/admin/invites endpoints"
 
 ## Phase 5 · 展示层
 
-### Task 19: resolve_display_info（mentions.py 升级）
+### Task 19: resolve_display_info（mentions.py 升级 — 直查降级 resolver）
+
+> 实现 design §7.1 的"直查降级 resolver"。**入参语义为"任意身份引用字符串"**——可能是 ULID（新内容稳态）、open_id（历史内容）、pinyin（旧 frontmatter）。解析器内部不做格式判别，按顺序回退。
 
 **Files:**
 - Modify: `server/mentions.py`
 - Test: `server/tests/test_mentions.py`
 
-- [ ] **Step 1: 在 mentions.py 加新函数**
+- [ ] **Step 1: 在 mentions.py 加 DisplayInfo + resolver**
 
 ```python
 from dataclasses import dataclass
+from functools import lru_cache
 
 from server.external_bindings import ExternalBindingRepo
 from server.pivot_users import PivotUserRepo
@@ -3503,57 +3530,147 @@ class DisplayInfo:
     status: str  # 'active' | 'suspended' | 'deleted' | 'unknown'
 
 
-def resolve_display_info(
-    open_id: str,
-    pivot_users: PivotUserRepo,
-    bindings: ExternalBindingRepo,
-    contacts: ContactRepo | None = None,
-) -> DisplayInfo:
-    binding = bindings.lookup(provider="feishu", external_id=open_id)
-    if binding is not None:
-        u = pivot_users.get(binding.pivot_user_id)
+class DisplayResolver:
+    """直查降级 resolver。线程内单例；测试 / 用户改名 / 状态变更后调 invalidate()。"""
+
+    def __init__(
+        self,
+        pivot_users: PivotUserRepo,
+        bindings: ExternalBindingRepo,
+        contacts: ContactRepo | None = None,
+    ):
+        self._pivot_users = pivot_users
+        self._bindings = bindings
+        self._contacts = contacts
+        # 缓存裹在实例方法上，按 ref 串去重；invalidate 时清空。
+        self._cached = lru_cache(maxsize=2048)(self._resolve_uncached)
+
+    def resolve(self, ref: str) -> DisplayInfo:
+        if not ref:
+            return DisplayInfo("", "", "unknown")
+        return self._cached(ref)
+
+    def invalidate(self) -> None:
+        self._cached.cache_clear()
+
+    def _resolve_uncached(self, ref: str) -> DisplayInfo:
+        # 1. 直查 pivot_user.id —— 新内容稳态路径，不经过 binding。
+        u = self._pivot_users.get(ref)
         if u is not None:
-            return DisplayInfo(
-                display_name=u.display_name,
-                avatar_url=u.avatar_url,
-                status=u.status,
-            )
-    if contacts is not None:
-        c = contacts.get_by_any_id(open_id)
-        if c is not None:
-            return DisplayInfo(
-                display_name=c.name, avatar_url=c.avatar_url or "",
-                status="unknown",
-            )
-    return DisplayInfo(display_name=open_id, avatar_url="", status="unknown")
+            return DisplayInfo(u.display_name, u.avatar_url, u.status)
+
+        # 2. external_binding 反查 —— 历史 open_id 兼容路径。
+        binding = self._bindings.lookup_any_provider(ref)
+        if binding is not None:
+            u = self._pivot_users.get(binding.pivot_user_id)
+            if u is not None:
+                return DisplayInfo(u.display_name, u.avatar_url, u.status)
+
+        # 3. contacts 兜底（仅飞书 open_id 形态）。
+        if self._contacts is not None:
+            c = self._contacts.get_by_any_id(ref)
+            if c is not None:
+                return DisplayInfo(
+                    c.name, c.avatar_url or "", status="unknown",
+                )
+
+        # 4. unknown —— 原值兜底。
+        return DisplayInfo(ref, "", "unknown")
 ```
 
-- [ ] **Step 2: 把现有 resolve_id / resolve_avatar_url 改为内部调用 resolve_display_info**
+> **关键不变式：** 直查路径（步骤 1）不经过 `external_binding`。新内容若按 §7.1.1 持久化 ULID，绝大部分调用在第 1 步命中即返。后续维护谁都不许把这一跳"优化"成 binding 反查，否则 §13 的脱耦预留全部失效。
+
+- [ ] **Step 2: ExternalBindingRepo 加 `lookup_any_provider(external_id)` 方法**
+
+只接 `external_id`，不限 provider；用 unique 索引 `(provider, external_id)` 上的命中查（命中即返第一条；理论上 external_id 在不同 provider 下重名概率为零，飞书 open_id 都是 `ou_…` 前缀，不会撞钉钉/邀请码邮箱）。
+
+- [ ] **Step 3: 把现有 resolve_id / resolve_avatar_url 改为薄包装**
 
 ```python
-def resolve_id(value, pivot_users, bindings, contacts=None) -> str:
+def resolve_id(value, resolver: DisplayResolver) -> str:
     if not value:
         return value
-    return resolve_display_info(value, pivot_users, bindings, contacts).display_name
+    return resolver.resolve(value).display_name
 
 
-def resolve_avatar_url(value, pivot_users, bindings, contacts=None) -> str | None:
+def resolve_avatar_url(value, resolver: DisplayResolver) -> str | None:
     if not value:
         return None
-    info = resolve_display_info(value, pivot_users, bindings, contacts)
-    return info.avatar_url or None
+    return resolver.resolve(value).avatar_url or None
 ```
 
-- [ ] **Step 3: 调用方批量改签名**
+- [ ] **Step 4: 调用方批量改签名**
 
-调用 `resolve_id` / `resolve_avatar_url` / `resolve_text` 的地方（grep 找到约 5-8 处）传入 `pivot_users` + `bindings` 而不是 `users` + `contacts`。
+调用 `resolve_id` / `resolve_avatar_url` / `resolve_text` 的地方（grep 找到约 5-8 处）改为接收一个 `DisplayResolver` 实例。装配在 `app.py` per-request 创建（依赖 repos 已经在 DI 容器里）。
 
-- [ ] **Step 4: 跑全量测试，pass**
+- [ ] **Step 5: 测试覆盖（关键）**
 
-- [ ] **Step 5: Commit**
+- 直查命中：seed pivot_user，传 ULID，断言命中且 `bindings.lookup_any_provider` 调用次数 = 0（用 spy/mock 计数）
+- binding 反查命中：seed pivot_user + 飞书 binding，传 open_id，断言 `pivot_users.get` 被调 2 次（一次直查 miss、一次按 binding.pivot_user_id 命中）
+- contacts 兜底：seed contact 不 seed binding，传 open_id，返回 unknown
+- 全 miss：返回原 ref + unknown
+- 缓存：同一 ref 调两次，第二次不再触底
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git commit -m "feat(mentions): add resolve_display_info returning user status"
+git commit -m "feat(mentions): direct-lookup display resolver with binding fallback"
+```
+
+### Task 19.5: publish.py 写入路径切 ULID
+
+> 实现 design §7.1.1 存储契约。**新发布的 post / matter / comment** 写入 frontmatter / matter index 时，`creator` / `owner` / `mentions[]` / `comments[].mentions[]` / `readers[]` 的值统一为 `pivot_user.id`（ULID），不再写 pinyin / open_id。
+>
+> 历史内容**不回填**——磁盘上的 git 仓库历史保留原值，由 §7.1 resolver 兼容读取。
+
+**Files:**
+- Modify: `server/publish.py`
+- Modify: `server/api/discussions.py` / `server/api/matters.py`（接收 mention 入参时由 ULID 入库）
+- Test: `server/tests/test_publish.py` / `server/tests/test_mentions.py`
+
+- [ ] **Step 1: 入参 normalize**
+
+`publish.py` 当前的 `_resolve_mention_strings_to_open_ids` 把 `name / pinyin / open_id` 都转成飞书 open_id。新增对偶函数 `_normalize_mentions_to_pivot_user_ids`：
+
+- 优先按 ULID 直查 `pivot_user`（前端新版控件已经发 ULID）
+- 其次按现有 contacts→open_id→external_binding 链路找到 `pivot_user.id`
+- 仍找不到（外部联系人未登录过 + 无 binding） → 保留原 open_id 字符串作降级（resolver §7.1 第 3 步会用 contacts 兜底渲染）
+
+入站 publish 在 normalize 之后落盘的 frontmatter 字段值即为 ULID（或飞书未登录联系人的 open_id 兜底）。
+
+- [ ] **Step 2: 通知发送侧保留 open_id**
+
+`notifier.send_*(mention_open_ids=[…])` **不变**——这是飞书 IM 协议字段。在 publish 路径里保留"normalize 出 ULID 落盘 + 同时算出 open_id 列表用于通知"两条并行链路：
+
+```python
+# publish 路径示意
+ulid_mentions = _normalize_mentions_to_pivot_user_ids(input, pivot_users, bindings, contacts)
+notify_open_ids = _ulids_to_feishu_open_ids(ulid_mentions, bindings)  # 新增 helper
+
+# 落盘 / index：用 ulid_mentions
+# Notifier：用 notify_open_ids
+```
+
+- [ ] **Step 3: 移除老的 pinyin 落盘逻辑**
+
+`_resolve_mentions_for_index` 把已注册用户的 open_id 转 pinyin 这条逻辑**删除**——新内容存 ULID，旧内容由 resolver 兼容。
+
+- [ ] **Step 4: 测试**
+
+- 给 publish 一个含 `mentions=[<ulid>, <未登录联系人的 open_id>]` 的入参，断言：
+  - 落盘 frontmatter `mentions` 是 `[<ulid>, <open_id>]`（前者 ULID 直通、后者降级保留）
+  - notifier 收到的 `mention_open_ids` 是 `[<ulid 对应的 feishu open_id>, <open_id>]`
+- 给 publish 一个 mention 是不存在的 ULID 的入参，断言落盘原值兜底，渲染走 unknown
+- 旧测试 fixture 里 `mentions` 用 open_id 的，迁移成 ULID
+
+- [ ] **Step 5: 抽查脚本**
+
+加 `scripts/audit_new_content_uses_ulid.py`：扫迁移上线后新增的 matter index 文件，断言 `creator` / `owner` / `mentions` 字段不含 `ou_` 前缀。供 §14 验收 checklist 第 1 条用。
+
+- [ ] **Step 6: Commit**
+
+```bash
+git commit -m "feat(publish): persist mention/owner/creator as pivot_user.id (ULID)"
 ```
 
 ### Task 20: 在 API 响应中带上 status
@@ -3580,20 +3697,23 @@ def _user_dict(u: PivotUser) -> dict:
 
 - [ ] **Step 2: 在 posts/matters API 响应的 author 字段加 status**
 
-每个 post 的 author 序列化器：
+每个 post 的 author 序列化器返回 ULID 形态的 `user_id` 字段（与 §7.1.1 存储契约一致）；为前端渐进切换保留 `open_id` 别名一个 release：
 
 ```python
-def _author_view(open_id, pivot_users, bindings, contacts):
-    info = resolve_display_info(open_id, pivot_users, bindings, contacts)
+def _author_view(ref: str, resolver: DisplayResolver) -> dict:
+    info = resolver.resolve(ref)
     return {
-        "open_id": open_id,
+        "user_id": ref,        # 主字段：ULID（新内容）/ open_id（历史内容）
+        "open_id": ref,        # 兼容别名（计划下一个 release 移除）
         "display_name": info.display_name,
         "avatar_url": info.avatar_url,
         "status": info.status,
     }
 ```
 
-- [ ] **Step 3: 现有测试断言里 author 字段类型升级**（适当处加 `assert "status" in author`）
+> 字段命名换 `user_id` 是为了反映 §7.1.1 之后这里实际是 `pivot_user.id`。`open_id` 别名仅在迁移过渡期保留——前端切换到 `user_id` 后下一个 release 删除。
+
+- [ ] **Step 3: 现有测试断言里 author 字段类型升级**（适当处加 `assert "status" in author` 和 `assert author["user_id"] == author["open_id"]`）
 
 - [ ] **Step 4: 跑全量回归，pass**
 
@@ -3722,10 +3842,19 @@ git commit -m "feat(notify): add application_created/approved/rejected card flow
 
 **Files:**
 - Modify: `web/src/api.ts`
+- Modify: `web/src/components/MentionField.tsx` / `OwnerPicker.tsx` / `ReadersPopover.tsx` / `ReadersRow.tsx` / `CopyForAIButton.tsx`
+
+> **重要：** 配合 design §7.1.1 存储契约，所有联系人选择器**提交给后端的字段统一改为 `pivot_user.id`（ULID）**。展示层不变（仍然渲染头像 + 姓名）。当前控件吐 `open_id`，需要把 `value` / `onChange` 字段改名 `userId` / `pivot_user_id`。
 
 - [ ] **Step 1: 移除 X-Admin-Password 相关代码**
 
 把所有添加 `X-Admin-Password` header 的 helper 删除；改成普通 `fetch` 带 cookie。
+
+- [ ] **Step 1.5: 选择器控件字段重命名 `open_id` → `user_id`**
+
+`MentionField` / `OwnerPicker` / `ReadersPopover` / `ReadersRow` 的 props、内部 state、onChange 回调，凡涉及"选定的用户标识"的字段名从 `open_id` / `openId` 改为 `userId`。展示数据结构 `{ user_id, display_name, avatar_url, status }`（与 Task 20 author view 一致）。提交到 publish API 的 payload 字段同步从 `mentions: [open_id, ...]` 改为 `mentions: [user_id, ...]`。
+
+> 注意：候选下拉数据源 `/api/contacts` / `/api/users` 返回的列表项也按 `user_id` 字段返回（active pivot_user 的 ULID；尚未登录过的飞书联系人继续返其 open_id 兜底——resolver §7.1 的第 2/3 步会兼容）。
 
 - [ ] **Step 2: 加新调用**
 
@@ -4262,3 +4391,7 @@ git commit -m "test(e2e): add full user-management lifecycle smoke test"
 - [ ] `--initial-admin` 不传或不命中时迁移中止
 - [ ] 全量 pytest 绿
 - [ ] 前端 tsc + build 通过
+- [ ] 迁移上线后新发布 post / matter frontmatter（`creator` / `owner` / `mentions` / `readers`）持久化值不含 `ou_` 前缀（跑 `scripts/audit_new_content_uses_ulid.py`）
+- [ ] mention 写入路径单测：`OwnerPicker` / `MentionField` 选定用户后，提交 payload 与落盘 frontmatter 同为 `pivot_user.id`
+- [ ] `file_reads` 表迁移后所有行 `pivot_user_id` 非空，无 `user_open_id` 残值
+- [ ] `DisplayResolver.resolve()` 对新内容（ULID 入参）不调用 `external_binding`（用 spy/mock 在单测中验证）
