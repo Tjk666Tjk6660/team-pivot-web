@@ -103,11 +103,15 @@ export type Reader = {
   first_read_at: string;
 };
 
-export type TimelineItem = {
+export type TimelineFileItem = {
   file: string;
   created_at: string;
   creator: string;
   owner: string;
+  owner_display?: string | null;
+  owner_avatar_url?: string | null;
+  creator_display?: string | null;
+  creator_avatar_url?: string | null;
   type: DocType;
   summary: string;
   quote: string | null;
@@ -122,6 +126,30 @@ export type TimelineItem = {
   readers?: Reader[];
 };
 
+export type TimelineOwnerChangeItem = {
+  type: "owner_change";
+  created_at: string;
+  actor: string;
+  actor_display: string | null;
+  actor_avatar_url: string | null;
+  from_owner: string | null;
+  from_owner_display: string | null;
+  from_owner_avatar_url: string | null;
+  to_owner: string;
+  to_owner_display: string | null;
+  to_owner_avatar_url: string | null;
+  reason: string;
+  status_change: StatusChange | null;
+  readers_count?: number;
+  readers?: Reader[];
+};
+
+export type TimelineItem = TimelineFileItem | TimelineOwnerChangeItem;
+
+export function isTimelineFileItem(item: TimelineItem): item is TimelineFileItem {
+  return item.type !== "owner_change";
+}
+
 export type MatterSummary = {
   id: string;
   title: string;
@@ -132,6 +160,12 @@ export type MatterSummary = {
   file_count: number;
   last_file_type: DocType | null;
   last_summary: string | null;
+  owner: string | null;
+  owner_display: string | null;
+  owner_avatar_url: string | null;
+  creator?: string | null;
+  creator_display?: string | null;
+  creator_avatar_url?: string | null;
   unread_count: number;
   favorite: boolean;
 };
@@ -189,6 +223,7 @@ export type NewMatterResponse = {
 export async function createMatter(body: {
   category: string;
   title: string;
+  owner_open_id?: string;
   initial_file: InitialFileIn;
 }): Promise<NewMatterResponse> {
   const r = await fetch("/api/matters", {
@@ -223,7 +258,7 @@ export type NewFileIn = {
 };
 
 export type AppendFileResponse = {
-  item: TimelineItem;
+  item: TimelineFileItem;
   matter: MatterMeta;
 };
 
@@ -249,6 +284,68 @@ export async function appendMatterFile(
     throw new Error(detail);
   }
   return (await r.json()) as AppendFileResponse;
+}
+
+export type TransferMatterOwnerResponse = {
+  matter: MatterMeta;
+  item: TimelineOwnerChangeItem;
+};
+
+type ApiErrorDetail = string | { code?: string; message?: string };
+
+function transferMatterOwnerErrorMessage(
+  detail: ApiErrorDetail | undefined,
+  status: number,
+): string {
+  const code = typeof detail === "object" ? detail?.code : undefined;
+  const message = typeof detail === "string" ? detail : detail?.message;
+  switch (code) {
+    case "owner_unchanged":
+      return "新负责人不能与当前负责人相同";
+    case "to_owner_required":
+      return "请选择新负责人";
+    case "owner_unknown":
+      return "找不到这个负责人，请重新选择";
+    case "reason_required":
+      return "请填写转交原因";
+    case "owner_stale":
+      return "负责人已被其他人更新，请刷新后重试";
+    case "status_stale":
+      return "状态已被其他人更新，请刷新后重试";
+    case "status_change_not_allowed_by_event":
+      return "当前状态不支持随转交一起推进";
+    default:
+      break;
+  }
+  if (message?.includes("to_owner equals from_owner")) {
+    return "新负责人不能与当前负责人相同";
+  }
+  return message || `转交负责人失败：${status}`;
+}
+
+export async function transferMatterOwner(
+  matterId: string,
+  body: {
+    to_owner: string;
+    reason: string;
+    status_change?: StatusChange | null;
+  },
+): Promise<TransferMatterOwnerResponse> {
+  const r = await fetch(
+    `/api/matters/${encodeURIComponent(matterId)}/owner`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!r.ok) {
+    await throwIfSessionExpired(r);
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(transferMatterOwnerErrorMessage(d.detail, r.status));
+  }
+  return (await r.json()) as TransferMatterOwnerResponse;
 }
 
 export async function appendMatterResult(

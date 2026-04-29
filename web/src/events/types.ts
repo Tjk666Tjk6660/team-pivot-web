@@ -1,7 +1,8 @@
 export type MatterChangeReason =
   | "created"
   | "file_appended"
-  | "comment_appended";
+  | "comment_appended"
+  | "owner_changed";
 
 export type MatterEvent =
   | {

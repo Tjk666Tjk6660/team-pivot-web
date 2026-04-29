@@ -317,6 +317,15 @@ def _extract_notify_mentions(
     return open_ids, (text or None)
 
 
+def _resolve_owner_name(owner: str | None, users: UserRepo | None) -> str | None:
+    if not owner:
+        return None
+    u = users.get_by_any_id(owner) if users else None
+    if u:
+        return u.name
+    return owner
+
+
 def _lookup_thread_title(workspace: Workspace, category: str, slug: str) -> str:
     detail = get_thread(workspace.discussions_dir, workspace.index_dir, category, slug)
     if detail is not None and detail.meta.title:
@@ -432,6 +441,7 @@ def publish_matter_create(
     notify_mention_open_ids, notify_mention_comments = _extract_notify_mentions(
         initial_item.get("comments")
     )
+    owner_notify_open_id = matter_owner_open_id or user.open_id
 
     item = _build_timeline_item(
         item_input,
@@ -481,6 +491,7 @@ def publish_matter_create(
             author_name=user.name,
             filename=filename,
             body=md_body,
+            owner_open_id=owner_notify_open_id,
             mention_open_ids=notify_mention_open_ids,
             mention_comments=notify_mention_comments,
         )
@@ -752,6 +763,8 @@ def publish_matter_owner_change(
         matter_apply_owner_change(index_path, item=item, now_iso=now)
 
     matter_snapshot = read_matter_index(index_path) or {}
+    matter_meta = matter_snapshot.get("matter") or {}
+    category = _derive_category_from_timeline(matter_snapshot) or "matters"
     emit(
         TOPIC_MATTER_OWNER_CHANGED,
         matter_id=matter_id,
@@ -764,6 +777,19 @@ def publish_matter_owner_change(
             "status_change": dict(status_change) if status_change else None,
         },
     )
+    if notifier is not None:
+        from_owner_name = _resolve_owner_name(from_owner, users)
+        notifier.notify_owner_change(
+            category=category,
+            slug=matter_id,
+            thread_title=matter_meta.get("title") or matter_id,
+            actor_name=user.name,
+            from_owner_name=from_owner_name,
+            to_owner_name=target_user.name,
+            to_owner_open_id=target_user.open_id,
+            reason=reason,
+            status_change=dict(status_change) if status_change else None,
+        )
     return {
         "matter_id": matter_id,
         "matter": matter_snapshot.get("matter", {}),

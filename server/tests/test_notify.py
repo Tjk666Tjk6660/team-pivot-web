@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from server.notify import (
     FeishuNotifier,
     NoOpNotifier,
     build_mention_dm_card,
+    build_owner_change_card,
     build_reply_card,
     build_standalone_mention_card,
     build_status_change_card,
@@ -79,6 +81,7 @@ def test_thread_card_uses_schema2_at_tag_for_mentions():
         mention_open_ids=["ou_alice00000000000", "ou_bob000000000000000"],
     )
     md = card["body"]["elements"][0]["content"]
+    assert "**圈人**：" in md
     assert '<at id="ou_alice00000000000"></at>' in md
     assert '<at id="ou_bob000000000000000"></at>' in md
     assert "user_id=" not in md, (
@@ -98,8 +101,46 @@ def test_reply_card_uses_schema2_at_tag_for_mentions():
         mention_open_ids=["ou_carol0000000000000"],
     )
     md = card["body"]["elements"][0]["content"]
+    assert "**圈人**：" in md
     assert '<at id="ou_carol0000000000000"></at>' in md
     assert "user_id=" not in md
+
+
+def test_new_thread_card_renders_owner_as_labeled_at():
+    card = build_thread_card(
+        category="abc",
+        thread_slug="s",
+        title="T",
+        author_name="李帅",
+        filename="001_lishuai_think_x.md",
+        thread_url="http://x",
+        owner_open_id="ou_zhangsan00000000",
+    )
+    md = card["body"]["elements"][0]["content"]
+    assert card["body"]["elements"][0]["tag"] == "markdown"
+    assert "**负责人**：<at id=\"ou_zhangsan00000000\"></at>" in md
+    assert md.index("**负责人**：") < md.index("<at id=\"ou_zhangsan00000000\"></at>")
+
+
+def test_owner_change_card_mentions_new_owner():
+    card = build_owner_change_card(
+        thread_title="Pivot 优化",
+        actor_name="李帅",
+        from_owner_name="张三",
+        to_owner_name="李四",
+        to_owner_open_id="ou_lisi000000000000",
+        reason="后续由李四推进",
+        thread_url="http://x/m/pivot",
+        status_change={"from": "planning", "to": "executing"},
+    )
+    body = json.dumps(card["body"], ensure_ascii=False)
+    md = card["body"]["elements"][0]["content"]
+    assert card["header"]["title"]["content"] == "负责人转交：Pivot 优化"
+    assert card["body"]["elements"][0]["tag"] == "markdown"
+    assert "ou_lisi000000000000" in body
+    assert "**负责人**：张三 → <at id=\"ou_lisi000000000000\"></at>" in md
+    assert "**原因**：后续由李四推进" in md
+    assert "**状态**：计划中 → 执行中" in md
 
 
 def test_card_no_author_row():

@@ -77,7 +77,7 @@
 | [web/src/components/matter/TimelineStrip.tsx](../../web/src/components/matter/TimelineStrip.tsx) | 节点渲染按 type 分形（owner_change = 小菱形 / 灰色） |
 | [web/src/pages/NewMatter.tsx](../../web/src/pages/NewMatter.tsx) | classic form 加"责任人（可选 · 默认你自己）"OwnerPicker；与既有 act-file owner 文案分明 |
 | [web/src/pages/NewMatterGuidedFlow.tsx](../../web/src/pages/NewMatterGuidedFlow.tsx) | 新增"指定责任人"步骤（mentions 之前），原 6 步 → 7 步 |
-| [web/src/pages/Dashboard.tsx](../../web/src/pages/Dashboard.tsx) | SSE 监听 `matter_owner_changed` → invalidate 该 matter 缓存 |
+| [web/src/pages/Dashboard.tsx](../../web/src/pages/Dashboard.tsx) | SSE 监听现有 `matter.updated` 事件，按 `reason: "owner_changed"` invalidate 该 matter 缓存 |
 
 ### 测试
 
@@ -373,7 +373,7 @@ def create_matter_index(
 
 ### Task 2.3：apply_owner_change 写入函数
 
-- [ ] **Step 1：实现**
+- [x] **Step 1：实现**
 
 ```python
 def apply_owner_change(
@@ -449,8 +449,10 @@ Grep `TOPIC_MATTER_CREATED` 找到。
 - [ ] **Step 2：加新 topic**
 
 ```python
-TOPIC_MATTER_OWNER_CHANGED = "matter_owner_changed"
+TOPIC_MATTER_OWNER_CHANGED = "matter.owner_changed"
 ```
+
+说明：这是服务端内部 event bus topic；SSE 对外沿用既有 `matter.updated` event，并在 payload 中携带 `reason: "owner_changed"`，与 `file_appended` / `comment_appended` 的刷新机制保持一致。
 
 ### Task 3.2：publish.py 扩展
 
@@ -981,7 +983,7 @@ git commit -m "feat(web): MatterSummary owner three-field + TimelineItem union +
 **Files:**
 - Create: `web/src/components/matter/OwnerChip.tsx`
 
-- [ ] **Step 1：实现**
+- [x] **Step 1：实现**
 
 ```tsx
 export function OwnerChip({
@@ -1033,7 +1035,7 @@ cd web && npx vitest run src/components/matter/OwnerChip.test.tsx
 **Files:**
 - Create: `web/src/components/matter/TransferOwnerDialog.tsx`
 
-- [ ] **Step 1：实现**
+- [x] **Step 1：实现**
 
 ```tsx
 export function TransferOwnerDialog({
@@ -1142,7 +1144,7 @@ test('TransferOwnerDialog calls transferMatterOwner with status_change when togg
 **Files:**
 - Create: `web/src/components/matter/OwnerChangeRow.tsx`
 
-- [ ] **Step 1：实现**
+- [x] **Step 1：实现**
 
 ```tsx
 export function OwnerChangeRow({ item }: { item: TimelineOwnerChangeItem }) {
@@ -1197,7 +1199,7 @@ git commit -m "feat(web): OwnerChip + TransferOwnerDialog + OwnerChangeRow compo
 **Files:**
 - Modify: [web/src/components/ThreadListPane.tsx](../../web/src/components/ThreadListPane.tsx)
 
-- [ ] **Step 1：MatterRow meta 行加 OwnerChip**
+- [x] **Step 1：MatterRow meta 行加 OwnerChip**
 
 ```tsx
 <div className="mt-1 flex items-center gap-2">
@@ -1218,7 +1220,7 @@ git commit -m "feat(web): OwnerChip + TransferOwnerDialog + OwnerChangeRow compo
 **Files:**
 - Modify: [web/src/pages/MatterDetailPane.tsx](../../web/src/pages/MatterDetailPane.tsx)
 
-- [ ] **Step 1：顶部 matter 卡片加 OwnerBadge + 按钮**
+- [x] **Step 1：顶部 matter 卡片加 OwnerBadge + 按钮**
 
 ```tsx
 const [transferOpen, setTransferOpen] = useState(false);
@@ -1250,7 +1252,7 @@ const [transferOpen, setTransferOpen] = useState(false);
 />
 ```
 
-- [ ] **Step 2：timeline 渲染按 type 分流**
+- [x] **Step 2：timeline 渲染按 type 分流**
 
 ```tsx
 {detail.timeline.map((item) =>
@@ -1269,7 +1271,7 @@ key 用 `created_at`（owner_change 没有 file）或 `${idx}-${created_at}`。
 **Files:**
 - Modify: [web/src/components/matter/TimelineStrip.tsx](../../web/src/components/matter/TimelineStrip.tsx)
 
-- [ ] **Step 1：节点形状分支**
+- [x] **Step 1：节点形状分支**
 
 ```tsx
 {items.map((item, i) =>
@@ -1321,7 +1323,7 @@ git commit -m "feat(web): list + detail show matter owner; timeline renders owne
 **Files:**
 - Modify: [web/src/pages/NewMatter.tsx](../../web/src/pages/NewMatter.tsx)
 
-- [ ] **Step 1：增加 matterOwner state + UI**
+- [x] **Step 1：增加 matterOwner state + UI**
 
 放在 title 输入框下方、initialType 之前：
 
@@ -1350,7 +1352,7 @@ const [matterOwner, setMatterOwner] = useState<{ openId: string; name: string }>
 
 文件级 owner（act 的 OwnerPicker）保持现有位置，文案保持"Owner（执行人 · 默认你自己）"——视觉上分明。
 
-- [ ] **Step 2：createMatter 调用透传**
+- [x] **Step 2：createMatter 调用透传**
 
 ```tsx
 await createMatter({
@@ -1367,7 +1369,7 @@ await createMatter({
 **Files:**
 - Modify: [web/src/pages/NewMatterGuidedFlow.tsx](../../web/src/pages/NewMatterGuidedFlow.tsx)
 
-- [ ] **Step 1：扩展 Phase + StepData**
+- [x] **Step 1：扩展 Phase + StepData**
 
 ```ts
 type Phase = "topic" | "type" | "category" | "title" | "owner" | "mentions" | "drafting" | "review";
@@ -1383,11 +1385,11 @@ const PHASE_LABEL: Record<Phase, string> = {
 
 `StepData` 加 `matterOwner: { openId: string; name: string }` 字段，初始值 = 当前用户。
 
-- [ ] **Step 2：OwnerStep 子组件**
+- [x] **Step 2：OwnerStep 子组件**
 
 类似 MentionsStep 的形态，OwnerPicker + "跳过（默认你自己）"按钮。
 
-- [ ] **Step 3：phaseDisplayIndex 适配**
+- [x] **Step 3：phaseDisplayIndex 适配**
 
 原 6 步 → 7 步。`phaseDisplayIndex` 计算改：
 
@@ -1398,7 +1400,7 @@ const totalSteps = 7;  // 显示"第 X / 7 步"
 
 bridge 入口（hasBridge）的 phase 仍直接跳到 drafting，但 data.matterOwner 从 bridge 取（新增字段）。
 
-- [ ] **Step 4：publish 透传**
+- [x] **Step 4：publish 透传**
 
 ```ts
 await createMatter({
@@ -1414,7 +1416,7 @@ await createMatter({
 **Files:**
 - Modify: [web/src/pages/NewMatterGuidedFlow.tsx](../../web/src/pages/NewMatterGuidedFlow.tsx)
 
-- [ ] **Step 1：ClassicBridgeSnapshot 加 matterOwner**
+- [x] **Step 1：ClassicBridgeSnapshot 加 matterOwner**
 
 ```ts
 export type ClassicBridgeSnapshot = {
@@ -1451,23 +1453,24 @@ git commit -m "feat(web): NewMatter classic + guided flow expose matter-level ow
 
 ## Phase 10：Dashboard SSE 监听 + 一致性
 
-### Task 10.1：监听 matter_owner_changed
+### Task 10.1：监听 owner_changed 更新原因
 
 **Files:**
 - Modify: [web/src/pages/Dashboard.tsx](../../web/src/pages/Dashboard.tsx)
 
-- [ ] **Step 1：定位现有 SSE 订阅位置**
+- [x] **Step 1：定位现有 SSE 订阅位置**
 
 ```bash
 ```
 
 Grep `matter_created` 找到既有 SSE 订阅 effect。
 
-- [ ] **Step 2：加新 topic handler**
+- [x] **Step 2：加新 topic handler**
 
 ```ts
-es.addEventListener("matter_owner_changed", (e) => {
+es.addEventListener("matter.updated", (e) => {
   const data = JSON.parse(e.data);
+  if (data.reason !== "owner_changed") return;
   // refresh matters list （触发 fetchMatters() 刷新缓存）
   void load();
   // 如果当前打开的就是该 matter，让 MatterDetailPane 也刷
@@ -1479,13 +1482,15 @@ es.addEventListener("matter_owner_changed", (e) => {
 
 具体接 API 视当前 SSE / store 实现而定。
 
+实现备注：当前 `Dashboard` 已通过 `useMatterEvents` 对 `resume / matter.created / matter.updated` 统一触发 `matters-list` 防抖刷新；`matter.updated` 携带 `reason: "owner_changed"` 时无需新增独立 EventSource handler，也会走同一刷新路径。
+
 ### Task 10.2：Commit
 
 - [ ] **Commit**
 
 ```bash
 git add web/src/pages/Dashboard.tsx
-git commit -m "feat(web): SSE handler for matter_owner_changed invalidates cache"
+git commit -m "feat(web): SSE owner_changed refresh invalidates cache"
 ```
 
 ---
@@ -1498,7 +1503,7 @@ git commit -m "feat(web): SSE handler for matter_owner_changed invalidates cache
 - Create: `server/scripts/backfill_matter_owner.py`
 - Create: `server/tests/test_backfill_matter_owner.py`
 
-- [ ] **Step 1：脚本实现**
+- [x] **Step 1：脚本实现**
 
 ```python
 """Backfill matter.owner for legacy index files.
@@ -1563,7 +1568,7 @@ if __name__ == "__main__":
     print(stats)
 ```
 
-- [ ] **Step 2：测试矩阵（design §5.1 边界表）**
+- [x] **Step 2：测试矩阵（design §5.1 边界表）**
 
 ```python
 def test_backfill_fills_when_missing()
@@ -1574,7 +1579,7 @@ def test_backfill_skip_missing_creator_warn()
 def test_backfill_handles_unreadable_yaml()
 ```
 
-- [ ] **Step 3：跑测试**
+- [x] **Step 3：跑测试**
 
 ```bash
 uv run pytest server/tests/test_backfill_matter_owner.py -q
@@ -1585,7 +1590,7 @@ uv run pytest server/tests/test_backfill_matter_owner.py -q
 **Files:**
 - Modify: [server/recovery.py](../../server/recovery.py)
 
-- [ ] **Step 1：启动期检测 missing matter.owner**
+- [x] **Step 1：启动期检测 missing matter.owner**
 
 定位现有 recovery 函数，加：
 
@@ -1620,13 +1625,13 @@ git commit -m "feat(server): backfill_matter_owner script + recovery warning"
 
 ### Task 12.1：自动化全跑
 
-- [ ] **Step 1：后端 pytest**
+- [x] **Step 1：后端 pytest**
 
 ```bash
 uv run pytest server/tests -q
 ```
 
-- [ ] **Step 2：前端 typecheck + vitest + build**
+- [x] **Step 2：前端 typecheck + vitest + build**
 
 ```bash
 cd web && npm run typecheck
@@ -1635,6 +1640,8 @@ cd web && npm run build
 ```
 
 任一失败停下查根因，**不绕过**。
+
+实现备注：`web/package.json` 没有独立 `typecheck` script；已通过 `npm run build` 中的 `tsc -b` 覆盖类型检查，并额外跑 `npm test`。
 
 ### Task 12.2：手测矩阵（按 design §7.2）
 
@@ -1714,7 +1721,7 @@ gh pr create --title "feat: matter owner mechanism (assign / transfer / timeline
 - 详情页支持转交（必填 reason），可选合并 planning → executing 状态推进
 - timeline 增加 owner_change 事件以保留变更历史
 - 列表 / 详情卡片展示 owner 头像 + 姓名（未分配时显"未分配"）
-- 后端 SSE 推 matter_owner_changed；前端订阅刷新缓存
+- 后端内部发 `matter.owner_changed`，SSE 对外推 `matter.updated` + `reason: "owner_changed"`；前端订阅刷新缓存
 - 历史 matter 缺 owner 的回填脚本 + 启动期 warning
 
 依据：AI-docs/designs/2026-04-29-matter-owner-design.md

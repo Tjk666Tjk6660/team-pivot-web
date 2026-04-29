@@ -25,6 +25,7 @@ import {
   markMatterRead,
   streamAIChat,
   updateDraft,
+  isTimelineFileItem,
   type Draft,
   type DocType,
   type MatterDetail as MatterDetailData,
@@ -37,6 +38,9 @@ import { useMarkdownStyle } from "@/components/markdown/MarkdownStyleProvider";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TimelineStrip } from "@/components/matter/TimelineStrip";
 import { FileCard } from "@/components/matter/FileCard";
+import { OwnerChip } from "@/components/matter/OwnerChip";
+import { OwnerChangeRow } from "@/components/matter/OwnerChangeRow";
+import { TransferOwnerDialog } from "@/components/matter/TransferOwnerDialog";
 import {
   CreateFileForm,
   type FormSnapshot,
@@ -104,7 +108,10 @@ function sameDetail(
     a.unread_count !== b.unread_count ||
     a.favorite !== b.favorite ||
     a.current_status !== b.current_status ||
-    a.title !== b.title
+    a.title !== b.title ||
+    a.owner !== b.owner ||
+    a.owner_display !== b.owner_display ||
+    a.owner_avatar_url !== b.owner_avatar_url
   ) {
     return false;
   }
@@ -112,6 +119,16 @@ function sameDetail(
   for (let i = 0; i < prev.timeline.length; i++) {
     const x = prev.timeline[i];
     const y = next.timeline[i];
+    if (x.type !== y.type) return false;
+    if (!isTimelineFileItem(x) || !isTimelineFileItem(y)) {
+      if (
+        x.created_at !== y.created_at ||
+        (x.status_change?.to ?? null) !== (y.status_change?.to ?? null)
+      ) {
+        return false;
+      }
+      continue;
+    }
     if (
       x.file !== y.file ||
       x.comments.length !== y.comments.length ||
@@ -243,6 +260,7 @@ export function MatterDetailPane() {
   const [aiOpen, setAiOpen] = useState(false);
   const [aiMinimized, setAiMinimized] = useState(false);
   const [aiFullscreen, setAiFullscreen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
   const [pendingAIOrigin, setPendingAIOrigin] = useState<string | null>(null);
   const [aiFillToken, setAiFillToken] = useState(0);
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -263,8 +281,10 @@ export function MatterDetailPane() {
     if (!matter_id || !data || data.timeline.length === 0) return;
     setAiMinimized(false);
     const { matter: m, timeline: tl } = data;
+    const firstFileItem = tl.find(isTimelineFileItem);
+    if (!firstFileItem) return;
     const tk = m.category ? `${m.category}/${m.id}` : m.id;
-    const firstFile = tl[0].file;
+    const firstFile = firstFileItem.file;
     setPendingAIOrigin(firstFile);
     ai.setInput(
       tk,
@@ -524,6 +544,7 @@ export function MatterDetailPane() {
   }
 
   const { matter, timeline } = data;
+  const fileTimeline = timeline.filter(isTimelineFileItem);
   const canGenerateResult = matter.current_status === "executing";
   const canGenerateInsight =
     matter.current_status === "finished" ||
@@ -542,7 +563,7 @@ export function MatterDetailPane() {
   }): Promise<string> => {
     const replyTarget =
       draft.quote ??
-      (timeline.length > 0 ? timeline[timeline.length - 1].file : null);
+      (fileTimeline.length > 0 ? fileTimeline[fileTimeline.length - 1].file : null);
     if (!replyTarget) {
       throw new Error("matter 暂无文件可作为上下文，无法生成 summary");
     }
@@ -878,7 +899,7 @@ export function MatterDetailPane() {
                   {matter.title}
                 </h1>
                 <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--text-mute)]">
-                  <span>{timeline.length} 个文件</span>
+                  <span>{fileTimeline.length} 个文件</span>
                   {matter.last_file_type && matter.last_summary && (
                     <>
                       <span>·</span>
@@ -894,6 +915,22 @@ export function MatterDetailPane() {
                 </div>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <OwnerChip
+                    name={matter.owner_display}
+                    avatarUrl={matter.owner_avatar_url}
+                    unassigned={!matter.owner}
+                    size="md"
+                  />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 rounded-[var(--r-sm)] px-1.5 text-xs font-medium text-[var(--text-soft)] hover:bg-[var(--surface-alt)]"
+                    onClick={() => setTransferOpen(true)}
+                  >
+                    转交
+                  </Button>
+                </div>
                 <StatusBadge
                   status={matter.current_status}
                   className="h-7 px-3"
@@ -993,35 +1030,39 @@ export function MatterDetailPane() {
 
           {/* ==== 文件流 ==== */}
           <section className="space-y-3">
-            {timeline.map((item, i) => (
-              <FileCard
-                key={item.file}
-                item={item}
-                index={i}
-                matterId={matter.id}
-                matterStatus={matter.current_status}
-                activeType={
-                  pendingCreate && pendingCreate.quote === item.file
-                    ? pendingCreate.type
-                    : null
-                }
-                onCreate={requestCreate}
-                onAddComment={(body, mentions) =>
-                  submitComment(item.file, body, mentions)
-                }
-                onJump={onJump}
-                registerRef={(el) => {
-                  cardRefs.current[item.file] = el;
-                }}
-                highlighted={highlight === item.file}
-                markdownStyle={markdownStyle}
-                me={{
-                  open_id: sessionOpenId,
-                  name: sessionName,
-                  avatar_url: sessionAvatarUrl || null,
-                }}
-              />
-            ))}
+            {timeline.map((item, i) =>
+              isTimelineFileItem(item) ? (
+                <FileCard
+                  key={item.file}
+                  item={item}
+                  index={i}
+                  matterId={matter.id}
+                  matterStatus={matter.current_status}
+                  activeType={
+                    pendingCreate && pendingCreate.quote === item.file
+                      ? pendingCreate.type
+                      : null
+                  }
+                  onCreate={requestCreate}
+                  onAddComment={(body, mentions) =>
+                    submitComment(item.file, body, mentions)
+                  }
+                  onJump={onJump}
+                  registerRef={(el) => {
+                    cardRefs.current[item.file] = el;
+                  }}
+                  highlighted={highlight === item.file}
+                  markdownStyle={markdownStyle}
+                  me={{
+                    open_id: sessionOpenId,
+                    name: sessionName,
+                    avatar_url: sessionAvatarUrl || null,
+                  }}
+                />
+              ) : (
+                <OwnerChangeRow key={`owner-${item.created_at}-${i}`} item={item} />
+              ),
+            )}
             {pendingCreate && (
               <article
                 ref={pendingArticleRef}
@@ -1274,6 +1315,28 @@ export function MatterDetailPane() {
               behavior: "smooth",
             })
           }
+        />
+      )}
+
+      {data && (
+        <TransferOwnerDialog
+          open={transferOpen}
+          matter={data.matter}
+          sessionOpenId={sessionOpenId}
+          sessionName={sessionName}
+          onClose={() => setTransferOpen(false)}
+          onTransferred={(result) => {
+            setData((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    matter: { ...prev.matter, ...result.matter },
+                    timeline: [...prev.timeline, result.item],
+                  }
+                : prev,
+            );
+            void reloadLists();
+          }}
         />
       )}
 

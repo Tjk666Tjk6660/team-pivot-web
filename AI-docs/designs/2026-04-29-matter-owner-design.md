@@ -127,7 +127,7 @@ POST /api/matters/{matter_id}/owner
 
 `*_display` / `*_avatar_url` 是后端 render 层的实时解析结果，**仅存在于 API 响应**，不落盘。
 
-**事件总线**：发一条 `TOPIC_MATTER_OWNER_CHANGED` 走既有 `emit()`，payload 含 `matter_id / actor / from_owner / to_owner / reason / at`。SSE 监听端（Dashboard）收到后刷新该 matter 的本地缓存。
+**事件总线**：内部发一条 `TOPIC_MATTER_OWNER_CHANGED = "matter.owner_changed"` 走既有 `emit()`，payload 含 `matter_id / actor / from_owner / to_owner / reason / at`。SSE 对外沿用既有 `matter.updated` event，并在 payload 中带 `reason: "owner_changed"`；监听端（Dashboard）收到后刷新该 matter 的本地缓存。
 
 ### 2.4 创建路径：默认 owner = 创建者，也可显式指定他人
 
@@ -385,7 +385,7 @@ export type TimelineOwnerChangeItem = {
 | [server/matter_index.py](../../server/matter_index.py) | `_normalize_item` 增加 owner_change 分支（不 fallback owner=creator——event 没有 creator 概念）；`create_matter_index` 接受 `matter_owner` 参数写入 matter block；新增 `apply_owner_change(path, *, item, now_iso)` 同时写 timeline、`matter.owner`、（可选）`matter.current_status`，全部在一次 `_atomic_write_yaml` 内 |
 | [server/api/matters.py](../../server/api/matters.py) | `NewMatterBody` 新增 `owner_open_id?: str`（matter 级，与既有 `initial_file.owner` 完全分离）；新增 `OwnerChangeBody` + `POST /api/matters/{id}/owner` 路由（接受可选 `status_change`）；`_summarize_matter` 输出 `owner / owner_display / owner_avatar_url`；`_render_matter_detail` 同步；`_render_item` owner_change 分支解析 `actor_display / from_owner_display / to_owner_display` |
 | [server/publish.py](../../server/publish.py) | `publish_matter_create` 接受可选 `matter_owner_pinyin`（缺省 = `user.pinyin`）写入 matter block；新增 `publish_matter_owner_change(workspace, user, *, matter_id, to_owner, reason, status_change=None)` 走 write_session、emit `TOPIC_MATTER_OWNER_CHANGED`（payload 含 `status_change` 字段，下游 SSE 可同时刷 status） |
-| `server/events.py`（或对应 topics 文件） | 新增 `TOPIC_MATTER_OWNER_CHANGED` |
+| `server/events.py`（或对应 topics 文件） | 新增内部 topic `TOPIC_MATTER_OWNER_CHANGED = "matter.owner_changed"`；SSE 对外映射为 `matter.updated` + `reason: "owner_changed"` |
 | [server/api/ai.py](../../server/api/ai.py) / [server/ai/tools.py](../../server/ai/tools.py) | `read_matter_index` MCP 工具天然返回 owner_change（已在 timeline 内）；`build_system_prompt` 提到 matter.owner 的语义，让 AI 在 reply 时知道"现在这件事归谁推进" |
 
 ### 前端
@@ -401,7 +401,7 @@ export type TimelineOwnerChangeItem = {
 | [web/src/pages/MatterDetailPane.tsx](../../web/src/pages/MatterDetailPane.tsx) | 顶部卡片加 OwnerBadge + 转交按钮；接 TransferOwnerDialog；timeline 渲染层加 owner_change 分支组件 `OwnerChangeRow`（带 status_change 时再渲一行 status 视觉条） |
 | [web/src/components/matter/TimelineStrip.tsx](../../web/src/components/matter/TimelineStrip.tsx) | 节点渲染按 type 分形（owner_change = 小菱形 / 灰色） |
 | `web/src/components/matter/OwnerChangeRow.tsx` | 新增；timeline 内的轻量事件条 |
-| [web/src/pages/Dashboard.tsx](../../web/src/pages/Dashboard.tsx) | SSE 监听 `matter_owner_changed` 后 invalidate 该 matter 缓存 |
+| [web/src/pages/Dashboard.tsx](../../web/src/pages/Dashboard.tsx) | SSE 监听 `matter.updated`，在 `reason === "owner_changed"` 时 invalidate 该 matter 缓存 |
 
 ### 测试
 
@@ -652,7 +652,7 @@ UI 上详情页 owner 卡片旁加一行小灰字提示："转错了？再转一
 - 转交合并 status：planning + `status_change={planning→executing}` → 200，matter.owner 与 matter.current_status 同时更新；timeline 仅 1 条 owner_change entry，但带 status_change 字段
 - 转交合并 status：executing + `status_change={executing→paused}` → 422 `status_change_not_allowed_by_event`（v1 仅允许 planning→executing）
 - 转交合并 status：planning + `status_change={planning→executing}` 但当前 status 已被别人改成 executing → 409 `status_stale`
-- SSE：转交后能收到 `matter_owner_changed` event；payload 含 status_change（合并迁移时）
+- SSE：转交后内部 event bus 发 `matter.owner_changed`，SSE 客户端收到 `matter.updated` + `reason: "owner_changed"`；payload 可扩展携带 status_change（合并迁移时）
 - 历史 matter（matter.owner 缺失）：`GET /api/matters/{id}` 不报错，返回 owner_display = creator 兜底
 - 回填脚本：跑一遍后所有 index 都有 owner，第二次跑（已存在 owner）幂等不改
 - 转交在 reviewed 状态下 → 200（决策 4.1）；不允许带 status_change（reviewed 是终态）

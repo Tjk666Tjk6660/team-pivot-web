@@ -351,9 +351,18 @@ def build_router(
                     },
                 ) from e
             raise HTTPException(status_code=400, detail=msg) from e
+        rendered_detail = _render_matter_detail(
+            workspace,
+            {
+                "matter": result["matter"],
+                "timeline": [result["item"]],
+            },
+            users,
+            contacts,
+        )
         return {
-            "matter": result["matter"],
-            "item": result["item"],
+            "matter": rendered_detail["matter"],
+            "item": rendered_detail["timeline"][0],
         }
 
     @router.post("/matters/{matter_id}/files")
@@ -573,6 +582,9 @@ def _summarize_matter(
 
 
 def _matter_has_owner(data: dict, owner: str) -> bool:
+    matter_owner = (data.get("matter") or {}).get("owner")
+    if matter_owner == owner:
+        return True
     for item in data.get("timeline") or []:
         if item.get("owner") == owner:
             return True

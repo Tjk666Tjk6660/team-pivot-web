@@ -38,6 +38,17 @@ class _WorkspaceStub:
         yield
 
 
+class _RecordingNotifier(NoOpNotifier):
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    def notify_new_thread(self, **kw):
+        self.calls.append(("new_thread", kw))
+
+    def notify_owner_change(self, **kw):
+        self.calls.append(("owner_change", kw))
+
+
 @pytest.fixture(autouse=True)
 def _clear_events():
     clear_subscribers()
@@ -67,16 +78,18 @@ def client(db, users, tmp_path):
     sid = sessions.create("ou_1")
     current_user = make_current_user(sessions, users, ApiTokenRepo(db))
 
+    notifier = _RecordingNotifier()
     app = FastAPI()
     app.include_router(
         build_router(
-            workspace, users, ContactRepo(db), NoOpNotifier(),
+            workspace, users, ContactRepo(db), notifier,
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db), current_user,
         )
     )
     c = TestClient(app)
     c.cookies.set("sid", sid)
     c.workspace = workspace  # type: ignore[attr-defined]
+    c.notifier = notifier  # type: ignore[attr-defined]
     return c
 
 
@@ -167,11 +180,47 @@ def test_transfer_owner_happy_path(client, event_bucket):
     assert body["matter"]["owner"] == "lisi"
     assert body["item"]["type"] == "owner_change"
     assert body["item"]["actor"] == "dengke"
+    assert body["item"]["actor_display"] == "邓柯"
     assert body["item"]["from_owner"] == "dengke"
     assert body["item"]["to_owner"] == "lisi"
+    assert body["item"]["to_owner_display"] == "李四"
+    assert body["matter"]["owner_display"] == "李四"
+    assert body["matter"]["owner_avatar_url"] == "https://x/2.png"
     # Event emitted
     topics = [e.topic for e in event_bucket]
     assert "matter.owner_changed" in topics
+
+
+def test_transfer_owner_notifies_feishu_group(client):
+    mid = _create_matter(client)
+    client.notifier.calls.clear()  # type: ignore[attr-defined]
+
+    r = client.post(f"/api/matters/{mid}/owner", json={
+        "to_owner": "ou_2",
+        "reason": "lisi takes over",
+    })
+
+    assert r.status_code == 200, r.text
+    calls = client.notifier.calls  # type: ignore[attr-defined]
+    name, payload = next(call for call in calls if call[0] == "owner_change")
+    assert name == "owner_change"
+    assert payload["thread_title"] == "Test Matter"
+    assert payload["actor_name"] == "邓柯"
+    assert payload["from_owner_name"] == "邓柯"
+    assert payload["to_owner_name"] == "李四"
+    assert payload["to_owner_open_id"] == "ou_2"
+    assert payload["reason"] == "lisi takes over"
+
+
+def test_list_matters_owner_filter_matches_matter_owner(client):
+    mid = _create_matter(client, title="Owned by Lisi", owner_open_id="ou_2")
+    _create_matter(client, title="Owned by Dengke")
+
+    r = client.get("/api/matters?owner=lisi")
+
+    assert r.status_code == 200
+    ids = [item["id"] for item in r.json()["items"]]
+    assert ids == [mid]
 
 
 def test_transfer_owner_persists_in_index(client):

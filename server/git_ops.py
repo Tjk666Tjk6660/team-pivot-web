@@ -78,6 +78,15 @@ def set_remote_url(repo_dir: str, remote: str, url: str) -> None:
 
 
 def pull(repo_dir: str) -> None:
+    head_check = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD"],
+        cwd=repo_dir,
+        capture_output=True,
+        text=True,
+    )
+    if head_check.returncode != 0:
+        log.debug("pull skipped: repository has no commits yet")
+        return
     try:
         _run(["git", "pull", "--rebase", "origin"], cwd=repo_dir)
     except GitError as e:
