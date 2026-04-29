@@ -270,6 +270,7 @@ def build_router(
                 contacts=contacts,
                 notifier=notifier,
                 users=users,
+                file_reads=file_reads,
             )
         except MatterAlreadyExistsError as e:
             raise HTTPException(
@@ -308,6 +309,7 @@ def build_router(
                 contacts=contacts,
                 notifier=notifier,
                 users=users,
+                file_reads=file_reads,
             )
         except MatterNotFoundError as e:
             raise HTTPException(status_code=404, detail={"code": "matter_not_found"}) from e
@@ -348,6 +350,7 @@ def build_router(
                 contacts=contacts,
                 notifier=notifier,
                 users=users,
+                file_reads=file_reads,
             )
         except MatterNotFoundError as e:
             raise HTTPException(status_code=404, detail={"code": "matter_not_found"}) from e

@@ -1138,13 +1138,15 @@ def test_mark_file_read_unknown_file_404(client):
 
 def test_get_matter_detail_includes_readers(client):
     matter_id, file1, file2 = _create_matter_with_two_files(client)
-    # No reads yet
+    # Authors are auto-marked as readers of their own files at publish time,
+    # so each freshly-created file starts with exactly one reader (ou_1).
     detail0 = client.get(f"/api/matters/{matter_id}").json()
     for item in detail0["timeline"]:
-        assert item["readers_count"] == 0
-        assert item["readers"] == []
+        assert item["readers_count"] == 1
+        assert len(item["readers"]) == 1
+        assert item["readers"][0]["open_id"] == "ou_1"
 
-    # Mark file1 read
+    # Re-marking by the same user is a no-op — count stays at 1.
     client.post(f"/api/matters/{matter_id}/files/{file1}/read")
     detail1 = client.get(f"/api/matters/{matter_id}").json()
     by_basename = {
@@ -1155,6 +1157,6 @@ def test_get_matter_detail_includes_readers(client):
     assert reader["open_id"] == "ou_1"
     assert reader["name"] == "邓柯"
     assert "first_read_at" in reader
-    # file2 still unread
-    assert by_basename[file2]["readers_count"] == 0
-    assert by_basename[file2]["readers"] == []
+    # file2 unaffected (still just the auto-marked author).
+    assert by_basename[file2]["readers_count"] == 1
+    assert by_basename[file2]["readers"][0]["open_id"] == "ou_1"
