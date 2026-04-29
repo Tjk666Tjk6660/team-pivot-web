@@ -11,6 +11,7 @@ REASON_REPLY_TO_MY_FILE = "reply_to_my_file"
 REASON_REPLY_TO_MY_OWNED = "reply_to_my_owned"
 REASON_VERIFY_MY_FILE = "verify_my_file"
 REASON_IN_MY_MATTER = "in_my_matter"
+REASON_IN_MY_OWNED_MATTER = "in_my_owned_matter"
 
 
 def compute_relevance(
@@ -24,11 +25,19 @@ def compute_relevance(
     ``(False, None)``. If relevant, returns the highest-priority matched
     rule's reason. Priority order:
 
-    1. owner_assigned   — someone made me the owner
-    2. reply_to_my_file — item.quote points to a file I created
-    3. reply_to_my_owned — item.quote points to a file I own
-    4. verify_my_file   — item.verifications target a file I created/own
-    5. in_my_matter     — I authored the matter's first proposal
+    1. owner_assigned       — someone made me the owner of this file
+    2. reply_to_my_file     — item.quote points to a file I created
+    3. reply_to_my_owned    — item.quote points to a file I own
+    4. verify_my_file       — item.verifications target a file I created/own
+    5. in_my_matter         — I authored the matter's first proposal
+    6. in_my_owned_matter   — matter.owner is me (matter-level owner field)
+
+    Rules 5 and 6 are both "broad matter-level" signals — every item created
+    by someone else inside a matter where I'm the creator (5) or the
+    matter-level owner (6) is relevant to me. Rule 5 wins when both match,
+    on the rationale that "I created this matter" is a stronger signal than
+    "someone assigned me as matter owner". Either reason is correct; only
+    the chip label differs in the UI.
 
     Self-exclusion: if the user authored the item (``item.creator == me``),
     no rule applies — self-triggered actions don't notify the actor.
@@ -86,5 +95,13 @@ def compute_relevance(
         first_creator = timeline[0].get("creator")
         if first_creator == me:
             return True, REASON_IN_MY_MATTER
+
+    # Rule 6: matter-level owner is me. Anything someone else creates in a
+    # matter I'm the owner of is mine to follow up on. The matter index'
+    # `matter.owner` field is set at the matter level (separate from the
+    # per-file owner already covered by rule 1).
+    matter_meta = matter_data.get("matter") or {}
+    if matter_meta.get("owner") == me:
+        return True, REASON_IN_MY_OWNED_MATTER
 
     return False, None

@@ -40,6 +40,7 @@ from server.ai_conversations import AIConversationRepo
 from server.read_state import ReadStateRepo
 from server.relevance_events import RelevanceEventsRepo
 from server.relevance_scanner import (
+    get_scan_interval_minutes,
     is_backfill_on_startup_enabled,
     scan_all as scan_relevance_all,
     schedule_hourly_scan,
@@ -132,6 +133,7 @@ def create_app() -> FastAPI:
         # RELEVANCE_BACKFILL_ON_STARTUP=false to skip and let the hourly
         # task carry the load.
         if is_backfill_on_startup_enabled():
+            log.info("relevance startup backfill entering")
             try:
                 await asyncio.to_thread(
                     scan_relevance_all,
@@ -141,9 +143,19 @@ def create_app() -> FastAPI:
                 )
             except Exception:
                 log.exception("startup relevance scan_all failed")
+        else:
+            log.info(
+                "relevance startup backfill skipped (RELEVANCE_BACKFILL_ON_STARTUP=off)"
+            )
 
+        scan_interval_seconds = get_scan_interval_minutes() * 60
+        log.info(
+            "relevance scheduled scan interval=%ds (%dmin)",
+            scan_interval_seconds, scan_interval_seconds // 60,
+        )
         hourly_task = asyncio.create_task(schedule_hourly_scan(
             workspace=workspace, users_repo=users, repo=relevance_events,
+            interval_seconds=scan_interval_seconds,
         ))
         try:
             async with mcp_app.router.lifespan_context(mcp_app):

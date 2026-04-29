@@ -6,6 +6,7 @@ const REASON_LABEL: Record<FileRelevanceReason, string> = {
   reply_to_my_owned: "回复你负责的文件",
   verify_my_file: "verify 你的文件",
   in_my_matter: "你创建的 matter",
+  in_my_owned_matter: "你负责的 matter",
 };
 
 /**

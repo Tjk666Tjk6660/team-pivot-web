@@ -9,7 +9,10 @@ import yaml
 
 from server.relevance_events import RelevanceEventsRepo
 from server.relevance_scanner import (
+    DEFAULT_SCAN_INTERVAL_MINUTES,
+    MIN_SCAN_INTERVAL_MINUTES,
     ScanReport,
+    get_scan_interval_minutes,
     is_backfill_on_startup_enabled,
     scan_all,
 )
@@ -386,3 +389,66 @@ def test_is_backfill_on_startup_enabled_disable_values(monkeypatch, value):
 def test_is_backfill_on_startup_enabled_truthy_values(monkeypatch, value):
     monkeypatch.setenv("RELEVANCE_BACKFILL_ON_STARTUP", value)
     assert is_backfill_on_startup_enabled() is True
+
+
+# ---------- scan interval config ----------
+
+
+def test_get_scan_interval_minutes_default_when_unset(monkeypatch):
+    monkeypatch.delenv("RELEVANCE_SCAN_INTERVAL_MINUTES", raising=False)
+    assert get_scan_interval_minutes() == DEFAULT_SCAN_INTERVAL_MINUTES
+    assert DEFAULT_SCAN_INTERVAL_MINUTES == 60
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("1", 1),
+    ("5", 5),
+    ("60", 60),
+    ("180", 180),
+    ("  30  ", 30),
+])
+def test_get_scan_interval_minutes_valid(monkeypatch, value, expected):
+    monkeypatch.setenv("RELEVANCE_SCAN_INTERVAL_MINUTES", value)
+    assert get_scan_interval_minutes() == expected
+
+
+def test_get_scan_interval_minutes_empty_falls_back(monkeypatch):
+    monkeypatch.setenv("RELEVANCE_SCAN_INTERVAL_MINUTES", "")
+    assert get_scan_interval_minutes() == DEFAULT_SCAN_INTERVAL_MINUTES
+
+
+@pytest.mark.parametrize("value", ["abc", "10m", "1.5", "-", "  "])
+def test_get_scan_interval_minutes_invalid_falls_back(monkeypatch, value):
+    monkeypatch.setenv("RELEVANCE_SCAN_INTERVAL_MINUTES", value)
+    assert get_scan_interval_minutes() == DEFAULT_SCAN_INTERVAL_MINUTES
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "-60"])
+def test_get_scan_interval_minutes_clamps_to_minimum(monkeypatch, value):
+    monkeypatch.setenv("RELEVANCE_SCAN_INTERVAL_MINUTES", value)
+    assert get_scan_interval_minutes() == MIN_SCAN_INTERVAL_MINUTES
+
+
+# ---------- entry log ----------
+
+
+def test_scan_all_logs_entry(tmp_path, db, caplog):
+    """Operators should see a log line when scan_all kicks off, so an empty
+    workspace doesn't look like the scanner silently no-op'd."""
+    import logging
+
+    workspace = _StubWorkspace(tmp_path)
+    users_repo = UserRepo(db)
+    repo = RelevanceEventsRepo(db)
+
+    with caplog.at_level(logging.INFO, logger="server.relevance_scanner"):
+        scan_all(workspace=workspace, users_repo=users_repo, repo=repo)
+
+    entry_logs = [
+        r for r in caplog.records
+        if r.name == "server.relevance_scanner"
+        and "scan_all starting" in r.getMessage()
+    ]
+    assert len(entry_logs) == 1, (
+        f"expected one 'scan_all starting' log, got {[r.getMessage() for r in caplog.records]}"
+    )

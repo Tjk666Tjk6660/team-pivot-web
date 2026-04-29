@@ -442,7 +442,7 @@ function FilterToggle({
     <div
       role="tablist"
       aria-label="matter 列表筛选"
-      className="mx-1 my-1 inline-flex rounded-[var(--r-sm)] border border-[var(--line)] bg-[var(--surface-alt)] p-0.5 text-[11px]"
+      className="mx-2 my-1.5 inline-flex rounded-full bg-[var(--surface-alt)] p-1 text-[12px]"
     >
       {options.map((opt) => {
         const active = value === opt.key;
@@ -456,9 +456,9 @@ function FilterToggle({
               if (!active) onChange(opt.key);
             }}
             className={cn(
-              "rounded-[var(--r-sm)] px-2.5 py-1 font-medium transition-colors",
+              "rounded-full px-3.5 py-1 font-medium transition-colors",
               active
-                ? "bg-[var(--surface)] text-[var(--text)] shadow-[var(--shadow-sm)]"
+                ? "bg-[var(--surface)] text-[var(--accent)] shadow-[var(--shadow-sm)]"
                 : "text-[var(--text-mute)] hover:text-[var(--text-soft)]",
             )}
           >

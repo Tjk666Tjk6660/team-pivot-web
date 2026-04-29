@@ -37,6 +37,9 @@ log = logging.getLogger(__name__)
 
 HOURLY_INTERVAL_SECONDS = 3600
 ENV_BACKFILL_ON_STARTUP = "RELEVANCE_BACKFILL_ON_STARTUP"
+ENV_SCAN_INTERVAL_MINUTES = "RELEVANCE_SCAN_INTERVAL_MINUTES"
+DEFAULT_SCAN_INTERVAL_MINUTES = 60
+MIN_SCAN_INTERVAL_MINUTES = 1
 
 
 @dataclass(frozen=True)
@@ -59,6 +62,7 @@ def scan_all(
     users_repo: UserRepo,
     repo: RelevanceEventsRepo,
 ) -> ScanReport:
+    log.info("relevance scan_all starting index_dir=%s", workspace.index_dir)
     inserted = 0
     skipped = 0
     matters = 0
@@ -161,6 +165,33 @@ def is_backfill_on_startup_enabled() -> bool:
     return val not in ("0", "false", "no", "off")
 
 
+def get_scan_interval_minutes() -> int:
+    """Read the periodic scan interval from env, in minutes.
+
+    Default: 60 (i.e. hourly). Non-numeric or sub-minimum values fall back
+    to the default; values below MIN_SCAN_INTERVAL_MINUTES are clamped up
+    to prevent runaway scan loops from a typo.
+    """
+    raw = os.getenv(ENV_SCAN_INTERVAL_MINUTES)
+    if raw is None or not raw.strip():
+        return DEFAULT_SCAN_INTERVAL_MINUTES
+    try:
+        minutes = int(raw.strip())
+    except ValueError:
+        log.warning(
+            "invalid %s=%r, falling back to default %d",
+            ENV_SCAN_INTERVAL_MINUTES, raw, DEFAULT_SCAN_INTERVAL_MINUTES,
+        )
+        return DEFAULT_SCAN_INTERVAL_MINUTES
+    if minutes < MIN_SCAN_INTERVAL_MINUTES:
+        log.warning(
+            "%s=%d below minimum %d, clamping",
+            ENV_SCAN_INTERVAL_MINUTES, minutes, MIN_SCAN_INTERVAL_MINUTES,
+        )
+        return MIN_SCAN_INTERVAL_MINUTES
+    return minutes
+
+
 async def schedule_hourly_scan(
     *,
     workspace: Workspace,
@@ -172,11 +203,19 @@ async def schedule_hourly_scan(
     until the task is cancelled. Each iteration runs in a thread (the scan
     is sync + I/O-bound) so it doesn't block the event loop.
     """
+    log.info(
+        "relevance periodic scan loop started interval=%ds (%dmin)",
+        interval_seconds, interval_seconds // 60,
+    )
     while True:
         try:
             await asyncio.sleep(interval_seconds)
         except asyncio.CancelledError:
             return
+        log.info(
+            "relevance periodic scan tick firing (interval=%ds)",
+            interval_seconds,
+        )
         try:
             await asyncio.to_thread(
                 scan_all,

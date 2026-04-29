@@ -108,7 +108,8 @@ export type FileRelevanceReason =
   | "reply_to_my_file"
   | "reply_to_my_owned"
   | "verify_my_file"
-  | "in_my_matter";
+  | "in_my_matter"
+  | "in_my_owned_matter";
 
 export type Reader = {
   open_id: string;

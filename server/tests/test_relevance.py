@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from server.relevance import (
     REASON_IN_MY_MATTER,
+    REASON_IN_MY_OWNED_MATTER,
     REASON_OWNER_ASSIGNED,
     REASON_REPLY_TO_MY_FILE,
     REASON_REPLY_TO_MY_OWNED,
@@ -29,9 +30,12 @@ def _user(pinyin: str | None) -> User:
     )
 
 
-def _matter(*items: dict) -> dict:
+def _matter(*items: dict, owner: str | None = None) -> dict:
+    matter_meta: dict = {"id": "m-x", "current_status": "executing"}
+    if owner is not None:
+        matter_meta["owner"] = owner
     return {
-        "matter": {"id": "m-x", "current_status": "executing"},
+        "matter": matter_meta,
         "timeline": list(items),
     }
 
@@ -265,6 +269,77 @@ def test_empty_timeline_no_in_my_matter():
     matter = {"matter": {"id": "m-x"}, "timeline": []}
     ok, reason = compute_relevance(isolated_item, matter, me)
     assert ok is False
+
+
+# ---------- Rule 6: in_my_owned_matter ----------
+
+
+def test_in_my_owned_matter_when_matter_owner_is_me():
+    me = _user("alice")
+    proposal = _proposal("bob", file="01.md")    # bob 创建 matter
+    item = _act(creator="charlie", file="02.md")  # 别人发的文件
+    matter = _matter(proposal, item, owner="alice")  # 但 matter.owner = alice
+    ok, reason = compute_relevance(item, matter, me)
+    assert ok is True
+    assert reason == REASON_IN_MY_OWNED_MATTER
+
+
+def test_in_my_owned_matter_does_not_fire_when_owner_is_other():
+    me = _user("alice")
+    item = _act(creator="bob", file="02.md")
+    matter = _matter(_proposal("bob", file="01.md"), item, owner="charlie")
+    ok, reason = compute_relevance(item, matter, me)
+    assert ok is False
+
+
+def test_in_my_owned_matter_skipped_when_creator_is_me():
+    """self-exclusion 在最前 — 即使我是 matter.owner,自己写的 item 不算相关。"""
+    me = _user("alice")
+    own_item = _act(creator="alice", owner="alice", file="02.md")
+    matter = _matter(_proposal("bob", file="01.md"), own_item, owner="alice")
+    ok, reason = compute_relevance(own_item, matter, me)
+    assert ok is False
+
+
+def test_in_my_matter_takes_priority_over_in_my_owned_matter():
+    """matter.creator == me AND matter.owner == me 同时命中 → in_my_matter (rule 5) 赢。"""
+    me = _user("alice")
+    proposal = _proposal("alice", file="01.md")  # alice 创建
+    item = _act(creator="bob", file="02.md")
+    matter = _matter(proposal, item, owner="alice")  # 同时是 owner
+    ok, reason = compute_relevance(item, matter, me)
+    assert ok is True
+    assert reason == REASON_IN_MY_MATTER
+
+
+def test_in_my_owned_matter_when_creator_other_owner_me():
+    """matter.creator != me 但 matter.owner == me → rule 6 兜底命中。"""
+    me = _user("alice")
+    proposal = _proposal("bob", file="01.md")     # bob 创建
+    item = _act(creator="charlie", file="02.md")
+    matter = _matter(proposal, item, owner="alice")  # alice 是 owner
+    ok, reason = compute_relevance(item, matter, me)
+    assert ok is True
+    assert reason == REASON_IN_MY_OWNED_MATTER
+
+
+def test_no_owner_field_in_matter_no_rule_6_fallback():
+    """旧 index 没有 matter.owner 字段时,rule 6 不命中,回退到不相关。"""
+    me = _user("alice")
+    item = _act(creator="bob", file="02.md")
+    matter = _matter(_proposal("charlie", file="01.md"), item)  # owner 默认不传
+    ok, reason = compute_relevance(item, matter, me)
+    assert ok is False
+
+
+def test_owner_assigned_beats_in_my_owned_matter():
+    """item-level owner=me 比 matter-level owner=me 优先。"""
+    me = _user("alice")
+    item = _act(creator="bob", owner="alice", file="02.md")  # 文件级 owner=alice
+    matter = _matter(_proposal("bob"), item, owner="alice")  # matter.owner 也=alice
+    ok, reason = compute_relevance(item, matter, me)
+    assert ok is True
+    assert reason == REASON_OWNER_ASSIGNED
 
 
 # ---------- 优先级冲突 ----------
