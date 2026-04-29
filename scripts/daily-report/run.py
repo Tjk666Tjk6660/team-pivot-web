@@ -1,28 +1,23 @@
 #!/usr/bin/env python3
-"""Pivot 团队日报 · CLI 入口
+"""Pivot 团队日报 · CLI 入口 (v0.2)
 
-Triggered by systemd timer (`team-pivot-daily-report.timer`) every day at
-09:30 (Asia/Shanghai). Default behavior: produce yesterday-09:30 →
-today-09:30 daily report and broadcast to all Feishu groups the bot is in.
+由 systemd timer (`team-pivot-daily-report.timer`) 每天 09:30 (Asia/Shanghai)
+触发。也可由 admin 手动触发(POST /api/admin/daily-report/trigger,Phase 5)。
+
+v0.2 主轴(基于 dengke #013):
+- 只读 Pivot matter 数据,不接代码仓库
+- 生成两份独立报告:公司视角(Phase 3)+ 个人视角(Phase 4 待落地)
+- 共享底层事实数据,不共享 LLM 中间结果
 
 CLI flags:
-  --dry-run / --no-send   Don't broadcast; print card JSON to stdout
-  --no-ai                 Skip AI scoring (forces fallback)
-  --since / --until       Replay an explicit window (ISO 8601 with tz)
-  --db-path / --workspace-index / --code-repo-dir
-                          Override paths discovered from .env
-  --report-out PATH       Dump full debug JSON to PATH (debug aid)
-  --log-level             DEBUG / INFO / WARNING / ERROR (default INFO)
-
-Default paths come from the project's .env:
-  db        = $DATA_DIR/data.db
-  workspace = $DATA_DIR/git/<single-repo>/index   (auto-detected)
-
-`code_repo_dir` is read from SQLite settings `daily_report.code_repo_dir`
-(default `/opt/team-pivot-web/var/code-mirror/team-pivot-web`).
-
-The card has no "进入 Pivot" button — daily report is decoupled from the
-Pivot product, and there's no admin page that supports this task."""
+  --dry-run / --no-send   不广播,把所有 card JSON 打到 stdout
+  --no-ai                 跳过 AI 调用,使用 fallback 文案
+  --since / --until       回放显式窗口(ISO 8601 with tz)
+  --db-path / --workspace-index
+                          覆盖 .env 的默认路径
+  --report-out PATH       把完整 debug JSON 写到 PATH
+  --log-level             DEBUG / INFO / WARNING / ERROR (默认 INFO)
+"""
 from __future__ import annotations
 
 import argparse
@@ -32,7 +27,6 @@ import sys
 from pathlib import Path
 
 
-# This script lives at <repo>/scripts/daily-report/run.py
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
@@ -49,9 +43,7 @@ def _setup_logging(level: str) -> None:
 
 
 def _force_utf8_stdout() -> None:
-    """Windows defaults stdout to GBK, which fails on emoji in our card JSON.
-    Force UTF-8 so `--dry-run` output is readable everywhere. No-op on Linux
-    (stdout is already UTF-8)."""
+    """Windows 默认 stdout = GBK,emoji 卡片 JSON 输出会失败。强制 UTF-8。"""
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
@@ -60,12 +52,7 @@ def _force_utf8_stdout() -> None:
 
 
 def _resolve_default_paths() -> tuple[Path, Path | None]:
-    """Read .env to derive default db_path / workspace_index.
-
-    Returns (db_path, workspace_index_or_None). `workspace_index` is None
-    when auto-detection is ambiguous (multiple repos under DATA_DIR/git/) —
-    caller must specify --workspace-index.
-    """
+    """Read .env to derive default db_path / workspace_index."""
     from server.config import load_config
 
     cfg = load_config()
@@ -78,18 +65,13 @@ def _resolve_default_paths() -> tuple[Path, Path | None]:
         repos = sorted(p for p in git_dir.iterdir() if (p / ".git").is_dir())
         if len(repos) == 1:
             workspace_index = repos[0] / "index"
-        # if 0 or >1 → leave None, force --workspace-index
 
     return db_path, workspace_index
 
 
 def _build_notifier():
     """Build a FeishuNotifier from .env config. Returns NoOpNotifier when
-    NOTIFY_ENABLED=false (developer / CI environments).
-
-    The daily report only calls `broadcast_card`, which doesn't touch
-    `_post_url` / `_matter_url`, so we can pass an empty `web_base_url`
-    placeholder — it's never read on this code path."""
+    NOTIFY_ENABLED=false (developer / CI environments)."""
     from server.config import load_config
     from server.feishu_token import FeishuTokenManager
     from server.notify import FeishuNotifier, NoOpNotifier
@@ -111,22 +93,22 @@ def _build_notifier():
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Pivot 团队日报 - 24h 窗口聚合 + AI 评分 + 飞书群广播",
+        description="Pivot 日报 v0.2 · 公司视角 + 个人视角(Phase 4 待落地)",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    parser.add_argument("--since", help="窗口起 (ISO 8601 with tz, 例 '2026-04-26T09:30:00+08:00')")
-    parser.add_argument("--until", help="窗口止 (同上格式)")
+    parser.add_argument("--since", help="窗口起 (ISO 8601 with tz, 例 '2026-04-28T09:00:00+08:00')")
+    parser.add_argument("--until", help="窗口止 (同上)")
     parser.add_argument(
         "--dry-run", action="store_true",
-        help="不发飞书,把 card JSON 打到 stdout",
+        help="不发飞书,把所有 card JSON 打到 stdout",
     )
     parser.add_argument(
         "--no-send", action="store_true",
-        help="--dry-run 的别名,语义更清晰",
+        help="--dry-run 的别名",
     )
     parser.add_argument(
         "--no-ai", action="store_true",
-        help="跳过 AI 评分,直接 fallback (产出 + 推进 + 阻塞 + 协作 维度全空,用粗分)",
+        help="跳过 AI 调用,所有报告走 fallback 文案",
     )
     parser.add_argument("--db-path", type=Path, help="覆盖 SQLite 路径")
     parser.add_argument(
@@ -134,12 +116,8 @@ def main(argv: list[str] | None = None) -> int:
         help="覆盖 matter index 目录 (默认 DATA_DIR/git/<repo>/index)",
     )
     parser.add_argument(
-        "--code-repo-dir", type=Path,
-        help="覆盖代码仓库 mirror 路径 (默认 settings 里 daily_report.code_repo_dir)",
-    )
-    parser.add_argument(
         "--report-out", type=Path,
-        help="把 debug JSON 写到该文件 (回放调试用)",
+        help="把 debug JSON 写到该文件",
     )
     parser.add_argument(
         "--log-level", default="INFO",
@@ -151,7 +129,6 @@ def main(argv: list[str] | None = None) -> int:
     _setup_logging(args.log_level.upper())
     log = logging.getLogger("daily-report.cli")
 
-    # Resolve defaults from .env
     try:
         default_db, default_ws_index = _resolve_default_paths()
     except Exception as e:  # noqa: BLE001
@@ -168,7 +145,6 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    # Window
     window = None
     if args.since and args.until:
         try:
@@ -182,7 +158,6 @@ def main(argv: list[str] | None = None) -> int:
 
     dry_run = args.dry_run or args.no_send
 
-    # Notifier (only when actually sending)
     notifier = None
     if not dry_run:
         try:
@@ -191,19 +166,20 @@ def main(argv: list[str] | None = None) -> int:
             log.error("could not build FeishuNotifier: %s", e)
             return 1
 
-    # Run pipeline
     rc, debug = run_daily_report(
         db_path=db_path,
         workspace_index_dir=workspace_index,
-        code_repo_dir=args.code_repo_dir,
         window=window,
         dry_run=dry_run,
         no_ai=args.no_ai,
         notifier=notifier,
     )
 
-    if dry_run and "card" in debug:
-        print(json.dumps(debug["card"], ensure_ascii=False, indent=2))
+    # dry-run 模式下 print 卡片 JSON(可能多张)到 stdout
+    if dry_run and "cards" in debug:
+        for i, card in enumerate(debug["cards"], start=1):
+            print(f"========== card {i} ==========", flush=True)
+            print(json.dumps(card, ensure_ascii=False, indent=2), flush=True)
 
     if args.report_out:
         args.report_out.parent.mkdir(parents=True, exist_ok=True)

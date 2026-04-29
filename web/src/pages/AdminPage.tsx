@@ -1,18 +1,24 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Bot, FolderGit2, Lock, Palette, ShieldCheck, Users } from "lucide-react";
+import { ArrowLeft, Bot, FileText, FolderGit2, Lock, Palette, Play, ShieldCheck, Users } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import {
   AdminRequiredError,
   clearAdminPassword,
   fetchAdminMarkdownSettings,
   fetchAISettings,
+  fetchDailyReportConfig,
+  fetchDailyReportLastRun,
   fetchWorkspaceAdminConfig,
   setAdminPassword,
   syncContacts,
+  triggerDailyReport,
   updateAdminMarkdownSettings,
   updateAISettings,
+  updateDailyReportConfig,
   updateWorkspaceAdminConfig,
+  type DailyReportConfig,
+  type DailyReportLastRun,
   type MarkdownStyleMeta,
 } from "@/api";
 import { Button } from "@/components/ui/button";
@@ -105,6 +111,7 @@ export function AdminPage() {
           <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
             <div className="space-y-6">
               <WorkspaceConfigSection onAdminLost={() => setUnlocked(false)} />
+              <DailyReportSection onAdminLost={() => setUnlocked(false)} />
               <SyncContactsSection onAdminLost={() => setUnlocked(false)} />
             </div>
             <div className="space-y-6">
@@ -757,6 +764,303 @@ function AISettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
         </CardContent>
       </Card>
     </section>
+  );
+}
+
+// ── Daily Report (Phase 5) ────────────────────────────────────────────────────
+
+function DailyReportSection({ onAdminLost }: { onAdminLost: () => void }) {
+  const [cfg, setCfg] = useState<DailyReportConfig | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [triggering, setTriggering] = useState(false);
+  const [dryRun, setDryRun] = useState(true);
+  const [noAi, setNoAi] = useState(false);
+  const [lastRun, setLastRun] = useState<DailyReportLastRun | null>(null);
+  const [pollingRunId, setPollingRunId] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchDailyReportConfig()
+      .then(setCfg)
+      .catch((e) => {
+        if (e instanceof AdminRequiredError) {
+          toast.error("管理员密码已失效，请重新输入");
+          onAdminLost();
+        } else {
+          toast.error(e instanceof Error ? e.message : String(e));
+        }
+      })
+      .finally(() => setLoading(false));
+    fetchDailyReportLastRun().then(setLastRun).catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // poll last-run when a trigger has just kicked off
+  useEffect(() => {
+    if (!pollingRunId) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const lr = await fetchDailyReportLastRun();
+        if (cancelled) return;
+        setLastRun(lr);
+        if (lr.run_id === pollingRunId && lr.finished_at) {
+          setPollingRunId(null);
+          if (lr.error) {
+            toast.error(`触发失败：${lr.error}`);
+          } else if (lr.rc === 0) {
+            toast.success("日报已生成");
+          } else {
+            toast.error(`运行结束 rc=${lr.rc}`);
+          }
+        }
+      } catch {
+        /* ignore polling error */
+      }
+    };
+    const t = window.setInterval(tick, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(t);
+    };
+  }, [pollingRunId]);
+
+  const save = async () => {
+    if (!cfg) return;
+    setSaving(true);
+    try {
+      await updateDailyReportConfig(cfg);
+      toast.success("日报配置已保存");
+    } catch (e) {
+      if (e instanceof AdminRequiredError) {
+        onAdminLost();
+      } else {
+        toast.error(e instanceof Error ? e.message : String(e));
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const trigger = async () => {
+    if (!cfg) return;
+    if (!cfg.enabled) {
+      toast.error("总开关 enabled=false，请先打开后保存再触发");
+      return;
+    }
+    setTriggering(true);
+    try {
+      const r = await triggerDailyReport({ dry_run: dryRun, no_ai: noAi });
+      toast.message(`已开始：${r.run_id}`);
+      setPollingRunId(r.run_id);
+    } catch (e) {
+      if (e instanceof AdminRequiredError) {
+        onAdminLost();
+      } else {
+        toast.error(e instanceof Error ? e.message : String(e));
+      }
+    } finally {
+      setTriggering(false);
+    }
+  };
+
+  const update = (patch: Partial<DailyReportConfig>) => {
+    if (!cfg) return;
+    setCfg({ ...cfg, ...patch });
+  };
+
+  return (
+    <section>
+      <Card className="shadow-[var(--shadow-sm)]">
+        <CardHeader className="pb-4">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <FileText className="h-4 w-4" />
+            日报配置 · 公司视角 / 个人视角
+          </CardTitle>
+          <CardDescription>
+            两份独立报告（公司视角 + 个人视角）的开关、推送窗口、触发方式与手动执行入口。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {loading || !cfg ? (
+            <p className="text-sm text-muted-foreground">加载中…</p>
+          ) : (
+            <>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <ToggleRow
+                  label="总开关"
+                  checked={cfg.enabled}
+                  onChange={(v) => update({ enabled: v })}
+                  hint="关闭后 systemd timer / 手动触发都跳过"
+                />
+                <ToggleRow
+                  label="公司视角报告"
+                  checked={cfg.company_enabled}
+                  onChange={(v) => update({ company_enabled: v })}
+                  hint="一段叙事 + 整体节奏定性（积极/平稳/偏停滞）"
+                />
+                <ToggleRow
+                  label="个人视角报告"
+                  checked={cfg.personal_enabled}
+                  onChange={(v) => update({ personal_enabled: v })}
+                  hint="逐人输入/输出叙述，无活动者合并到一行"
+                />
+                <ToggleRow
+                  label="AI 正文读取（预留）"
+                  checked={cfg.allow_ai_read_body}
+                  onChange={(v) => update({ allow_ai_read_body: v })}
+                  hint="允许 AI 在 summary 不足时下钻读 markdown 正文"
+                />
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="dr-window-hours">统计时间窗口（小时）</Label>
+                  <Input
+                    id="dr-window-hours"
+                    type="number"
+                    min={1}
+                    max={168}
+                    value={cfg.time_window_hours}
+                    onChange={(e) =>
+                      update({ time_window_hours: Number(e.target.value) || 24 })
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    默认 24 小时；范围 1-168。
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="dr-push-time">每日推送时刻 (HH:MM)</Label>
+                  <Input
+                    id="dr-push-time"
+                    type="time"
+                    value={cfg.push_time}
+                    onChange={(e) =>
+                      update({ push_time: e.target.value || "09:30" })
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    主服务进程内置定时,Asia/Shanghai;此处也可立即手动触发。
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex justify-end border-t pt-4">
+                <Button onClick={save} disabled={saving}>
+                  {saving ? "保存中…" : "保存配置"}
+                </Button>
+              </div>
+
+              <div className="rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface-alt)] p-4 space-y-3">
+                <div className="text-sm font-semibold text-[var(--text)]">
+                  立即手动触发一次
+                </div>
+                <div className="flex flex-wrap items-center gap-4 text-sm">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={dryRun}
+                      onChange={(e) => setDryRun(e.target.checked)}
+                    />
+                    Dry-run（不发飞书）
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={noAi}
+                      onChange={(e) => setNoAi(e.target.checked)}
+                    />
+                    No AI（fallback 文案）
+                  </label>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={trigger}
+                  disabled={triggering || pollingRunId !== null}
+                >
+                  <Play className="mr-1.5 h-3.5 w-3.5" />
+                  {triggering
+                    ? "启动中…"
+                    : pollingRunId
+                    ? "运行中…"
+                    : "立即触发"}
+                </Button>
+                {lastRun && (lastRun.started_at || lastRun.run_id) && (
+                  <div className="rounded border bg-[var(--surface)] p-3 text-xs space-y-1">
+                    <div>
+                      <span className="font-medium">run_id:</span>{" "}
+                      {lastRun.run_id ?? "-"}
+                    </div>
+                    <div>
+                      <span className="font-medium">started:</span>{" "}
+                      {lastRun.started_at ?? "-"}
+                    </div>
+                    <div>
+                      <span className="font-medium">finished:</span>{" "}
+                      {lastRun.finished_at ?? "(running…)"}
+                    </div>
+                    {lastRun.rc !== null && (
+                      <div>
+                        <span className="font-medium">rc:</span>{" "}
+                        <span
+                          style={{
+                            color:
+                              lastRun.rc === 0
+                                ? "var(--ok-600)"
+                                : "var(--warn-600)",
+                          }}
+                        >
+                          {lastRun.rc}
+                        </span>
+                      </div>
+                    )}
+                    {lastRun.error && (
+                      <div className="text-[var(--warn-600)]">
+                        error: {lastRun.error}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
+function ToggleRow({
+  label,
+  checked,
+  onChange,
+  hint,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  hint?: string;
+}) {
+  return (
+    <label className="flex items-start gap-3 rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] p-3 cursor-pointer hover:bg-[var(--surface-alt)]">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5"
+      />
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-semibold text-[var(--text)]">
+          {label}
+        </span>
+        {hint && (
+          <span className="mt-0.5 block text-xs text-[var(--text-mute)]">
+            {hint}
+          </span>
+        )}
+      </span>
+    </label>
   );
 }
 

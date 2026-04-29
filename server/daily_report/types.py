@@ -1,11 +1,16 @@
-"""Dataclasses for the daily-report pipeline. All structures are frozen
-(immutable) so they pass safely between collector / aggregator / scorer /
-renderer without surprise mutation."""
+"""Dataclasses for the daily-report pipeline (v0.2).
+
+v0.2 主轴(基于 dengke #013):
+- 只读 Pivot matter 数据,不接入 git 代码仓库
+- 不做评分,生成两份独立 LLM 报告(公司视角 / 个人视角)
+- 共享底层事实数据,不共享 LLM 中间结果
+
+本文件只保留事实层 dataclass。SharedFacts(Phase 2)+ 公司/个人 narrative
+dataclass(Phase 3/4)在各自模块声明,避免 types.py 又长又重。"""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
 
 
 # --------------------------------------------------------------------------- #
@@ -33,7 +38,7 @@ class TimeWindow:
 
 
 # --------------------------------------------------------------------------- #
-# Raw event records                                                           #
+# Raw event records (collected from matter index timeline)                   #
 # --------------------------------------------------------------------------- #
 
 
@@ -65,20 +70,6 @@ class MatterEvent:
     comments_in_window: tuple[MatterEventComment, ...]
 
 
-@dataclass(frozen=True)
-class CommitRecord:
-    """A git commit from the team-pivot-web code mirror, in window."""
-    sha: str
-    author_name: str
-    author_email: str
-    committed_at: datetime
-    subject: str
-    files_changed: int
-    insertions: int
-    deletions: int
-    matched_pinyin: str | None = None  # filled by attribution.py
-
-
 # --------------------------------------------------------------------------- #
 # Aggregated per-user view                                                    #
 # --------------------------------------------------------------------------- #
@@ -86,6 +77,10 @@ class CommitRecord:
 
 @dataclass(frozen=True)
 class UserActivity:
+    """Per-user roll-up of matter timeline activity within the window.
+
+    v0.2 去除 commits / mentions_received 之外的旧字段保留;commits 字段
+    整体删除(数据源不再读 git)。"""
     pinyin: str
     display_name: str                              # users.name 优先,fallback pinyin
     file_creates: tuple[MatterEvent, ...]          # creator == self
@@ -94,65 +89,23 @@ class UserActivity:
     status_changes_triggered: tuple[MatterEvent, ...]  # 自己创建的 + 带 status_change 的
     comments_given: tuple[MatterEventComment, ...]  # 自己写的评论(自己/别人文件)
     mentions_received: int
-    commits: tuple[CommitRecord, ...]
 
     @property
     def is_active(self) -> bool:
-        """True iff at least one event/commit attributed to this user."""
+        """True iff at least one event attributed to this user in window."""
         return bool(
             self.file_creates or self.file_owns or self.verifications_given
-            or self.comments_given or self.commits or self.mentions_received
+            or self.comments_given or self.mentions_received
         )
 
 
 @dataclass(frozen=True)
 class TeamSummary:
-    """Window-level aggregate stats. `inactive_users` and `unattributed_commits`
-    surface in the card so the manager sees gaps."""
+    """Window-level aggregate stats. `inactive_users` lists users who
+    showed zero activity in the window — surfaced in the personal-view card."""
     window: TimeWindow
     total_files: int
-    total_commits: int
     total_status_changes: int
     total_comments: int
     matters_touched: int
-    unattributed_commits: tuple[CommitRecord, ...]
     inactive_users: tuple[str, ...]                # display_names
-    fetch_warning: str | None = None               # 代码仓库未刷新时的提示文本
-
-
-# --------------------------------------------------------------------------- #
-# AI scoring                                                                  #
-# --------------------------------------------------------------------------- #
-
-
-@dataclass(frozen=True)
-class UserScore:
-    pinyin: str
-    score: float
-    sub_scores: dict[str, float | None]            # {output, progress, blocker, collab}
-    summary: str                                   # <= ~60 字
-    highlights: tuple[str, ...]                    # 1-3 突出条目
-
-
-@dataclass(frozen=True)
-class ScoringResult:
-    status: Literal["ai", "fallback"]
-    team_score: float
-    team_sub_scores: dict[str, float | None]
-    team_summary: str
-    per_user: tuple[UserScore, ...]
-    raw_response: str = ""                         # AI 原文 for debug
-    fallback_reason: str | None = None             # 降级时填
-
-
-# --------------------------------------------------------------------------- #
-# Final report                                                                #
-# --------------------------------------------------------------------------- #
-
-
-@dataclass(frozen=True)
-class TeamReport:
-    """Top-level structure passed to the renderer."""
-    summary: TeamSummary
-    user_activities: tuple[UserActivity, ...]      # 已按总分降序排序
-    scoring: ScoringResult

@@ -1,166 +1,133 @@
 # 团队日报 · 部署 + 调试速查
 
-每天 09:30 (Asia/Shanghai) 自动跑一次,统计前一天 09:30 到今天 09:30 这 24h 内团队的 matter 活动 + 代码 commits,用 AI 评分总结,以飞书群卡片形式广播。
+v0.2 主轴(基于 dengke #013):
+
+- 只读 Pivot matter 数据,不接代码仓库
+- 生成两份独立 LLM 报告(公司视角 + 个人视角)
+- 共享底层事实数据,不共享 LLM 中间结果
+- 默认每天 09:30 (Asia/Shanghai) 自动推到所有 bot 在的飞书群
 
 设计 / 实施细节见:
 - `AI-docs/daily-report/product-design.md`
-- `AI-docs/daily-report/implementation-plan.md`
 
 ---
 
-## 1. 一次性部署 setup
+## 1. 上线流程(简化版,无需 systemd timer)
 
-### 1.1 部署最新代码到生产服
+v0.2 把调度器**集成到主服务进程**了,FastAPI lifespan 启动时挂个 asyncio
+后台任务,睡到下一个推送时刻 → fire → 再睡。**部署只需要部署主服务,
+不再需要单独配置 systemd timer**。
 
-按现有部署流程把代码部署到 `/opt/team-pivot-web/`(rsync / 各位负责人惯用方式)。
+### 1.1 部署最新代码
 
-### 1.2 创建代码仓库 mirror workspace
-
-`/opt/team-pivot-web` 是 rsync-deployed,**没有 `.git`**,没法 `git log`。日报需要单独的代码仓库 mirror。
-
-```bash
-# 用一个 readonly PAT (scope: contents:read on team-pivot-web)
-sudo mkdir -p /opt/team-pivot-web/var/code-mirror
-sudo chown ubuntu:ubuntu /opt/team-pivot-web/var/code-mirror
-cd /opt/team-pivot-web/var/code-mirror
-
-git clone https://<readonly_token>@github.com/hashSTACS-Global/team-pivot-web.git
-# .git/config 里嵌入 token,后续 fetch 自动认证
-```
-
-校验:`ls team-pivot-web/.git/HEAD` 应输出 `ref: refs/heads/main`。
-
-### 1.3 设置飞书群
-
-确认 Pivot 飞书 bot **已被拉进**预期接收日报的所有群。日报会广播给 bot 在的**所有**群(没有白名单/黑名单配置)。
-
-### 1.4 安装 systemd unit
+按现有 rsync 流程同步到 `/opt/team-pivot-web/`,然后:
 
 ```bash
-cd /opt/team-pivot-web
-sudo cp scripts/daily-report/systemd/team-pivot-daily-report.service.example \
-        /etc/systemd/system/team-pivot-daily-report.service
-sudo cp scripts/daily-report/systemd/team-pivot-daily-report.timer.example \
-        /etc/systemd/system/team-pivot-daily-report.timer
-
-# 改 User / 路径(若不是 ubuntu / /opt/team-pivot-web)
-sudo nano /etc/systemd/system/team-pivot-daily-report.service
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now team-pivot-daily-report.timer
-
-# 确认下次触发时间
-systemctl list-timers | grep daily-report
+sudo systemctl restart team-pivot-web.service
 ```
+
+主服务一启动,内置调度器就开始工作。
+
+### 1.2 第一次跑,从 admin 验证
+
+1. 浏览器进 `/admin`,输入管理员密码
+2. 找到 **"日报配置 · 公司视角 / 个人视角"** 卡片
+3. 默认配置 `enabled / company_enabled / personal_enabled` 都开启,推送时刻 09:30
+4. 在最下方点 **"立即触发"** —— 勾上 dry-run 不发飞书,验证流水线
+5. 取消 dry-run 再点一次 —— 真发到所有 bot 在的群,看效果
+6. 等到次日 09:30,定时调度器会自动跑
+
+### 1.3 关掉 / 开启日报
+
+- **临时停推**:UI 上把"总开关 enabled"关掉再保存。调度器仍在跑但每次 fire 都会跳过
+- **彻底停**:改 `daily_report.enabled` 为 `0` 也行,或者重启主服务前从 settings 表删除该配置项
+- **暂停某一份**:UI 上把"公司视角"或"个人视角"开关单独关掉
 
 ---
 
-## 2. 验证流程
+## 2. 配置项一览
 
-### 2.1 dry-run 调试(不发飞书,不调 AI)
+所有配置都在 `/admin` UI 上调,落到 SQLite `settings` 表。
+
+| 键 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `daily_report.enabled` | bool | true | 总开关 |
+| `daily_report.company_enabled` | bool | true | 公司视角报告开关 |
+| `daily_report.personal_enabled` | bool | true | 个人视角报告开关 |
+| `daily_report.time_window_hours` | int | 24 | 统计时间窗口(小时) |
+| `daily_report.push_time` | str | "09:30" | 每日推送时刻(HH:MM,Asia/Shanghai) |
+| `daily_report.allow_ai_read_body` | bool | false | AI 正文读取(预留,v0.2 暂未启用) |
+
+---
+
+## 3. 调试 / 运维
+
+### 3.1 手动触发(从 admin UI)
+
+`/admin` → 日报配置 → 立即触发 → 选 dry-run / no-AI 组合 → 看 last-run 状态
+
+### 3.2 命令行回放(任意时间窗口)
+
+适合"补昨天没跑成功的日报""调试新 prompt"这类场景。
 
 ```bash
 cd /opt/team-pivot-web
-uv run python scripts/daily-report/run.py \
-    --dry-run --no-ai \
-    --since 2026-04-26T09:30:00+08:00 \
-    --until 2026-04-27T09:30:00+08:00 \
-    --report-out /tmp/daily-report-debug.json
-```
 
-stdout 是即将发送的 card JSON;`/tmp/daily-report-debug.json` 含完整 debug 数据(window / 数量 / fetch_warning 等)。
+# Dry-run + no-AI(最快、最省、不发飞书)
+uv run python scripts/daily-report/run.py --dry-run --no-ai \
+  --since 2026-04-26T09:30:00+08:00 \
+  --until 2026-04-27T09:30:00+08:00 \
+  --report-out /tmp/daily-report-debug.json
 
-### 2.2 dry-run 含 AI 调用(仍不发飞书)
-
-```bash
+# Dry-run + 真 AI 调用(看 LLM 输出但不发卡)
 uv run python scripts/daily-report/run.py --dry-run \
-    --since 2026-04-26T09:30:00+08:00 \
-    --until 2026-04-27T09:30:00+08:00
+  --since 2026-04-26T09:30:00+08:00 \
+  --until 2026-04-27T09:30:00+08:00
+
+# 真发飞书(同时跑 AI 和广播)
+uv run python scripts/daily-report/run.py \
+  --since 2026-04-26T09:30:00+08:00 \
+  --until 2026-04-27T09:30:00+08:00
 ```
 
-stdout card JSON 中 `template=blue` + 评分块完整 → AI 路径正常。
-若 `template=wathet` + 含"⚠️ AI 评分缺失"提示 → 看日志看 fallback_reason 排错。
-
-### 2.3 手工立刻触发(不等 09:30)
+### 3.3 查看主服务日志(含调度器日志)
 
 ```bash
-sudo systemctl start team-pivot-daily-report.service
-sudo journalctl -u team-pivot-daily-report.service -n 50 --no-pager
+sudo journalctl -u team-pivot-web.service -n 200 | grep daily_report
 ```
 
-每个群应该收到一张卡片。
+调度器关键日志:
+- `daily-report scheduler started` —— 主服务启动时
+- `daily-report scheduler sleeping Ns until ...` —— 每轮等下一次 fire
+- `daily-report scheduled fire done rc=0` —— 一次成功
+- `daily-report fire skipped: previous run still in progress` —— 上一次 LLM 还没跑完(罕见)
 
 ---
 
-## 3. 配置(SQLite settings)
+## 4. 已知约束
 
-只 3 个 key,通过 SQL 直改即可(管理 UI 留迭代):
-
-| Key | 默认 | 说明 |
-|---|---|---|
-| `daily_report.enabled` | `"1"` | `"0"` 临时停推日报(脚本退出码 0,不让 systemd timer failed) |
-| `daily_report.commit_author_overrides` | `"{}"` | JSON `{"<pinyin>": ["alt-email1", "alt-email2"]}`,人工修正 commit 归属 |
-| `daily_report.code_repo_dir` | `/opt/team-pivot-web/var/code-mirror/team-pivot-web` | 代码仓库 mirror 本地路径(若你放别处需改这里) |
-
-```bash
-# 临时停推日报
-sqlite3 /opt/team-pivot-web/var/data.db \
-  "INSERT OR REPLACE INTO settings(key, value, updated_at)
-   VALUES('daily_report.enabled', '0', strftime('%s','now'))"
-
-# 补 commit author override(发现"未识别 commits"后)
-sqlite3 /opt/team-pivot-web/var/data.db \
-  "INSERT OR REPLACE INTO settings(key, value, updated_at)
-   VALUES('daily_report.commit_author_overrides',
-          '{\"huangshengli\": [\"captain.ronly@gmail.com\"]}',
-          strftime('%s','now'))"
-```
+| 约束 | 说明 |
+|---|---|
+| 单 worker 假设 | 调度器在主进程内,如果以后 uvicorn 起多 worker(`--workers N`),会重复 fire。需要 SQLite 时间戳锁,目前未实现 |
+| 不补跑 | 主服务挂了过夜恢复后,要等下一个推送时刻才会跑;管理员可在 `/admin` 手动触发补一次 |
+| LLM 不可中断 | 推送中(LLM 慢调用)主服务重启,系统会等线程跑完才退出 |
 
 ---
 
-## 4. 排错速查
+## 5. 故障排查
 
-### 飞书没收到日报
-
-1. `systemctl list-timers | grep daily-report` → 确认 timer 启用且下次触发时间正常
-2. `sudo journalctl -u team-pivot-daily-report.service -n 100 --no-pager` → 看日志 / 报错
-3. `tail -200 /opt/team-pivot-web/var/log/daily-report.log` → 看应用日志
-4. `sqlite3 ... 'SELECT value FROM settings WHERE key="daily_report.enabled"'` → 确认未被禁用
-5. 飞书 bot 是否在那个群里?
-
-### "代码仓库未刷新" 警告一直出现
-
-1. `cd /opt/team-pivot-web/var/code-mirror/team-pivot-web && git fetch --all --prune`
-2. 看 fetch 报错,通常是 token 过期 / 网络
-3. 重新 setup mirror(改 `.git/config` 或重 clone)
-
-### "未识别 commits N 个" 一直显示
-
-1. `bash -c "cd /opt/team-pivot-web/var/code-mirror/team-pivot-web && git log --all --since=24h --pretty='%ae|%an'"` 看 author 形态
-2. 在 `daily_report.commit_author_overrides` JSON 里加映射
-
-### AI 评分降级一直出现
-
-1. 看日志的 `fallback_reason`
-2. `parse_error` → AI 模型可能输出非 JSON,试换更听话的模型
-3. `ai_error: AIError: ...` → API key 失效 / 网络 / 配额
-4. `TimeoutError` → 提高 `oneshot.generate_text` 的 `timeout_seconds`(目前硬编码 90s)
-
-### 临时停推
-
-```bash
-sudo systemctl stop team-pivot-daily-report.timer    # 暂停 timer
-# 或
-sqlite3 /opt/team-pivot-web/var/data.db \
-  "UPDATE settings SET value='0' WHERE key='daily_report.enabled'"
-```
+| 现象 | 排查 |
+|---|---|
+| 群里没收到日报 | 1) `daily_report.enabled` 是否 0;2) 主服务日志 grep daily_report;3) 飞书 SSL 抖动(`_ssl.c:993` 类) —— notify.py 有重试,仍不行就重启主服务 |
+| 卡片渲染异常 | `/admin` 立即触发选 dry-run 看 last-run debug,卡片 JSON 是否完整 |
+| AI 总是 fallback | 1) `settings.ai.openrouter_api_key` 是否配置;2) 调用超时(`120s` for company / `180s` for personal,慢模型可能不够) |
+| 推送时刻改了但还是按老时间跑 | 重启主服务一次。调度器在每轮 sleep 计算时读最新值,但当前 sleep 还是老 push_time |
 
 ---
 
-## 5. 与其它 scripts/ 的关系
+## 6. 二期方向(未来)
 
-- `scripts/migration-test/` — 历史迁移测试(已用过)
-- `scripts/migration-prod/` — 历史迁移生产上线(已用过)
-- **`scripts/daily-report/`** — 本目录,定时任务
-
-三个目录互相独立。
+- 多 worker 锁(SQLite 时间戳)
+- 补跑机制(检测到主服务从超过 push_time 状态启动则立即补一次)
+- AI 正文读取(`allow_ai_read_body` 配置项已预留)
+- 周报 / 月报

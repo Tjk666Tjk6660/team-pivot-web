@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from server.api.ai import build_router as build_ai_router
 from server.api.app_home import build_router as build_app_home_router
 from server.api.contacts import build_router as build_contacts_router
+from server.api.daily_report import build_router as build_daily_report_router
 from server.api.discussions import build_router as build_discussions_router
 from server.api.drafts import build_router as build_drafts_router
 from server.api.inbox import build_router as build_inbox_router
@@ -20,6 +21,7 @@ from server.api.tokens import build_router as build_tokens_router
 from server.api.workspace import build_router as build_workspace_router
 from server.api_tokens import ApiTokenRepo
 from server.auth.deps import make_current_user, make_current_user_cookie_only
+from server.daily_report.scheduler import DailyReportScheduler
 from server.auth.feishu_oauth import FeishuOAuth
 from server.auth.routes import build_router as build_auth_router
 from server.auth.session import SessionStore
@@ -106,10 +108,21 @@ def create_app() -> FastAPI:
     api_base_url = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
     mcp_app = build_mcp_app(api_tokens, users, api_base_url, cfg.web_dev_origin)
 
+    daily_report_scheduler = DailyReportScheduler(
+        db_path=cfg.data_dir / "data.db",
+        workspace_index_dir_provider=lambda: workspace.path / "index",
+        settings=settings,
+        notifier=notifier,
+    )
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        async with mcp_app.router.lifespan_context(mcp_app):
-            yield
+        await daily_report_scheduler.start()
+        try:
+            async with mcp_app.router.lifespan_context(mcp_app):
+                yield
+        finally:
+            await daily_report_scheduler.stop()
 
     app = FastAPI(title="team-pivot-web", lifespan=lifespan)
     app.add_middleware(
@@ -143,6 +156,11 @@ def create_app() -> FastAPI:
     ))
     app.include_router(build_workspace_router(
         workspace, settings, current_user_dep, current_user_cookie_dep,
+    ))
+    app.include_router(build_daily_report_router(
+        workspace, settings, notifier,
+        cfg.data_dir / "data.db",
+        current_user_cookie_dep,
     ))
     app.include_router(build_drafts_router(
         workspace, drafts, contacts, notifier, current_user_dep,

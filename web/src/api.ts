@@ -731,6 +731,72 @@ export async function updateAdminMarkdownSettings(body: {
   }
 }
 
+// ── Daily report admin (Phase 5) ─────────────────────────────────────────────
+
+export type DailyReportConfig = {
+  enabled: boolean;
+  company_enabled: boolean;
+  personal_enabled: boolean;
+  time_window_hours: number;
+  push_time: string;     // "HH:MM" Asia/Shanghai
+  allow_ai_read_body: boolean;
+};
+
+export type DailyReportLastRun = {
+  run_id: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  rc: number | null;
+  debug: Record<string, unknown> | null;
+  error: string | null;
+};
+
+export async function fetchDailyReportConfig(): Promise<DailyReportConfig> {
+  const r = await adminFetch("/api/admin/daily-report/config");
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `/api/admin/daily-report/config failed: ${r.status}`);
+  }
+  return (await r.json()) as DailyReportConfig;
+}
+
+export async function updateDailyReportConfig(body: DailyReportConfig): Promise<void> {
+  const r = await adminFetch("/api/admin/daily-report/config", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `update daily-report config failed: ${r.status}`);
+  }
+}
+
+export async function triggerDailyReport(body: {
+  dry_run: boolean;
+  no_ai: boolean;
+}): Promise<{ ok: boolean; run_id: string; started_at: string }> {
+  const r = await adminFetch("/api/admin/daily-report/trigger", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `trigger daily-report failed: ${r.status}`);
+  }
+  return r.json();
+}
+
+export async function fetchDailyReportLastRun(): Promise<DailyReportLastRun> {
+  const r = await adminFetch("/api/admin/daily-report/last-run");
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `last-run failed: ${r.status}`);
+  }
+  return (await r.json()) as DailyReportLastRun;
+}
+
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
 export type AIToolUse = {

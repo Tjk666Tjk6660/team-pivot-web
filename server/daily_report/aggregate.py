@@ -1,7 +1,7 @@
-"""Aggregate raw collector outputs into per-user `UserActivity` records and
+"""Aggregate matter timeline events into per-user `UserActivity` records and
 a top-level `TeamSummary`.
 
-Routing rules:
+Routing rules (v0.2):
   - file_creates    = events where event.creator == user.pinyin AND file_in_window
   - file_owns       = events where event.owner   == user.pinyin AND creator != self
                                                   AND file_in_window
@@ -14,16 +14,16 @@ Routing rules:
                        (covers commenting on own files AND others')
   - mentions_received = sum across ALL events of comments_in_window where
                          user.pinyin ∈ comment.mentions
-  - commits         = commits where matched_pinyin == user.pinyin
 
 Items with `creator/owner` set to a raw `ou_xxx` open_id (未注册联系人 fallback,
 see `publish.py::_resolve_owner_for_index`) still count toward team-level totals
 but are NOT routed to any per-user record. The "个人列表" only covers users with
-a pinyin in the `users` table."""
+a pinyin in the `users` table.
+
+v0.2 删除了 commits 路径(dengke #005:工作分布在多个 repo,单仓库统计偏)。"""
 from __future__ import annotations
 
 from server.daily_report.types import (
-    CommitRecord,
     MatterEvent,
     TeamSummary,
     TimeWindow,
@@ -34,36 +34,28 @@ from server.users import User
 
 def aggregate(
     matter_events: list[MatterEvent],
-    matched_commits: list[CommitRecord],
-    unattributed_commits: list[CommitRecord],
     all_users: list[User],
     window: TimeWindow,
-    *,
-    fetch_warning: str | None = None,
 ) -> tuple[list[UserActivity], TeamSummary]:
     """Produce (UserActivity[] for all users with pinyin, TeamSummary).
 
     The returned UserActivity list includes EVERY user with a pinyin —
     inactive users land with empty arrays so the renderer can list them
-    in the "今日 0 活动" bucket. Sorting is the caller's job (typically by
-    AI score, after scoring runs)."""
+    in the "今日 0 活动" bucket. Sorting is the caller's job."""
     activities: list[UserActivity] = []
     inactive_names: list[str] = []
 
     eligible_users = [u for u in all_users if u.pinyin]
     for user in eligible_users:
-        ua = _build_user_activity(user, matter_events, matched_commits)
+        ua = _build_user_activity(user, matter_events)
         activities.append(ua)
         if not ua.is_active:
             inactive_names.append(ua.display_name)
 
     summary = _build_team_summary(
         matter_events=matter_events,
-        all_commits=matched_commits + unattributed_commits,
-        unattributed_commits=unattributed_commits,
         inactive_names=inactive_names,
         window=window,
-        fetch_warning=fetch_warning,
     )
     return activities, summary
 
@@ -76,7 +68,6 @@ def aggregate(
 def _build_user_activity(
     user: User,
     events: list[MatterEvent],
-    commits: list[CommitRecord],
 ) -> UserActivity:
     pinyin = user.pinyin
     assert pinyin is not None  # eligible_users filter guarantees
@@ -117,8 +108,6 @@ def _build_user_activity(
             if pinyin in c.mentions:
                 mentions_received += 1
 
-    user_commits = [c for c in commits if c.matched_pinyin == pinyin]
-
     return UserActivity(
         pinyin=pinyin,
         display_name=user.name or pinyin,
@@ -128,18 +117,14 @@ def _build_user_activity(
         status_changes_triggered=tuple(status_changes_triggered),
         comments_given=tuple(comments_given),
         mentions_received=mentions_received,
-        commits=tuple(user_commits),
     )
 
 
 def _build_team_summary(
     *,
     matter_events: list[MatterEvent],
-    all_commits: list[CommitRecord],
-    unattributed_commits: list[CommitRecord],
     inactive_names: list[str],
     window: TimeWindow,
-    fetch_warning: str | None,
 ) -> TeamSummary:
     # Count "file events": items whose file is in window. Comments-only
     # events (file_in_window=False) don't bump this — they bump comment count.
@@ -155,11 +140,8 @@ def _build_team_summary(
     return TeamSummary(
         window=window,
         total_files=len(files_in_window),
-        total_commits=len(all_commits),
         total_status_changes=total_status_changes,
         total_comments=total_comments,
         matters_touched=matters_touched,
-        unattributed_commits=tuple(unattributed_commits),
         inactive_users=tuple(inactive_names),
-        fetch_warning=fetch_warning,
     )

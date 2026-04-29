@@ -1,127 +1,147 @@
-"""Render `TeamReport` to a Feishu interactive card dict (schema 2.0).
-Composition reuses `notify._card_shell` so we share header / template
-machinery with the existing card builders.
+"""Render daily report narratives to Feishu interactive cards (schema 2.0).
 
-The daily report card has **no CTA button** — the report is self-contained
-in the markdown, and the Pivot product has no admin page that supports
-this task, so a "进入 Pivot" button would just dump readers on the home
-page. If a deep-link makes sense later (e.g. per-user dashboard), add
-`button_text=...` + `thread_url=...` to the `_card_shell` call below."""
+v0.2 dengke #013 主张两份独立报告,**两张独立卡片**,共用 _card_shell 工厂。
+
+Phase 3 实现公司视角卡 `build_company_card`;
+Phase 4 实现个人视角卡 `build_personal_card`。
+"""
 from __future__ import annotations
 
 from datetime import datetime
 
-from server.daily_report.types import TeamReport
+from server.daily_report.company_narrate import CompanyNarrative
+from server.daily_report.personal_narrate import (
+    NO_ACTIVITY_NARRATIVE,
+    PersonalNarrative,
+)
+from server.daily_report.shared_facts import SharedFacts
 from server.notify import _card_shell
 
 
-def build_daily_report_card(report: TeamReport) -> dict:
-    """Build the daily report card dict ready for `FeishuNotifier.broadcast_card`.
+# --------------------------------------------------------------------------- #
+# Company-view card (Phase 3)                                                 #
+# --------------------------------------------------------------------------- #
 
-    Layout:
-      - header: 📊 团队日报 · M-D
-      - 覆盖窗口
-      - (?) 代码仓库 fetch warning
-      - 📈 团队总览 (4 stat numbers + matter / 人 数)
-      - (zero-activity branch ends here)
-      - ⭐ 团队评分 + 4 维度 + AI 一句话总结  /  fallback 警告
-      - 👥 个人评分(降序,由 caller 排好)
-      - 😴 今日 0 活动列表
-      - ❓ 未识别 commits 总数
+
+def build_company_card(facts: SharedFacts, narrative: CompanyNarrative) -> dict:
+    """飞书交互卡片字典,直接给 FeishuNotifier.broadcast_card。
+
+    布局:
+      header:📊 公司日报 · M-D
+      template:blue(AI 成功)/ wathet(fallback / no_activity)
+      body:
+        覆盖窗口
+        团队总览(简短统计行)
+        公司视角叙事(主体段落)
+        tone 提示(active/steady/stalled 配色 emoji)
+        AI 缺席提示(仅 fallback 状态)
     """
-    s = report.summary
-    sc = report.scoring
-    template = "blue" if sc.status == "ai" else "wathet"
-    header = f"📊 团队日报 · {s.window.label}"
+    s = facts.summary
+    template = "blue" if narrative.status == "ai" else "wathet"
+    header = f"📊 公司日报 · {s.window.label}"
 
     parts: list[str] = []
 
-    # Covered window
     parts.append(
         f"📅 覆盖窗口:{_fmt_dt(s.window.since)} → {_fmt_dt(s.window.until)}"
     )
-    if s.fetch_warning:
-        parts.append(f"⚠️ 代码仓库未刷新({s.fetch_warning})")
     parts.append("")
 
-    # Team stats — matter 主线在前,代码辅助参考在后
+    # Team stats — 简短一行,公司视角不堆数字
     parts.append("**📈 团队总览**")
     parts.append(
-        f"- matter 事件 **{s.total_files}** 篇 · "
+        f"matter 事件 **{s.total_files}** 篇 · "
         f"状态推进 **{s.total_status_changes}** 次 · "
-        f"评论 **{s.total_comments}** 条"
+        f"评论 **{s.total_comments}** 条 · "
+        f"涉及 matter **{s.matters_touched}** 个 · "
+        f"活跃成员 **{facts.n_active}** 人"
     )
-    n_active = sum(1 for ua in report.user_activities if ua.is_active)
-    parts.append(
-        f"- 涉及 matter **{s.matters_touched}** 个 · "
-        f"活跃成员 **{n_active}** 人"
-    )
-    if s.total_commits:
-        parts.append(
-            f"- _配套代码提交 {s.total_commits} 个(辅助参考)_"
-        )
     parts.append("")
 
-    # Zero-activity short-circuit
-    if (
-        s.total_files == 0
-        and s.total_commits == 0
-        and s.total_comments == 0
-    ):
-        parts.append("😴 今日团队无活动(节假日 / 集中放空)")
-        return _card_shell(
-            header=header,
-            template=template,
-            markdown="\n".join(parts).rstrip(),
-        )
+    # 整体定性 emoji(状态可视化)
+    tone_emoji = {
+        "active": "🚀",
+        "steady": "🌊",
+        "stalled": "⚠️",
+    }.get(narrative.tone, "")
+    tone_label = {
+        "active": "积极推进",
+        "steady": "平稳推进",
+        "stalled": "偏停滞",
+    }.get(narrative.tone, narrative.tone)
 
-    # Team score block
-    if sc.status == "ai":
-        parts.append(
-            f"**⭐ 团队评分:{_stars(sc.team_score)} ({sc.team_score})**"
-        )
-        sub = sc.team_sub_scores
-        parts.append(
-            f"产出 {_fmt_sub(sub.get('output'))} · "
-            f"推进 {_fmt_sub(sub.get('progress'))} · "
-            f"阻塞 {_fmt_sub(sub.get('blocker'))} · "
-            f"协作 {_fmt_sub(sub.get('collab'))}"
-        )
-        if sc.team_summary:
-            parts.append(f"_{sc.team_summary}_")
-    else:
-        parts.append("**⚠️ AI 评分缺失,以下仅展示统计**")
-        if sc.fallback_reason:
-            parts.append(f"_(原因:{sc.fallback_reason})_")
+    parts.append(f"**{tone_emoji} 整体节奏:{tone_label}**")
     parts.append("")
+    parts.append(narrative.summary)
 
-    # Per-user scores
-    if sc.per_user:
-        parts.append("**👥 个人评分**")
-        ua_by_pinyin = {ua.pinyin: ua for ua in report.user_activities}
-        for u in sc.per_user:
-            ua = ua_by_pinyin.get(u.pinyin)
-            display = ua.display_name if ua else u.pinyin
-            parts.append(
-                f"**{display}** · {_stars(u.score)} ({u.score})"
-            )
-            if u.summary:
-                parts.append(f"  · {u.summary}")
-            if u.highlights:
-                parts.append(f"  · {' / '.join(u.highlights)}")
+    # Fallback 提示
+    if narrative.status == "fallback":
         parts.append("")
+        parts.append("_(AI 公司视角生成失败,以上仅展示统计;请管理员检查日志)_")
+        if narrative.fallback_reason:
+            parts.append(f"_原因:{narrative.fallback_reason}_")
 
-    # Inactive list
-    if s.inactive_users:
-        parts.append(f"😴 今日 0 活动:{', '.join(s.inactive_users)}")
-    # Unattributed commits 是 author 映射运维提示,不是事项异常 —— 用淡化样式
-    # 提醒管理员去补 daily_report.commit_author_overrides,而不是放在主区让人误以为
-    # "团队有 N 个未识别贡献是个大问题"
-    if s.unattributed_commits:
-        parts.append(
-            f"_运维提示:{len(s.unattributed_commits)} 个 commit 暂未关联到用户,"
-            f"可在 settings 的 `daily_report.commit_author_overrides` 补充映射_"
-        )
+    parts.append("")
+    parts.append("_本日报由 AI 基于 Pivot matter 数据生成,仅供管理参考,不作为最终结论。_")
+
+    return _card_shell(
+        header=header,
+        template=template,
+        markdown="\n".join(parts).rstrip(),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Personal-view card (Phase 4 占位)                                            #
+# --------------------------------------------------------------------------- #
+
+
+def build_personal_card(facts: SharedFacts, narrative: PersonalNarrative) -> dict:
+    """飞书交互卡片字典,Phase 4 个人视角报告。
+
+    布局:
+      header:👥 个人日报 · M-D
+      template:blue(AI 成功)/ wathet(fallback / no_active_users)
+      body:
+        覆盖窗口
+        活跃成员逐人一行(LLM 叙述)
+        无活动成员合并到一行(顿号串联)—— dengke 原话"明确写没有
+          输入和输出",但渲染层合并以避免 20+ 重复行撑爆篇幅
+        AI 缺席提示(仅 fallback)
+        AI 分析免责
+    """
+    s = facts.summary
+    template = "blue" if narrative.status == "ai" else "wathet"
+    header = f"👥 个人日报 · {s.window.label}"
+
+    parts: list[str] = []
+    parts.append(
+        f"📅 覆盖窗口:{_fmt_dt(s.window.since)} → {_fmt_dt(s.window.until)}"
+    )
+    parts.append("")
+
+    active = [e for e in narrative.entries if e.has_activity]
+    inactive = [e for e in narrative.entries if not e.has_activity]
+
+    if narrative.status == "no_active_users":
+        parts.append("**🌙 团队动态**")
+        parts.append("今日团队成员在 Pivot 上均无任何输入和输出。")
+    else:
+        parts.append("**👥 团队动态**")
+        for e in active:
+            parts.append(f"· **{e.display_name}**:{e.narrative}")
+        if inactive:
+            names = "、".join(e.display_name for e in inactive)
+            parts.append(f"· {NO_ACTIVITY_NARRATIVE}:{names}")
+
+    if narrative.status == "fallback":
+        parts.append("")
+        parts.append("_(AI 个人视角生成失败,以上为程序侧统计 stub;请管理员检查日志)_")
+        if narrative.fallback_reason:
+            parts.append(f"_原因:{narrative.fallback_reason}_")
+
+    parts.append("")
+    parts.append("_本日报由 AI 基于 Pivot matter 数据生成,仅供管理参考,不作为最终结论;不用于绩效评价。_")
 
     return _card_shell(
         header=header,
@@ -133,25 +153,6 @@ def build_daily_report_card(report: TeamReport) -> dict:
 # --------------------------------------------------------------------------- #
 # format helpers                                                              #
 # --------------------------------------------------------------------------- #
-
-
-def _stars(score: float) -> str:
-    """Render a 1.0~5.0 score as a 5-char ★/☆ string.
-
-    Uses floor() so 4.5 reads as ★★★★☆ and 4.0 also ★★★★☆ — the half-step
-    is conveyed by the numeric `(4.5)` shown next to it. Avoiding the
-    half-star unicode (⯪/½) sidesteps font-fallback issues in Feishu cards."""
-    if score is None:
-        return "─────"
-    full = max(0, min(5, int(score)))
-    return "★" * full + "☆" * (5 - full)
-
-
-def _fmt_sub(v: float | None) -> str:
-    """Sub-score may be None in fallback mode."""
-    if v is None:
-        return "—"
-    return f"{v:.1f}"
 
 
 def _fmt_dt(dt: datetime) -> str:

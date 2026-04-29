@@ -18,6 +18,33 @@ _LIST_CHATS_ENDPOINT = "https://open.feishu.cn/open-apis/im/v1/chats"
 _SEND_MESSAGE_ENDPOINT = "https://open.feishu.cn/open-apis/im/v1/messages"
 _TIMEOUT = 10.0
 
+# 偶发的 CN 网络冷连接 SSL 握手超时(`_ssl.c:993: handshake timed out`)
+# 在飞书 API 上不算少见。一次重试就能让 80%+ 的抖动通过,所以集中
+# 在两个 HTTP 调用包一层。
+_TRANSIENT_HTTP_ERRORS = (
+    httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ConnectError,
+)
+
+
+def _http_get_with_retry(url: str, **kwargs) -> httpx.Response:
+    """One retry on transient connection errors."""
+    try:
+        return httpx.get(url, **kwargs)
+    except _TRANSIENT_HTTP_ERRORS as e:
+        log.warning("notify GET transient %s, retrying once: %s",
+                    type(e).__name__, e)
+        return httpx.get(url, **kwargs)
+
+
+def _http_post_with_retry(url: str, **kwargs) -> httpx.Response:
+    """One retry on transient connection errors."""
+    try:
+        return httpx.post(url, **kwargs)
+    except _TRANSIENT_HTTP_ERRORS as e:
+        log.warning("notify POST transient %s, retrying once: %s",
+                    type(e).__name__, e)
+        return httpx.post(url, **kwargs)
+
 
 class Notifier(Protocol):
     def notify_new_thread(
@@ -298,7 +325,7 @@ class FeishuNotifier:
             params: dict[str, object] = {"page_size": 100}
             if page_token:
                 params["page_token"] = page_token
-            resp = httpx.get(
+            resp = _http_get_with_retry(
                 _LIST_CHATS_ENDPOINT, params=params,
                 headers={"Authorization": f"Bearer {token}"}, timeout=_TIMEOUT,
             )
@@ -318,7 +345,7 @@ class FeishuNotifier:
 
     def _send(self, token: str, receive_id: str, receive_id_type: str, card: dict) -> bool:
         try:
-            resp = httpx.post(
+            resp = _http_post_with_retry(
                 _SEND_MESSAGE_ENDPOINT,
                 params={"receive_id_type": receive_id_type},
                 headers={
