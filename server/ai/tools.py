@@ -18,6 +18,8 @@ MAX_SEARCH_HITS = 20
 MAX_SNIPPET_CHARS = 240
 MAX_INDEX_BYTES = 60_000
 MAX_POST_BODY_CHARS = 20_000
+MAX_BATCH_POSTS = 30
+MAX_BATCH_POST_CHARS = 6_000
 WHITELIST_TTL_SECONDS = 60
 
 
@@ -154,6 +156,31 @@ class AITools:
             {
                 "type": "function",
                 "function": {
+                    "name": "read_posts",
+                    "description": (
+                        "批量读取多篇帖子正文。适合在已经通过 read_matter_index / read_thread_index "
+                        "拿到一组文件路径后，一次读取多篇，避免逐篇 read_post 耗尽工具轮数。"
+                        "paths 每次最多 30 个；单篇过长会截断。"
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "paths": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": (
+                                    "帖子路径列表，元素形如 "
+                                    "'discussions/<category>/<slug>/<filename>.md'"
+                                ),
+                            }
+                        },
+                        "required": ["paths"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "read_post",
                     "description": (
                         "读取某篇帖子（.md 文件）的正文。"
@@ -189,6 +216,9 @@ class AITools:
                 return self._read_thread_index(str(arguments.get("thread_slug") or "").strip())
             if name == "read_matter_index":
                 return self._read_matter_index(str(arguments.get("matter_id") or "").strip())
+            if name == "read_posts":
+                paths = arguments.get("paths")
+                return self._read_posts(paths if isinstance(paths, list) else [])
             if name == "read_post":
                 return self._read_post(str(arguments.get("path") or "").strip())
             raise ToolError(f"未知工具：{name}")
@@ -373,6 +403,23 @@ class AITools:
             default_flow_style=False,
         ).rstrip()
         return f"---\n{fm_text}\n---\n{body}{clipped}"
+
+    def _read_posts(self, paths: list[Any]) -> str:
+        clean_paths = [str(p).strip() for p in paths if str(p).strip()]
+        if not clean_paths:
+            raise ToolError("read_posts 需要非空 paths 列表")
+        if len(clean_paths) > MAX_BATCH_POSTS:
+            raise ToolError(f"read_posts 每次最多读取 {MAX_BATCH_POSTS} 篇")
+
+        sections: list[str] = []
+        for path in clean_paths:
+            content = self._read_post(path)
+            clipped = ""
+            if len(content) > MAX_BATCH_POST_CHARS:
+                clipped = f"\n...（单篇已截断，原文 {len(content)} 字符）"
+                content = content[:MAX_BATCH_POST_CHARS]
+            sections.append(f"===== {path} =====\n{content}{clipped}")
+        return "\n\n".join(sections)
 
     # ── Whitelist ──────────────────────────────────────────────────────────────
 

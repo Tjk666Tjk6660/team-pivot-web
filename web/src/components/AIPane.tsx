@@ -664,12 +664,37 @@ function fullActionText(t: AIToolUse): string {
         typeof t.arguments?.path === "string" ? t.arguments.path : "";
       return path ? path.split("/").pop() || path : "帖子";
     }
+    case "read_posts": {
+      const paths = toolPaths(t);
+      if (paths.length === 0) return "批量帖子";
+      const first = paths[0].split("/").pop() || paths[0];
+      return paths.length === 1
+        ? first
+        : `${paths.length} 篇：${first} 等`;
+    }
     default:
       return t.name;
   }
 }
 
 function TimelineRow({ tool }: { tool: AIToolUse }) {
+  if (tool.name === "read_posts") {
+    const paths = toolPaths(tool);
+    if (paths.length > 0) {
+      return (
+        <>
+          {paths.map((path, idx) => (
+            <TimelinePostRow
+              key={`${tool.id}-${path}-${idx}`}
+              path={path}
+              pending={!tool.output_summary}
+            />
+          ))}
+        </>
+      );
+    }
+  }
+
   const s = describeToolCall(tool);
   const pending = !tool.output_summary;
   return (
@@ -696,6 +721,39 @@ function TimelineRow({ tool }: { tool: AIToolUse }) {
   );
 }
 
+function TimelinePostRow({
+  path,
+  pending,
+}: {
+  path: string;
+  pending: boolean;
+}) {
+  const filename = path.split("/").pop() ?? path;
+  const label = prettifyPostFilename(filename) || "post";
+  return (
+    <li className="relative flex items-center gap-2">
+      <span
+        aria-hidden
+        className={`absolute -left-[15px] top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full ring-2 ring-[var(--surface)] ${
+          pending ? "bg-[var(--text-fade)] animate-pulse" : "bg-[var(--ok-500)]"
+        }`}
+      />
+      <span
+        className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded bg-[var(--surface-alt)] px-1.5 py-0.5 text-[var(--text-soft)] ring-1 ring-inset ring-[var(--line)]"
+        title={path}
+      >
+        <FileText className="h-3 w-3 shrink-0 text-[var(--text-mute)]" />
+        <span className="truncate">{label}</span>
+      </span>
+      {pending && (
+        <span className="shrink-0 animate-pulse text-[var(--text-fade)]">
+          …
+        </span>
+      )}
+    </li>
+  );
+}
+
 type ChipStyle = {
   Icon: typeof Search;
   tone: string;
@@ -703,6 +761,12 @@ type ChipStyle = {
   label: string;
   title: string;
 };
+
+function toolPaths(t: AIToolUse): string[] {
+  return Array.isArray(t.arguments?.paths)
+    ? t.arguments.paths.filter((p): p is string => typeof p === "string")
+    : [];
+}
 
 function describeToolCall(t: AIToolUse): ChipStyle {
   switch (t.name) {
@@ -748,6 +812,26 @@ function describeToolCall(t: AIToolUse): ChipStyle {
         iconTone: "text-[var(--text-mute)]",
         label: prettifyPostFilename(filename) || "post",
         title: path || "read_post",
+      };
+    }
+    case "read_posts": {
+      const paths = toolPaths(t);
+      const filenames = paths
+        .map((path) => path.split("/").pop() || path)
+        .filter(Boolean);
+      const preview = filenames
+        .slice(0, 3)
+        .map((name) => prettifyPostFilename(name))
+        .join(" / ");
+      return {
+        Icon: FileText,
+        tone: "bg-[var(--surface-alt)] text-[var(--text-soft)] ring-[var(--line)]",
+        iconTone: "text-[var(--text-mute)]",
+        label:
+          paths.length > 0
+            ? `批量读取 ${paths.length} 篇${preview ? `：${preview}` : ""}`
+            : "批量读取帖子",
+        title: paths.length > 0 ? paths.join("\n") : "read_posts",
       };
     }
     default:
