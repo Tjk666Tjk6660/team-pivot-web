@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, Bot, Maximize2, Minimize2, Sparkles, X } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { ArrowLeft } from "lucide-react";
 import {
   createMatter,
   deleteDraft,
@@ -18,7 +17,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { OwnerPicker } from "@/components/matter/OwnerPicker";
-import { AIPane } from "@/components/AIPane";
 import {
   MentionField,
   emptyMention,
@@ -27,13 +25,15 @@ import {
 import { searchContacts, type MentionBlock } from "@/api";
 import { formatSaveStatus, useDraftAutosave } from "@/hooks/useDraftAutosave";
 import {
-  applyAIDraft,
   computeAtPublish,
   onUserEdit,
   type BodySourceState,
 } from "@/lib/bodySource";
 import { useConfirmPublishQuality } from "@/hooks/useConfirmPublishQuality";
-import { newMatterThreadKey, useDashboard } from "@/pages/Dashboard";
+import {
+  NewMatterGuidedFlow,
+  type ClassicBridgeSnapshot,
+} from "@/pages/NewMatterGuidedFlow";
 
 const NEW_CATEGORY_OPTION = "__new_category__";
 const CATEGORY_PATTERN = /^[^/\\:*?"<>|\t\n\r]{1,20}$/;
@@ -43,6 +43,50 @@ const CATEGORY_PATTERN = /^[^/\\:*?"<>|\t\n\r]{1,20}$/;
 const NEW_MATTER_PSEUDO_ID = "_new_matter_";
 
 export function NewMatter({ me }: { me: Me }) {
+  // Two paths: guided AI conversation (default, mirrors AICraft demo) and the
+  // classic form for users who already know what they want to write.
+  // bridge carries the classic form's full snapshot (title, category, type,
+  // mentions, body) across into the guided flow when the user picks
+  // "进行 AI 讨论" in the publish quality gate. The guided flow then skips
+  // the manual steps and jumps straight to AI drafting.
+  const [mode, setMode] = useState<"guided" | "classic">("guided");
+  const [bridge, setBridge] = useState<ClassicBridgeSnapshot | null>(null);
+  if (mode === "guided") {
+    return (
+      <NewMatterGuidedFlow
+        me={me}
+        initialBridge={bridge ?? undefined}
+        onSwitchToClassic={() => {
+          setBridge(null);
+          setMode("classic");
+        }}
+      />
+    );
+  }
+  return (
+    <NewMatterClassicForm
+      me={me}
+      onSwitchToGuided={() => {
+        setBridge(null);
+        setMode("guided");
+      }}
+      onSwitchToGuidedWithSnapshot={(snap) => {
+        setBridge(snap);
+        setMode("guided");
+      }}
+    />
+  );
+}
+
+function NewMatterClassicForm({
+  me,
+  onSwitchToGuided,
+  onSwitchToGuidedWithSnapshot,
+}: {
+  me: Me;
+  onSwitchToGuided: () => void;
+  onSwitchToGuidedWithSnapshot: (snap: ClassicBridgeSnapshot) => void;
+}) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const draftIdFromUrl = searchParams.get("draft");
@@ -51,15 +95,11 @@ export function NewMatter({ me }: { me: Me }) {
   const [categoryMode, setCategoryMode] = useState<"select" | "create">("select");
   const [availableCategories, setAvailableCategories] = useState<string[]>([]);
   const [title, setTitle] = useState("");
-  const [aiTitleSuggestion, setAiTitleSuggestion] = useState<string | null>(null);
   const [initialType, setInitialType] = useState<DocType>("think");
   const [body, setBody] = useState("");
   const [bodyState, setBodyState] = useState<BodySourceState>({
     body_source: "manual",
   });
-  // Cached AI <summary> from path A. When present, submit() uses it directly
-  // instead of firing the legacy "summary-from-body" AI call.
-  const [aiSummary, setAiSummary] = useState<string>("");
   const [owner, setOwner] = useState<string>(me.open_id);
   const [ownerDisplayName, setOwnerDisplayName] = useState<string>(me.name);
   const [mentions, setMentions] = useState<MentionBlock>(() => emptyMention());
@@ -67,36 +107,13 @@ export function NewMatter({ me }: { me: Me }) {
   const submitting = stage !== "idle";
   const [draftId, setDraftId] = useState<string | null>(null);
   const [draftLoaded, setDraftLoaded] = useState(false);
-  // AIPane open state — default true so the assistant is visible the moment
-  // the page loads. On md+ it's the permanent right column; on narrow it's a
-  // fullscreen overlay the user can dismiss via the X.
-  const [aiOpen, setAiOpen] = useState(true);
-  // md+ only: toggle the side panel into a fullscreen workspace. Mirrors the
-  // reply-path AIPane behavior so the chrome looks consistent.
-  const [aiFullscreen, setAiFullscreen] = useState(false);
   // Resolved open_id → display-name map for the mention chips. MentionField
   // mutates this in place when the user picks from the dropdown, but on
   // draft restore we only have open_ids — fetch the names lazily.
   const [resolvedNames, setResolvedNames] = useState<Record<string, string>>({});
 
-  const { ai } = useDashboard();
   const { dialog: qualityDialog, confirm: confirmPublishQuality } =
     useConfirmPublishQuality();
-
-  // Track whether body was just set from an AI draft so the next onChange
-  // tick (React batches setBody → re-render → controlled input echo) doesn't
-  // immediately demote the source. Without this guard, the very same body
-  // value passing through onChange would still cost one onUserEdit call.
-  const lastAIWriteRef = useRef<string | null>(null);
-  // Used to scroll the user back to the form after AI fills the body.
-  // On narrow screens the AIPane stacks below the form, so after the AI
-  // generates the draft the user otherwise stays at the AIPane section
-  // and doesn't notice the body got filled.
-  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
-  // Outer scroll container on narrow screens. We reset its scrollTop after
-  // an AI fill so the user lands on the form (which is at the top), rather
-  // than relying on scrollIntoView which races React's render commit.
-  const pageScrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     Promise.all([fetchMatters(), fetchDrafts()])
@@ -145,9 +162,6 @@ export function NewMatter({ me }: { me: Me }) {
             setBodyState({ body_source: "ai", body_source_snapshot: snap });
           } else {
             setBodyState({ body_source: "manual" });
-          }
-          if (typeof payload.ai_summary === "string") {
-            setAiSummary(payload.ai_summary);
           }
           const rawMentions = payload.mentions as
             | { open_ids?: unknown; comments?: unknown }
@@ -219,7 +233,6 @@ export function NewMatter({ me }: { me: Me }) {
         ...(bodyState.body_source_snapshot
           ? { body_source_snapshot: bodyState.body_source_snapshot }
           : {}),
-        ...(aiSummary ? { ai_summary: aiSummary } : {}),
         ...(mentions.open_ids.length > 0 ? { mentions } : {}),
       },
     }),
@@ -227,81 +240,14 @@ export function NewMatter({ me }: { me: Me }) {
     deps: [
       draftLoaded, isDirty, stage,
       title, category, body, initialType, owner, ownerDisplayName,
-      bodyState.body_source, bodyState.body_source_snapshot, aiSummary,
+      bodyState.body_source, bodyState.body_source_snapshot,
       mentions.open_ids.length, mentions.comments,
     ],
   });
 
-  // Stable thread key for AIPane. Falls back to a placeholder before the
-  // draft id materializes; once autosave creates the draft, the AIPane
-  // remounts with the real key. We mitigate the rare lost-conversation case
-  // by recommending the user type at least one form field before opening AI
-  // (in practice everyone does anyway).
-  const threadKey = useMemo(
-    () => newMatterThreadKey(draftId ?? "tmp"),
-    [draftId],
-  );
-
-  const titleAndBodyDirty = useMemo(
-    () => ({ title: title.trim(), body: body.trim() }),
-    [title, body],
-  );
-
-  const handleAIDraft = async (
-    content: string,
-    _replyTo: string,
-    summary?: string,
-    aiTitle?: string,
-  ): Promise<boolean> => {
-    lastAIWriteRef.current = content;
-    setBody(content);
-    setBodyState(applyAIDraft(content));
-    if (summary) setAiSummary(summary);
-    if (aiTitle && aiTitle.trim()) {
-      const trimmed = aiTitle.trim();
-      if (!titleAndBodyDirty.title) {
-        setTitle(trimmed);
-        setAiTitleSuggestion(null);
-      } else if (trimmed !== titleAndBodyDirty.title) {
-        setAiTitleSuggestion(trimmed);
-      }
-    }
-    // On narrow screens AIPane is a fullscreen overlay; close it after a
-    // successful fill so the user lands back on the form (mirrors how the
-    // reply path auto-minimizes its AIPane in MatterDetailPane).
-    if (
-      typeof window !== "undefined" &&
-      !window.matchMedia("(min-width: 768px)").matches
-    ) {
-      setAiOpen(false);
-      // Scroll page back to top + briefly focus the body so the user sees
-      // what AI just wrote. setTimeout > rAF — gives the overlay-close
-      // animation a moment to commit before we re-focus.
-      window.setTimeout(() => {
-        pageScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-        bodyRef.current?.focus({ preventScroll: true });
-      }, 50);
-    }
-    return true;
-  };
-
   const onBodyChange = (next: string) => {
     setBody(next);
-    // If this onChange echoes the exact AI write we just performed, skip
-    // re-evaluating the state machine (saves one LCS pass on long bodies).
-    if (lastAIWriteRef.current !== null && next === lastAIWriteRef.current) {
-      lastAIWriteRef.current = null;
-      return;
-    }
-    lastAIWriteRef.current = null;
     setBodyState((s) => onUserEdit(s, next));
-  };
-
-  const adoptAITitle = () => {
-    if (aiTitleSuggestion) {
-      setTitle(aiTitleSuggestion);
-      setAiTitleSuggestion(null);
-    }
   };
 
   const categoryOptions = category.trim() && !availableCategories.includes(category.trim())
@@ -349,15 +295,13 @@ export function NewMatter({ me }: { me: Me }) {
 
   const performCreate = async (sourceForBackend: "ai" | "manual") => {
     setStage("generating");
-    let summary = aiSummary.trim();
-    if (!summary) {
-      try {
-        summary = await generateSummaryFromBody();
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : "生成 summary 失败");
-        setStage("idle");
-        return;
-      }
+    let summary = "";
+    try {
+      summary = await generateSummaryFromBody();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "生成 summary 失败");
+      setStage("idle");
+      return;
     }
     if (!summary) {
       toast.error("AI 生成的 summary 为空");
@@ -414,46 +358,33 @@ export function NewMatter({ me }: { me: Me }) {
     }
 
     const finalSource = computeAtPublish(bodyState, body);
-    const active = ai.activeStream;
-    const blockedByAIBusy =
-      finalSource === "manual" &&
-      !!active &&
-      active.threadKey !== threadKey;
-
     const gate = await confirmPublishQuality({
       bodySource: finalSource,
-      blockedByAIBusy,
-      busyTitle: blockedByAIBusy ? active?.title : undefined,
+      // Classic mode has no AI side panel anymore, so "busy" never applies.
+      blockedByAIBusy: false,
     });
     if (gate === "cancel") return;
     if (gate === "send_to_ai") {
-      ai.setInput(threadKey, body);
-      // On narrow screens AIPane is hidden behind a button; force it open
-      // so the user can see the content was filled and continue chatting.
-      // On md+ the right column is always visible; setAiOpen is harmless.
-      setAiOpen(true);
-      toast.success("内容已填入 AI 输入框，可以继续追加说明再发送");
+      // Hand the full form snapshot off to the guided flow. The guided flow
+      // skips the manual question-and-answer steps and goes straight to AI
+      // drafting based on the user's typed content.
+      onSwitchToGuidedWithSnapshot({
+        body,
+        title: title.trim(),
+        category: category.trim(),
+        docType: initialType,
+        mentions,
+      });
+      toast.success("已切换到 AI 引导，正在为你重新起草…");
       return;
     }
     await performCreate(finalSource);
   };
 
   return (
-    <div
-      ref={pageScrollRef}
-      className="flex h-full min-h-0 flex-col overflow-y-auto md:flex-row md:overflow-hidden"
-    >
+    <div className="h-full min-h-0 overflow-y-auto">
       {qualityDialog}
-      {/* On narrow screens the outer container is the sole scroller so the
-          page reads as one continuous flow (form, then AIPane below). On md+
-          the form column gets its own internal scroll so it can be tall
-          without pushing AIPane out of the side panel. */}
-      <div className="min-h-0 flex-1 md:overflow-y-auto">
-        {/* Cap the form at max-w-5xl and center it. The cap keeps the layout
-            readable when the user closes / fullscreen-toggles AIPane on a
-            big monitor; the column is otherwise free to grow up to that
-            width. */}
-        <div className="mx-auto w-full max-w-5xl space-y-4 px-3 py-4 sm:px-5 sm:py-5 md:space-y-6">
+      <div className="mx-auto w-full max-w-4xl space-y-4 px-3 py-4 sm:px-5 sm:py-5 md:space-y-6">
           <Button
             asChild
             variant="ghost"
@@ -490,27 +421,17 @@ export function NewMatter({ me }: { me: Me }) {
               )}
             </div>
             <p className="max-w-2xl text-sm leading-7 text-[var(--text-soft)]">
-              和右侧 AI 助手讨论后让它起草，或者直接手写。表单会自动保存草稿。
+              直接手写正文。需要 AI 帮你起草，可以
+              <button
+                type="button"
+                onClick={onSwitchToGuided}
+                className="ml-1 text-[var(--accent)] underline-offset-2 hover:underline"
+              >
+                切回 AI 引导
+              </button>
+              。表单会自动保存草稿。
             </p>
           </div>
-
-          {/* AI assistant trigger: shown when AIPane is closed on either
-              breakpoint. Auto-width so it doesn't stretch across the form
-              when the user closes the side panel. */}
-          {!aiOpen && (
-            <div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="inline-flex items-center gap-2 rounded-[var(--r-md)]"
-                onClick={() => setAiOpen(true)}
-              >
-                <Sparkles className="h-4 w-4 text-[var(--accent)]" />
-                打开 AI 助手
-              </Button>
-            </div>
-          )}
 
           <Card className="paper-panel rounded-[1.25rem] border sm:rounded-[1.75rem]">
             <form onSubmit={submit} className="space-y-6 p-4 sm:p-8">
@@ -598,15 +519,6 @@ export function NewMatter({ me }: { me: Me }) {
                     maxLength={200}
                     className="h-11 rounded-[var(--r-md)] bg-[var(--surface-alt)]"
                   />
-                  {aiTitleSuggestion && aiTitleSuggestion !== title && (
-                    <button
-                      type="button"
-                      onClick={adoptAITitle}
-                      className="self-start text-xs text-[var(--text-mute)] hover:text-[var(--accent)]"
-                    >
-                      AI 建议：{aiTitleSuggestion} · 点击采用
-                    </button>
-                  )}
                 </div>
               </div>
 
@@ -644,7 +556,6 @@ export function NewMatter({ me }: { me: Me }) {
                       正文（markdown）<span className="text-[var(--danger-500)]"> *</span>
                     </Label>
                     <Textarea
-                      ref={bodyRef}
                       id="body"
                       value={body}
                       onChange={(e) => onBodyChange(e.target.value)}
@@ -709,74 +620,5 @@ export function NewMatter({ me }: { me: Me }) {
           </Card>
         </div>
       </div>
-
-      {/* AI assistant: fullscreen overlay on narrow when aiOpen=true; on md+
-          a 420px side panel by default, fullscreen-toggleable. Header chrome
-          mirrors MatterDetailPane's reply AIPane (Bot label + fullscreen
-          toggle + close). */}
-      {aiOpen && (
-        <aside
-          className={cn(
-            "flex min-h-0 flex-col overflow-hidden bg-[var(--surface)]",
-            // Narrow: always fixed fullscreen overlay (no toggle needed).
-            "fixed inset-0 z-50",
-            // md+: choose between fullscreen overlay and side panel.
-            aiFullscreen
-              ? "md:fixed md:inset-0 md:z-50 md:w-auto"
-              : "md:static md:inset-auto md:z-auto md:w-[420px] md:shrink-0 md:border-l md:border-[var(--line)]",
-          )}
-        >
-          <div className="flex items-center justify-between border-b border-[var(--line)] px-4 py-3">
-            <div className="flex items-center gap-2 text-sm font-medium text-[var(--text)]">
-              <Bot className="h-4 w-4 text-[var(--accent)]" />
-              AI 助手
-            </div>
-            <div className="flex items-center gap-1">
-              {/* Fullscreen toggle is md+ only — on narrow the panel is
-                  already fullscreen. */}
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="hidden h-8 w-8 rounded-[var(--r-sm)] text-[var(--text-mute)] hover:bg-[var(--surface-alt)] md:inline-flex"
-                onClick={() => setAiFullscreen((v) => !v)}
-                title={aiFullscreen ? "退出全屏" : "全屏"}
-              >
-                {aiFullscreen ? (
-                  <Minimize2 className="h-4 w-4" />
-                ) : (
-                  <Maximize2 className="h-4 w-4" />
-                )}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 rounded-[var(--r-sm)] text-[var(--text-mute)] hover:bg-[var(--surface-alt)]"
-                onClick={() => {
-                  setAiOpen(false);
-                  setAiFullscreen(false);
-                }}
-                title="关闭"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-          <div className="min-h-0 flex-1 p-3 sm:p-4">
-            <AIPane
-              mode="new-matter"
-              matter_id={NEW_MATTER_PSEUDO_ID}
-              threadKey={threadKey}
-              threadTitle={title.trim() || "新讨论"}
-              // Treat any existing body as "draft already filled" so AIPane
-              // asks the overwrite confirm before AI replaces user content.
-              hasReplyDraft={!!body.trim()}
-              onUseDraftAsReply={handleAIDraft}
-            />
-          </div>
-        </aside>
-      )}
-    </div>
   );
 }
