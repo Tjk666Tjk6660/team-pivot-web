@@ -831,8 +831,7 @@ def publish_matter_owner_change(
     data = read_matter_index(index_path)
     if data is None:
         raise MatterNotFoundError(matter_id)
-    matter_block = data.get("matter") or {}
-    from_owner = matter_block.get("owner")  # may be None for unassigned
+    from_owner = _effective_matter_owner(data)
 
     # Same strictness as create-time matter owner: require a registered user
     # (with pinyin), otherwise reject. Permissive contact fallback isn't
@@ -921,6 +920,17 @@ def _resolve_owner_for_index(
         if u and u.pinyin:
             return u.pinyin
     return value
+
+
+def _effective_matter_owner(matter_data: dict) -> str | None:
+    matter = matter_data.get("matter") or {}
+    if "owner" in matter:
+        return matter.get("owner")
+    for item in matter_data.get("timeline") or []:
+        if item.get("type") == "owner_change":
+            continue
+        return item.get("owner") or item.get("creator")
+    return None
 
 
 def _build_timeline_item(

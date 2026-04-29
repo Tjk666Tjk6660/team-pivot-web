@@ -346,13 +346,11 @@ def test_transfer_owner_status_stale(client):
     assert r.json()["detail"]["code"] == "status_stale"
 
 
-# ---------- unassigned matter (design §6.1, §6.2) ----------
+# ---------- legacy missing owner / unassigned matter ----------
 
 
-def test_transfer_unassigned_to_owner(client, tmp_path):
-    """Hand-craft an unassigned matter (no matter.owner) and transfer to bob."""
-    # Create matter then hand-edit yaml to remove the owner field. Cheaper than
-    # a full unassigned-creation API path which doesn't exist in v1.
+def test_transfer_legacy_missing_owner_uses_first_timeline_owner(client, tmp_path):
+    """Legacy indexes without matter.owner use first timeline owner as current owner."""
     mid = _create_matter(client)
     from server.matter_index import matter_index_path, read_matter_index, _atomic_write_yaml
     p = matter_index_path(client.workspace.index_dir, mid)
@@ -367,7 +365,7 @@ def test_transfer_unassigned_to_owner(client, tmp_path):
     assert r.status_code == 200
     assert r.json()["matter"]["owner"] == "lisi"
     last_item = client.get(f"/api/matters/{mid}").json()["timeline"][-1]
-    assert last_item["from_owner"] is None
+    assert last_item["from_owner"] == "dengke"
     assert last_item["to_owner"] == "lisi"
 
 
@@ -387,3 +385,22 @@ def test_transfer_unassigned_with_status_to_executing(client):
     assert r.status_code == 200
     assert r.json()["matter"]["owner"] == "lisi"
     assert r.json()["matter"]["current_status"] == "executing"
+
+
+def test_transfer_explicit_null_owner_is_unassigned(client):
+    mid = _create_matter(client)
+    from server.matter_index import matter_index_path, read_matter_index, _atomic_write_yaml
+    p = matter_index_path(client.workspace.index_dir, mid)
+    data = read_matter_index(p)
+    data["matter"]["owner"] = None
+    _atomic_write_yaml(p, data)
+
+    r = client.post(f"/api/matters/{mid}/owner", json={
+        "to_owner": "ou_2",
+        "reason": "claim",
+    })
+
+    assert r.status_code == 200
+    last_item = client.get(f"/api/matters/{mid}").json()["timeline"][-1]
+    assert last_item["from_owner"] is None
+    assert last_item["to_owner"] == "lisi"

@@ -29,15 +29,6 @@ export function OwnerChangeRow({ item }: { item: TimelineOwnerChangeItem }) {
       <div className="mt-2 text-xs leading-5 text-[var(--text-mute)]">
         原因：{item.reason}
       </div>
-      {item.status_change && (
-        <div className="mt-3 flex items-center gap-2 rounded-[var(--r-sm)] border border-[var(--line)] bg-[var(--surface-alt)] px-3 py-2 text-sm text-[var(--text)]">
-          <ArrowRight className="h-4 w-4 text-[var(--text-mute)]" />
-          <span className="text-[var(--text-mute)]">状态：</span>
-          <strong>{item.status_change.from}</strong>
-          <span>→</span>
-          <strong>{item.status_change.to}</strong>
-        </div>
-      )}
     </article>
   );
 }

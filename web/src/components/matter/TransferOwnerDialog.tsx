@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { ArrowRight, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import {
   transferMatterOwner,
   type MatterMeta,
-  type StatusChange,
   type TransferMatterOwnerResponse,
 } from "@/api";
 import { Button } from "@/components/ui/button";
@@ -38,7 +37,6 @@ export function TransferOwnerDialog({
   const [toOwner, setToOwner] = useState("");
   const [toOwnerName, setToOwnerName] = useState("");
   const [reason, setReason] = useState("");
-  const [advance, setAdvance] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -46,10 +44,8 @@ export function TransferOwnerDialog({
     setToOwner("");
     setToOwnerName("");
     setReason("");
-    setAdvance(false);
   }, [open, matter.id]);
 
-  const canAdvance = matter.current_status === "planning";
   const trimmedReason = reason.trim();
   const disabled = submitting || !toOwner || !trimmedReason;
 
@@ -57,17 +53,12 @@ export function TransferOwnerDialog({
     if (disabled) return;
     setSubmitting(true);
     try {
-      const status_change: StatusChange | null =
-        advance && canAdvance
-          ? { from: "planning", to: "executing" }
-          : null;
       const result = await transferMatterOwner(matter.id, {
         to_owner: toOwner,
         reason: trimmedReason,
-        status_change,
       });
       onTransferred(result);
-      toast.success("已转交负责人");
+      toast.success("已更改负责人");
       onClose();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -80,9 +71,9 @@ export function TransferOwnerDialog({
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>转交负责人</DialogTitle>
+          <DialogTitle>更改负责人</DialogTitle>
           <DialogDescription>
-            记录这件事当前由谁继续推进，变更会写入时间轴。
+            记录这件事当前由谁继续推进，变更会写入时间轴，并通过飞书 IM 私聊通知新负责人。
           </DialogDescription>
         </DialogHeader>
 
@@ -130,24 +121,10 @@ export function TransferOwnerDialog({
               value={reason}
               maxLength={200}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="为什么转交给对方继续推进？"
+              placeholder="为什么更改为对方继续推进？"
             />
           </div>
 
-          {canAdvance && (
-            <label className="flex cursor-pointer items-center gap-2 rounded-[var(--r-sm)] border border-[var(--line)] bg-[var(--surface-alt)] px-3 py-2 text-sm text-[var(--text)]">
-              <input
-                type="checkbox"
-                checked={advance}
-                onChange={(e) => setAdvance(e.target.checked)}
-                className="h-4 w-4 accent-[var(--accent)]"
-              />
-              <span className="inline-flex items-center gap-1.5">
-                同时推进至 executing
-                <ArrowRight className="h-3.5 w-3.5 text-[var(--text-mute)]" />
-              </span>
-            </label>
-          )}
         </div>
 
         <DialogFooter>
@@ -156,7 +133,7 @@ export function TransferOwnerDialog({
           </Button>
           <Button type="button" disabled={disabled} onClick={submit}>
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-            确认转交
+            确认更改
           </Button>
         </DialogFooter>
       </DialogContent>

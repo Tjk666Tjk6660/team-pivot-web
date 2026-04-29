@@ -156,11 +156,11 @@ def _validate_owner_change_shape(
             f"reason exceeds {OWNER_CHANGE_REASON_MAX} chars",
         )
 
-    # from_owner must equal current matter.owner. None == None is treated as
-    # equal (design §6.1: unassigned matter can be transferred — both sides
-    # null compare equal). Use explicit `!=` rather than truthy comparison
-    # so two Nones don't accidentally trip the stale check.
-    current_owner = matter.get("owner")
+    # from_owner must equal the effective current owner. Legacy indexes may
+    # lack matter.owner entirely; in that case the UI falls back to the first
+    # timeline file's owner/creator, so validation uses the same rule. An
+    # explicit owner: null still means truly unassigned.
+    current_owner = _effective_matter_owner(index_data)
     from_owner = item.get("from_owner")
     if from_owner != current_owner:
         return _fail(
@@ -207,6 +207,17 @@ def _validate_owner_change_shape(
             )
 
     return OK
+
+
+def _effective_matter_owner(index_data: dict[str, Any]) -> str | None:
+    matter = index_data.get("matter") or {}
+    if "owner" in matter:
+        return matter.get("owner")
+    for item in index_data.get("timeline") or []:
+        if item.get("type") == "owner_change":
+            continue
+        return item.get("owner") or item.get("creator")
+    return None
 
 
 def _validate_verify_shape(

@@ -288,7 +288,7 @@ class FeishuNotifier:
             thread_url=detail_url,
             status_change=status_change,
         )
-        self._broadcast(card, event=f"owner_change slug={slug}")
+        self._dm_many([to_owner_open_id], card, event=f"owner_change slug={slug}")
 
     def _thread_url(self, category: str, slug: str) -> str:
         from urllib.parse import urlencode
@@ -532,7 +532,7 @@ def build_owner_change_card(
     to_at = f'<at id="{to_owner_open_id}"></at>'
     from_label = from_owner_name or "未分配"
     rows: list[tuple[str, str]] = [
-        ("操作", f"{actor_name} 转交负责人"),
+        ("操作", f"{actor_name} 更改负责人"),
         ("负责人", f"{from_label} → {to_at}"),
         ("新负责人", to_owner_name),
         ("原因", _oneline(reason)),
@@ -545,7 +545,7 @@ def build_owner_change_card(
         ))
     markdown_rows = [f"**{label}**：{value}" for label, value in rows]
     return _card_shell(
-        header=f"负责人转交：{thread_title}",
+        header=f"负责人变更：{thread_title}",
         template="yellow",
         markdown="<br>".join(markdown_rows),
         button_text="查看讨论",

@@ -921,15 +921,9 @@ export function MatterDetailPane() {
                     avatarUrl={matter.owner_avatar_url}
                     unassigned={!matter.owner}
                     size="md"
-                  />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 rounded-[var(--r-sm)] px-1.5 text-xs font-medium text-[var(--text-soft)] hover:bg-[var(--surface-alt)]"
+                    asButton
                     onClick={() => setTransferOpen(true)}
-                  >
-                    转交
-                  </Button>
+                  />
                 </div>
                 <StatusBadge
                   status={matter.current_status}

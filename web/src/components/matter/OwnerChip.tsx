@@ -7,24 +7,32 @@ export function OwnerChip({
   unassigned = false,
   size = "sm",
   className,
+  asButton = false,
+  onClick,
 }: {
   name?: string | null;
   avatarUrl?: string | null;
   unassigned?: boolean;
   size?: "sm" | "md";
   className?: string;
+  asButton?: boolean;
+  onClick?: () => void;
 }) {
   const label = name || "未分配";
   const avatarSize = size === "md" ? "h-6 w-6" : "h-4 w-4";
   const textSize = size === "md" ? "text-xs" : "text-[11px]";
+  const Comp = asButton ? "button" : "span";
 
   return (
-    <span
-      title={label}
+    <Comp
+      type={asButton ? "button" : undefined}
+      title={asButton ? `更改负责人：${label}` : label}
+      onClick={onClick}
       className={cn(
         "inline-flex min-w-[5rem] max-w-[8rem] shrink-0 items-center gap-1.5 rounded-[var(--r-sm)] border border-[var(--line)] bg-[var(--surface-alt)] px-1.5 py-0.5",
         unassigned && "border-dashed text-[var(--text-fade)]",
         size === "md" && "min-w-[6rem] px-2 py-1",
+        asButton && "cursor-pointer transition-colors hover:border-[var(--accent-soft)] hover:bg-[var(--accent-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]",
         className,
       )}
     >
@@ -53,6 +61,6 @@ export function OwnerChip({
       >
         {label}
       </span>
-    </span>
+    </Comp>
   );
 }

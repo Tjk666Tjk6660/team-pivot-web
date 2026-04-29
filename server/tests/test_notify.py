@@ -135,9 +135,10 @@ def test_owner_change_card_mentions_new_owner():
     )
     body = json.dumps(card["body"], ensure_ascii=False)
     md = card["body"]["elements"][0]["content"]
-    assert card["header"]["title"]["content"] == "负责人转交：Pivot 优化"
+    assert card["header"]["title"]["content"] == "负责人变更：Pivot 优化"
     assert card["body"]["elements"][0]["tag"] == "markdown"
     assert "ou_lisi000000000000" in body
+    assert "**操作**：李帅 更改负责人" in md
     assert "**负责人**：张三 → <at id=\"ou_lisi000000000000\"></at>" in md
     assert "**原因**：后续由李四推进" in md
     assert "**状态**：计划中 → 执行中" in md
@@ -622,6 +623,34 @@ def test_feishu_notifier_thread_status_change_uses_thread_url(monkeypatch):
 
     btn_url = _extract_button_url(captured[0])
     assert "%2Ft%2Fgeneral%2Flegacy-thread" in btn_url
+
+
+def test_feishu_notifier_owner_change_sends_dm_only(monkeypatch):
+    notifier = FeishuNotifier(tokens=None, web_base_url="https://x")  # type: ignore[arg-type]
+    calls: dict[str, object] = {"broadcast": 0, "dm_open_ids": []}
+
+    def fake_broadcast(self, card, *, event):
+        calls["broadcast"] = int(calls["broadcast"]) + 1
+
+    def fake_dm_many(self, open_ids, card, *, event):
+        calls["dm_open_ids"] = list(open_ids)
+
+    monkeypatch.setattr(FeishuNotifier, "_broadcast", fake_broadcast)
+    monkeypatch.setattr(FeishuNotifier, "_dm_many", fake_dm_many)
+
+    notifier.notify_owner_change(
+        category="c",
+        slug="m1",
+        thread_title="T",
+        actor_name="Alice",
+        from_owner_name="Bob",
+        to_owner_name="Carol",
+        to_owner_open_id="ou_carol",
+        reason="换人跟进",
+    )
+
+    assert calls["broadcast"] == 0
+    assert calls["dm_open_ids"] == ["ou_carol"]
 
 
 def _extract_button_url(card: dict) -> str:

@@ -600,12 +600,10 @@ def _summarize_matter(
         out["creator"] = creator
         out["creator_display"] = resolve_id(creator, users, contacts)
         out["creator_avatar_url"] = resolve_avatar_url(creator, users, contacts)
-        # matter-level owner: prefer matter.owner; fall back to first file's
-        # creator for legacy indexes that haven't been backfilled yet (design
-        # §5.1). UI shows "未分配" when both are absent.
-        owner = matter.get("owner")
-        if not owner and creator:
-            owner = creator
+        # matter-level owner: prefer matter.owner; for legacy indexes where
+        # the key is missing, fall back to first timeline file owner/creator.
+        # Explicit owner: null still means unassigned.
+        owner = _effective_matter_owner(data)
         out["owner"] = owner
         out["owner_display"] = resolve_id(owner, users, contacts) if owner else None
         out["owner_avatar_url"] = (
@@ -615,7 +613,7 @@ def _summarize_matter(
 
 
 def _matter_has_owner(data: dict, owner: str) -> bool:
-    matter_owner = (data.get("matter") or {}).get("owner")
+    matter_owner = _effective_matter_owner(data)
     if matter_owner == owner:
         return True
     for item in data.get("timeline") or []:
@@ -650,11 +648,8 @@ def _render_matter_detail(
     file_items = [t for t in timeline_out if t.get("type") not in {"owner_change"}]
     last_file = file_items[-1] if file_items else None
     # Resolve matter-level owner display + avatar via the same fallback as
-    # _summarize_matter (matter.owner → first file's creator → null).
-    owner = matter.get("owner")
-    if not owner:
-        first_file = file_items[0] if file_items else {}
-        owner = first_file.get("creator") or None
+    # _summarize_matter (matter.owner → first file owner/creator → null).
+    owner = _effective_matter_owner({"matter": matter, "timeline": file_items})
     matter_out = {
         **matter,
         "file_count": len(file_items),
@@ -667,6 +662,17 @@ def _render_matter_detail(
         ),
     }
     return {"matter": matter_out, "timeline": timeline_out}
+
+
+def _effective_matter_owner(data: dict) -> str | None:
+    matter = data.get("matter") or {}
+    if "owner" in matter:
+        return matter.get("owner")
+    for item in data.get("timeline") or []:
+        if item.get("type") == "owner_change":
+            continue
+        return item.get("owner") or item.get("creator")
+    return None
 
 
 def _render_item(
