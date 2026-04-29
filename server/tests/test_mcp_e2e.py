@@ -342,6 +342,7 @@ async def _run_mcp_flow(base_url: str, token: str, matter_id: str) -> dict:
 
                 return {
                     "server_name": init.serverInfo.name,
+                    "instructions": init.instructions,
                     "tool_names": tool_names,
                     "resolved": resolved,
                     "before_timeline": before["timeline"],
@@ -561,6 +562,17 @@ def test_mcp_e2e_full_flow(live_server):
 
     # Handshake + tool discovery
     assert result["server_name"] == "pivot-mcp"
+    # Instructions are delivered at handshake so the LLM can introduce
+    # capabilities on the user's first message of the session.
+    instructions = result["instructions"] or ""
+    assert "Pivot MCP" in instructions, instructions
+    # Each tool name should appear in the instructions so the LLM has a
+    # concrete list to walk through during the introduction.
+    for tool in [
+        "resolve_context", "list_matters", "get_matter", "read_files",
+        "create_matter", "create_file", "add_comment",
+    ]:
+        assert tool in instructions, (tool, instructions)
     assert {"resolve_context", "list_matters", "get_matter", "read_files",
             "create_file", "create_matter", "add_comment"} <= result["tool_names"]
 

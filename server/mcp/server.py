@@ -16,6 +16,7 @@ from starlette.routing import Mount
 
 from server.api_tokens import ApiTokenRepo
 from server.mcp.auth import McpAuthError, authenticate
+from server.mcp.instructions import INSTRUCTIONS
 from server.mcp.runtime import current_user_token, set_user_token
 from server.mcp.schemas import (
     AddCommentIn,
@@ -286,7 +287,11 @@ def build_mcp_app(
 
     (When mounted at `/mcp`, external clients reach it as POST/GET `/mcp`.)
     """
-    mcp_server = Server(_SERVER_NAME, version=_SERVER_VERSION)
+    mcp_server = Server(
+        _SERVER_NAME,
+        version=_SERVER_VERSION,
+        instructions=INSTRUCTIONS,
+    )
     _register_tools(mcp_server, api_base_url, web_base_url)
 
     session_manager = StreamableHTTPSessionManager(
