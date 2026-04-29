@@ -30,6 +30,8 @@ from server.daily_report.config_keys import (
     KEY_COMPANY_ENABLED,
     KEY_ENABLED,
     KEY_PERSONAL_ENABLED,
+    KEY_PUSH_TIME,
+    KEY_TIME_WINDOW_HOURS,
 )
 from server.daily_report.personal_narrate import narrate_personal
 from server.daily_report.render import build_company_card, build_personal_card
@@ -78,7 +80,14 @@ def run_daily_report(
     all_users = user_repo.list_all()
 
     if window is None:
-        window = compute_window(now or datetime.now().astimezone())
+        # 从 settings 读 push_time + time_window_hours,这样 admin UI 改了即时生效
+        push_h, push_m = _read_push_time(settings)
+        win_hours = _read_window_hours(settings)
+        window = compute_window(
+            now or datetime.now().astimezone(),
+            push_hour=push_h, push_minute=push_m,
+            window_hours=win_hours,
+        )
 
     # 1. Collect + aggregate
     matter_events = collect_matter_events(workspace_index_dir, window)
@@ -186,6 +195,33 @@ def _is_enabled(settings, key: str, *, default: bool) -> bool:
     if raw is None or not str(raw).strip():
         return default
     return str(raw).strip().lower() not in ("0", "false", "off", "no")
+
+
+def _read_push_time(settings) -> tuple[int, int]:
+    """读 push_time(HH:MM)→ (hour, minute)。坏值兜底 09:30。"""
+    raw = (settings.get(KEY_PUSH_TIME) or "09:30").strip()
+    try:
+        hh, mm = raw.split(":")
+        h, m = int(hh), int(mm)
+        if 0 <= h < 24 and 0 <= m < 60:
+            return h, m
+    except (ValueError, AttributeError):
+        pass
+    return 9, 30
+
+
+def _read_window_hours(settings) -> int:
+    """读 time_window_hours,默认 24,合法范围 [1, 168]。"""
+    raw = settings.get(KEY_TIME_WINDOW_HOURS)
+    if raw is None or not str(raw).strip():
+        return 24
+    try:
+        v = int(str(raw).strip())
+        if 1 <= v <= 168:
+            return v
+    except (TypeError, ValueError):
+        pass
+    return 24
 
 
 def _load_ai_settings(settings) -> AISettings | None:
