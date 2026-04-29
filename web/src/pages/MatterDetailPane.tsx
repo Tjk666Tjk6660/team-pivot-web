@@ -517,6 +517,12 @@ export function MatterDetailPane() {
 
   const saveDraftFromForm = async (snap: FormSnapshot) => {
     if (!matter_id || !pendingCreate) return;
+    // Mirror the latest snapshot into pendingInitial so subsequent form
+    // remounts (e.g. after AI fills <draft>, which bumps aiFillToken) restore
+    // user-entered fields like mentions / refer / status_change. Without this
+    // the AI fill path silently wipes any in-form fields that were never in
+    // pendingInitial to begin with.
+    setPendingInitial(snap);
     const matter_payload = buildMatterPayload(
       pendingCreate.type,
       pendingCreate.quote,

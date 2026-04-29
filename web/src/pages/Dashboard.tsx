@@ -207,6 +207,9 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   // matter detail view; `/new` is the NewMatter composer (also a full pane).
   const isThreadView =
     location.pathname.startsWith("/m/") || location.pathname.startsWith("/new");
+  // /new doesn't need the matter / draft list at all — the composer fills the
+  // whole main column and the AI assistant lives in its own right column.
+  const hideSidebar = location.pathname.startsWith("/new");
   const layoutRef = useRef<HTMLDivElement>(null);
   const aiThreadsRef = useRef<Record<string, AIThreadState>>({});
   const activeAIStreamRef = useRef<ActiveAIStream>(null);
@@ -835,10 +838,14 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
         <aside
           className={cn(
             "min-h-0 overflow-y-auto md:shrink-0 md:transition-[width] md:duration-200 md:ease-out",
-            // mobile visibility (route-based)
-            isThreadView ? "hidden md:block" : "block w-full",
+            // /new hides the sidebar entirely on every breakpoint.
+            hideSidebar
+              ? "hidden"
+              : isThreadView
+                ? "hidden md:block"
+                : "block w-full",
             // desktop width
-            sidebarOpen
+            sidebarOpen && !hideSidebar
               ? "md:w-[var(--sidebar-width)] md:border-r"
               : "md:w-0 md:overflow-hidden",
           )}
@@ -852,7 +859,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
               : ({ background: "var(--bg)" } as React.CSSProperties)
           }
         >
-          {sidebarOpen && (
+          {sidebarOpen && !hideSidebar && (
             <ThreadListPane
               drafts={drafts}
               matters={matters}
@@ -860,7 +867,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
             />
           )}
         </aside>
-        {sidebarOpen && (
+        {sidebarOpen && !hideSidebar && (
           <div
             className="group relative hidden w-3 shrink-0 cursor-col-resize items-stretch justify-center md:flex"
             onMouseDown={startSidebarResize}
