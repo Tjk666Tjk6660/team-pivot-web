@@ -139,6 +139,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "httpx>=0.27",
     "mcp>=1.0",
+    "pypinyin>=0.55.0",   # added on main in cf674b0; preserve it, only add bcrypt
     "bcrypt>=4.0",
 ]
 ```
@@ -167,7 +168,7 @@ git commit -m "feat(deps): add bcrypt for invite-code password hashing"
 ### Task 2: 在 db.py 加 4 张新表
 
 **Files:**
-- Modify: `server/db.py:8-82`（SCHEMA 常量末尾）
+- Modify: `server/db.py`（SCHEMA 常量末尾）
 
 - [ ] **Step 1: 写测试，断言 4 张表存在**
 
@@ -237,7 +238,7 @@ Expected: 3 个测试全 FAIL，因为表不存在
 
 - [ ] **Step 3: 在 db.py 的 SCHEMA 末尾追加 4 张表 DDL**
 
-Modify: `server/db.py:81`（在 `idx_api_tokens_user` 那行之后、闭合 `"""` 之前追加）
+Modify: `server/db.py`（在 SCHEMA 末尾，紧挨闭合 `"""` 之前追加；勿用行号锚点，`file_reads` 等表已使锚点偏移）
 
 ```sql
 CREATE TABLE IF NOT EXISTS pivot_user (
@@ -652,7 +653,7 @@ class PivotUserRepo:
 - [ ] **Step 4: 跑测试，全部 pass**
 
 Run: `uv run pytest server/tests/test_pivot_users.py -v`
-Expected: 9 个测试 PASS
+Expected: 10 个测试 PASS
 
 - [ ] **Step 5: Commit**
 
@@ -1349,7 +1350,7 @@ def compute_match_candidates(
 - [ ] **Step 4: 跑，pass**
 
 Run: `uv run pytest server/tests/test_join_applications.py -v`
-Expected: 10 个测试 PASS
+Expected: 11 个测试 PASS
 
 - [ ] **Step 5: Commit**
 
@@ -1753,6 +1754,38 @@ def test_sessions_rewritten_not_cleared(tmp_path):
     assert len(sessions) == 1  # still there
     # New column populated
     assert sessions[0]["pivot_user_id"] is not None
+
+
+def test_initial_admin_ambiguous_aborts(tmp_path):
+    """Two users with identical pinyin → migration must abort (see ee2dd21)."""
+    db_path = tmp_path / "data.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript("""
+        CREATE TABLE users (
+            open_id TEXT PRIMARY KEY, union_id TEXT, name TEXT NOT NULL,
+            avatar_url TEXT NOT NULL DEFAULT '',
+            pinyin TEXT, github_username TEXT, created_at REAL NOT NULL
+        );
+        CREATE TABLE drafts (id TEXT PRIMARY KEY, user_open_id TEXT NOT NULL, body TEXT);
+        CREATE TABLE sessions (
+            id TEXT PRIMARY KEY, user_open_id TEXT NOT NULL,
+            expires_at REAL NOT NULL, created_at REAL NOT NULL
+        );
+        CREATE TABLE file_reads (
+            user_open_id TEXT NOT NULL, matter_id TEXT NOT NULL,
+            filename TEXT NOT NULL, first_read_at REAL NOT NULL,
+            PRIMARY KEY (user_open_id, matter_id, filename)
+        );
+    """)
+    conn.execute("INSERT INTO users VALUES (?,?,?,?,?,?,?)",
+                 ("ou_a1", "on_a1", "Alice One", "", "alice", None, 1.0))
+    conn.execute("INSERT INTO users VALUES (?,?,?,?,?,?,?)",
+                 ("ou_a2", "on_a2", "Alice Two", "", "alice", None, 2.0))
+    conn.commit()
+    conn.close()
+    result = migrate(db_path=db_path, initial_admin_pinyin="alice", dry_run=False)
+    assert not result.success
+    assert "ambiguous" in result.error.lower()
 ```
 
 - [ ] **Step 2: 跑，fail**
@@ -1877,19 +1910,32 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     return row is not None
 
 
+def _execute_sql_block(conn: sqlite3.Connection, sql: str) -> None:
+    # CPython 3.14: Connection.executescript() issues an implicit COMMIT even
+    # when isolation_level=None (autocommit mode), breaking dry-run rollback.
+    # Split on ';' and call conn.execute() individually to stay in our transaction.
+    for stmt in sql.split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            conn.execute(stmt)
+
+
 def migrate(
     *,
     db_path: Path,
     initial_admin_pinyin: str,
     dry_run: bool,
 ) -> MigrationResult:
-    conn = sqlite3.connect(db_path)
+    # isolation_level=None = autocommit; we issue BEGIN/COMMIT/ROLLBACK manually.
+    # Required because executescript() issues an implicit COMMIT on every call
+    # even inside an existing transaction, which breaks dry-run rollback.
+    conn = sqlite3.connect(db_path, isolation_level=None)
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("BEGIN")
 
-        # 1. New tables
-        conn.executescript(_NEW_TABLES_SQL)
+        # 1. New tables (use _execute_sql_block, NOT executescript — see above)
+        _execute_sql_block(conn, _NEW_TABLES_SQL)
 
         # 2. Build mapping users.open_id → pivot_user.id and seed pivot_user
         users = list(conn.execute("SELECT * FROM users"))
@@ -2029,7 +2075,7 @@ if __name__ == "__main__":
 - [ ] **Step 4: 跑测试**
 
 Run: `uv run pytest server/tests/test_migrate_user_management.py -v`
-Expected: 6 PASS
+Expected: 7 PASS
 
 - [ ] **Step 5: 验证脚本可独立执行**
 
@@ -2603,6 +2649,8 @@ Run: `uv run pytest server/tests/test_routes.py -v`
 Expected: 现有测试可能因为 `build_router` 签名变了而 fail——按 Step 3 的新签名调整 fixture，然后 PASS
 
 - [ ] **Step 6: Commit**
+
+> **NOTE (fd694ec):** `routes.py` 的 `/me`、`/me/profile`、`/logout` 端点也直接引用 `users: UserRepo`，必须在同一次修改中一起迁移到 `pivot_users: PivotUserRepo`，否则文件无法导入。整个 `routes.py` 是一次性整体重写，不是只改 `callback()`。
 
 ```bash
 git add server/auth/routes.py server/app.py server/tests/test_routes.py
