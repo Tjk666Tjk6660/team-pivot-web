@@ -38,6 +38,7 @@ import { ThreadListPane } from "@/components/ThreadListPane";
 import { cn } from "@/lib/utils";
 import { useMatterEvents } from "@/events/MatterEventsProvider";
 import { scheduleRefresh } from "@/events/scheduleRefresh";
+import { subscribeListRefresh } from "@/events/listRefresh";
 import {
   mergeLoadedAIConversation,
   setAIReplyTarget,
@@ -756,6 +757,20 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       },
       [refreshMattersSilently],
     ),
+  );
+
+  // Local-action refresh channel: things like POST /files/.../read mutate
+  // server state in a way that the matter list cares about (red/gray
+  // counts shift) but don't fire SSE. The originating component
+  // publishes here, we silently refetch the list — without going through
+  // the SSE/resume path, which would also kick MatterDetailPane to
+  // refetch the open detail page and step on FileCard's optimistic state.
+  useEffect(
+    () =>
+      subscribeListRefresh(() => {
+        scheduleRefresh("matters-list", refreshMattersSilently);
+      }),
+    [refreshMattersSilently],
   );
 
   const onRefresh = async () => {

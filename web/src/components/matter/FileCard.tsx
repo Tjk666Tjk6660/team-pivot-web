@@ -12,7 +12,6 @@ import {
   type MatterStatus,
   type MentionBlock,
   type Reader,
-  type TimelineComment,
   type TimelineItem,
 } from "@/api";
 import { Button } from "@/components/ui/button";
@@ -35,15 +34,9 @@ import {
 } from "./timeline-config";
 import { ReadersRow } from "./ReadersRow";
 import { RelevanceChip } from "./RelevanceChip";
-import { MentionUnreadDot } from "./MentionUnreadDot";
+import { publishListRefresh } from "@/events/listRefresh";
 
 const COLLAPSE_HEIGHT = 208;
-
-// Delay between successful mark-file-read API and clearing the
-// `mention_unread_for_me` red dot on each comment. Shows the dot for a
-// beat after the read action so users notice "I just got @-ed and now
-// it's being cleared", instead of the dot vanishing instantly.
-const MENTION_CLEAR_DELAY_MS = 10000;
 
 const markdownComponents: Components = {
   code({ className, children, ...rest }) {
@@ -114,36 +107,12 @@ export function FileCard({
     setReaders(item.readers ?? []);
   }, [item.readers]);
 
-  // Local mirror of comments. We only diverge from item.comments by
-  // clearing `mention_unread_for_me` after a successful mark API call —
-  // the server already cleared the corresponding relevance_events.read_at,
-  // we just reflect that in the UI without waiting for the next refetch.
-  const [comments, setComments] = useState<TimelineComment[]>(item.comments);
-  useEffect(() => {
-    setComments(item.comments);
-  }, [item.comments]);
-
   // Track whether the card is currently in viewport. Used to decide whether
-  // to auto-fire triggerMark when SSE delivers a new mention mid-session
-  // (the IntersectionObserver only fires on threshold crossings, so a new
-  // dot appearing while the card sits visible would otherwise sit unread
-  // until the user scrolls or navigates away).
+  // to auto-fire triggerMark when SSE delivers a new mention mid-session —
+  // the IntersectionObserver only fires on threshold crossings, so a new
+  // unread mention arriving while the card sits visible would otherwise
+  // not get marked-read until the user scrolls or navigates away.
   const isVisibleRef = useRef(false);
-
-  // Pending timer for the delayed mention-dot clear. Tracked in a ref so
-  // we can cancel on unmount (avoids setState on unmounted component) and
-  // reset when a new triggerMark fires before the previous timer landed.
-  const clearMentionsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
-  useEffect(() => {
-    return () => {
-      if (clearMentionsTimerRef.current !== null) {
-        clearTimeout(clearMentionsTimerRef.current);
-        clearMentionsTimerRef.current = null;
-      }
-    };
-  }, []);
 
   useEffect(() => {
     setExpanded(false);
@@ -159,59 +128,39 @@ export function FileCard({
   // the file again, which is what users expect.
   const triggerMark = () => {
     if (!me.open_id) return;
-    const already = readers.some((r) => r.open_id === me.open_id);
-    if (!already) {
-      const optimistic: Reader = {
-        open_id: me.open_id,
-        name: me.name || me.open_id,
-        avatar_url: me.avatar_url,
-        first_read_at: new Date().toISOString(),
-      };
-      setReaders((prev) => [...prev, optimistic]);
-    }
+    // Optimistic "I've read it" insert. The dedup MUST be inside the
+    // functional updater — the closure-captured `readers` value is stale
+    // when triggerMark fires from a re-attached observer (second viewport
+    // entry, etc.), so a pre-call `readers.some(...)` would happily push
+    // me a second time. functional setState with `prev` reads latest state
+    // atomically. No catch-rollback: if the API fails, the next detail
+    // refetch will replace these readers with the server version.
+    setReaders((prev) => {
+      if (prev.some((r) => r.open_id === me.open_id)) return prev;
+      return [
+        ...prev,
+        {
+          open_id: me.open_id,
+          name: me.name || me.open_id,
+          avatar_url: me.avatar_url,
+          first_read_at: new Date().toISOString(),
+        },
+      ];
+    });
     void markFileRead(matterId, fileBasename)
       .then(() => {
-        // Snapshot the keys of currently-unread @ mentions at API-success
-        // time. The timer below only clears these specific comments — new
-        // mentions that arrive via SSE refetch during the delay stay red.
-        //
-        // Important: read from `item.comments` (prop) not from `comments`
-        // (state). When SSE delivers a new mention, item.comments is the
-        // newest version *immediately*, but the local `comments` state
-        // lags by one render (it's about to be updated by the
-        // setComments-on-prop-change effect). Reading state would miss
-        // the freshly-arrived comment and `targets.size === 0` would
-        // early-return without scheduling the clear timer.
-        const targets = new Set<string>();
-        for (const c of item.comments) {
-          if (c.mention_unread_for_me) {
-            targets.add(`${c.created_at}|${c.author}`);
-          }
-        }
-        if (targets.size === 0) return;
-        // Reset any prior pending timer so the user always sees the dot
-        // for the full delay window after the latest view.
-        if (clearMentionsTimerRef.current !== null) {
-          clearTimeout(clearMentionsTimerRef.current);
-        }
-        clearMentionsTimerRef.current = window.setTimeout(() => {
-          setComments((prev) =>
-            prev.map((c) =>
-              targets.has(`${c.created_at}|${c.author}`)
-                ? { ...c, mention_unread_for_me: false }
-                : c,
-            ),
-          );
-          clearMentionsTimerRef.current = null;
-        }, MENTION_CLEAR_DELAY_MS);
+        // Tell Dashboard to silently refetch the matters list so the
+        // sidebar's red/gray badges reflect the cleared mention. We do
+        // not go through the SSE/resume channel because that would also
+        // trigger MatterDetailPane to refetch the full detail, replacing
+        // FileCard's optimistic readers state.
+        publishListRefresh();
       })
       .catch(() => {
-        // Roll back the optimistic readers insert (only if we added it
-        // this call). Mention dots weren't touched yet — nothing to
-        // restore. Next view will fire again automatically.
-        if (!already) {
-          setReaders((prev) => prev.filter((r) => r.open_id !== me.open_id));
-        }
+        // No rollback: if the mark API failed, the next detail refetch
+        // (SSE-driven, visibility resume, etc.) will replace the local
+        // readers with the server-side version, which won't include me
+        // until a successful mark lands.
       });
   };
 
@@ -234,22 +183,31 @@ export function FileCard({
 
   // Short-form auto-mark: only when the body is fully revealed (no expand
   // affordance). Long-form requires the user to click "展开全文 ↓" — that
-  // path is wired on the button onClick below. The observer stays attached
-  // for the lifetime of the card; every time the card re-enters viewport
-  // past the 50% threshold, triggerMark fires again. Visibility is also
-  // mirrored to isVisibleRef so the comment-update effect below can decide
-  // whether to fire when SSE delivers a new mention while the card sits
-  // statically on screen.
+  // path is wired on the button onClick below.
+  //
+  // Visibility is detected by absolute pixel height (>= MIN_VISIBLE_PX),
+  // not the original `intersectionRatio >= 0.5`. The ratio approach
+  // breaks for tall cards (long body, many comments, big readers row):
+  // if the card is taller than the viewport, the maximum ratio is
+  // viewport / card and never crosses 0.5, so the observer's callback
+  // never qualifies as "visible" and triggerMark never fires.
+  // Multi-threshold subscription guarantees callbacks at multiple
+  // scroll positions so we don't miss the moment height crosses the cut.
+  // Visibility is also mirrored to isVisibleRef so the comment-update
+  // effect below can decide whether to fire when SSE delivers a new
+  // mention while the card sits statically on screen.
   useEffect(() => {
     if (canExpand) return;
     if (!item.body) return;
     const el = cardRef.current;
     if (!el) return;
+    const MIN_VISIBLE_PX = 100;
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
           const visible =
-            entry.isIntersecting && entry.intersectionRatio >= 0.5;
+            entry.isIntersecting &&
+            entry.intersectionRect.height >= MIN_VISIBLE_PX;
           isVisibleRef.current = visible;
           if (visible) {
             triggerMark();
@@ -257,12 +215,19 @@ export function FileCard({
           }
         }
       },
-      { threshold: 0.5 },
+      { threshold: [0, 0.25, 0.5, 0.75, 1] },
     );
     observer.observe(el);
     return () => observer.disconnect();
+    // me.open_id intentionally in deps: on initial mount fetchMe hasn't
+    // resolved yet so me.open_id is "", triggerMark short-circuits, and
+    // the observer is permanently bound to that stale closure (the card
+    // is statically visible after that, never crosses the threshold
+    // again). Adding me.open_id forces a re-attach when fetchMe lands —
+    // the new observer fires immediately on observe(el) with a closure
+    // that sees the populated me, and the mark API actually gets called.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canExpand, item.body, item.file]);
+  }, [canExpand, item.body, item.file, me.open_id]);
 
   // When the parent re-fetches the matter detail (typically because SSE
   // pushed a `matter.updated` event), item.comments swaps in place. If the
@@ -447,7 +412,7 @@ export function FileCard({
       )}
 
       {/* comments (read-only; "添加评论" was removed — use the @ 提及 button at the top to leave a note instead) */}
-      <CommentsBlock comments={comments} />
+      <CommentsBlock item={item} />
 
       <ReadersRow readers={readers} />
 
@@ -643,13 +608,13 @@ function JudgementChip({ judgement }: { judgement: Judgement }) {
   );
 }
 
-function CommentsBlock({ comments }: { comments: TimelineComment[] }) {
-  if (comments.length === 0) return null;
+function CommentsBlock({ item }: { item: TimelineItem }) {
+  if (item.comments.length === 0) return null;
 
   return (
     <div className="mt-3">
       <ul className="space-y-2">
-        {comments.map((c, i) => {
+        {item.comments.map((c, i) => {
           const author =
             ((c.author_display || c.author) ?? "").trim() || "未知用户";
           const mentionNames = c.mentions_display ?? c.mentions ?? [];
@@ -676,7 +641,6 @@ function CommentsBlock({ comments }: { comments: TimelineComment[] }) {
                   @{name}
                 </span>
               ))}
-              <MentionUnreadDot show={c.mention_unread_for_me} />
               <span className="ml-1 text-[var(--text-mute)]">说:</span>
               {body ? (
                 <span className="ml-0.5">{body}</span>
