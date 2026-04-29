@@ -9,6 +9,8 @@ from typing import Iterable
 
 from server.db import Database
 
+PINYIN_RE_PATTERN = r"^[a-z][a-z0-9._-]{1,39}$"
+
 
 @dataclass(frozen=True)
 class PivotUser:

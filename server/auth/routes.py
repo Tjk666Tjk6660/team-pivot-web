@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import secrets
 from urllib.parse import unquote, urlencode, urlparse
@@ -158,6 +159,41 @@ def build_router(
                     f"{post_login_redirect}login?reason=deleted",
                     status_code=302,
                 )
+            pivot_users.touch_last_login(user.id)
+            sid = sessions.create(
+                pivot_user_id=user.id, user_access_token=token.access_token
+            )
+            resp = RedirectResponse(next_url, status_code=302)
+            resp.set_cookie(
+                SESSION_COOKIE, sid,
+                httponly=True, samesite=cookie_samesite,
+                secure=secure_cookie, path="/",
+            )
+            return resp
+
+        # Bootstrap: if no admin exists yet, the first feishu sign-in is
+        # promoted to admin instantly (skip the join_application path).
+        # The /init endpoint covers the email/password bootstrap; this covers
+        # the feishu-on-fresh-deploy case.
+        if pivot_users.count_active_admins() == 0:
+            user = pivot_users.create(
+                display_name=info.name,
+                pinyin=None,
+                email=None,
+                avatar_url=info.avatar_url or "",
+                role="admin",
+            )
+            bindings.bind(
+                pivot_user_id=user.id,
+                provider="feishu",
+                external_id=info.open_id,
+                external_union_id=info.union_id,
+                raw_profile_json=json.dumps({
+                    "name": info.name,
+                    "avatar_url": info.avatar_url,
+                    "union_id": info.union_id,
+                }),
+            )
             pivot_users.touch_last_login(user.id)
             sid = sessions.create(
                 pivot_user_id=user.id, user_access_token=token.access_token

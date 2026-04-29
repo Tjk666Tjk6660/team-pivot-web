@@ -13,6 +13,7 @@ from server.api.contacts import build_router as build_contacts_router
 from server.api.discussions import build_router as build_discussions_router
 from server.api.drafts import build_router as build_drafts_router
 from server.api.inbox import build_router as build_inbox_router
+from server.api.init import build_router as build_init_router
 from server.api.matters import build_router as build_matters_router
 from server.api.matters_events import build_router as build_matters_events_router
 from server.api.markdown_styles import build_router as build_markdown_styles_router
@@ -132,6 +133,12 @@ def create_app() -> FastAPI:
             oauth, sessions, pivot_users, bindings, applications, notifier,
             contacts, cfg.session_secret,
             post_login_redirect=cfg.web_dev_origin + "/",
+            secure_cookie=cfg.feishu_redirect_uri.startswith("https://"),
+        )
+    )
+    app.include_router(
+        build_init_router(
+            pivot_users, bindings, sessions,
             secure_cookie=cfg.feishu_redirect_uri.startswith("https://"),
         )
     )

@@ -273,6 +273,17 @@ def test_callback_bound_user_deleted_redirects_with_reason(db):
     assert "sid" not in cb.cookies
 
 
+def _seed_existing_admin(pivot_users: PivotUserRepo) -> None:
+    """Seed a pre-existing admin so callback's bootstrap branch is skipped."""
+    pivot_users.create(
+        display_name="Boot Admin",
+        pinyin="boot",
+        email="boot@example.com",
+        avatar_url="",
+        role="admin",
+    )
+
+
 def test_callback_no_binding_creates_application(db):
     """No binding and no prior application → creates join_application + 302 reason=submitted."""
     # Build app WITHOUT the default pre-seeded binding
@@ -283,6 +294,8 @@ def test_callback_no_binding_creates_application(db):
     applications = JoinApplicationRepo(db)
     contacts = ContactRepo(db)
     notifier = NoOpNotifier()
+
+    _seed_existing_admin(pivot_users)
 
     app = FastAPI()
     app.include_router(
@@ -318,6 +331,8 @@ def test_callback_no_binding_pending_application_blocks(db):
     applications = JoinApplicationRepo(db)
     contacts = ContactRepo(db)
     notifier = NoOpNotifier()
+
+    _seed_existing_admin(pivot_users)
 
     # Pre-seed a pending application for ou_1
     applications.create(
@@ -358,6 +373,8 @@ def test_callback_no_binding_rejected_application_blocks(db):
     contacts = ContactRepo(db)
     notifier = NoOpNotifier()
 
+    _seed_existing_admin(pivot_users)
+
     # Create then reject an application for ou_1
     app_obj = applications.create(
         provider="feishu", external_id="ou_1",
@@ -383,3 +400,46 @@ def test_callback_no_binding_rejected_application_blocks(db):
     assert cb.status_code == 302
     assert "reason=rejected" in cb.headers["location"]
     assert "sid" not in cb.cookies
+
+
+def test_callback_bootstraps_first_feishu_user_as_admin(db):
+    """Fresh deploy with zero admins: feishu first-login is promoted to admin
+    instantly, skipping the join_application path."""
+    oauth = FakeOAuth()
+    sessions = SessionStore(db)
+    pivot_users = PivotUserRepo(db)
+    bindings_repo = ExternalBindingRepo(db)
+    applications = JoinApplicationRepo(db)
+    contacts = ContactRepo(db)
+    notifier = NoOpNotifier()
+
+    # Sanity: no users / admins yet
+    assert pivot_users.count_active_admins() == 0
+
+    app = FastAPI()
+    app.include_router(
+        build_router(
+            oauth, sessions, pivot_users, bindings_repo, applications, notifier,
+            contacts, SECRET,
+        )
+    )
+    client = TestClient(app)
+
+    login = client.get("/login", follow_redirects=False)
+    state = login.headers["location"].split("state=", 1)[1]
+    cb = client.get(f"/auth/callback?code=abc&state={state}", follow_redirects=False)
+
+    assert cb.status_code == 302
+    # Goes to next_url (default "/"), NOT to login?reason=submitted
+    assert "reason=" not in cb.headers["location"]
+    assert "sid" in cb.cookies
+
+    # User should have been created as admin + bound to ou_1, no application created
+    binding = bindings_repo.lookup(provider="feishu", external_id="ou_1")
+    assert binding is not None
+    user = pivot_users.get(binding.pivot_user_id)
+    assert user is not None
+    assert user.role == "admin"
+    assert user.status == "active"
+    assert user.pinyin is None  # filled later by ProfileSetup
+    assert applications.list_pending() == []
