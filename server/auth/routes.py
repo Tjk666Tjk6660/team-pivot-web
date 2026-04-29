@@ -14,7 +14,10 @@ from pydantic import BaseModel, Field
 from server.auth.feishu_oauth import FeishuOAuth, FeishuOAuthError
 from server.auth.session import SessionStore
 from server.contacts import ContactRepo
-from server.users import User, UserRepo
+from server.external_bindings import ExternalBindingRepo
+from server.join_applications import JoinApplicationRepo, compute_match_candidates
+from server.notify import Notifier
+from server.pivot_users import PivotUser, PivotUserRepo
 
 SESSION_COOKIE = "sid"
 STATE_MAX_AGE_SEC = 600
@@ -25,22 +28,28 @@ class ProfileUpdate(BaseModel):
     github_username: str | None = Field(default=None, max_length=39)
 
 
-def _user_dict(u: User) -> dict:
+def _user_dict(u: PivotUser) -> dict:
     return {
-        "open_id": u.open_id,
-        "name": u.name,
+        "id": u.id,
+        "open_id": u.id,  # backward-compat alias used by older frontend/tests
+        "name": u.display_name,
         "avatar_url": u.avatar_url,
         "pinyin": u.pinyin,
         "github_username": u.github_username,
-        "markdown_style": u.markdown_style,
+        "markdown_style": None,  # deprecated field; always None post-migration
         "needs_setup": u.needs_setup,
+        "role": u.role,
+        "status": u.status,
     }
 
 
 def build_router(
     oauth: FeishuOAuth,
     sessions: SessionStore,
-    users: UserRepo,
+    pivot_users: PivotUserRepo,
+    bindings: ExternalBindingRepo,
+    applications: JoinApplicationRepo,
+    notifier: Notifier,
     contacts: ContactRepo,
     session_secret: str,
     post_login_redirect: str = "/",
@@ -87,11 +96,11 @@ def build_router(
         ua = (request.headers.get("user-agent") or "").lower()
         return "lark" in ua or "feishu" in ua
 
-    def _current_user(sid: str | None) -> User:
+    def _current_user(sid: str | None) -> PivotUser:
         s = sessions.get(sid)
         if s is None:
             raise HTTPException(status_code=401, detail="not logged in")
-        u = users.get(s.user_open_id)
+        u = pivot_users.get(s.pivot_user_id)
         if u is None:
             sessions.delete(sid)
             raise HTTPException(status_code=401, detail="user not found")
@@ -127,30 +136,77 @@ def build_router(
         except FeishuOAuthError as e:
             raise HTTPException(status_code=502, detail=str(e)) from e
 
-        users.upsert_from_feishu(
-            open_id=info.open_id,
-            union_id=info.union_id,
-            name=info.name,
-            avatar_url=info.avatar_url,
-        )
+        # Always update contacts mirror — independent of binding state
         contacts.upsert_from_login(
-            open_id=info.open_id,
-            union_id=info.union_id,
-            name=info.name,
-            avatar_url=info.avatar_url or "",
+            open_id=info.open_id, union_id=info.union_id,
+            name=info.name, avatar_url=info.avatar_url or "",
         )
-        sid = sessions.create(info.open_id, user_access_token=token.access_token)
-        log.info("login success name=%s open_id=%s", info.name, info.open_id)
-        resp = RedirectResponse(next_url, status_code=302)
-        resp.set_cookie(
-            SESSION_COOKIE,
-            sid,
-            httponly=True,
-            samesite=cookie_samesite,
-            secure=secure_cookie,
-            path="/",
+
+        binding = bindings.lookup(provider="feishu", external_id=info.open_id)
+        if binding is not None:
+            # Entry 1: existing user
+            user = pivot_users.get(binding.pivot_user_id)
+            if user is None:
+                raise HTTPException(status_code=500, detail="binding_orphan")
+            if user.status == "suspended":
+                return RedirectResponse(
+                    f"{post_login_redirect}login?reason=suspended",
+                    status_code=302,
+                )
+            if user.status == "deleted":
+                return RedirectResponse(
+                    f"{post_login_redirect}login?reason=deleted",
+                    status_code=302,
+                )
+            pivot_users.touch_last_login(user.id)
+            sid = sessions.create(
+                pivot_user_id=user.id, user_access_token=token.access_token
+            )
+            resp = RedirectResponse(next_url, status_code=302)
+            resp.set_cookie(
+                SESSION_COOKIE, sid,
+                httponly=True, samesite=cookie_samesite,
+                secure=secure_cookie, path="/",
+            )
+            return resp
+
+        # Entry 2: not bound — check application history
+        blocking = applications.lookup_blocking("feishu", info.open_id)
+        if blocking is not None:
+            if blocking.status == "pending":
+                return RedirectResponse(
+                    f"{post_login_redirect}login?reason=pending_approval",
+                    status_code=302,
+                )
+            if blocking.status == "rejected":
+                return RedirectResponse(
+                    f"{post_login_redirect}login?reason=rejected",
+                    status_code=302,
+                )
+
+        # Create new application
+        raw_profile = {
+            "name": info.name, "avatar_url": info.avatar_url,
+            "union_id": info.union_id,
+        }
+        candidates = compute_match_candidates(pivot_users, raw_profile=raw_profile)
+        suggested = candidates[0].user_id if candidates else None
+        applications.create(
+            provider="feishu", external_id=info.open_id,
+            external_union_id=info.union_id,
+            raw_profile=raw_profile, suggested_match_user_id=suggested,
         )
-        return resp
+        # Notify all active admins
+        admin_open_ids = _admin_feishu_open_ids(pivot_users, bindings)
+        if admin_open_ids:
+            notifier.notify_application_created(
+                applicant_name=info.name, provider="feishu",
+                admin_open_ids=admin_open_ids,
+            )
+        return RedirectResponse(
+            f"{post_login_redirect}login?reason=submitted",
+            status_code=302,
+        )
 
     @router.get("/me")
     def me(sid: str | None = Cookie(default=None)) -> JSONResponse:
@@ -162,8 +218,8 @@ def build_router(
     ) -> JSONResponse:
         user = _current_user(sid)
         try:
-            updated = users.update_profile(
-                user.open_id,
+            updated = pivot_users.update_profile(
+                user.id,
                 pinyin=body.pinyin,
                 github_username=body.github_username,
             )
@@ -176,10 +232,25 @@ def build_router(
     def logout(sid: str | None = Cookie(default=None)) -> JSONResponse:
         s = sessions.get(sid)
         if s is not None:
-            log.info("logout user=%s", s.user_open_id)
+            log.info("logout user=%s", s.pivot_user_id)
         sessions.delete(sid)
         resp = JSONResponse({"ok": True})
         resp.delete_cookie(SESSION_COOKIE, path="/")
         return resp
 
     return router
+
+
+def _admin_feishu_open_ids(
+    pivot_users: PivotUserRepo, bindings: ExternalBindingRepo,
+) -> list[str]:
+    """Resolve all active admins' feishu open_ids for DM notification."""
+    admins = [u for u in pivot_users.list_for_admin(include_deleted=False)
+              if u.role == "admin" and u.status == "active"]
+    open_ids: list[str] = []
+    for a in admins:
+        for b in bindings.list_for_user(a.id):
+            if b.provider == "feishu":
+                open_ids.append(b.external_id)
+                break
+    return open_ids

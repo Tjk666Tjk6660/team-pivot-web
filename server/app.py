@@ -27,14 +27,18 @@ from server.config import load_config
 from server.contacts import ContactRepo
 from server.db import Database
 from server.drafts import DraftRepo
+from server.external_bindings import ExternalBindingRepo
 from server.feishu_contacts import FeishuContactSyncer
 from server.feishu_token import FeishuTokenManager
 from server.favorites import FavoriteRepo
 from server.file_reads import FileReadRepo
+from server.invites import InviteRepo
+from server.join_applications import JoinApplicationRepo
 from server.logging_setup import configure_logging
 from server.mcp.server import build_mcp_app
 from server.notify import FeishuNotifier, NoOpNotifier, Notifier
 from server.ai_conversations import AIConversationRepo
+from server.pivot_users import PivotUserRepo
 from server.read_state import ReadStateRepo
 from server.settings import SettingsRepo
 from server.users import UserRepo
@@ -50,6 +54,10 @@ def create_app() -> FastAPI:
 
     db = Database(cfg.data_dir / "data.db")
     users = UserRepo(db)
+    pivot_users = PivotUserRepo(db)
+    bindings = ExternalBindingRepo(db)
+    applications = JoinApplicationRepo(db)
+    invites = InviteRepo(db)
     drafts = DraftRepo(db)
     read_states = ReadStateRepo(db)
     favorites = FavoriteRepo(db)
@@ -121,11 +129,8 @@ def create_app() -> FastAPI:
     )
     app.include_router(
         build_auth_router(
-            oauth,
-            sessions,
-            users,
-            contacts,
-            cfg.session_secret,
+            oauth, sessions, pivot_users, bindings, applications, notifier,
+            contacts, cfg.session_secret,
             post_login_redirect=cfg.web_dev_origin + "/",
             secure_cookie=cfg.feishu_redirect_uri.startswith("https://"),
         )

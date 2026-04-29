@@ -76,12 +76,21 @@ class Notifier(Protocol):
         mention_comments: str,
     ) -> None: ...
 
+    def notify_application_created(
+        self,
+        *,
+        applicant_name: str,
+        provider: str,
+        admin_open_ids: list[str],
+    ) -> None: ...
+
 
 class NoOpNotifier:
     def notify_new_thread(self, **_: object) -> None: pass
     def notify_new_reply(self, **_: object) -> None: pass
     def notify_status_change(self, **_: object) -> None: pass
     def notify_standalone_mention(self, **_: object) -> None: pass
+    def notify_application_created(self, **_: object) -> None: pass
 
 
 class FeishuNotifier:
@@ -175,6 +184,16 @@ class FeishuNotifier:
                 post_url=post_url,
             )
             self._dm_many(mention_open_ids, dm, event=f"new_reply slug={slug}")
+
+    def notify_application_created(
+        self,
+        *,
+        applicant_name: str,
+        provider: str,
+        admin_open_ids: list[str],
+    ) -> None:
+        # TODO(Task 21): real card builder — send DM to each admin open_id
+        pass
 
     def notify_standalone_mention(
         self, *, category, slug, thread_title, target_filename,
