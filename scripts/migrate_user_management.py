@@ -237,10 +237,16 @@ def migrate(
             initial_admin_id=admin_id,
         )
     except _MigrationError as e:
-        conn.execute("ROLLBACK")
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
         return MigrationResult(success=False, error=str(e))
     except Exception as e:
-        conn.execute("ROLLBACK")
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
         return MigrationResult(success=False, error=f"unexpected: {e}")
     finally:
         conn.close()

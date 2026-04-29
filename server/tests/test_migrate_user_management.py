@@ -45,13 +45,17 @@ def test_dry_run_does_not_write(tmp_path):
     _seed_legacy_db(db_path)
     result = migrate(db_path=db_path, initial_admin_pinyin="alice", dry_run=True)
     assert result.success
-    # Verify no new tables created
     conn = sqlite3.connect(db_path)
     tables = {r[0] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'"
     )}
-    conn.close()
     assert "pivot_user" not in tables
+    # ALTER TABLE additions also rolled back:
+    draft_cols = {r[1] for r in conn.execute("PRAGMA table_info(drafts)")}
+    assert "pivot_user_id" not in draft_cols
+    session_cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
+    assert "pivot_user_id" not in session_cols
+    conn.close()
 
 
 def test_full_migration_creates_tables_and_promotes_admin(tmp_path):
@@ -121,3 +125,26 @@ def test_sessions_rewritten_not_cleared(tmp_path):
     assert len(sessions) == 1  # still there
     # New column populated
     assert sessions[0]["pivot_user_id"] is not None
+
+
+def test_initial_admin_ambiguous_aborts(tmp_path):
+    db_path = tmp_path / "data.db"
+    _seed_legacy_db(db_path)
+    # Add a second user with the same pinyin "alice"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO users VALUES (?,?,?,?,?,?,?)",
+        ("ou_alice2", "on_alice2", "Alice2", "", "alice", None, 3.0),
+    )
+    conn.commit()
+    conn.close()
+    result = migrate(db_path=db_path, initial_admin_pinyin="alice", dry_run=False)
+    assert not result.success
+    assert "ambiguous" in result.error.lower()
+    # And no pivot_user table created (rolled back)
+    conn = sqlite3.connect(db_path)
+    tables = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    )}
+    conn.close()
+    assert "pivot_user" not in tables
