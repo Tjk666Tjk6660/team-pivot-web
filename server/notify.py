@@ -18,6 +18,33 @@ _LIST_CHATS_ENDPOINT = "https://open.feishu.cn/open-apis/im/v1/chats"
 _SEND_MESSAGE_ENDPOINT = "https://open.feishu.cn/open-apis/im/v1/messages"
 _TIMEOUT = 10.0
 
+# 偶发的 CN 网络冷连接 SSL 握手超时(`_ssl.c:993: handshake timed out`)
+# 在飞书 API 上不算少见。一次重试就能让 80%+ 的抖动通过,所以集中
+# 在两个 HTTP 调用包一层。
+_TRANSIENT_HTTP_ERRORS = (
+    httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ConnectError,
+)
+
+
+def _http_get_with_retry(url: str, **kwargs) -> httpx.Response:
+    """One retry on transient connection errors."""
+    try:
+        return httpx.get(url, **kwargs)
+    except _TRANSIENT_HTTP_ERRORS as e:
+        log.warning("notify GET transient %s, retrying once: %s",
+                    type(e).__name__, e)
+        return httpx.get(url, **kwargs)
+
+
+def _http_post_with_retry(url: str, **kwargs) -> httpx.Response:
+    """One retry on transient connection errors."""
+    try:
+        return httpx.post(url, **kwargs)
+    except _TRANSIENT_HTTP_ERRORS as e:
+        log.warning("notify POST transient %s, retrying once: %s",
+                    type(e).__name__, e)
+        return httpx.post(url, **kwargs)
+
 
 class Notifier(Protocol):
     def notify_new_thread(
@@ -29,6 +56,7 @@ class Notifier(Protocol):
         author_name: str,
         filename: str,
         body: str | None = None,
+        owner_open_id: str | None = None,
         mention_open_ids: list[str] | None = None,
         mention_comments: str | None = None,
     ) -> None: ...
@@ -64,6 +92,20 @@ class Notifier(Protocol):
         trigger_filename: str | None = None,
     ) -> None: ...
 
+    def notify_owner_change(
+        self,
+        *,
+        category: str,
+        slug: str,
+        thread_title: str,
+        actor_name: str,
+        from_owner_name: str | None,
+        to_owner_name: str,
+        to_owner_open_id: str,
+        reason: str,
+        status_change: dict | None = None,
+    ) -> None: ...
+
     def notify_standalone_mention(
         self,
         *,
@@ -89,6 +131,7 @@ class NoOpNotifier:
     def notify_new_thread(self, **_: object) -> None: pass
     def notify_new_reply(self, **_: object) -> None: pass
     def notify_status_change(self, **_: object) -> None: pass
+    def notify_owner_change(self, **_: object) -> None: pass
     def notify_standalone_mention(self, **_: object) -> None: pass
     def notify_application_created(self, **_: object) -> None: pass
 
@@ -114,6 +157,7 @@ class FeishuNotifier:
         author_name: str,
         filename: str,
         body: str | None = None,
+        owner_open_id: str | None = None,
         mention_open_ids: list[str] | None = None,
         mention_comments: str | None = None,
     ) -> None:
@@ -127,6 +171,7 @@ class FeishuNotifier:
             filename=filename,
             body=body,
             thread_url=post_url,
+            owner_open_id=owner_open_id,
             mention_open_ids=mention_open_ids or [],
             mention_comments=mention_comments,
             directory_content=directory_content,
@@ -238,6 +283,32 @@ class FeishuNotifier:
         )
         self._broadcast(card, event=f"status_change slug={slug} {from_state}->{to_state}")
 
+    def notify_owner_change(
+        self,
+        *,
+        category: str,
+        slug: str,
+        thread_title: str,
+        actor_name: str,
+        from_owner_name: str | None,
+        to_owner_name: str,
+        to_owner_open_id: str,
+        reason: str,
+        status_change: dict | None = None,
+    ) -> None:
+        detail_url = self._matter_url(slug)
+        card = build_owner_change_card(
+            thread_title=thread_title,
+            actor_name=actor_name,
+            from_owner_name=from_owner_name,
+            to_owner_name=to_owner_name,
+            to_owner_open_id=to_owner_open_id,
+            reason=reason,
+            thread_url=detail_url,
+            status_change=status_change,
+        )
+        self._dm_many([to_owner_open_id], card, event=f"owner_change slug={slug}")
+
     def _thread_url(self, category: str, slug: str) -> str:
         from urllib.parse import urlencode
 
@@ -283,6 +354,13 @@ class FeishuNotifier:
             post_url_builder=self._post_url,
         )
 
+    def broadcast_card(self, card: dict, *, event: str) -> None:
+        """Public hook for "send any card to all chats the bot is in".
+        Used by daily-report (and future periodic jobs like weekly digest)
+        that don't fit one of the existing notify_* shapes. Internally
+        delegates to `_broadcast`; failures are swallowed + logged inside."""
+        self._broadcast(card, event=event)
+
     def _broadcast(self, card: dict, *, event: str) -> None:
         try:
             token = self._tokens.get()
@@ -310,7 +388,7 @@ class FeishuNotifier:
             params: dict[str, object] = {"page_size": 100}
             if page_token:
                 params["page_token"] = page_token
-            resp = httpx.get(
+            resp = _http_get_with_retry(
                 _LIST_CHATS_ENDPOINT, params=params,
                 headers={"Authorization": f"Bearer {token}"}, timeout=_TIMEOUT,
             )
@@ -330,7 +408,7 @@ class FeishuNotifier:
 
     def _send(self, token: str, receive_id: str, receive_id_type: str, card: dict) -> bool:
         try:
-            resp = httpx.post(
+            resp = _http_post_with_retry(
                 _SEND_MESSAGE_ENDPOINT,
                 params={"receive_id_type": receive_id_type},
                 headers={
@@ -367,6 +445,7 @@ def build_thread_card(
     filename: str,
     thread_url: str,
     body: str | None = None,
+    owner_open_id: str | None = None,
     mention_open_ids: list[str] | None = None,
     mention_comments: str | None = None,
     directory_content: str | None = None,
@@ -383,6 +462,7 @@ def build_thread_card(
         body=body,
         thread_url=thread_url,
         button_text="去 Web 查看",
+        owner_open_id=owner_open_id,
         mention_open_ids=mention_open_ids or [],
         mention_comments=mention_comments,
         directory_content=directory_content,
@@ -452,6 +532,41 @@ def build_status_change_card(
         header=f"状态变更：{thread_title}",
         template="purple",
         markdown="\n\n".join(md_parts),
+        button_text="查看讨论",
+        thread_url=thread_url,
+    )
+
+
+def build_owner_change_card(
+    *,
+    thread_title: str,
+    actor_name: str,
+    from_owner_name: str | None,
+    to_owner_name: str,
+    to_owner_open_id: str,
+    reason: str,
+    thread_url: str,
+    status_change: dict | None = None,
+) -> dict:
+    to_at = f'<at id="{to_owner_open_id}"></at>'
+    from_label = from_owner_name or "未分配"
+    rows: list[tuple[str, str]] = [
+        ("操作", f"{actor_name} 更改负责人"),
+        ("负责人", f"{from_label} → {to_at}"),
+        ("新负责人", to_owner_name),
+        ("原因", _oneline(reason)),
+    ]
+    if status_change:
+        rows.append((
+            "状态",
+            f"{_STATUS_LABEL.get(str(status_change.get('from') or ''), str(status_change.get('from') or ''))}"
+            f" → {_STATUS_LABEL.get(str(status_change.get('to') or ''), str(status_change.get('to') or ''))}"
+        ))
+    markdown_rows = [f"**{label}**：{value}" for label, value in rows]
+    return _card_shell(
+        header=f"负责人变更：{thread_title}",
+        template="yellow",
+        markdown="<br>".join(markdown_rows),
         button_text="查看讨论",
         thread_url=thread_url,
     )
@@ -544,6 +659,7 @@ def _build_card_6fields(
     filename: str | None,
     thread_url: str,
     button_text: str,
+    owner_open_id: str | None = None,
     mention_open_ids: list[str],
     mention_comments: str | None,
     body: str | None = None,
@@ -564,16 +680,16 @@ def _build_card_6fields(
     from datetime import datetime
 
     info_rows: list[str] = []
+    info_rows.append(f"**项目**：{category}")
+    info_rows.append(f"**主题**：{thread_title}")
+    info_rows.append(f"**操作**：{author_name} {action_text}")
+    if owner_open_id:
+        info_rows.append(f"**负责人**：{_at_tags([owner_open_id])}")
     if mention_open_ids:
         # Schema 2.0 markdown tag uses `<at id="...">`. The legacy `user_id`
         # attribute is silently ignored by Feishu — the @-tag never fires red
         # dots / pushes. Keep this aligned with build_standalone_mention_card.
-        info_rows.append(
-            " ".join(f'<at id="{oid}"></at>' for oid in mention_open_ids)
-        )
-    info_rows.append(f"**项目**：{category}")
-    info_rows.append(f"**主题**：{thread_title}")
-    info_rows.append(f"**操作**：{author_name} {action_text}")
+        info_rows.append(f"**圈人**：{_at_tags(mention_open_ids)}")
     if filename:
         info_rows.append(f"**文件**：{filename}")
     info_rows.append(f"**时间**：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
@@ -657,37 +773,110 @@ def _card_shell(
     header: str,
     template: str,
     markdown: str,
+    button_text: str | None = None,
+    thread_url: str | None = None,
+    directory_content: str | None = None,
+    directory_post_count: int | None = None,
+) -> dict:
+    """Build a Feishu interactive card (schema 2.0). Pass `button_text` and
+    `thread_url` together for a CTA button at the bottom; pass neither for
+    a button-less card (used by daily-report — that flow has no in-product
+    page worth deep-linking to)."""
+    elements: list[dict] = [{"tag": "markdown", "content": markdown}]
+    if directory_content:
+        elements.append(_card_directory_panel(directory_content, directory_post_count))
+    if button_text and thread_url:
+        elements.append(_card_button(button_text, thread_url))
+    return _card_payload(header, template, elements)
+
+
+def _card_shell_elements(
+    *,
+    header: str,
+    template: str,
+    elements: list[dict],
     button_text: str,
     thread_url: str,
     directory_content: str | None = None,
     directory_post_count: int | None = None,
 ) -> dict:
-    elements: list[dict] = [{"tag": "markdown", "content": markdown}]
+    out = list(elements)
     if directory_content:
-        post_count = directory_post_count or 0
-        title = (
-            f"<font color='orange'>**📂 讨论目录（{post_count} 篇帖子）**</font>"
-            if post_count
-            else "<font color='orange'>**📂 讨论目录**</font>"
-        )
-        elements.append({
-            "tag": "collapsible_panel",
-            "expanded": False,
-            "header": {
-                "title": {"tag": "markdown", "content": title},
-                "vertical_align": "center",
-                "padding": "4px 0 4px 8px",
+        out.append(_card_directory_panel(directory_content, directory_post_count))
+    out.append(_card_button(button_text, thread_url))
+    return _card_payload(header, template, out)
+
+
+def _card_field_row(label: str, value: str) -> dict:
+    return {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "background_style": "default",
+        "columns": [
+            {
+                "tag": "column",
+                "width": "weighted",
+                "weight": 1,
+                "vertical_align": "top",
+                "elements": [
+                    {
+                        "tag": "markdown",
+                        "content": f"**{label}**：",
+                        "text_align": "left",
+                    },
+                ],
             },
-            "elements": [
-                {"tag": "markdown", "content": directory_content},
-            ],
-        })
-    elements.append({
+            {
+                "tag": "column",
+                "width": "weighted",
+                "weight": 8,
+                "vertical_align": "top",
+                "elements": [
+                    {
+                        "tag": "markdown",
+                        "content": value,
+                        "text_align": "left",
+                    },
+                ],
+            },
+        ],
+    }
+
+
+def _card_button(button_text: str, thread_url: str) -> dict:
+    return {
         "tag": "button",
         "text": {"tag": "plain_text", "content": button_text},
         "type": "primary",
         "multi_url": {"url": thread_url, "pc_url": "", "android_url": "", "ios_url": ""},
-    })
+    }
+
+
+def _card_directory_panel(
+    directory_content: str,
+    directory_post_count: int | None = None,
+) -> dict:
+    post_count = directory_post_count or 0
+    title = (
+        f"<font color='orange'>**📂 讨论目录（{post_count} 篇帖子）**</font>"
+        if post_count
+        else "<font color='orange'>**📂 讨论目录**</font>"
+    )
+    return {
+        "tag": "collapsible_panel",
+        "expanded": False,
+        "header": {
+            "title": {"tag": "markdown", "content": title},
+            "vertical_align": "center",
+            "padding": "4px 0 4px 8px",
+        },
+        "elements": [
+            {"tag": "markdown", "content": directory_content},
+        ],
+    }
+
+
+def _card_payload(header: str, template: str, elements: list[dict]) -> dict:
     return {
         "schema": "2.0",
         "config": {"wide_screen_mode": True},
@@ -715,6 +904,10 @@ def _oneline(s: str | None) -> str:
     if not s:
         return ""
     return " ".join(s.split())
+
+
+def _at_tags(open_ids: list[str]) -> str:
+    return " ".join(f'<at id="{oid}"></at>' for oid in open_ids)
 
 
 def _strip_markdown(s: str) -> str:

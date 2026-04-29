@@ -150,6 +150,27 @@ CREATE TABLE IF NOT EXISTS invite (
     used_at REAL,
     used_by_user_id TEXT
 );
+CREATE TABLE IF NOT EXISTS relevance_events (
+    user_open_id  TEXT NOT NULL,
+    matter_id     TEXT NOT NULL,
+    filename      TEXT NOT NULL,
+    kind          TEXT NOT NULL,
+    reason        TEXT NOT NULL,
+    event_at      TEXT NOT NULL,
+    actor_pinyin  TEXT NOT NULL,
+    created_at    REAL NOT NULL,
+    read_at       REAL,
+    PRIMARY KEY (user_open_id, matter_id, filename, kind, event_at, actor_pinyin)
+);
+CREATE INDEX IF NOT EXISTS idx_re_user_unread
+    ON relevance_events(user_open_id, read_at, matter_id);
+CREATE TABLE IF NOT EXISTS user_preferences (
+    user_open_id TEXT NOT NULL,
+    key          TEXT NOT NULL,
+    value        TEXT NOT NULL,
+    updated_at   REAL NOT NULL,
+    PRIMARY KEY (user_open_id, key)
+);
 """
 
 

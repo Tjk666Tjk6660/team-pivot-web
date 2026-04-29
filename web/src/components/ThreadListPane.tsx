@@ -7,6 +7,7 @@ import {
   FolderTree,
   Star,
   Trash2,
+  UserRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -17,14 +18,20 @@ import type { Draft, MatterSummary } from "@/api";
 
 const UNCATEGORIZED = "未分类";
 
+export type MatterListFilter = "all" | "mine";
+
 export function ThreadListPane({
   drafts,
   matters,
   onRemoveDraft,
+  listFilter = "all",
+  onListFilterChange,
 }: {
   drafts: Draft[] | null;
   matters: MatterSummary[] | null;
   onRemoveDraft: (id: string) => void;
+  listFilter?: MatterListFilter;
+  onListFilterChange?: (next: MatterListFilter) => void;
 }) {
   const location = useLocation();
   const activeMatterId = useMemo(() => {
@@ -39,7 +46,21 @@ export function ThreadListPane({
       .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
   }, [matters]);
 
-  const grouped = useMemo(() => groupByCategory(matters), [matters]);
+  // Filter applied to the matters section (NOT the favorites section —
+  // favorites is an explicit per-user pin and shouldn't be hidden by the
+  // 与我相关 toggle). Strict filter: only matters with red unread > 0.
+  // The currently-viewed matter is NOT exempted — if it has no red, it
+  // disappears from the list but the detail page stays open via the URL.
+  const visibleMatters = useMemo(() => {
+    if (!matters) return matters;
+    if (listFilter !== "mine") return matters;
+    return matters.filter((m) => (m.red_unread_count ?? 0) > 0);
+  }, [matters, listFilter]);
+
+  const grouped = useMemo(
+    () => groupByCategory(visibleMatters),
+    [visibleMatters],
+  );
   const activeCategory = useMemo(() => {
     if (!activeMatterId || !matters) return null;
     const m = matters.find((x) => x.id === activeMatterId);
@@ -171,6 +192,12 @@ export function ThreadListPane({
           onToggle={() => setMattersOpen((v) => !v)}
           icon={<FolderTree className="h-3.5 w-3.5 shrink-0" />}
         >
+          {mattersOpen && onListFilterChange && (
+            <FilterToggle
+              value={listFilter}
+              onChange={onListFilterChange}
+            />
+          )}
           {matters === null && (
             <div className="px-4 py-3 text-sm text-muted-foreground">
               Loading…
@@ -181,6 +208,14 @@ export function ThreadListPane({
               还没有讨论。
             </div>
           )}
+          {mattersOpen &&
+            visibleMatters !== null &&
+            visibleMatters.length === 0 &&
+            (matters?.length ?? 0) > 0 && (
+              <div className="px-4 py-3 text-sm text-muted-foreground">
+                没有跟你相关的未读 matter。
+              </div>
+            )}
           {mattersOpen &&
             matters !== null &&
             grouped.length > 0 &&
@@ -217,11 +252,7 @@ export function ThreadListPane({
                         </div>
                       )}
                     </div>
-                    {group.unread > 0 && (
-                      <Badge variant="red" className="shrink-0">
-                        {group.unread}
-                      </Badge>
-                    )}
+                    <UnreadBadges red={group.red} gray={group.gray} />
                   </button>
                   {open && (
                     <div className="mt-1 ml-5 border-l border-[var(--line)] bg-transparent pl-2">
@@ -240,13 +271,20 @@ export function ThreadListPane({
 }
 
 function MatterRow({ matter }: { matter: MatterSummary }) {
+  const lastActivity = activityKey(matter);
   const meta = [
     matter.file_count ? `${matter.file_count} 个文件` : null,
     matter.last_file_type ? `最近 ${matter.last_file_type}` : null,
-    matter.updated_at ? relativeTime(matter.updated_at) : null,
+    lastActivity ? relativeTime(lastActivity) : null,
   ]
     .filter(Boolean)
     .join(" · ");
+  // Prefer the new red/gray split. Fall back to the legacy single-number
+  // rendering when the backend hasn't been upgraded yet (red/gray omitted
+  // → keep showing unread_count as red, matching old behavior).
+  const red = matter.red_unread_count;
+  const gray = matter.gray_unread_count;
+  const hasSplit = red !== undefined && gray !== undefined;
   return (
     <div>
       <NavLink
@@ -262,10 +300,14 @@ function MatterRow({ matter }: { matter: MatterSummary }) {
         {({ isActive }) => (
           <>
             <div className="flex items-start gap-2">
-              {matter.unread_count > 0 && (
-                <Badge variant="red" className="shrink-0">
-                  {matter.unread_count}
-                </Badge>
+              {hasSplit ? (
+                <UnreadBadges red={red} gray={gray} />
+              ) : (
+                matter.unread_count > 0 && (
+                  <Badge variant="red" className="shrink-0">
+                    {matter.unread_count}
+                  </Badge>
+                )
               )}
               <span
                 className="line-clamp-2 min-w-0 flex-1 text-[14px] font-medium leading-5 text-[var(--text)] transition-colors group-hover:text-[var(--accent)]"
@@ -277,11 +319,17 @@ function MatterRow({ matter }: { matter: MatterSummary }) {
             <div className="mt-1 flex items-center gap-2">
               <div
                 className={cn(
-                  "min-w-0 flex-1 truncate text-[10px] leading-5 text-[var(--text-mute)] group-hover:text-[var(--text-soft)] md:text-[11px]",
+                  "flex min-w-0 flex-1 items-center gap-1.5 text-[10px] leading-5 text-[var(--text-mute)] group-hover:text-[var(--text-soft)] md:text-[11px]",
                   isActive && "text-[var(--accent)]",
                 )}
               >
-                {meta}
+                <OwnerInline matter={matter} />
+                {meta && (
+                  <>
+                    <span className="shrink-0 text-[var(--text-fade)]">·</span>
+                    <span className="min-w-0 truncate">{meta}</span>
+                  </>
+                )}
               </div>
               <span className="shrink-0">
                 <StatusBadge
@@ -294,6 +342,27 @@ function MatterRow({ matter }: { matter: MatterSummary }) {
         )}
       </NavLink>
     </div>
+  );
+}
+
+function OwnerInline({ matter }: { matter: MatterSummary }) {
+  const label = matter.owner_display || "未分配";
+  return (
+    <span
+      className="inline-flex min-w-0 max-w-[6.75rem] shrink-0 items-center gap-1 text-[var(--text-mute)]"
+      title={`负责人：${label}`}
+    >
+      {matter.owner_avatar_url ? (
+        <img
+          src={matter.owner_avatar_url}
+          alt=""
+          className="h-3.5 w-3.5 shrink-0 rounded-full object-cover"
+        />
+      ) : (
+        <UserRound className="h-3.5 w-3.5 shrink-0 text-[var(--text-fade)]" />
+      )}
+      <span className="min-w-0 truncate">{label}</span>
+    </span>
   );
 }
 
@@ -339,27 +408,135 @@ type CategoryGroup = {
   category: string;
   items: MatterSummary[];
   last_updated: string | null;
-  unread: number;
+  // Sum of red_unread_count / gray_unread_count across the category's
+  // matters. Falls back to splitting unread_count entirely into red when
+  // the backend is older and didn't return the split (matches the legacy
+  // single-red-badge behavior).
+  red: number;
+  gray: number;
 };
+
+function UnreadBadges({ red, gray }: { red: number; gray: number }) {
+  if (red <= 0 && gray <= 0) return null;
+  const fmt = (n: number) => (n > 99 ? "99+" : String(n));
+  // Both present → single rounded pill split into two halves: red left,
+  // gray right. Reads as one unit visually but the two colors signal the
+  // semantic split — red is "your stuff", gray is "background updates".
+  if (red > 0 && gray > 0) {
+    return (
+      <span
+        className="inline-flex shrink-0 items-center overflow-hidden rounded-full text-xs font-medium leading-tight"
+        title={`相关 ${red} · 普通 ${gray}`}
+      >
+        <span className="bg-[var(--danger-500)] px-2 py-0.5 text-white">
+          {fmt(red)}
+        </span>
+        <span className="bg-[var(--status-archived-bg)] px-2 py-0.5 text-[var(--status-archived-fg)]">
+          {fmt(gray)}
+        </span>
+      </span>
+    );
+  }
+  if (red > 0) {
+    return (
+      <Badge variant="red" className="shrink-0" title="跟你相关的未读">
+        {fmt(red)}
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="gray" className="shrink-0" title="普通更新">
+      {fmt(gray)}
+    </Badge>
+  );
+}
+
+function FilterToggle({
+  value,
+  onChange,
+}: {
+  value: MatterListFilter;
+  onChange: (next: MatterListFilter) => void;
+}) {
+  const options: { key: MatterListFilter; label: string; hint?: string }[] = [
+    { key: "all", label: "全部" },
+    { key: "mine", label: "与我相关", hint: "只看有未读的相关 matter" },
+  ];
+  return (
+    <div
+      role="tablist"
+      aria-label="matter 列表筛选"
+      className="mx-2 my-1.5 flex rounded-full bg-[var(--surface-alt)] p-1 text-[12px]"
+    >
+      {options.map((opt) => {
+        const active = value === opt.key;
+        return (
+          <button
+            key={opt.key}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            title={opt.hint}
+            onClick={() => {
+              if (!active) onChange(opt.key);
+            }}
+            className={cn(
+              "flex-1 rounded-full px-3.5 py-1 text-center font-medium transition-all",
+              active
+                ? "bg-[var(--accent)] text-[var(--accent-ink)] shadow-[0_1px_3px_rgba(0,0,0,0.18)]"
+                : "text-[var(--text-soft)] hover:bg-[var(--surface)] hover:text-[var(--text)] hover:shadow-[0_1px_2px_rgba(0,0,0,0.06)]",
+            )}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Sort key: last_activity_at when the backend provides it (max of
+// matter.updated_at and the latest comment.created_at), falling back to
+// matter.updated_at for older backends. This is what makes a matter that
+// just received a new comment / @-mention float to the top — comments
+// don't bump matter.updated_at on their own.
+function activityKey(m: MatterSummary): string {
+  return m.last_activity_at || m.updated_at || "";
+}
+
+// Per-matter red / gray, with back-compat fallback when the backend is
+// pre-split: the entire unread_count counts as red, mirroring the
+// legacy single-red-badge UX.
+function matterRed(m: MatterSummary): number {
+  return m.red_unread_count ?? m.unread_count ?? 0;
+}
+function matterGray(m: MatterSummary): number {
+  return m.gray_unread_count ?? 0;
+}
 
 function groupByCategory(matters: MatterSummary[] | null): CategoryGroup[] {
   if (!matters || matters.length === 0) return [];
   const map = new Map<string, CategoryGroup>();
   for (const m of matters) {
     const cat = m.category ?? UNCATEGORIZED;
+    const ak = activityKey(m);
+    const r = matterRed(m);
+    const g = matterGray(m);
     const existing = map.get(cat);
     if (existing) {
       existing.items.push(m);
-      existing.unread += m.unread_count;
-      if ((m.updated_at || "") > (existing.last_updated || "")) {
-        existing.last_updated = m.updated_at;
+      existing.red += r;
+      existing.gray += g;
+      if (ak > (existing.last_updated || "")) {
+        existing.last_updated = ak;
       }
     } else {
       map.set(cat, {
         category: cat,
         items: [m],
-        last_updated: m.updated_at,
-        unread: m.unread_count,
+        last_updated: ak,
+        red: r,
+        gray: g,
       });
     }
   }
@@ -367,7 +544,7 @@ function groupByCategory(matters: MatterSummary[] | null): CategoryGroup[] {
     .map((g) => ({
       ...g,
       items: [...g.items].sort((a, b) =>
-        (b.updated_at || "").localeCompare(a.updated_at || ""),
+        activityKey(b).localeCompare(activityKey(a)),
       ),
     }))
     .sort((a, b) => (b.last_updated || "").localeCompare(a.last_updated || ""));

@@ -94,7 +94,22 @@ export type TimelineComment = {
   body: string;
   mentions?: string[];
   mentions_display?: string[];
+  // True when the current user is mentioned in this comment AND has not
+  // marked the host file as read (via POST /matters/{id}/files/{f}/read).
+  // Detail interface populates this; missing for old backends or for users
+  // not in the mentions list.
+  mention_unread_for_me?: boolean;
 };
+
+// File-level relevance reasons. Comment-level @ mentions are tracked
+// separately via TimelineComment.mention_unread_for_me, not by this enum.
+export type FileRelevanceReason =
+  | "owner_assigned"
+  | "reply_to_my_file"
+  | "reply_to_my_owned"
+  | "verify_my_file"
+  | "in_my_matter"
+  | "in_my_owned_matter";
 
 export type Reader = {
   open_id: string;
@@ -103,11 +118,15 @@ export type Reader = {
   first_read_at: string;
 };
 
-export type TimelineItem = {
+export type TimelineFileItem = {
   file: string;
   created_at: string;
   creator: string;
   owner: string;
+  owner_display?: string | null;
+  owner_avatar_url?: string | null;
+  creator_display?: string | null;
+  creator_avatar_url?: string | null;
   type: DocType;
   summary: string;
   quote: string | null;
@@ -120,7 +139,34 @@ export type TimelineItem = {
   outcome?: Outcome;
   readers_count?: number;
   readers?: Reader[];
+  // File-level relevance reason for the current user. null / missing means
+  // not relevant. Populated by detail interface from relevance_events table.
+  relevance_reason?: FileRelevanceReason | null;
 };
+
+export type TimelineOwnerChangeItem = {
+  type: "owner_change";
+  created_at: string;
+  actor: string;
+  actor_display: string | null;
+  actor_avatar_url: string | null;
+  from_owner: string | null;
+  from_owner_display: string | null;
+  from_owner_avatar_url: string | null;
+  to_owner: string;
+  to_owner_display: string | null;
+  to_owner_avatar_url: string | null;
+  reason: string;
+  status_change: StatusChange | null;
+  readers_count?: number;
+  readers?: Reader[];
+};
+
+export type TimelineItem = TimelineFileItem | TimelineOwnerChangeItem;
+
+export function isTimelineFileItem(item: TimelineItem): item is TimelineFileItem {
+  return item.type !== "owner_change";
+}
 
 export type MatterSummary = {
   id: string;
@@ -129,10 +175,27 @@ export type MatterSummary = {
   current_status: MatterStatus;
   created_at: string;
   updated_at: string;
+  // Derived sort key: max(updated_at, latest comment.created_at). Comments
+  // do not bump matter.updated_at (per pivot-product.md), so the list
+  // would otherwise miss matters that just got a new @-mention. Optional
+  // for back-compat with older backends — fall back to updated_at.
+  last_activity_at?: string;
   file_count: number;
   last_file_type: DocType | null;
   last_summary: string | null;
+  owner: string | null;
+  owner_display: string | null;
+  owner_avatar_url: string | null;
+  creator?: string | null;
+  creator_display?: string | null;
+  creator_avatar_url?: string | null;
   unread_count: number;
+  // Red = unread items that are relevant to the current user; gray = the rest
+  // of unread_count. Together they sum to unread_count (red + gray ===
+  // unread_count). Both fields are optional for backwards compatibility — old
+  // backends only return unread_count.
+  red_unread_count?: number;
+  gray_unread_count?: number;
   favorite: boolean;
 };
 
@@ -189,6 +252,7 @@ export type NewMatterResponse = {
 export async function createMatter(body: {
   category: string;
   title: string;
+  owner_open_id?: string;
   initial_file: InitialFileIn;
 }): Promise<NewMatterResponse> {
   const r = await fetch("/api/matters", {
@@ -223,7 +287,7 @@ export type NewFileIn = {
 };
 
 export type AppendFileResponse = {
-  item: TimelineItem;
+  item: TimelineFileItem;
   matter: MatterMeta;
 };
 
@@ -249,6 +313,68 @@ export async function appendMatterFile(
     throw new Error(detail);
   }
   return (await r.json()) as AppendFileResponse;
+}
+
+export type TransferMatterOwnerResponse = {
+  matter: MatterMeta;
+  item: TimelineOwnerChangeItem;
+};
+
+type ApiErrorDetail = string | { code?: string; message?: string };
+
+function transferMatterOwnerErrorMessage(
+  detail: ApiErrorDetail | undefined,
+  status: number,
+): string {
+  const code = typeof detail === "object" ? detail?.code : undefined;
+  const message = typeof detail === "string" ? detail : detail?.message;
+  switch (code) {
+    case "owner_unchanged":
+      return "新负责人不能与当前负责人相同";
+    case "to_owner_required":
+      return "请选择新负责人";
+    case "owner_unknown":
+      return "找不到这个负责人，请重新选择";
+    case "reason_required":
+      return "请填写转交原因";
+    case "owner_stale":
+      return "负责人已被其他人更新，请刷新后重试";
+    case "status_stale":
+      return "状态已被其他人更新，请刷新后重试";
+    case "status_change_not_allowed_by_event":
+      return "当前状态不支持随转交一起推进";
+    default:
+      break;
+  }
+  if (message?.includes("to_owner equals from_owner")) {
+    return "新负责人不能与当前负责人相同";
+  }
+  return message || `转交负责人失败：${status}`;
+}
+
+export async function transferMatterOwner(
+  matterId: string,
+  body: {
+    to_owner: string;
+    reason: string;
+    status_change?: StatusChange | null;
+  },
+): Promise<TransferMatterOwnerResponse> {
+  const r = await fetch(
+    `/api/matters/${encodeURIComponent(matterId)}/owner`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!r.ok) {
+    await throwIfSessionExpired(r);
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(transferMatterOwnerErrorMessage(d.detail, r.status));
+  }
+  return (await r.json()) as TransferMatterOwnerResponse;
 }
 
 export async function appendMatterResult(
@@ -708,6 +834,42 @@ export async function updateMyMarkdownStyle(style: string): Promise<{
   return (await r.json()) as { user_style: string; effective_style: string };
 }
 
+// ── Per-user preferences (generic KV; keys are server-whitelisted) ──────────
+//
+// Currently used keys:
+//   - "matter_list_filter": "all" | "mine"
+//
+// The server enforces a key whitelist on PUT — sending an unknown key returns
+// 400. fetchPreferences returns the full bag (keys absent from the user's
+// row simply won't appear in the dict).
+
+export type UserPreferences = Record<string, string>;
+
+export async function fetchPreferences(): Promise<UserPreferences> {
+  const r = await fetch("/api/me/preferences", { credentials: "include" });
+  await throwIfSessionExpired(r);
+  if (!r.ok) throw new Error(`/api/me/preferences failed: ${r.status}`);
+  return (await r.json()) as UserPreferences;
+}
+
+export async function setPreference(
+  key: string,
+  value: string,
+): Promise<{ key: string; value: string }> {
+  const r = await fetch(`/api/me/preferences/${encodeURIComponent(key)}`, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value }),
+  });
+  if (!r.ok) {
+    await throwIfSessionExpired(r);
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `set preference failed: ${r.status}`);
+  }
+  return (await r.json()) as { key: string; value: string };
+}
+
 export async function fetchAdminMarkdownSettings(): Promise<AdminMarkdownSettings> {
   const r = await adminFetch("/api/admin/markdown-settings");
   if (!r.ok) {
@@ -729,6 +891,72 @@ export async function updateAdminMarkdownSettings(body: {
     const d = await r.json().catch(() => ({ detail: r.statusText }));
     throw new Error(d.detail || `update markdown settings failed: ${r.status}`);
   }
+}
+
+// ── Daily report admin (Phase 5) ─────────────────────────────────────────────
+
+export type DailyReportConfig = {
+  enabled: boolean;
+  company_enabled: boolean;
+  personal_enabled: boolean;
+  time_window_hours: number;
+  push_time: string;                // "HH:MM" Asia/Shanghai
+  push_freq: "daily" | "weekdays";  // 默认 weekdays(仅周一到周五)
+};
+
+export type DailyReportLastRun = {
+  run_id: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  rc: number | null;
+  debug: Record<string, unknown> | null;
+  error: string | null;
+};
+
+export async function fetchDailyReportConfig(): Promise<DailyReportConfig> {
+  const r = await adminFetch("/api/admin/daily-report/config");
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `/api/admin/daily-report/config failed: ${r.status}`);
+  }
+  return (await r.json()) as DailyReportConfig;
+}
+
+export async function updateDailyReportConfig(body: DailyReportConfig): Promise<void> {
+  const r = await adminFetch("/api/admin/daily-report/config", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `update daily-report config failed: ${r.status}`);
+  }
+}
+
+export async function triggerDailyReport(body: {
+  dry_run: boolean;
+  no_ai: boolean;
+}): Promise<{ ok: boolean; run_id: string; started_at: string }> {
+  const r = await adminFetch("/api/admin/daily-report/trigger", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `trigger daily-report failed: ${r.status}`);
+  }
+  return r.json();
+}
+
+export async function fetchDailyReportLastRun(): Promise<DailyReportLastRun> {
+  const r = await adminFetch("/api/admin/daily-report/last-run");
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `last-run failed: ${r.status}`);
+  }
+  return (await r.json()) as DailyReportLastRun;
 }
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };

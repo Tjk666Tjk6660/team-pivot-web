@@ -4,7 +4,7 @@ import yaml
 
 from server.index_files import create_thread_index, read_thread_index
 from server.posts import mark_indexed, read_post, scan_un_indexed, write_post_pending
-from server.recovery import repair_partial_writes
+from server.recovery import repair_partial_writes, warn_missing_matter_owner
 
 
 def _write_pending_post(discussions_root, category, slug, filename, ptype, author):
@@ -108,3 +108,33 @@ def test_recover_no_op_when_nothing_un_indexed(tmp_path):
         encoding="utf-8",
     )
     assert repair_partial_writes(d, tmp_path / "index") == 0
+
+
+def test_warn_missing_matter_owner_logs_legacy_indexes(tmp_path, caplog):
+    idx = tmp_path / "index"
+    idx.mkdir()
+    path = idx / "demo.index.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "matter": {
+                    "id": "demo",
+                    "title": "Demo",
+                    "current_status": "planning",
+                    "created_at": "2026-04-29T10:00:00+08:00",
+                    "updated_at": "2026-04-29T10:00:00+08:00",
+                },
+                "timeline": [],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    count = warn_missing_matter_owner(idx)
+
+    assert count == 1
+    assert "missing matter.owner" in caplog.text
+    assert path.read_text(encoding="utf-8").find("owner:") == -1

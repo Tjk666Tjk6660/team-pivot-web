@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from server.notify import (
     FeishuNotifier,
     NoOpNotifier,
     build_mention_dm_card,
+    build_owner_change_card,
     build_reply_card,
     build_standalone_mention_card,
     build_status_change_card,
@@ -79,6 +81,7 @@ def test_thread_card_uses_schema2_at_tag_for_mentions():
         mention_open_ids=["ou_alice00000000000", "ou_bob000000000000000"],
     )
     md = card["body"]["elements"][0]["content"]
+    assert "**圈人**：" in md
     assert '<at id="ou_alice00000000000"></at>' in md
     assert '<at id="ou_bob000000000000000"></at>' in md
     assert "user_id=" not in md, (
@@ -98,8 +101,47 @@ def test_reply_card_uses_schema2_at_tag_for_mentions():
         mention_open_ids=["ou_carol0000000000000"],
     )
     md = card["body"]["elements"][0]["content"]
+    assert "**圈人**：" in md
     assert '<at id="ou_carol0000000000000"></at>' in md
     assert "user_id=" not in md
+
+
+def test_new_thread_card_renders_owner_as_labeled_at():
+    card = build_thread_card(
+        category="abc",
+        thread_slug="s",
+        title="T",
+        author_name="李帅",
+        filename="001_lishuai_think_x.md",
+        thread_url="http://x",
+        owner_open_id="ou_zhangsan00000000",
+    )
+    md = card["body"]["elements"][0]["content"]
+    assert card["body"]["elements"][0]["tag"] == "markdown"
+    assert "**负责人**：<at id=\"ou_zhangsan00000000\"></at>" in md
+    assert md.index("**负责人**：") < md.index("<at id=\"ou_zhangsan00000000\"></at>")
+
+
+def test_owner_change_card_mentions_new_owner():
+    card = build_owner_change_card(
+        thread_title="Pivot 优化",
+        actor_name="李帅",
+        from_owner_name="张三",
+        to_owner_name="李四",
+        to_owner_open_id="ou_lisi000000000000",
+        reason="后续由李四推进",
+        thread_url="http://x/m/pivot",
+        status_change={"from": "planning", "to": "executing"},
+    )
+    body = json.dumps(card["body"], ensure_ascii=False)
+    md = card["body"]["elements"][0]["content"]
+    assert card["header"]["title"]["content"] == "负责人变更：Pivot 优化"
+    assert card["body"]["elements"][0]["tag"] == "markdown"
+    assert "ou_lisi000000000000" in body
+    assert "**操作**：李帅 更改负责人" in md
+    assert "**负责人**：张三 → <at id=\"ou_lisi000000000000\"></at>" in md
+    assert "**原因**：后续由李四推进" in md
+    assert "**状态**：计划中 → 执行中" in md
 
 
 def test_card_no_author_row():
@@ -330,6 +372,30 @@ def test_feishu_notifier_uses_auth_entry_thread_url():
     )
 
 
+def test_feishu_notifier_broadcast_card_delegates_to_broadcast(monkeypatch):
+    """`broadcast_card` is the public hook for periodic-job callers (daily
+    report etc). It must forward to `_broadcast` 1:1 without modifying the
+    card or the event tag."""
+    from server.notify import FeishuNotifier
+
+    class _StubTokens:
+        def get(self) -> str:
+            return "token"
+
+    captured: list[tuple[dict, str]] = []
+    n = FeishuNotifier(
+        tokens=_StubTokens(),
+        web_base_url="http://localhost:5173",
+        workspace=None,
+    )
+    monkeypatch.setattr(n, "_broadcast",
+                        lambda card, *, event: captured.append((card, event)))
+
+    card = {"schema": "2.0", "header": {"title": {"content": "test"}}}
+    n.broadcast_card(card, event="daily_report 2026-04-26")
+    assert captured == [(card, "daily_report 2026-04-26")]
+
+
 def test_feishu_notifier_post_url_lands_on_matter_detail():
     """Post-migration: per-post deep-link URL lands on /m/<matter_id>.
     The old /t/<cat>/<slug>?post=<anchor> route is gone (frontend has no
@@ -557,6 +623,34 @@ def test_feishu_notifier_thread_status_change_uses_thread_url(monkeypatch):
 
     btn_url = _extract_button_url(captured[0])
     assert "%2Ft%2Fgeneral%2Flegacy-thread" in btn_url
+
+
+def test_feishu_notifier_owner_change_sends_dm_only(monkeypatch):
+    notifier = FeishuNotifier(tokens=None, web_base_url="https://x")  # type: ignore[arg-type]
+    calls: dict[str, object] = {"broadcast": 0, "dm_open_ids": []}
+
+    def fake_broadcast(self, card, *, event):
+        calls["broadcast"] = int(calls["broadcast"]) + 1
+
+    def fake_dm_many(self, open_ids, card, *, event):
+        calls["dm_open_ids"] = list(open_ids)
+
+    monkeypatch.setattr(FeishuNotifier, "_broadcast", fake_broadcast)
+    monkeypatch.setattr(FeishuNotifier, "_dm_many", fake_dm_many)
+
+    notifier.notify_owner_change(
+        category="c",
+        slug="m1",
+        thread_title="T",
+        actor_name="Alice",
+        from_owner_name="Bob",
+        to_owner_name="Carol",
+        to_owner_open_id="ou_carol",
+        reason="换人跟进",
+    )
+
+    assert calls["broadcast"] == 0
+    assert calls["dm_open_ids"] == ["ou_carol"]
 
 
 def _extract_button_url(card: dict) -> str:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -66,17 +68,31 @@ class GetMatterIn(BaseModel):
 
 
 class TimelineItem(BaseModel):
-    file: str
+    """Timeline entries returned by get_matter.
+
+    Two shapes are valid:
+    - file entries: type in think/act/verify/result/insight, with file/creator/owner/summary.
+    - event entries: type == owner_change, with actor/from_owner/to_owner/reason and no file.
+    """
+
+    type: Literal["think", "act", "verify", "result", "insight", "owner_change"]
     created_at: str
-    creator: str
-    owner: str
-    type: str
-    summary: str
+    file: str | None = None
+    creator: str | None = None
+    owner: str | None = None
+    summary: str | None = None
     quote: str | None = None
     refer: list[str] = []
     verifications: list[dict] | None = None
     outcome: str | None = None
     status_change: dict | None = None
+    actor: str | None = None
+    from_owner: str | None = None
+    to_owner: str | None = None
+    reason: str | None = Field(
+        default=None,
+        description="For type=owner_change, the required human reason for the transfer.",
+    )
 
 
 class GetMatterOut(BaseModel):
