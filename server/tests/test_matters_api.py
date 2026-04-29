@@ -1077,7 +1077,7 @@ def test_mcp_name_mentions_resolve_to_open_ids_for_notifier(db, users, tmp_path)
     app.include_router(
         build_router(
             workspace, users, contacts, RecordingNotifier(),
-            ReadStateRepo(db), FavoriteRepo(db), current_user,
+            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db), current_user,
         )
     )
     c = TestClient(app)
@@ -1180,7 +1180,7 @@ def test_comment_with_ambiguous_pinyin_returns_422_with_candidates(db, users, tm
     app.include_router(
         build_router(
             workspace, users, contacts, RecordingNotifier(),
-            ReadStateRepo(db), FavoriteRepo(db), current_user,
+            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db), current_user,
         )
     )
     c = TestClient(app)
