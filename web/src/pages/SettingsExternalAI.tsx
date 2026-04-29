@@ -11,6 +11,10 @@ import {
   codexCliCommand,
   cursorDeepLink,
 } from "./settings/clientConfigs";
+import {
+  MCP_FIRST_MESSAGE_PROMPT,
+  MCP_TOOLS_GUIDE,
+} from "./settings/mcpToolsGuide";
 import { createApiToken, fetchApiTokens, type ApiTokenSummary } from "@/api";
 
 const CLIENT_NAMES = [
@@ -190,6 +194,15 @@ export function SettingsExternalAI() {
   );
 }
 
+async function copyToClipboard(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast.success("已复制");
+  } catch {
+    toast.error("复制失败");
+  }
+}
+
 function McpToolsPanel() {
   return (
     <Card className="rounded-[var(--r-md)] border-[var(--line)] bg-[var(--surface)] p-5 shadow-none">
@@ -202,33 +215,21 @@ function McpToolsPanel() {
           的 matter / 文件链接不只是文本引用，AI 可以通过工具读取对应内容并协助写回。
         </p>
       </div>
-      <div className="space-y-2">
-        <McpToolRow
-          name="resolve_context"
-          title="解析复制链接"
-          body="AI 收到「复制给 AI」的 matter / 文件 URL 后，用这个工具确认链接对应的 matter、文件和当前状态，并把可读摘要展示给你核对。"
-        />
-        <McpToolRow
-          name="list_matters"
-          title="查找可见 matters"
-          body="按状态、负责人或关键词列出当前用户能访问的 matters，适合让 AI 先帮你找相关讨论。"
-        />
-        <McpToolRow
-          name="get_matter"
-          title="读取时间线目录"
-          body="获取 matter 标题、状态、可触发的状态迁移，以及时间线上的文件元数据；不拉正文，方便 AI 先判断该读哪些文件。"
-        />
-        <McpToolRow
-          name="read_files"
-          title="读取文件正文"
-          body="按文件路径读取完整正文和作者、类型等信息。单次最多 5 篇、总量有上限，避免 AI 一次拉太多上下文。"
-        />
-        <McpToolRow
-          name="create_file"
-          title="写入新文件"
-          body="在你的明确确认后，AI 可以创建 think / act / verify / result / insight 文件；如果涉及状态变更，也必须先把可选迁移展示给你选择。"
-        />
+
+      <FirstMessagePrompt />
+
+      <div className="mt-4 space-y-2">
+        {MCP_TOOLS_GUIDE.map((tool) => (
+          <McpToolRow
+            key={tool.name}
+            name={tool.name}
+            title={tool.title}
+            body={tool.body}
+            examples={tool.examples}
+          />
+        ))}
       </div>
+
       <p className="mt-3 rounded-[var(--r-sm)] bg-[var(--accent-bg)] px-3 py-2 text-sm leading-6 text-[var(--accent)]">
         推荐流程：先在本页完成客户端接入，再回到 matter 或文件页点击「复制给
         AI」，把链接粘给 AI，并要求它通过 Pivot MCP 读取上下文。
@@ -237,14 +238,45 @@ function McpToolsPanel() {
   );
 }
 
+function FirstMessagePrompt() {
+  return (
+    <div className="rounded-[var(--r-sm)] border border-[var(--accent-soft)] bg-[var(--accent-bg)] p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-[var(--text)]">
+            首次接入测试
+          </div>
+          <p className="mt-1 text-sm leading-6 text-[var(--text-soft)]">
+            把下面这条粘到 Claude Code / Codex / Cursor，让它自己介绍 Pivot MCP
+            提供的工具和触发方式。CLI 用户验证连接最方便。
+          </p>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => copyToClipboard(MCP_FIRST_MESSAGE_PROMPT)}
+          className="shrink-0"
+        >
+          复制
+        </Button>
+      </div>
+      <pre className="mt-2 whitespace-pre-wrap break-words rounded-[var(--r-sm)] bg-[var(--surface)] px-3 py-2 text-[12.5px] leading-6 text-[var(--text)]">
+        {MCP_FIRST_MESSAGE_PROMPT}
+      </pre>
+    </div>
+  );
+}
+
 function McpToolRow({
   name,
   title,
   body,
+  examples,
 }: {
   name: string;
   title: string;
   body: string;
+  examples: string[];
 }) {
   return (
     <div className="rounded-[var(--r-sm)] border border-[var(--line)] bg-[var(--surface-alt)] p-3">
@@ -259,6 +291,21 @@ function McpToolRow({
       <p className="mt-1.5 text-sm leading-6 text-[var(--text-soft)]">
         {body}
       </p>
+      {examples.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {examples.map((ex) => (
+            <button
+              key={ex}
+              type="button"
+              onClick={() => copyToClipboard(ex)}
+              title="点击复制"
+              className="rounded-full border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1 text-[12px] leading-5 text-[var(--text-soft)] transition hover:border-[var(--accent-soft)] hover:bg-[var(--accent-bg)] hover:text-[var(--accent)]"
+            >
+              {ex}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
