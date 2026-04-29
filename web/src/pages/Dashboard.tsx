@@ -195,6 +195,7 @@ function sameMatters(
     if (
       a.id !== b.id ||
       a.updated_at !== b.updated_at ||
+      a.last_activity_at !== b.last_activity_at ||
       a.unread_count !== b.unread_count ||
       a.red_unread_count !== b.red_unread_count ||
       a.gray_unread_count !== b.gray_unread_count ||

@@ -255,11 +255,7 @@ export function ThreadListPane({
                         </div>
                       )}
                     </div>
-                    {group.unread > 0 && (
-                      <Badge variant="red" className="shrink-0">
-                        {group.unread}
-                      </Badge>
-                    )}
+                    <UnreadBadges red={group.red} gray={group.gray} />
                   </button>
                   {open && (
                     <div className="mt-1 ml-5 border-l border-[var(--line)] bg-transparent pl-2">
@@ -278,10 +274,11 @@ export function ThreadListPane({
 }
 
 function MatterRow({ matter }: { matter: MatterSummary }) {
+  const lastActivity = activityKey(matter);
   const meta = [
     matter.file_count ? `${matter.file_count} 个文件` : null,
     matter.last_file_type ? `最近 ${matter.last_file_type}` : null,
-    matter.updated_at ? relativeTime(matter.updated_at) : null,
+    lastActivity ? relativeTime(lastActivity) : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -387,24 +384,46 @@ type CategoryGroup = {
   category: string;
   items: MatterSummary[];
   last_updated: string | null;
-  unread: number;
+  // Sum of red_unread_count / gray_unread_count across the category's
+  // matters. Falls back to splitting unread_count entirely into red when
+  // the backend is older and didn't return the split (matches the legacy
+  // single-red-badge behavior).
+  red: number;
+  gray: number;
 };
 
 function UnreadBadges({ red, gray }: { red: number; gray: number }) {
   if (red <= 0 && gray <= 0) return null;
+  const fmt = (n: number) => (n > 99 ? "99+" : String(n));
+  // Both present → single rounded pill split into two halves: red left,
+  // gray right. Reads as one unit visually but the two colors signal the
+  // semantic split — red is "your stuff", gray is "background updates".
+  if (red > 0 && gray > 0) {
+    return (
+      <span
+        className="inline-flex shrink-0 items-center overflow-hidden rounded-full text-xs font-medium leading-tight"
+        title={`相关 ${red} · 普通 ${gray}`}
+      >
+        <span className="bg-[var(--danger-500)] px-2 py-0.5 text-white">
+          {fmt(red)}
+        </span>
+        <span className="bg-[var(--status-archived-bg)] px-2 py-0.5 text-[var(--status-archived-fg)]">
+          {fmt(gray)}
+        </span>
+      </span>
+    );
+  }
+  if (red > 0) {
+    return (
+      <Badge variant="red" className="shrink-0" title="跟你相关的未读">
+        {fmt(red)}
+      </Badge>
+    );
+  }
   return (
-    <div className="flex shrink-0 items-center gap-1">
-      {red > 0 && (
-        <Badge variant="red" className="shrink-0" title="跟你相关的未读">
-          {red > 99 ? "99+" : red}
-        </Badge>
-      )}
-      {gray > 0 && (
-        <Badge variant="gray" className="shrink-0" title="普通更新">
-          {gray > 99 ? "99+" : gray}
-        </Badge>
-      )}
-    </div>
+    <Badge variant="gray" className="shrink-0" title="普通更新">
+      {fmt(gray)}
+    </Badge>
   );
 }
 
@@ -451,24 +470,48 @@ function FilterToggle({
   );
 }
 
+// Sort key: last_activity_at when the backend provides it (max of
+// matter.updated_at and the latest comment.created_at), falling back to
+// matter.updated_at for older backends. This is what makes a matter that
+// just received a new comment / @-mention float to the top — comments
+// don't bump matter.updated_at on their own.
+function activityKey(m: MatterSummary): string {
+  return m.last_activity_at || m.updated_at || "";
+}
+
+// Per-matter red / gray, with back-compat fallback when the backend is
+// pre-split: the entire unread_count counts as red, mirroring the
+// legacy single-red-badge UX.
+function matterRed(m: MatterSummary): number {
+  return m.red_unread_count ?? m.unread_count ?? 0;
+}
+function matterGray(m: MatterSummary): number {
+  return m.gray_unread_count ?? 0;
+}
+
 function groupByCategory(matters: MatterSummary[] | null): CategoryGroup[] {
   if (!matters || matters.length === 0) return [];
   const map = new Map<string, CategoryGroup>();
   for (const m of matters) {
     const cat = m.category ?? UNCATEGORIZED;
+    const ak = activityKey(m);
+    const r = matterRed(m);
+    const g = matterGray(m);
     const existing = map.get(cat);
     if (existing) {
       existing.items.push(m);
-      existing.unread += m.unread_count;
-      if ((m.updated_at || "") > (existing.last_updated || "")) {
-        existing.last_updated = m.updated_at;
+      existing.red += r;
+      existing.gray += g;
+      if (ak > (existing.last_updated || "")) {
+        existing.last_updated = ak;
       }
     } else {
       map.set(cat, {
         category: cat,
         items: [m],
-        last_updated: m.updated_at,
-        unread: m.unread_count,
+        last_updated: ak,
+        red: r,
+        gray: g,
       });
     }
   }
@@ -476,7 +519,7 @@ function groupByCategory(matters: MatterSummary[] | null): CategoryGroup[] {
     .map((g) => ({
       ...g,
       items: [...g.items].sort((a, b) =>
-        (b.updated_at || "").localeCompare(a.updated_at || ""),
+        activityKey(b).localeCompare(activityKey(a)),
       ),
     }))
     .sort((a, b) => (b.last_updated || "").localeCompare(a.last_updated || ""));

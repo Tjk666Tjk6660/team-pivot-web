@@ -146,6 +146,11 @@ export type MatterSummary = {
   current_status: MatterStatus;
   created_at: string;
   updated_at: string;
+  // Derived sort key: max(updated_at, latest comment.created_at). Comments
+  // do not bump matter.updated_at (per pivot-product.md), so the list
+  // would otherwise miss matters that just got a new @-mention. Optional
+  // for back-compat with older backends — fall back to updated_at.
+  last_activity_at?: string;
   file_count: number;
   last_file_type: DocType | null;
   last_summary: string | null;

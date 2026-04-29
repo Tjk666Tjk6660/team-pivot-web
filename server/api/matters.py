@@ -154,8 +154,14 @@ def build_router(
             summary["unread_count"] = red + gray
             summary["favorite"] = key in favorite_keys
             summary["category"] = category
+            # Derived "any activity" timestamp: matter.updated_at only moves
+            # on file appends; comments do not bump it (per pivot-product.md
+            # design — comments are discussion, not progress). For list
+            # sorting we want comments to count too so that a newly @-ed
+            # matter floats to the top, hence this max() over both sources.
+            summary["last_activity_at"] = _matter_last_activity_at(data)
             items.append(summary)
-        items.sort(key=lambda m: m.get("updated_at") or "", reverse=True)
+        items.sort(key=lambda m: m.get("last_activity_at") or "", reverse=True)
         return {"items": items}
 
     @router.get("/matters/{matter_id}")
@@ -495,6 +501,25 @@ def _matter_category(data: dict) -> str | None:
     if len(parts) < 4 or parts[0] != "discussions":
         return None
     return parts[1]
+
+
+def _matter_last_activity_at(data: dict) -> str:
+    """Latest ISO timestamp across matter.updated_at + every comment.created_at.
+
+    matter.updated_at only moves on file appends; comments deliberately do
+    not bump it (pivot-product.md treats comments as discussion, not
+    matter progress). Using this derived field for list sort lets a matter
+    that just got a new comment / @-mention float to the top, while
+    leaving the on-disk index schema untouched.
+    """
+    matter = data.get("matter") or {}
+    latest = str(matter.get("updated_at") or "")
+    for item in data.get("timeline") or []:
+        for c in item.get("comments") or []:
+            ca = str(c.get("created_at") or "")
+            if ca > latest:
+                latest = ca
+    return latest
 
 
 def _render_matter_detail(
