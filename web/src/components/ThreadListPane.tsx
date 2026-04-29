@@ -17,14 +17,20 @@ import type { Draft, MatterSummary } from "@/api";
 
 const UNCATEGORIZED = "未分类";
 
+export type MatterListFilter = "all" | "mine";
+
 export function ThreadListPane({
   drafts,
   matters,
   onRemoveDraft,
+  listFilter = "all",
+  onListFilterChange,
 }: {
   drafts: Draft[] | null;
   matters: MatterSummary[] | null;
   onRemoveDraft: (id: string) => void;
+  listFilter?: MatterListFilter;
+  onListFilterChange?: (next: MatterListFilter) => void;
 }) {
   const location = useLocation();
   const activeMatterId = useMemo(() => {
@@ -39,7 +45,25 @@ export function ThreadListPane({
       .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
   }, [matters]);
 
-  const grouped = useMemo(() => groupByCategory(matters), [matters]);
+  // Filter applied to the matters section (NOT the favorites section —
+  // favorites is an explicit per-user pin and shouldn't be hidden by the
+  // 与我相关 toggle). When the user is on a hidden matter's detail page,
+  // we still keep the row visible so they don't lose context mid-scroll;
+  // the active row escapes the filter regardless of red count.
+  const visibleMatters = useMemo(() => {
+    if (!matters) return matters;
+    if (listFilter !== "mine") return matters;
+    return matters.filter(
+      (m) =>
+        (m.red_unread_count ?? 0) > 0 ||
+        m.id === activeMatterId,
+    );
+  }, [matters, listFilter, activeMatterId]);
+
+  const grouped = useMemo(
+    () => groupByCategory(visibleMatters),
+    [visibleMatters],
+  );
   const activeCategory = useMemo(() => {
     if (!activeMatterId || !matters) return null;
     const m = matters.find((x) => x.id === activeMatterId);
@@ -171,6 +195,12 @@ export function ThreadListPane({
           onToggle={() => setMattersOpen((v) => !v)}
           icon={<FolderTree className="h-3.5 w-3.5 shrink-0" />}
         >
+          {mattersOpen && onListFilterChange && (
+            <FilterToggle
+              value={listFilter}
+              onChange={onListFilterChange}
+            />
+          )}
           {matters === null && (
             <div className="px-4 py-3 text-sm text-muted-foreground">
               Loading…
@@ -181,6 +211,14 @@ export function ThreadListPane({
               还没有讨论。
             </div>
           )}
+          {mattersOpen &&
+            visibleMatters !== null &&
+            visibleMatters.length === 0 &&
+            (matters?.length ?? 0) > 0 && (
+              <div className="px-4 py-3 text-sm text-muted-foreground">
+                没有跟你相关的未读 matter。
+              </div>
+            )}
           {mattersOpen &&
             matters !== null &&
             grouped.length > 0 &&
@@ -247,6 +285,12 @@ function MatterRow({ matter }: { matter: MatterSummary }) {
   ]
     .filter(Boolean)
     .join(" · ");
+  // Prefer the new red/gray split. Fall back to the legacy single-number
+  // rendering when the backend hasn't been upgraded yet (red/gray omitted
+  // → keep showing unread_count as red, matching old behavior).
+  const red = matter.red_unread_count;
+  const gray = matter.gray_unread_count;
+  const hasSplit = red !== undefined && gray !== undefined;
   return (
     <div>
       <NavLink
@@ -262,10 +306,14 @@ function MatterRow({ matter }: { matter: MatterSummary }) {
         {({ isActive }) => (
           <>
             <div className="flex items-start gap-2">
-              {matter.unread_count > 0 && (
-                <Badge variant="red" className="shrink-0">
-                  {matter.unread_count}
-                </Badge>
+              {hasSplit ? (
+                <UnreadBadges red={red} gray={gray} />
+              ) : (
+                matter.unread_count > 0 && (
+                  <Badge variant="red" className="shrink-0">
+                    {matter.unread_count}
+                  </Badge>
+                )
               )}
               <span
                 className="line-clamp-2 min-w-0 flex-1 text-[14px] font-medium leading-5 text-[var(--text)] transition-colors group-hover:text-[var(--accent)]"
@@ -341,6 +389,67 @@ type CategoryGroup = {
   last_updated: string | null;
   unread: number;
 };
+
+function UnreadBadges({ red, gray }: { red: number; gray: number }) {
+  if (red <= 0 && gray <= 0) return null;
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      {red > 0 && (
+        <Badge variant="red" className="shrink-0" title="跟你相关的未读">
+          {red > 99 ? "99+" : red}
+        </Badge>
+      )}
+      {gray > 0 && (
+        <Badge variant="gray" className="shrink-0" title="普通更新">
+          {gray > 99 ? "99+" : gray}
+        </Badge>
+      )}
+    </div>
+  );
+}
+
+function FilterToggle({
+  value,
+  onChange,
+}: {
+  value: MatterListFilter;
+  onChange: (next: MatterListFilter) => void;
+}) {
+  const options: { key: MatterListFilter; label: string }[] = [
+    { key: "all", label: "全部" },
+    { key: "mine", label: "与我相关" },
+  ];
+  return (
+    <div
+      role="tablist"
+      aria-label="matter 列表筛选"
+      className="mx-1 my-1 inline-flex rounded-[var(--r-sm)] border border-[var(--line)] bg-[var(--surface-alt)] p-0.5 text-[11px]"
+    >
+      {options.map((opt) => {
+        const active = value === opt.key;
+        return (
+          <button
+            key={opt.key}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => {
+              if (!active) onChange(opt.key);
+            }}
+            className={cn(
+              "rounded-[var(--r-sm)] px-2.5 py-1 font-medium transition-colors",
+              active
+                ? "bg-[var(--surface)] text-[var(--text)] shadow-[var(--shadow-sm)]"
+                : "text-[var(--text-mute)] hover:text-[var(--text-soft)]",
+            )}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function groupByCategory(matters: MatterSummary[] | null): CategoryGroup[] {
   if (!matters || matters.length === 0) return [];

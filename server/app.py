@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -16,6 +17,7 @@ from server.api.inbox import build_router as build_inbox_router
 from server.api.matters import build_router as build_matters_router
 from server.api.matters_events import build_router as build_matters_events_router
 from server.api.markdown_styles import build_router as build_markdown_styles_router
+from server.api.preferences import build_router as build_preferences_router
 from server.api.tokens import build_router as build_tokens_router
 from server.api.workspace import build_router as build_workspace_router
 from server.api_tokens import ApiTokenRepo
@@ -36,7 +38,15 @@ from server.mcp.server import build_mcp_app
 from server.notify import FeishuNotifier, NoOpNotifier, Notifier
 from server.ai_conversations import AIConversationRepo
 from server.read_state import ReadStateRepo
+from server.relevance_events import RelevanceEventsRepo
+from server.relevance_scanner import (
+    is_backfill_on_startup_enabled,
+    scan_all as scan_relevance_all,
+    schedule_hourly_scan,
+)
+from server.relevance_writer import install as install_relevance_writer
 from server.settings import SettingsRepo
+from server.user_preferences import UserPreferenceRepo
 from server.users import UserRepo
 from server.workspace_config import load_workspace_config, save_workspace_config
 from server.workspace_runtime import WorkspaceRuntime
@@ -54,6 +64,8 @@ def create_app() -> FastAPI:
     read_states = ReadStateRepo(db)
     favorites = FavoriteRepo(db)
     file_reads = FileReadRepo(db)
+    relevance_events = RelevanceEventsRepo(db)
+    user_prefs = UserPreferenceRepo(db)
     contacts = ContactRepo(db)
     settings = SettingsRepo(db)
     _migrate_legacy_workspace_env(settings)
@@ -97,6 +109,13 @@ def create_app() -> FastAPI:
         notifier = NoOpNotifier()
         log.info("notifier disabled (no-op)")
 
+    # Real-time relevance writer: subscribes to the in-process event bus and
+    # writes relevance_events rows on each matter mutation. Failures are
+    # swallowed; the hourly scanner is the safety net.
+    install_relevance_writer(
+        workspace=workspace, users_repo=users, repo=relevance_events,
+    )
+
     # Build MCP sub-app once; FastAPI does not propagate lifespan to mounted
     # sub-apps, so we enter its lifespan_context from our own lifespan below.
     # The sub-app enforces PAT bearer auth on every HTTP request using the
@@ -108,8 +127,33 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        async with mcp_app.router.lifespan_context(mcp_app):
-            yield
+        # Optional startup backfill: walk the index from scratch and ensure
+        # every relevance row that should exist does. Defaults to ON; set
+        # RELEVANCE_BACKFILL_ON_STARTUP=false to skip and let the hourly
+        # task carry the load.
+        if is_backfill_on_startup_enabled():
+            try:
+                await asyncio.to_thread(
+                    scan_relevance_all,
+                    workspace=workspace,
+                    users_repo=users,
+                    repo=relevance_events,
+                )
+            except Exception:
+                log.exception("startup relevance scan_all failed")
+
+        hourly_task = asyncio.create_task(schedule_hourly_scan(
+            workspace=workspace, users_repo=users, repo=relevance_events,
+        ))
+        try:
+            async with mcp_app.router.lifespan_context(mcp_app):
+                yield
+        finally:
+            hourly_task.cancel()
+            try:
+                await hourly_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
     app = FastAPI(title="team-pivot-web", lifespan=lifespan)
     app.add_middleware(
@@ -139,8 +183,10 @@ def create_app() -> FastAPI:
     app.include_router(build_matters_events_router(current_user_dep))
     app.include_router(build_matters_router(
         workspace, users, contacts, notifier,
-        read_states, favorites, file_reads, current_user_dep,
+        read_states, favorites, file_reads, relevance_events,
+        current_user_dep,
     ))
+    app.include_router(build_preferences_router(user_prefs, current_user_dep))
     app.include_router(build_workspace_router(
         workspace, settings, current_user_dep, current_user_cookie_dep,
     ))

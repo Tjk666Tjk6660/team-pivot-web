@@ -17,6 +17,7 @@ from server.favorites import FavoriteRepo
 from server.file_reads import FileReadRepo
 from server.notify import NoOpNotifier
 from server.read_state import ReadStateRepo
+from server.relevance_events import RelevanceEventsRepo
 
 
 class _WorkspaceStub:
@@ -59,7 +60,8 @@ def client(db, users, tmp_path):
     app.include_router(
         build_router(
             workspace, users, ContactRepo(db), NoOpNotifier(),
-            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db), current_user,
+            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
+            RelevanceEventsRepo(db), current_user,
         )
     )
     c = TestClient(app)
@@ -854,7 +856,8 @@ def test_notifier_is_called_on_append_and_status_change(db, users, tmp_path):
     app.include_router(
         build_router(
             workspace, users, ContactRepo(db), RecordingNotifier(),
-            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db), current_user,
+            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
+            RelevanceEventsRepo(db), current_user,
         )
     )
     c = TestClient(app)
@@ -917,7 +920,8 @@ def test_create_and_append_propagate_bundled_mentions_to_notifier(db, users, tmp
     app.include_router(
         build_router(
             workspace, users, ContactRepo(db), RecordingNotifier(),
-            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db), current_user,
+            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
+            RelevanceEventsRepo(db), current_user,
         )
     )
     c = TestClient(app)
@@ -1017,7 +1021,8 @@ def test_comment_route_does_not_pass_unknown_kwargs_to_notifier(db, users, tmp_p
     app.include_router(
         build_router(
             workspace, users, ContactRepo(db), notifier,
-            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db), current_user,
+            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
+            RelevanceEventsRepo(db), current_user,
         )
     )
     c = TestClient(app)

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | 状态 | 待评审 |
-| 涉及组件 | `server/db.py` · `server/relevance_events.py`（新增） · `server/relevance.py` · `server/relevance_writer.py` · `server/relevance_scanner.py` · `server/inbox.py` · `server/api/matters.py` · `server/api/preferences.py` · `web/src/pages/Dashboard.tsx` · `web/src/components/matter/FileCard.tsx` |
+| 涉及组件 | `server/db.py` · `server/relevance_events.py`（新增） · `server/scan_cursor.py`（新增） · `server/relevance.py` · `server/relevance_writer.py` · `server/relevance_scanner.py` · `server/inbox.py` · `server/api/matters.py` · `server/api/preferences.py` · `web/src/pages/Dashboard.tsx` · `web/src/components/matter/FileCard.tsx` |
 
 ## 一、需求背景
 
@@ -67,6 +67,15 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     value        TEXT NOT NULL,
     updated_at   REAL NOT NULL,
     PRIMARY KEY (user_open_id, key)
+);
+
+-- 扫描器游标:每个 matter index 文件最近一次扫描时的 inode mtime,
+-- scan_all 跑增量用(详见 §3.7.1)。
+CREATE TABLE IF NOT EXISTS scan_cursor (
+    matter_id       TEXT NOT NULL,
+    file_mtime_ns   INTEGER NOT NULL,
+    last_scanned_at REAL NOT NULL,
+    PRIMARY KEY (matter_id)
 );
 ```
 
@@ -195,62 +204,73 @@ SELECT matter_id,
 
 前端用 `if (item.relevance_reason)` 判断是否相关，不再有 `is_relevant` 这种冗余布尔。
 
-### 3.7 扫描补录
+### 3.7 扫描补录（增量 + 显式 SELECT-then-INSERT）
 
-real-time writer 走异步回调，可能因总线异常 / 进程重启漏写。`server/relevance_scanner.py` 全量幂等扫，补漏不污染。
+real-time writer 走异步回调，可能因总线异常 / 进程重启漏写。`server/relevance_scanner.py` 作为兜底，**按文件 mtime 增量扫**——只处理 index 文件 inode 修改时间跟上次扫描记录不一致的 matter，其它整体跳过。
 
-**scanner 用显式 SELECT-then-INSERT**，每条候选先 `Repo.exists` 查 PK，不存在才 INSERT。好处：
+#### 3.7.1 增量游标
 
-- **可观测**：能区分跳过 vs 新增，扫完报 `inserted=N skipped=M`，实时通道是否健康一目了然。
-- **可扩展**：未来需要"行存在但要纠正 reason"时，已经查过现状，加分支即可。
-- **代价小**：N 条候选多 N 次 PK 索引 lookup（常数级），整体耗时主要被 index 文件读盘吃掉，DB 不是瓶颈。
+新增一张 `scan_cursor` 表：
 
-real-time writer 路径继续用 `INSERT OR IGNORE`——单事件落表延迟敏感、并发 race 多，数据库原子去重更安全。两条路径用的 Repo 方法分开。
+```sql
+CREATE TABLE IF NOT EXISTS scan_cursor (
+    matter_id       TEXT NOT NULL,
+    file_mtime_ns   INTEGER NOT NULL,    -- os.stat(index_path).st_mtime_ns
+    last_scanned_at REAL NOT NULL,
+    PRIMARY KEY (matter_id)
+);
+```
 
-代码骨架：
+`file_mtime_ns` 是文件系统层 inode 修改时间，跟 matter index yaml 内部的 `updated_at` 字段无关——publish 路径动文件时走 `_atomic_write_yaml`，inode mtime 一定会变。
+
+scan_all 主循环只在 mtime 变化时进入文件内容遍历：
 
 ```python
 def scan_all() -> ScanReport:
-    inserted = skipped = 0
-    for matter, item in walk(indices):
-        # file 级
-        for user in users.all():
-            ok, reason = compute_relevance(item, matter, user)
-            if not ok:
-                continue
-            if relevance_events.exists(
-                user_open_id=user.open_id, matter_id=matter.id,
-                filename=item.filename, kind="file",
-                event_at=item.created_at, actor_pinyin=item.author,
-            ):
-                skipped += 1
-                continue
-            relevance_events.insert_file(...)
-            inserted += 1
-        # mention 级
-        for comment in item.comments:
-            for mention_id in comment.mentions:
-                target = users.get_by_any_id(mention_id)
-                if target is None or target.pinyin == comment.author:
-                    continue
-                if relevance_events.exists(
-                    user_open_id=target.open_id, matter_id=matter.id,
-                    filename=item.filename, kind="mention",
-                    event_at=comment.created_at, actor_pinyin=comment.author,
-                ):
-                    skipped += 1
-                    continue
-                relevance_events.insert_mention(...)
-                inserted += 1
-    log.info("scan_all done: inserted=%d skipped=%d", inserted, skipped)
-    return ScanReport(inserted=inserted, skipped=skipped)
+    inserted = skipped_unchanged = skipped_existing = 0
+    for index_path in indices:
+        matter_id = ...
+        mtime_ns = index_path.stat().st_mtime_ns
+        cached = cursor_repo.get(matter_id)
+        if cached is not None and cached.file_mtime_ns == mtime_ns:
+            skipped_unchanged += 1
+            cursor_repo.touch(matter_id)   # 只刷 last_scanned_at,便于 ops 观测
+            continue
+
+        # 文件被改过(或首次扫到)→ 走完整 timeline / comments 遍历
+        # 每条候选先 Repo.exists 再 INSERT(见 §3.7.2)
+
+        cursor_repo.upsert(matter_id, file_mtime_ns=mtime_ns)
+    return ScanReport(...)
 ```
 
-触发点：
+稳态收益：100 matter 每小时改动 ~5 个 → 95 个走 `os.stat` 直接跳过。stat 是 µs 级系统调用，比一条 SQL 还快，整体单轮成本下降约 95%。
 
-- **启动一次**（默认开，`RELEVANCE_BACKFILL_ON_STARTUP=False` 可关）
-- **每小时定时**：`server/app.py` 注册 hourly task 全量扫
-- **CLI**：`python -m server.relevance_scanner`
+#### 3.7.2 文件被改过时仍走显式 SELECT-then-INSERT
+
+进入 mtime 不一致分支后，每条候选先 `Repo.exists` 查 PK，不存在才 INSERT。好处：
+
+- **可观测**：扫完一个文件能区分跳过 vs 新增，报 `inserted=N skipped_existing=M`，实时通道是否健康一目了然。
+- **可扩展**：未来需要"行存在但要纠正 reason"，已经查过现状，加分支即可。
+- **代价小**：N 条候选多 N 次 PK 索引 lookup（常数级），跟读 index 文件的盘 I/O 比可忽略。
+
+real-time writer 路径继续用 `INSERT OR IGNORE`——单事件落表延迟敏感、并发 race 多，数据库原子去重更安全。两条路径用的 Repo 方法分开。
+
+#### 3.7.3 边界场景
+
+mtime 增量扫几个特殊场景需要绕过缓存：
+
+| 场景 | 处理 |
+|---|---|
+| compute_relevance 规则改了，老 matter 需要按新规则重算 | 上线时手动 `DELETE FROM scan_cursor`，下轮 scan 自动全量重跑 |
+| writer 发现 bug 修复后想刷历史数据 | CLI 加 `--full` 旗标：`python -m server.relevance_scanner --full` 跳过 cursor，强制全扫 |
+
+#### 3.7.4 触发点
+
+- **启动一次**（默认开，`RELEVANCE_BACKFILL_ON_STARTUP=False` 可关）：第一次启动时 cursor 表是空的，走全扫；后续重启时绝大多数 matter mtime 没变，秒级跑完。
+- **每小时定时**：`server/app.py` 注册 hourly task。
+- **CLI 普通模式**：`python -m server.relevance_scanner`，跟定时任务等价。
+- **CLI 强制全扫**：`python -m server.relevance_scanner --full`，跳过 cursor 比对，给运维做兜底。
 
 定时任务永远跑全量，启动开关只影响"是否阻塞 startup 等扫一次完成"。
 
@@ -272,6 +292,8 @@ UI 改动：
 - **N > 99**：UI 截断"99+"。
 - **DM 与红点不同步**：总线异常时 DM 已发但红点没出，最坏 1h 红点延迟由 hourly scanner 补回。
 - **文件 reason 升级**（in_my_matter 后被改成 owner_assigned）：`INSERT OR IGNORE` 保留首次 reason，本期不做升级。
+- **新员工入职**：scanner 走 mtime 增量，老 matter 不会被重扫，新员工拿不到加入前的 file 级 relevance 行（mention 历史命中也基本不存在，详见 §3.7.3）。可接受折中。需要时运维跑一次 `python -m server.relevance_scanner --full` 强制全扫。
+- **compute_relevance 规则修改**：scanner 不会主动按新规则重刷老 matter。开发者上线时执行 `DELETE FROM scan_cursor` 即可触发下轮全扫；或运维直接跑 `--full`。
 
 ## 四、时序图
 
@@ -315,10 +337,10 @@ GET /api/matters
 
 | 阶段 | 内容 | 负责 | 估时 |
 |---|---|---|---|
-| 后端 1 | `db.py` 加表；`relevance_events.py` Repo + 单测 | 后端 | 0.5 d |
+| 后端 1 | `db.py` 加 `relevance_events` / `user_preferences` / `scan_cursor` 三张表；`relevance_events.py` Repo + 单测；`scan_cursor` Repo（get / upsert / touch / clear） | 后端 | 0.5 d |
 | 后端 2 | `relevance.py` `compute_relevance` 5 条规则 + 单测 | 后端 | 0.3 d |
 | 后端 3 | `relevance_writer.py` 三事件订阅 + self-exclusion | 后端 | 0.4 d |
-| 后端 4 | `relevance_scanner.py` 全量扫（exists → insert）；启动 + hourly + CLI | 后端 | 0.4 d |
+| 后端 4 | `relevance_scanner.py` 增量扫：`os.stat` 比 mtime 决定是否进文件内容遍历，进入后走 exists → insert；启动 + hourly + CLI（含 `--full` 旗标） | 后端 | 0.5 d |
 | 后端 5 | 文件级 read 端点挂清读 side effect；list red/gray；详情字段 | 后端 | 0.5 d |
 | 后端 6 | `api/preferences.py` filter 状态读写 | 后端 | 0.2 d |
 | 后端 7 | 集成测试：多次 @ 累加、读后再 @、file+mention 混合 | 后端 | 0.4 d |

@@ -18,11 +18,13 @@ import {
   fetchAIConversation,
   fetchDrafts,
   fetchMatters,
+  fetchPreferences,
   fetchWorkspaceStatus,
   refreshWorkspace,
   saveAIConversation,
   SessionExpiredError,
   setMatterFavorite,
+  setPreference,
   streamAIChat,
   type AIToolUse,
   type ChatMessage,
@@ -182,6 +184,8 @@ function sameMatters(
       a.id !== b.id ||
       a.updated_at !== b.updated_at ||
       a.unread_count !== b.unread_count ||
+      a.red_unread_count !== b.red_unread_count ||
+      a.gray_unread_count !== b.gray_unread_count ||
       a.file_count !== b.file_count ||
       a.favorite !== b.favorite ||
       a.current_status !== b.current_status ||
@@ -193,10 +197,22 @@ function sameMatters(
   return true;
 }
 
+export type MatterListFilter = "all" | "mine";
+
+const FILTER_PREF_KEY = "matter_list_filter";
+
+function parseListFilter(value: string | undefined): MatterListFilter {
+  return value === "mine" ? "mine" : "all";
+}
+
 export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const location = useLocation();
   const [matters, setMatters] = useState<MatterSummary[] | null>(null);
   const [drafts, setDrafts] = useState<Draft[] | null>(null);
+  // "全部 / 与我相关" filter. Server-persisted via /api/me/preferences so
+  // the choice survives across browsers / devices. Defaults to "all" until
+  // the prefs fetch lands on first mount.
+  const [listFilter, setListFilter] = useState<MatterListFilter>("all");
   const [workspace, setWorkspace] = useState<WorkspaceStatus | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -627,6 +643,32 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     void load();
   }, [load]);
 
+  // Load persisted filter on mount. Failures are silent; default "all"
+  // already applied so the UI is usable even if prefs endpoint is down.
+  useEffect(() => {
+    let cancelled = false;
+    fetchPreferences()
+      .then((prefs) => {
+        if (cancelled) return;
+        setListFilter(parseListFilter(prefs[FILTER_PREF_KEY]));
+      })
+      .catch(() => {
+        // ignore — keep default
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleListFilterChange = useCallback((next: MatterListFilter) => {
+    setListFilter(next);
+    setPreference(FILTER_PREF_KEY, next).catch(() => {
+      // server write failed; the in-memory state is still updated so the
+      // current session works. Next session will fall back to whatever the
+      // server has, which is ok — losing one filter toggle is harmless.
+    });
+  }, []);
+
   // One-shot cleanup of orphan __newmatter__: threads. A NewMatter draft can
   // be deleted (via publish or manual remove) while its AIPane conversation
   // sits in the in-memory ai store keyed by draftId. On Dashboard mount, drop
@@ -857,6 +899,8 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
               drafts={drafts}
               matters={matters}
               onRemoveDraft={removeDraft}
+              listFilter={listFilter}
+              onListFilterChange={handleListFilterChange}
             />
           )}
         </aside>
