@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from server.api.ai import build_router as build_ai_router
 from server.api.app_home import build_router as build_app_home_router
 from server.api.auth_email_password import build_router as build_email_login_router
+from server.api.auth_invite import build_router as build_invite_router
 from server.api.contacts import build_router as build_contacts_router
 from server.api.daily_report import build_router as build_daily_report_router
 from server.api.discussions import build_router as build_discussions_router
@@ -216,6 +217,12 @@ def create_app() -> FastAPI:
     app.include_router(
         build_email_login_router(
             pivot_users, bindings, sessions,
+            secure_cookie=cfg.feishu_redirect_uri.startswith("https://"),
+        )
+    )
+    app.include_router(
+        build_invite_router(
+            invites, pivot_users, bindings, sessions,
             secure_cookie=cfg.feishu_redirect_uri.startswith("https://"),
         )
     )
