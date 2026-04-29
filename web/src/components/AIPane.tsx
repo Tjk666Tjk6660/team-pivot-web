@@ -13,6 +13,7 @@ import {
   Search,
   Send,
   Sparkles,
+  Square,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -134,6 +135,10 @@ export function AIPane({
       onUseDraftAsReply,
       mode,
     });
+  };
+
+  const handleStop = () => {
+    ai.stopMessage(threadKey);
   };
 
   const handleGenerateDraft = async () => {
@@ -320,18 +325,31 @@ export function AIPane({
             )}
             <Button
               size="sm"
-              onClick={() => void handleSend()}
-              disabled={sendDisabled}
-              className="h-8 rounded-[var(--r-sm)] px-3 text-[12.5px] font-semibold shadow-none"
+              onClick={streaming ? handleStop : () => void handleSend()}
+              disabled={streaming ? blockedByOtherThread : sendDisabled}
+              className="h-8 rounded-[var(--r-sm)] px-3 text-[0px] font-semibold shadow-none"
               style={{
-                background: sendDisabled
+                background: streaming
                   ? "var(--surface-alt)"
-                  : "var(--accent)",
-                color: sendDisabled ? "var(--text-fade)" : "var(--accent-ink)",
-                border: `1px solid ${sendDisabled ? "var(--line)" : "var(--accent)"}`,
+                  : sendDisabled
+                    ? "var(--surface-alt)"
+                    : "var(--accent)",
+                color: streaming
+                  ? "var(--text)"
+                  : sendDisabled
+                    ? "var(--text-fade)"
+                    : "var(--accent-ink)",
+                border: `1px solid ${streaming || sendDisabled ? "var(--line)" : "var(--accent)"}`,
               }}
             >
-              <Send className="mr-1.5 h-3.5 w-3.5" />
+              {streaming ? (
+                <Square className="mr-1.5 h-3.5 w-3.5" />
+              ) : (
+                <Send className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              <span className="text-[12.5px]">
+                {streaming ? "停止" : "发送"}
+              </span>
               发送
             </Button>
           </div>

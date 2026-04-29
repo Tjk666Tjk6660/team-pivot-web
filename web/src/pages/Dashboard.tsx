@@ -38,6 +38,10 @@ import { ThreadListPane } from "@/components/ThreadListPane";
 import { cn } from "@/lib/utils";
 import { useMatterEvents } from "@/events/MatterEventsProvider";
 import { scheduleRefresh } from "@/events/scheduleRefresh";
+import {
+  mergeLoadedAIConversation,
+  setAIReplyTarget,
+} from "@/lib/aiConversationState";
 
 export type AIMsg = ChatMessage & { id: number; toolUses?: AIToolUse[] };
 
@@ -55,6 +59,11 @@ type ActiveAIStream = {
   threadKey: string;
   matter_id: string;
   title: string;
+} | null;
+
+type ActiveAIAbort = {
+  threadKey: string;
+  controller: AbortController;
 } | null;
 
 type DashboardContext = {
@@ -91,6 +100,7 @@ type DashboardContext = {
       ) => Promise<boolean>;
       mode?: "reply" | "new-matter";
     }) => Promise<void>;
+    stopMessage: (threadKey: string) => void;
   };
 };
 
@@ -150,6 +160,8 @@ function extractDraft(text: string): {
 // Virtual threadKey for NewMatter conversations: __newmatter__:<draftId>.
 // Bound to a draft so the same composer reopened later resumes the same chat.
 const NEW_MATTER_THREAD_PREFIX = "__newmatter__:";
+const SIDEBAR_RESIZE_CURSOR =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%235a3a1a' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 7 3 12l5 5'/%3E%3Cpath d='M16 7l5 5-5 5'/%3E%3Cpath d='M3 12h18'/%3E%3C/svg%3E\") 12 12, col-resize";
 
 export function newMatterThreadKey(draftId: string): string {
   return `${NEW_MATTER_THREAD_PREFIX}${draftId}`;
@@ -223,9 +235,14 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   // matter detail view; `/new` is the NewMatter composer (also a full pane).
   const isThreadView =
     location.pathname.startsWith("/m/") || location.pathname.startsWith("/new");
+  // /new doesn't need the matter / draft list at all — the composer fills the
+  // whole main column and the AI assistant lives in its own right column.
+  const hideSidebar = location.pathname.startsWith("/new");
   const layoutRef = useRef<HTMLDivElement>(null);
   const aiThreadsRef = useRef<Record<string, AIThreadState>>({});
   const activeAIStreamRef = useRef<ActiveAIStream>(null);
+  const activeAIAbortRef = useRef<ActiveAIAbort>(null);
+  const aiThreadLoadsInFlightRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     aiThreadsRef.current = aiThreads;
@@ -312,6 +329,8 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   ) => {
     const current = aiThreadsRef.current[threadKey];
     if (current?.loaded || current?.loading) return;
+    if (aiThreadLoadsInFlightRef.current.has(threadKey)) return;
+    aiThreadLoadsInFlightRef.current.add(threadKey);
 
     setAiThreads((prev) => ({
       ...prev,
@@ -325,20 +344,9 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       const conv = await fetchAIConversation(matter_id);
       setAiThreads((prev) => {
         const existing = prev[threadKey] ?? emptyAIThreadState();
-        const mapped: AIMsg[] = conv.messages.map((m, idx) => ({
-          ...m,
-          id: idx + 1,
-        }));
         return {
           ...prev,
-          [threadKey]: {
-            ...existing,
-            loaded: true,
-            loading: false,
-            messages: mapped,
-            replyTarget: conv.reply_target,
-            nextId: mapped.length + 1,
-          },
+          [threadKey]: mergeLoadedAIConversation<AIMsg>(existing, conv),
         };
       });
     } catch {
@@ -350,6 +358,8 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
           loading: false,
         },
       }));
+    } finally {
+      aiThreadLoadsInFlightRef.current.delete(threadKey);
     }
   };
 
@@ -370,10 +380,8 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   ) => {
     setAiThreads((prev) => {
       const existing = prev[threadKey] ?? emptyAIThreadState();
-      const nextState: AIThreadState = {
-        ...existing,
-        replyTarget: value,
-      };
+      const { state: nextState, changed } = setAIReplyTarget(existing, value);
+      if (!changed) return prev;
       queueMicrotask(() =>
         persistThreadConversation(matter_id, threadKey, nextState),
       );
@@ -470,19 +478,21 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     }));
 
     setActiveAIStream({ threadKey, matter_id, title: threadTitle });
+    const controller = new AbortController();
+    activeAIAbortRef.current = { threadKey, controller };
     const historyForApi: ChatMessage[] = withUser.map(({ role, content }) => ({
       role,
       content,
     }));
 
+    let accumulated = "";
+    const toolUses: AIToolUse[] = [];
     try {
-      let accumulated = "";
-      const toolUses: AIToolUse[] = [];
       for await (const ev of streamAIChat(
         matter_id,
         historyForApi,
         mode === "new-matter" ? null : currentReplyTarget,
-        undefined,
+        controller.signal,
         mode,
       )) {
         if (ev.kind === "delta") {
@@ -617,6 +627,34 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
         // any consuming form stays untouched per the failure-fallback contract.
         toast.error(`AI 调用失败：${errText}`);
       }
+      if (aborted) {
+        const frozenToolUses = toolUses.map((t) => ({ ...t }));
+        let finalSnapshot: AIThreadState | null = null;
+        setAiThreads((prev) => {
+          const existing = prev[threadKey] ?? emptyAIThreadState();
+          const nextState: AIThreadState = {
+            ...existing,
+            messages: existing.messages.map((m) =>
+              m.id === assistantId
+                ? {
+                    ...m,
+                    content: accumulated
+                      ? `${accumulated}\n\n_已停止生成_`
+                      : "_已停止生成_",
+                    toolUses: frozenToolUses,
+                  }
+                : m,
+            ),
+            streaming: false,
+          };
+          finalSnapshot = nextState;
+          return { ...prev, [threadKey]: nextState };
+        });
+        if (finalSnapshot) {
+          persistThreadConversation(matter_id, threadKey, finalSnapshot);
+        }
+        return;
+      }
       setAiThreads((prev) => {
         const existing = prev[threadKey] ?? emptyAIThreadState();
         return {
@@ -636,7 +674,16 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       setActiveAIStream((prev) =>
         prev?.threadKey === threadKey ? null : prev,
       );
+      if (activeAIAbortRef.current?.controller === controller) {
+        activeAIAbortRef.current = null;
+      }
     }
+  };
+
+  const stopMessage = (threadKey: string) => {
+    const activeAbort = activeAIAbortRef.current;
+    if (!activeAbort || activeAbort.threadKey !== threadKey) return;
+    activeAbort.controller.abort();
   };
 
   useEffect(() => {
@@ -877,10 +924,14 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
         <aside
           className={cn(
             "min-h-0 overflow-y-auto md:shrink-0 md:transition-[width] md:duration-200 md:ease-out",
-            // mobile visibility (route-based)
-            isThreadView ? "hidden md:block" : "block w-full",
+            // /new hides the sidebar entirely on every breakpoint.
+            hideSidebar
+              ? "hidden"
+              : isThreadView
+                ? "hidden md:block"
+                : "block w-full",
             // desktop width
-            sidebarOpen
+            sidebarOpen && !hideSidebar
               ? "md:w-[var(--sidebar-width)] md:border-r"
               : "md:w-0 md:overflow-hidden",
           )}
@@ -894,7 +945,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
               : ({ background: "var(--bg)" } as React.CSSProperties)
           }
         >
-          {sidebarOpen && (
+          {sidebarOpen && !hideSidebar && (
             <ThreadListPane
               drafts={drafts}
               matters={matters}
@@ -904,13 +955,14 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
             />
           )}
         </aside>
-        {sidebarOpen && (
+        {sidebarOpen && !hideSidebar && (
           <div
             className="group relative hidden w-3 shrink-0 cursor-col-resize items-stretch justify-center md:flex"
             onMouseDown={startSidebarResize}
+            style={{ cursor: SIDEBAR_RESIZE_CURSOR }}
             title="拖拽调整导航栏宽度"
           >
-            <div className="pointer-events-none flex items-center text-[var(--text-fade)] transition-colors group-hover:text-[var(--text-mute)]">
+            <div className="pointer-events-none flex items-center text-[var(--text-mute)] transition-colors group-hover:text-[var(--accent)]">
               <GripVertical className="h-3.5 w-3.5" />
             </div>
           </div>
@@ -935,6 +987,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
                   setReplyTarget,
                   clearThreadConversation,
                   sendMessage,
+                  stopMessage,
                 },
               } satisfies DashboardContext
             }
