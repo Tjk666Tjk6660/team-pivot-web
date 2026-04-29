@@ -24,6 +24,11 @@ def _seed_legacy_db(path: Path) -> None:
             id TEXT PRIMARY KEY, user_open_id TEXT NOT NULL,
             expires_at REAL NOT NULL, created_at REAL NOT NULL
         );
+        CREATE TABLE file_reads (
+            user_open_id TEXT NOT NULL, matter_id TEXT NOT NULL,
+            filename TEXT NOT NULL, first_read_at REAL NOT NULL,
+            PRIMARY KEY (user_open_id, matter_id, filename)
+        );
     """)
     conn.execute(
         "INSERT INTO users VALUES (?,?,?,?,?,?,?)",
@@ -36,6 +41,8 @@ def _seed_legacy_db(path: Path) -> None:
     conn.execute("INSERT INTO drafts VALUES (?,?,?)", ("d1", "ou_alice", "..."))
     conn.execute("INSERT INTO sessions VALUES (?,?,?,?)",
                  ("s1", "ou_alice", 9999.0, 1.0))
+    conn.execute("INSERT INTO file_reads VALUES (?,?,?,?)",
+                 ("ou_bob", "m1", "a.md", 1.5))
     conn.commit()
     conn.close()
 
@@ -112,6 +119,21 @@ def test_orphan_fk_aborts(tmp_path):
     result = migrate(db_path=db_path, initial_admin_pinyin="alice", dry_run=False)
     assert not result.success
     assert "orphan" in result.error.lower()
+
+
+def test_orphan_in_file_reads_aborts(tmp_path):
+    """file_reads must be in _DOWNSTREAM_TABLES so its orphans abort migration."""
+    db_path = tmp_path / "data.db"
+    _seed_legacy_db(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute("INSERT INTO file_reads VALUES (?,?,?,?)",
+                 ("ou_ghost", "m1", "b.md", 2.0))
+    conn.commit()
+    conn.close()
+    result = migrate(db_path=db_path, initial_admin_pinyin="alice", dry_run=False)
+    assert not result.success
+    assert "orphan" in result.error.lower()
+    assert "file_reads" in result.error.lower()
 
 
 def test_sessions_rewritten_not_cleared(tmp_path):

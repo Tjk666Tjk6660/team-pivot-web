@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS invite (
 
 _DOWNSTREAM_TABLES = (
     "drafts", "read_state", "favorites", "sessions",
-    "ai_conversations", "api_tokens",
+    "ai_conversations", "api_tokens", "file_reads",
 )
 
 
