@@ -6,14 +6,18 @@ from typing import Any
 from server.doc_types import (
     ALLOWED_TYPES_BY_STATUS,
     VALID_DOC_TYPES,
+    VALID_EVENT_TYPES,
     VALID_JUDGEMENTS,
     VALID_OUTCOMES,
 )
 from server.matter_status import (
     VALID_STATES,
+    can_event_type_trigger,
     can_file_type_trigger,
     can_transition,
 )
+
+OWNER_CHANGE_REASON_MAX = 200
 
 
 @dataclass(frozen=True)
@@ -64,6 +68,13 @@ def validate_append(
     doc_type = item.get("type")
     if not doc_type:
         return _fail("type_missing", "type", "file type is required")
+
+    # Event-type entries (owner_change etc.) bypass the file-type × status
+    # matrix entirely — they're not files, can fire in any state, and have
+    # their own shape rules. Branch here before the file-type validators.
+    if doc_type in VALID_EVENT_TYPES:
+        return _validate_event_shape(item, index_data)
+
     if doc_type not in VALID_DOC_TYPES:
         return _fail("unknown_type", "type", f"unknown type: {doc_type!r}")
 
@@ -106,6 +117,94 @@ def validate_append(
         err = _validate_result_shape(item, sc)
         if err:
             return err
+
+    return OK
+
+
+def _validate_event_shape(
+    item: dict[str, Any], index_data: dict[str, Any]
+) -> ValidationResult:
+    """Validate an event-type timeline entry. v1 dispatches by type.
+
+    Owner_change shape: actor / from_owner / to_owner / reason; optional
+    status_change limited to (planning → executing) per §2.5 of the design.
+    """
+    doc_type = item.get("type")
+    if doc_type == "owner_change":
+        return _validate_owner_change_shape(item, index_data)
+    return _fail("unknown_event_type", "type", f"unknown event type: {doc_type!r}")
+
+
+def _validate_owner_change_shape(
+    item: dict[str, Any], index_data: dict[str, Any]
+) -> ValidationResult:
+    matter = index_data.get("matter") or {}
+
+    # actor required (operator who performs the transfer; same format as creator).
+    actor = item.get("actor")
+    if not actor:
+        return _fail("actor_required", "actor", "actor is required")
+
+    # reason required + length cap (design §4.1: 200 char limit).
+    reason = item.get("reason")
+    if reason is None or not str(reason).strip():
+        return _fail("reason_required", "reason", "reason is required")
+    if len(str(reason)) > OWNER_CHANGE_REASON_MAX:
+        return _fail(
+            "reason_too_long",
+            "reason",
+            f"reason exceeds {OWNER_CHANGE_REASON_MAX} chars",
+        )
+
+    # from_owner must equal current matter.owner. None == None is treated as
+    # equal (design §6.1: unassigned matter can be transferred — both sides
+    # null compare equal). Use explicit `!=` rather than truthy comparison
+    # so two Nones don't accidentally trip the stale check.
+    current_owner = matter.get("owner")
+    from_owner = item.get("from_owner")
+    if from_owner != current_owner:
+        return _fail(
+            "owner_stale",
+            "from_owner",
+            f"from_owner {from_owner!r} does not match current matter.owner {current_owner!r}",
+        )
+
+    # to_owner required + must differ from from_owner (avoid no-op transfers).
+    to_owner = item.get("to_owner")
+    if not to_owner:
+        return _fail("to_owner_required", "to_owner", "to_owner is required")
+    if to_owner == from_owner:
+        return _fail(
+            "owner_unchanged",
+            "to_owner",
+            "to_owner equals from_owner — nothing to do",
+        )
+
+    # Optional status_change: must be a legal transition AND owner_change must
+    # be a legal trigger for it (v1: only planning → executing).
+    sc = item.get("status_change")
+    if sc:
+        frm = sc.get("from")
+        to = sc.get("to")
+        current_status = matter.get("current_status")
+        if frm != current_status:
+            return _fail(
+                "status_stale",
+                "status_change.from",
+                f"status_change.from {frm!r} does not match current {current_status!r}",
+            )
+        if not can_transition(frm, to):
+            return _fail(
+                "status_change_not_allowed",
+                "status_change",
+                f"transition {frm!r} -> {to!r} is not allowed",
+            )
+        if not can_event_type_trigger("owner_change", frm, to):
+            return _fail(
+                "status_change_not_allowed_by_event",
+                "status_change",
+                f"owner_change cannot trigger {frm!r} -> {to!r}",
+            )
 
     return OK
 
