@@ -936,6 +936,7 @@ def publish_matter_owner_change(
     matter_snapshot = read_matter_index(index_path) or {}
     matter_meta = matter_snapshot.get("matter") or {}
     category = _derive_category_from_timeline(matter_snapshot) or "matters"
+    matter_creator = _matter_creator_pinyin(matter_snapshot)
     emit(
         TOPIC_MATTER_OWNER_CHANGED,
         matter_id=matter_id,
@@ -946,6 +947,11 @@ def publish_matter_owner_change(
             "to_owner": to_owner,
             "reason": reason,
             "status_change": dict(status_change) if status_change else None,
+            # matter_creator: pinyin of the first non-event timeline item's
+            # creator. Pre-resolved here so relevance_writer doesn't re-read
+            # the index. Used to mark the matter creator as "与我相关" on
+            # ownership transfers.
+            "matter_creator": matter_creator,
         },
     )
     if notifier is not None:
@@ -1004,6 +1010,18 @@ def _effective_matter_owner(matter_data: dict) -> str | None:
         if item.get("type") == "owner_change":
             continue
         return item.get("owner") or item.get("creator")
+    return None
+
+
+def _matter_creator_pinyin(matter_data: dict) -> str | None:
+    """First non-event timeline item's creator (pinyin). Mirrors how
+    api/matters._summarize_matter derives the matter-level creator field —
+    keep the two in lock-step."""
+    for item in matter_data.get("timeline") or []:
+        if item.get("type") == "owner_change":
+            continue
+        creator = item.get("creator")
+        return str(creator) if creator else None
     return None
 
 
