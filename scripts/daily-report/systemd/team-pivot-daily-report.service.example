@@ -1,0 +1,16 @@
+[Unit]
+Description=team-pivot-web Daily Report (24h window aggregation + Feishu group broadcast)
+After=network-online.target team-pivot-web.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Adjust User/Group to whoever owns /opt/team-pivot-web (typically `ubuntu`)
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/team-pivot-web
+EnvironmentFile=/opt/team-pivot-web/.env
+ExecStart=/home/ubuntu/.local/bin/uv run python scripts/daily-report/run.py
+StandardOutput=append:/opt/team-pivot-web/var/log/daily-report.log
+StandardError=append:/opt/team-pivot-web/var/log/daily-report.log
+TimeoutStartSec=600

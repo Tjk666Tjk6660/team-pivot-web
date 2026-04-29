@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 import time
 
@@ -155,3 +156,122 @@ def head_short(repo_dir: str) -> str | None:
             return None
         raise
     return proc.stdout.strip()
+
+
+# ---------------------------------------------------------------------------
+# Read-only history queries (used by daily-report)
+# ---------------------------------------------------------------------------
+
+# Use ASCII unit/record separators as field/commit delimiters in the pretty
+# format. They are non-printing control chars that no human types into a
+# commit subject, so parsing stays robust against `|`, `,`, multiline body,
+# etc. in user-authored content.
+_LOG_FIELD_SEP = "\x1f"
+_LOG_RECORD_SEP = "\x1e"
+_LOG_PRETTY = (
+    f"format:{_LOG_RECORD_SEP}%H{_LOG_FIELD_SEP}%ae"
+    f"{_LOG_FIELD_SEP}%an{_LOG_FIELD_SEP}%aI{_LOG_FIELD_SEP}%s"
+)
+_SHORTSTAT_RE = re.compile(
+    r"^\s*(\d+)\s+files?\s+changed"
+    r"(?:,\s+(\d+)\s+insertions?\(\+\))?"
+    r"(?:,\s+(\d+)\s+deletions?\(-\))?\s*$"
+)
+
+
+def log_commits(
+    repo_dir: str,
+    *,
+    since: str,
+    until: str,
+    branches: str = "--all",
+) -> list[dict]:
+    """Run `git log` over a time window and return parsed commit records.
+
+    Each record dict carries:
+      sha             full hex sha
+      author_email    %ae
+      author_name     %an
+      committed_at    ISO8601 with tz (%aI)
+      subject         %s
+      files_changed   from --shortstat (0 if absent / merge commit)
+      insertions      from --shortstat
+      deletions       from --shortstat
+
+    `since` / `until` accept any value `git log --since/--until` understands
+    (ISO 8601 with timezone recommended for unambiguous boundaries).
+
+    `branches` is a single argv token: `--all` (default, scan all refs),
+    `main`, or several refs space-separated.
+
+    Empty repos return [] silently. Other git failures raise GitError.
+    """
+    args = [
+        "git", "log", branches,
+        f"--since={since}",
+        f"--until={until}",
+        f"--pretty={_LOG_PRETTY}",
+        "--shortstat",
+        "--date-order",
+    ]
+    try:
+        proc = _run(args, cwd=repo_dir)
+    except GitError as e:
+        # Brand-new repo with no commits yet — caller doesn't care.
+        if "does not have any commits yet" in e.stderr.lower():
+            return []
+        raise
+    return _parse_log_output(proc.stdout)
+
+
+def _parse_log_output(output: str) -> list[dict]:
+    """Parse `git log --pretty=...record-sep... --shortstat` output.
+
+    Each commit chunk starts with the record separator we embed in the
+    pretty format, followed by 5 field-separated values on the first line,
+    then optionally a blank line + shortstat line if files were changed.
+    """
+    commits: list[dict] = []
+    chunks = output.split(_LOG_RECORD_SEP)
+    # chunks[0] is empty (or whitespace) — content before the first marker.
+    for chunk in chunks[1:]:
+        first_nl = chunk.find("\n")
+        if first_nl < 0:
+            pretty_part = chunk
+            rest = ""
+        else:
+            pretty_part = chunk[:first_nl]
+            rest = chunk[first_nl + 1:]
+
+        fields = pretty_part.split(_LOG_FIELD_SEP, 4)
+        if len(fields) != 5:
+            log.warning(
+                "log_commits: malformed pretty line, skipping: %r",
+                pretty_part[:120],
+            )
+            continue
+        sha, email, name, iso, subject = fields
+
+        files = ins = dels = 0
+        for line in rest.split("\n"):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            m = _SHORTSTAT_RE.match(stripped)
+            if m:
+                files = int(m.group(1))
+                ins = int(m.group(2) or 0)
+                dels = int(m.group(3) or 0)
+                break
+
+        commits.append({
+            "sha": sha,
+            "author_email": email,
+            "author_name": name,
+            "committed_at": iso,
+            "subject": subject,
+            "files_changed": files,
+            "insertions": ins,
+            "deletions": dels,
+        })
+    return commits

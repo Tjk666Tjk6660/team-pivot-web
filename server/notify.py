@@ -264,6 +264,13 @@ class FeishuNotifier:
             post_url_builder=self._post_url,
         )
 
+    def broadcast_card(self, card: dict, *, event: str) -> None:
+        """Public hook for "send any card to all chats the bot is in".
+        Used by daily-report (and future periodic jobs like weekly digest)
+        that don't fit one of the existing notify_* shapes. Internally
+        delegates to `_broadcast`; failures are swallowed + logged inside."""
+        self._broadcast(card, event=event)
+
     def _broadcast(self, card: dict, *, event: str) -> None:
         try:
             token = self._tokens.get()
@@ -638,11 +645,15 @@ def _card_shell(
     header: str,
     template: str,
     markdown: str,
-    button_text: str,
-    thread_url: str,
+    button_text: str | None = None,
+    thread_url: str | None = None,
     directory_content: str | None = None,
     directory_post_count: int | None = None,
 ) -> dict:
+    """Build a Feishu interactive card (schema 2.0). Pass `button_text` and
+    `thread_url` together for a CTA button at the bottom; pass neither for
+    a button-less card (used by daily-report — that flow has no in-product
+    page worth deep-linking to)."""
     elements: list[dict] = [{"tag": "markdown", "content": markdown}]
     if directory_content:
         post_count = directory_post_count or 0
@@ -663,12 +674,15 @@ def _card_shell(
                 {"tag": "markdown", "content": directory_content},
             ],
         })
-    elements.append({
-        "tag": "button",
-        "text": {"tag": "plain_text", "content": button_text},
-        "type": "primary",
-        "multi_url": {"url": thread_url, "pc_url": "", "android_url": "", "ios_url": ""},
-    })
+    if button_text and thread_url:
+        elements.append({
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": button_text},
+            "type": "primary",
+            "multi_url": {
+                "url": thread_url, "pc_url": "", "android_url": "", "ios_url": "",
+            },
+        })
     return {
         "schema": "2.0",
         "config": {"wide_screen_mode": True},
