@@ -5,7 +5,7 @@ from typing import Callable, Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from server.auth.admin import require_admin
+from server.pivot_users import PivotUser
 from server.settings import SettingsRepo
 from server.users import User
 from server.workspace_config import (
@@ -28,6 +28,7 @@ def build_router(
     settings: SettingsRepo,
     current_user: Callable,
     current_user_cookie_only: Callable,
+    admin_user_cookie_only: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
 
@@ -48,8 +49,8 @@ def build_router(
     def mirror(_: User = Depends(current_user)):
         return workspace.mirror_payload()
 
-    @router.get("/admin/workspace-config", dependencies=[Depends(require_admin)])
-    def get_workspace_config(_: User = Depends(current_user_cookie_only)):
+    @router.get("/admin/workspace-config")
+    def get_workspace_config(_: PivotUser = Depends(admin_user_cookie_only)):
         draft: WorkspaceConfigDraft = load_workspace_draft(settings)
         return {
             "repo_url": draft.repo_url,
@@ -59,10 +60,10 @@ def build_router(
             "branch": "main",
         }
 
-    @router.put("/admin/workspace-config", dependencies=[Depends(require_admin)])
+    @router.put("/admin/workspace-config")
     def update_workspace_config(
         body: WorkspaceConfigBody,
-        _: User = Depends(current_user_cookie_only),
+        _: PivotUser = Depends(admin_user_cookie_only),
     ):
         try:
             cfg = save_workspace_config(

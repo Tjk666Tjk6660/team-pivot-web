@@ -3,7 +3,6 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from server.auth.admin import require_admin
 from server.markdown_styles import (
     DEFAULT_MARKDOWN_STYLE,
     KEY_MARKDOWN_DEFAULT_STYLE,
@@ -12,6 +11,7 @@ from server.markdown_styles import (
     is_markdown_style_id,
     system_default_style,
 )
+from server.pivot_users import PivotUser
 from server.settings import SettingsRepo
 from server.users import User, UserRepo
 
@@ -29,6 +29,7 @@ def build_router(
     users: UserRepo,
     current_user_dep,
     current_user_cookie_only,
+    admin_user_cookie_only,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -58,11 +59,10 @@ def build_router(
             "effective_style": effective_markdown_style(user=updated, settings=settings),
         }
 
-    @router.get(
-        "/api/admin/markdown-settings",
-        dependencies=[Depends(require_admin)],
-    )
-    def get_admin_markdown_settings(_: User = Depends(current_user_cookie_only)):
+    @router.get("/api/admin/markdown-settings")
+    def get_admin_markdown_settings(
+        _: PivotUser = Depends(admin_user_cookie_only),
+    ):
         system_style = system_default_style(settings)
         return {
             "styles": all_markdown_style_dicts(),
@@ -70,13 +70,10 @@ def build_router(
             "effective_system_default_style": system_style or DEFAULT_MARKDOWN_STYLE,
         }
 
-    @router.put(
-        "/api/admin/markdown-settings",
-        dependencies=[Depends(require_admin)],
-    )
+    @router.put("/api/admin/markdown-settings")
     def update_admin_markdown_settings(
         body: AdminMarkdownSettingsIn,
-        _: User = Depends(current_user_cookie_only),
+        _: PivotUser = Depends(admin_user_cookie_only),
     ):
         if not is_markdown_style_id(body.system_default_style):
             raise HTTPException(status_code=400, detail="invalid_markdown_style")

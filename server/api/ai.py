@@ -18,8 +18,8 @@ from server.ai.context import (
 from server.ai.prompts import build_new_matter_system_prompt, build_system_prompt
 from server.ai.tools import AITools
 from server.ai_conversations import AIConversationRepo
-from server.auth.admin import require_admin
 from server.matter_index import matter_index_path, read_matter_index
+from server.pivot_users import PivotUser
 from server.settings import SettingsRepo
 from server.users import User
 from server.workspace import Workspace
@@ -83,14 +83,15 @@ def build_router(
     conversations: AIConversationRepo,
     current_user: Callable,
     current_user_cookie_only: Callable,
+    admin_user_cookie_only: Callable,
 ) -> APIRouter:
     router = APIRouter()
 
     # ── Settings ──────────────────────────────────────────────────────────────
     # Admin-gated AND cookie-only — PATs cannot read/write the AI API key.
 
-    @router.get("/api/ai/settings", dependencies=[Depends(require_admin)])
-    def get_ai_settings(_: User = Depends(current_user_cookie_only)):
+    @router.get("/api/ai/settings")
+    def get_ai_settings(_: PivotUser = Depends(admin_user_cookie_only)):
         return {
             "base_url": settings.get(_KEY_BASE_URL) or DEFAULT_BASE_URL,
             "model": settings.get(_KEY_MODEL) or DEFAULT_MODEL,
@@ -100,10 +101,10 @@ def build_router(
             "max_rounds": _get_int(settings, _KEY_MAX_ROUNDS, _DEFAULT_MAX_ROUNDS),
         }
 
-    @router.put("/api/ai/settings", dependencies=[Depends(require_admin)])
+    @router.put("/api/ai/settings")
     def update_ai_settings(
         body: AISettingsUpdate,
-        _: User = Depends(current_user_cookie_only),
+        _: PivotUser = Depends(admin_user_cookie_only),
     ):
         if body.api_key is not None:
             settings.set(_KEY_API_KEY, body.api_key)

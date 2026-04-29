@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from server.api.markdown_styles import build_router
-from server.auth.admin import ADMIN_PASSWORD
+from server.pivot_users import PivotUser
 from server.settings import SettingsRepo
 from server.users import User, UserRepo
 
@@ -22,7 +22,28 @@ def _user(open_id: str = "ou_1") -> User:
     )
 
 
-def _build_client(db, users: UserRepo) -> tuple[TestClient, SettingsRepo]:
+def _admin_pivot_user() -> PivotUser:
+    return PivotUser(
+        id="pu_admin",
+        display_name="Admin",
+        pinyin="admin",
+        email="admin@example.com",
+        avatar_url="",
+        github_username=None,
+        role="admin",
+        status="active",
+        status_note=None,
+        created_at=1.0,
+        updated_at=1.0,
+        last_login_at=None,
+        status_changed_at=None,
+        status_changed_by=None,
+    )
+
+
+def _build_client(
+    db, users: UserRepo, *, admin: bool = True,
+) -> tuple[TestClient, SettingsRepo]:
     settings = SettingsRepo(db)
     current = _user()
 
@@ -32,8 +53,15 @@ def _build_client(db, users: UserRepo) -> tuple[TestClient, SettingsRepo]:
             raise HTTPException(status_code=401, detail="not logged in")
         return got
 
+    def admin_user() -> PivotUser:
+        if not admin:
+            raise HTTPException(status_code=403, detail="admin_required")
+        return _admin_pivot_user()
+
     app = FastAPI()
-    app.include_router(build_router(settings, users, current_user, current_user))
+    app.include_router(build_router(
+        settings, users, current_user, current_user, admin_user,
+    ))
     return TestClient(app), settings
 
 
@@ -95,32 +123,30 @@ def test_admin_markdown_default_roundtrip_and_validation(db, users):
     users.upsert_from_feishu(open_id="ou_1", union_id=None, name="Ken", avatar_url="")
     users.update_profile("ou_1", pinyin="ken")
     client, _ = _build_client(db, users)
-    headers = {"X-Admin-Password": ADMIN_PASSWORD}
 
     ok = client.put(
         "/api/admin/markdown-settings",
         json={"system_default_style": "nord-dark"},
-        headers=headers,
     )
 
     assert ok.status_code == 200
-    body = client.get("/api/admin/markdown-settings", headers=headers).json()
+    body = client.get("/api/admin/markdown-settings").json()
     assert body["system_default_style"] == "nord-dark"
     assert body["effective_system_default_style"] == "nord-dark"
 
     bad = client.put(
         "/api/admin/markdown-settings",
         json={"system_default_style": "unknown"},
-        headers=headers,
     )
     assert bad.status_code == 400
 
 
-def test_admin_markdown_settings_requires_admin_password(db, users):
+def test_admin_markdown_settings_rejects_non_admin(db, users):
+    """When the admin gate refuses, the endpoint returns 403."""
     users.upsert_from_feishu(open_id="ou_1", union_id=None, name="Ken", avatar_url="")
     users.update_profile("ou_1", pinyin="ken")
-    client, _ = _build_client(db, users)
+    client, _ = _build_client(db, users, admin=False)
 
     r = client.get("/api/admin/markdown-settings")
 
-    assert r.status_code == 401
+    assert r.status_code == 403

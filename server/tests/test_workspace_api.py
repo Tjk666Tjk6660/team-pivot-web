@@ -6,16 +6,16 @@ from fastapi.testclient import TestClient
 from server.api.tokens import build_router as build_tokens_router
 from server.api.workspace import build_router as build_workspace_router
 from server.api_tokens import ApiTokenRepo
-from server.auth.admin import ADMIN_PASSWORD
-from server.auth.deps import make_current_user, make_current_user_cookie_only
+from server.auth.deps import (
+    make_current_user,
+    make_current_user_cookie_only,
+    make_require_admin_user_cookie,
+)
 from server.auth.session import SessionStore
+from server.pivot_users import PivotUserRepo
 from server.settings import SettingsRepo
 from server.workspace_config import save_workspace_config
 from server.workspace_runtime import WorkspaceRuntime
-
-
-def _admin_headers() -> dict:
-    return {"X-Admin-Password": ADMIN_PASSWORD}
 
 
 def _stub_workspace(monkeypatch):
@@ -26,27 +26,33 @@ def _stub_workspace(monkeypatch):
     monkeypatch.setattr("server.workspace_runtime.Workspace.refresh", lambda self: None)
 
 
-def _build_app(db, users, tmp_path, monkeypatch):
+def _build_app(db, tmp_path, monkeypatch):
     _stub_workspace(monkeypatch)
-    users.upsert_from_feishu(open_id="ou_1", union_id=None, name="Ken", avatar_url="")
-    users.update_profile("ou_1", pinyin="ken")
+    pivot_users = PivotUserRepo(db)
+    admin = pivot_users.create(
+        display_name="Admin", pinyin="admin",
+        email="admin@example.com", avatar_url="", role="admin",
+    )
     sessions = SessionStore(db)
-    sid = sessions.create("ou_1")
+    sid = sessions.create(pivot_user_id=admin.id)
     tokens = ApiTokenRepo(db)
     settings = SettingsRepo(db)
     runtime = WorkspaceRuntime(base_dir=tmp_path / "git", settings=settings)
 
-    cu = make_current_user(sessions, users, tokens)
-    cu_cookie = make_current_user_cookie_only(sessions, users)
+    cu = make_current_user(sessions, pivot_users, tokens)
+    cu_cookie = make_current_user_cookie_only(sessions, pivot_users)
+    admin_cookie = make_require_admin_user_cookie(sessions, pivot_users)
 
     app = FastAPI()
     app.include_router(build_tokens_router(tokens, cu_cookie))
-    app.include_router(build_workspace_router(runtime, settings, cu, cu_cookie))
+    app.include_router(build_workspace_router(
+        runtime, settings, cu, cu_cookie, admin_cookie,
+    ))
     return app, sid, tokens, settings, runtime
 
 
-def test_bearer_can_call_workspace_mirror(db, users, tmp_path, monkeypatch):
-    app, sid, tokens, settings, runtime = _build_app(db, users, tmp_path, monkeypatch)
+def test_bearer_can_call_workspace_mirror(db, tmp_path, monkeypatch):
+    app, sid, tokens, settings, runtime = _build_app(db, tmp_path, monkeypatch)
     save_workspace_config(
         settings,
         repo_url="https://github.com/acme/test-team-pivot.git",
@@ -58,7 +64,7 @@ def test_bearer_can_call_workspace_mirror(db, users, tmp_path, monkeypatch):
 
     cookie_client = TestClient(app)
     cookie_client.cookies.set("sid", sid)
-    created = cookie_client.post("/api/tokens", json={"name": "vscode"}, headers=_admin_headers())
+    created = cookie_client.post("/api/tokens", json={"name": "vscode"})
     plaintext = created.json()["token"]
 
     bearer_client = TestClient(app)
@@ -74,8 +80,8 @@ def test_bearer_can_call_workspace_mirror(db, users, tmp_path, monkeypatch):
     assert body["head"] == "abc1234"
 
 
-def test_invalid_pat_returns_invalid_token(db, users, tmp_path, monkeypatch):
-    app, _, _, _, _ = _build_app(db, users, tmp_path, monkeypatch)
+def test_invalid_pat_returns_invalid_token(db, tmp_path, monkeypatch):
+    app, _, _, _, _ = _build_app(db, tmp_path, monkeypatch)
     client = TestClient(app)
     client.headers.update({"Authorization": "Bearer pvt_nope"})
     r = client.get("/api/workspace/mirror")
@@ -83,8 +89,8 @@ def test_invalid_pat_returns_invalid_token(db, users, tmp_path, monkeypatch):
     assert r.json()["detail"] == "invalid_token"
 
 
-def test_public_repo_returns_null_credentials(db, users, tmp_path, monkeypatch):
-    app, sid, _, settings, runtime = _build_app(db, users, tmp_path, monkeypatch)
+def test_public_repo_returns_null_credentials(db, tmp_path, monkeypatch):
+    app, sid, _, settings, runtime = _build_app(db, tmp_path, monkeypatch)
     save_workspace_config(
         settings,
         repo_url="https://github.com/acme/public-repo.git",
@@ -103,13 +109,12 @@ def test_public_repo_returns_null_credentials(db, users, tmp_path, monkeypatch):
     assert body["git_token"] is None
 
 
-def test_private_repo_returns_configured_credentials(db, users, tmp_path, monkeypatch):
-    app, sid, _, _, _ = _build_app(db, users, tmp_path, monkeypatch)
+def test_private_repo_returns_configured_credentials(db, tmp_path, monkeypatch):
+    app, sid, _, _, _ = _build_app(db, tmp_path, monkeypatch)
     client = TestClient(app)
     client.cookies.set("sid", sid)
     r = client.put(
         "/api/admin/workspace-config",
-        headers=_admin_headers(),
         json={
             "repo_url": "https://github.com/acme/private-repo.git",
             "visibility": "private",
@@ -125,13 +130,12 @@ def test_private_repo_returns_configured_credentials(db, users, tmp_path, monkey
     assert body["git_token"] == "read-secret"
 
 
-def test_admin_workspace_config_validation(db, users, tmp_path, monkeypatch):
-    app, sid, _, _, _ = _build_app(db, users, tmp_path, monkeypatch)
+def test_admin_workspace_config_validation(db, tmp_path, monkeypatch):
+    app, sid, _, _, _ = _build_app(db, tmp_path, monkeypatch)
     client = TestClient(app)
     client.cookies.set("sid", sid)
     r = client.put(
         "/api/admin/workspace-config",
-        headers=_admin_headers(),
         json={
             "repo_url": "https://github.com/acme/private-repo.git",
             "visibility": "private",
@@ -141,3 +145,30 @@ def test_admin_workspace_config_validation(db, users, tmp_path, monkeypatch):
     )
     assert r.status_code == 400
     assert "readonly_token" in r.json()["detail"]
+
+
+def test_admin_workspace_config_rejects_non_admin(db, tmp_path, monkeypatch):
+    """Member-role users cannot read or write the workspace config."""
+    _stub_workspace(monkeypatch)
+    pivot_users = PivotUserRepo(db)
+    member = pivot_users.create(
+        display_name="Member", pinyin="member",
+        email="member@example.com", avatar_url="", role="member",
+    )
+    sessions = SessionStore(db)
+    member_sid = sessions.create(pivot_user_id=member.id)
+    tokens = ApiTokenRepo(db)
+    settings = SettingsRepo(db)
+    runtime = WorkspaceRuntime(base_dir=tmp_path / "git", settings=settings)
+    cu = make_current_user(sessions, pivot_users, tokens)
+    cu_cookie = make_current_user_cookie_only(sessions, pivot_users)
+    admin_cookie = make_require_admin_user_cookie(sessions, pivot_users)
+    app = FastAPI()
+    app.include_router(build_workspace_router(
+        runtime, settings, cu, cu_cookie, admin_cookie,
+    ))
+
+    client = TestClient(app)
+    client.cookies.set("sid", member_sid)
+    r = client.get("/api/admin/workspace-config")
+    assert r.status_code == 403

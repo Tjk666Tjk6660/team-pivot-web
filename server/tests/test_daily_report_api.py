@@ -4,14 +4,13 @@ Covers:
 - GET /config: defaults when settings empty
 - PUT /config: writes to settings table
 - Roundtrip: PUT 后 GET 反映新值
-- Auth: 缺 X-Admin-Password 头 → 401
+- Auth: 无 cookie → 401, member 角色 → 403
 - Trigger when disabled → 409
 - Trigger happy path: 后台 thread + last-run 反映完成状态
 """
 from __future__ import annotations
 
 import time
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -19,14 +18,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server.api.daily_report import build_router
-from server.api_tokens import ApiTokenRepo
-from server.auth.admin import ADMIN_PASSWORD
-from server.auth.deps import make_current_user_cookie_only
+from server.auth.deps import make_require_admin_user_cookie
 from server.auth.session import SessionStore
 from server.db import Database
 from server.notify import NoOpNotifier
+from server.pivot_users import PivotUserRepo
 from server.settings import SettingsRepo
-from server.users import UserRepo
 from server.workspace_runtime import WorkspaceRuntime
 
 
@@ -35,25 +32,22 @@ from server.workspace_runtime import WorkspaceRuntime
 # --------------------------------------------------------------------------- #
 
 
-def _admin_headers() -> dict[str, str]:
-    return {"X-Admin-Password": ADMIN_PASSWORD}
-
-
 @pytest.fixture
 def app_state(tmp_path):
     db_path = tmp_path / "data.db"
     db = Database(db_path)
-    users = UserRepo(db)
-    users.upsert_from_feishu(open_id="ou_admin", union_id=None,
-                             name="Admin", avatar_url="")
-    users.update_profile("ou_admin", pinyin="admin")
+    pivot_users = PivotUserRepo(db)
+    admin = pivot_users.create(
+        display_name="Admin", pinyin="admin",
+        email="admin@example.com", avatar_url="", role="admin",
+    )
     sessions = SessionStore(db)
-    sid = sessions.create("ou_admin")
+    sid = sessions.create(pivot_user_id=admin.id)
     settings = SettingsRepo(db)
     notifier = NoOpNotifier()
     workspace = WorkspaceRuntime(base_dir=tmp_path / "git", settings=settings)
 
-    cu_cookie = make_current_user_cookie_only(sessions, users)
+    admin_cookie = make_require_admin_user_cookie(sessions, pivot_users)
 
     app = FastAPI()
     app.include_router(build_router(
@@ -61,7 +55,7 @@ def app_state(tmp_path):
         settings=settings,
         notifier=notifier,
         db_path=db_path,
-        current_user_cookie_only=cu_cookie,
+        admin_user_cookie_only=admin_cookie,
     ))
     return app, sid, settings, db_path
 
@@ -76,7 +70,7 @@ def test_config_get_returns_defaults_when_empty(app_state):
     client = TestClient(app)
     client.cookies.set("sid", sid)
     r = client.get(
-        "/api/admin/daily-report/config", headers=_admin_headers(),
+        "/api/admin/daily-report/config",
     )
     assert r.status_code == 200, r.text
     assert r.json() == {
@@ -89,12 +83,30 @@ def test_config_get_returns_defaults_when_empty(app_state):
     }
 
 
-def test_config_get_requires_admin_header(app_state):
-    app, sid, _settings, _db = app_state
-    client = TestClient(app)
-    client.cookies.set("sid", sid)
-    r = client.get("/api/admin/daily-report/config")  # no admin header
+def test_config_get_requires_session_cookie(app_state):
+    app, _sid, _settings, _db = app_state
+    client = TestClient(app)  # no cookie
+    r = client.get("/api/admin/daily-report/config")
     assert r.status_code == 401
+
+
+def test_config_get_rejects_non_admin(app_state, tmp_path):
+    """Member-role cookie must get 403, not 401."""
+    app, _sid, _settings, db_path = app_state
+    # Reuse the same DB and add a member user
+    db = Database(db_path)
+    pivot_users = PivotUserRepo(db)
+    member = pivot_users.create(
+        display_name="Member", pinyin="member",
+        email="member@example.com", avatar_url="", role="member",
+    )
+    sessions = SessionStore(db)
+    member_sid = sessions.create(pivot_user_id=member.id)
+
+    client = TestClient(app)
+    client.cookies.set("sid", member_sid)
+    r = client.get("/api/admin/daily-report/config")
+    assert r.status_code == 403
 
 
 # --------------------------------------------------------------------------- #
@@ -116,7 +128,7 @@ def test_config_put_writes_settings_and_round_trips(app_state):
     }
     r = client.put(
         "/api/admin/daily-report/config",
-        headers=_admin_headers(), json=payload,
+        json=payload,
     )
     assert r.status_code == 200, r.text
     assert r.json() == {"ok": True}
@@ -130,7 +142,7 @@ def test_config_put_writes_settings_and_round_trips(app_state):
 
     # GET reflects new values
     r = client.get(
-        "/api/admin/daily-report/config", headers=_admin_headers(),
+        "/api/admin/daily-report/config",
     )
     assert r.json()["personal_enabled"] is False
     assert r.json()["time_window_hours"] == 12
@@ -150,7 +162,7 @@ def test_config_put_validates_window_hours(app_state):
     }
     r = client.put(
         "/api/admin/daily-report/config",
-        headers=_admin_headers(), json=bad,
+        json=bad,
     )
     assert r.status_code == 422
 
@@ -168,7 +180,6 @@ def test_trigger_when_disabled_returns_409(app_state):
     client.cookies.set("sid", sid)
     r = client.post(
         "/api/admin/daily-report/trigger",
-        headers=_admin_headers(),
         json={"dry_run": True, "no_ai": True},
     )
     assert r.status_code == 409
@@ -189,7 +200,6 @@ def test_trigger_starts_thread_and_last_run_reflects_completion(app_state):
     ):
         r = client.post(
             "/api/admin/daily-report/trigger",
-            headers=_admin_headers(),
             json={"dry_run": True, "no_ai": True},
         )
         assert r.status_code == 200, r.text
@@ -204,8 +214,7 @@ def test_trigger_starts_thread_and_last_run_reflects_completion(app_state):
         while time.monotonic() < deadline:
             r = client.get(
                 "/api/admin/daily-report/last-run",
-                headers=_admin_headers(),
-            )
+                )
             assert r.status_code == 200
             data = r.json()
             if data["finished_at"]:
@@ -232,7 +241,6 @@ def test_trigger_thread_crash_recorded_in_last_run(app_state):
     ):
         r = client.post(
             "/api/admin/daily-report/trigger",
-            headers=_admin_headers(),
             json={"dry_run": True, "no_ai": True},
         )
         assert r.status_code == 200
@@ -241,8 +249,7 @@ def test_trigger_thread_crash_recorded_in_last_run(app_state):
         while time.monotonic() < deadline:
             data = client.get(
                 "/api/admin/daily-report/last-run",
-                headers=_admin_headers(),
-            ).json()
+                ).json()
             if data["finished_at"]:
                 break
             time.sleep(0.05)

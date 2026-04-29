@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from server.api_tokens import ApiToken, ApiTokenRepo, MAX_TTL_DAYS, MIN_TTL_DAYS, DEFAULT_TTL_DAYS
-from server.users import User
+from server.pivot_users import PivotUser
 
 
 class CreateTokenBody(BaseModel):
@@ -27,10 +27,10 @@ def build_router(
     @router.post("")
     def create_token(
         body: CreateTokenBody,
-        user: User = Depends(current_user_cookie_only),
+        user: PivotUser = Depends(current_user_cookie_only),
     ):
         plaintext, tok = tokens.create(
-            pivot_user_id=user.open_id,
+            pivot_user_id=user.id,
             name=body.name.strip(),
             ttl_days=body.ttl_days,
         )
@@ -43,16 +43,16 @@ def build_router(
         }
 
     @router.get("")
-    def list_tokens(user: User = Depends(current_user_cookie_only)):
-        items = [_to_dict(t) for t in tokens.list_for_user(user.open_id)]
+    def list_tokens(user: PivotUser = Depends(current_user_cookie_only)):
+        items = [_to_dict(t) for t in tokens.list_for_user(user.id)]
         return {"items": items}
 
     @router.delete("/{short_id}")
     def delete_token(
         short_id: str,
-        user: User = Depends(current_user_cookie_only),
+        user: PivotUser = Depends(current_user_cookie_only),
     ):
-        ok = tokens.delete_by_short_id(user.open_id, short_id)
+        ok = tokens.delete_by_short_id(user.id, short_id)
         if not ok:
             raise HTTPException(status_code=404, detail="token not found")
         return {"ok": True}

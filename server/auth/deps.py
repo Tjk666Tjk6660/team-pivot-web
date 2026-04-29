@@ -90,6 +90,26 @@ def make_require_admin_user() -> Callable:
     return require
 
 
+def make_require_admin_user_cookie(
+    sessions: SessionStore, users: PivotUserRepo,
+) -> Callable:
+    """Cookie-only auth + admin role check, returns the PivotUser.
+
+    Replaces the legacy X-Admin-Password gate (server/auth/admin.py): instead
+    of a hardcoded shared password, we now resolve the cookie session into a
+    real PivotUser and enforce role='admin'. PATs are explicitly NOT honored
+    here — admin-scoped endpoints stay browser-only.
+    """
+    def admin(sid: str | None = Cookie(default=None)) -> PivotUser:
+        u = _user_from_session(sid, sessions, users)
+        if u is None:
+            raise HTTPException(status_code=401, detail="not logged in")
+        if u.role != "admin":
+            raise HTTPException(status_code=403, detail="admin_required")
+        return u
+    return admin
+
+
 def require_profile(user: PivotUser) -> PivotUser:
     if not user.pinyin:
         raise HTTPException(status_code=400, detail="profile setup required")

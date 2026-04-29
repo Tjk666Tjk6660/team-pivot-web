@@ -5,10 +5,10 @@ from typing import Callable
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException
 
-from server.auth.admin import require_admin
 from server.auth.session import SessionStore
 from server.contacts import ContactRepo
 from server.feishu_contacts import FeishuContactSyncer
+from server.pivot_users import PivotUser
 from server.users import User
 
 log = logging.getLogger(__name__)
@@ -20,6 +20,7 @@ def build_router(
     syncer: FeishuContactSyncer,
     current_user: Callable,
     current_user_cookie_only: Callable,
+    admin_user_cookie_only: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
 
@@ -43,10 +44,10 @@ def build_router(
             "total": contacts.count(),
         }
 
-    @router.post("/contacts/sync", dependencies=[Depends(require_admin)])
+    @router.post("/contacts/sync")
     def sync_contacts(
         sid: str | None = Cookie(default=None),
-        user: User = Depends(current_user_cookie_only),
+        user: PivotUser = Depends(admin_user_cookie_only),
     ):
         # Cookie-only because we need the Feishu user_access_token attached
         # to the browser session — PATs don't carry one.
@@ -57,7 +58,7 @@ def build_router(
                 status_code=400,
                 detail="当前会话没有飞书 user_access_token，请重新登录后再试",
             )
-        log.info("manual contact sync triggered by user=%s", user.open_id)
+        log.info("manual contact sync triggered by user=%s", user.id)
         try:
             n = syncer.sync(token)
         except Exception as e:

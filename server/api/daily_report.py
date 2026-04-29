@@ -23,7 +23,6 @@ from typing import Any, Callable, Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from server.auth.admin import require_admin
 from server.daily_report.config_keys import (
     KEY_COMPANY_ENABLED,
     KEY_ENABLED,
@@ -34,8 +33,8 @@ from server.daily_report.config_keys import (
 )
 from server.daily_report.runner import run_daily_report
 from server.notify import Notifier
+from server.pivot_users import PivotUser
 from server.settings import SettingsRepo
-from server.users import User
 from server.workspace_runtime import WorkspaceRuntime
 
 log = logging.getLogger("server.api.daily_report")
@@ -116,14 +115,14 @@ def build_router(
     settings: SettingsRepo,
     notifier: Notifier,
     db_path: Path,
-    current_user_cookie_only: Callable,
+    admin_user_cookie_only: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/admin/daily-report")
 
     # ------------------ config: GET / PUT ------------------ #
 
-    @router.get("/config", dependencies=[Depends(require_admin)])
-    def get_config(_: User = Depends(current_user_cookie_only)) -> DailyReportConfig:
+    @router.get("/config")
+    def get_config(_: PivotUser = Depends(admin_user_cookie_only)) -> DailyReportConfig:
         return DailyReportConfig(
             enabled=_read_bool(settings, KEY_ENABLED, default=True),
             company_enabled=_read_bool(settings, KEY_COMPANY_ENABLED, default=True),
@@ -133,10 +132,10 @@ def build_router(
             push_freq=_read_push_freq(settings),
         )
 
-    @router.put("/config", dependencies=[Depends(require_admin)])
+    @router.put("/config")
     def put_config(
         body: DailyReportConfig,
-        _: User = Depends(current_user_cookie_only),
+        _: PivotUser = Depends(admin_user_cookie_only),
     ):
         settings.set(KEY_ENABLED, "1" if body.enabled else "0")
         settings.set(KEY_COMPANY_ENABLED, "1" if body.company_enabled else "0")
@@ -148,10 +147,10 @@ def build_router(
 
     # ------------------ trigger: POST ---------------------- #
 
-    @router.post("/trigger", dependencies=[Depends(require_admin)])
+    @router.post("/trigger")
     def trigger(
         body: TriggerRequest,
-        _: User = Depends(current_user_cookie_only),
+        _: PivotUser = Depends(admin_user_cookie_only),
     ) -> TriggerResponse:
         if not _read_bool(settings, KEY_ENABLED, default=True):
             raise HTTPException(
@@ -193,9 +192,9 @@ def build_router(
 
     # ------------------ last-run: GET ---------------------- #
 
-    @router.get("/last-run", dependencies=[Depends(require_admin)])
+    @router.get("/last-run")
     def last_run(
-        _: User = Depends(current_user_cookie_only),
+        _: PivotUser = Depends(admin_user_cookie_only),
     ) -> LastRunResponse:
         return LastRunResponse(**_get_last_run())
 

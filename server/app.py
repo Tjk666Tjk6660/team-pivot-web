@@ -25,7 +25,11 @@ from server.api.preferences import build_router as build_preferences_router
 from server.api.tokens import build_router as build_tokens_router
 from server.api.workspace import build_router as build_workspace_router
 from server.api_tokens import ApiTokenRepo
-from server.auth.deps import make_current_user, make_current_user_cookie_only
+from server.auth.deps import (
+    make_current_user,
+    make_current_user_cookie_only,
+    make_require_admin_user_cookie,
+)
 from server.daily_report.scheduler import DailyReportScheduler
 from server.auth.feishu_oauth import FeishuOAuth
 from server.auth.routes import build_router as build_auth_router
@@ -107,6 +111,7 @@ def create_app() -> FastAPI:
 
     current_user_dep = make_current_user(sessions, users, api_tokens)
     current_user_cookie_dep = make_current_user_cookie_only(sessions, users)
+    admin_user_cookie_dep = make_require_admin_user_cookie(sessions, pivot_users)
 
     workspace = WorkspaceRuntime(base_dir=cfg.data_dir / "git", settings=settings)
 
@@ -241,11 +246,12 @@ def create_app() -> FastAPI:
     app.include_router(build_preferences_router(user_prefs, current_user_dep))
     app.include_router(build_workspace_router(
         workspace, settings, current_user_dep, current_user_cookie_dep,
+        admin_user_cookie_dep,
     ))
     app.include_router(build_daily_report_router(
         workspace, settings, notifier,
         cfg.data_dir / "data.db",
-        current_user_cookie_dep,
+        admin_user_cookie_dep,
     ))
     app.include_router(build_drafts_router(
         workspace, drafts, contacts, notifier, current_user_dep,
@@ -255,13 +261,16 @@ def create_app() -> FastAPI:
     ))
     app.include_router(build_contacts_router(
         sessions, contacts, syncer, current_user_dep, current_user_cookie_dep,
+        admin_user_cookie_dep,
     ))
     app.include_router(build_ai_router(
         workspace, settings, ai_conversations, current_user_dep, current_user_cookie_dep,
+        admin_user_cookie_dep,
     ))
     app.include_router(build_app_home_router(workspace, current_user_dep))
     app.include_router(build_markdown_styles_router(
         settings, users, current_user_dep, current_user_cookie_dep,
+        admin_user_cookie_dep,
     ))
     app.include_router(build_tokens_router(api_tokens, current_user_cookie_dep))
 
