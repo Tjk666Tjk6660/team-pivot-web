@@ -55,6 +55,7 @@ from server.contacts import ContactRepo
 from server.db import Database
 from server.events import clear_subscribers
 from server.favorites import FavoriteRepo
+from server.file_reads import FileReadRepo
 from server.mcp.server import build_mcp_app
 from server.notify import NoOpNotifier
 from server.read_state import ReadStateRepo
@@ -107,7 +108,7 @@ def _build_combined_app(db: Database, users: UserRepo,
     app.include_router(
         build_matters_router(
             workspace, users, ContactRepo(db), NoOpNotifier(),
-            ReadStateRepo(db), FavoriteRepo(db), current_user,
+            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db), current_user,
         )
     )
     app.mount("/mcp", mcp_app)

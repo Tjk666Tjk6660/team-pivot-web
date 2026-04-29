@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Plus } from "lucide-react";
+import { Grip, Maximize2, Minimize2, Plus } from "lucide-react";
 import {
   searchContacts,
   type DocType,
@@ -13,6 +13,12 @@ import {
   type TimelineItem,
   type Verification,
 } from "@/api";
+import {
+  computeAtPublish,
+  onUserEdit,
+  type BodySource,
+} from "@/lib/bodySource";
+import type { GateResult } from "@/hooks/useConfirmPublishQuality";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -47,6 +53,8 @@ type FormState = {
   actPromote: boolean;
   outcome: Outcome;
   mentions: MentionBlock;
+  body_source: BodySource;
+  body_source_snapshot?: string;
 };
 
 export type FormSnapshot = {
@@ -59,6 +67,8 @@ export type FormSnapshot = {
   status_change?: StatusChange;
   outcome?: Outcome;
   mentions?: MentionBlock;
+  body_source?: BodySource;
+  body_source_snapshot?: string;
 };
 
 function initialFormState(
@@ -95,6 +105,8 @@ function initialFormState(
     actPromote,
     outcome: initial?.outcome ?? "finished",
     mentions: initial?.mentions ?? emptyMention(),
+    body_source: initial?.body_source ?? "manual",
+    body_source_snapshot: initial?.body_source_snapshot,
   };
 }
 
@@ -111,6 +123,10 @@ export function CreateFileForm({
   onFormBlur,
   onDeleteDraft,
   initial,
+  confirmPublishQuality,
+  onSendToAI,
+  isAIBusy,
+  busyTitle,
 }: {
   context: CreateFormContext;
   matterStatus: MatterStatus;
@@ -128,6 +144,16 @@ export function CreateFileForm({
   onFormBlur?: (snapshot: FormSnapshot) => void | Promise<void>;
   onDeleteDraft?: () => void | Promise<void>;
   initial?: Partial<FormSnapshot>;
+  // Quality gate (only the parent has the dialog mounted; pass it down).
+  // think/act/verify call this; result/insight bypass it (decided in submit()).
+  confirmPublishQuality?: (args: {
+    bodySource: BodySource;
+    blockedByAIBusy: boolean;
+    busyTitle?: string;
+  }) => Promise<GateResult>;
+  onSendToAI?: (body: string) => void;
+  isAIBusy?: boolean;
+  busyTitle?: string;
 }) {
   const actFiles = useMemo(
     () => timeline.filter((t) => t.type === "act"),
@@ -137,6 +163,7 @@ export function CreateFileForm({
     initialFormState(context, sessionOpenId, sessionName, actFiles, initial),
   );
   const [stage, setStage] = useState<"idle" | "generating" | "publishing">("idle");
+  const [bodyEditorFullscreen, setBodyEditorFullscreen] = useState(false);
   const submitting = stage !== "idle";
 
   // 圈人选中后用人名显示而不是 open_id slice。MentionField 在用户从下拉
@@ -227,6 +254,8 @@ export function CreateFileForm({
     status_change: computeStatusChange(),
     outcome: isResult ? form.outcome : undefined,
     mentions: form.mentions.open_ids.length > 0 ? form.mentions : undefined,
+    body_source: form.body_source,
+    body_source_snapshot: form.body_source_snapshot,
   });
 
   const handleContainerBlur = (e: React.FocusEvent<HTMLDivElement>) => {
@@ -285,6 +314,38 @@ export function CreateFileForm({
       return;
     }
 
+    // Quality gate must run BEFORE the (potentially slow) summary AI call.
+    // Order matters for two reasons:
+    //   1. If the user cancels or sends to AI, we waste no AI summary call.
+    //   2. We never enter the "generating" stage in those branches, so an
+    //      early return doesn't leave the form stuck with submitting=true
+    //      (this previously froze the form on "send_to_ai" → no buttons).
+    //
+    // result/insight bypass the gate per design §四 — they also do NOT carry
+    // body_source into NewFileIn so the post frontmatter omits the field.
+    const qualityGated = isThink || isAct || isVerify;
+    let publishSource: BodySource | undefined;
+    if (qualityGated && confirmPublishQuality) {
+      const finalSource = computeAtPublish(
+        {
+          body_source: form.body_source,
+          body_source_snapshot: form.body_source_snapshot,
+        },
+        form.body,
+      );
+      const gate = await confirmPublishQuality({
+        bodySource: finalSource,
+        blockedByAIBusy: !!isAIBusy,
+        busyTitle,
+      });
+      if (gate === "cancel") return;
+      if (gate === "send_to_ai") {
+        onSendToAI?.(form.body);
+        return;
+      }
+      publishSource = finalSource;
+    }
+
     let summary = form.summary.trim();
     // form.summary 已有值时直接用——通常由 AIPane【生成草稿】流程在回填 body
     // 时同步回填 summary,跳过这次 AI 调用,免去发布时再等一次。
@@ -332,6 +393,7 @@ export function CreateFileForm({
         },
       ];
     }
+    if (publishSource) body.body_source = publishSource;
 
     setStage("publishing");
     try {
@@ -352,6 +414,19 @@ export function CreateFileForm({
         return prev;
       }
       return { ...prev, refer: [...prev.refer, file] };
+    });
+  };
+
+  const updateBody = (next: string) => {
+    setForm((p) => {
+      const nextSource = onUserEdit(
+        {
+          body_source: p.body_source,
+          body_source_snapshot: p.body_source_snapshot,
+        },
+        next,
+      );
+      return { ...p, body: next, ...nextSource };
     });
   };
 
@@ -426,11 +501,12 @@ export function CreateFileForm({
             : "Markdown 正文（可选）"
         }
       >
-        <Textarea
-          rows={4}
+        <BodyMarkdownEditor
           value={form.body}
-          onChange={(e) => setForm((p) => ({ ...p, body: e.target.value }))}
+          onChange={updateBody}
           placeholder={isAct ? "## Summary / What To Do / Notes …" : "写下详细内容 …"}
+          fullscreen={bodyEditorFullscreen}
+          onFullscreenChange={setBodyEditorFullscreen}
         />
       </FieldRow>
 
@@ -614,6 +690,98 @@ export function CreateFileDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function BodyMarkdownEditor({
+  value,
+  onChange,
+  placeholder,
+  fullscreen,
+  onFullscreenChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  fullscreen: boolean;
+  onFullscreenChange: (value: boolean) => void;
+}) {
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onFullscreenChange(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [fullscreen, onFullscreenChange]);
+
+  const textarea = (
+    <Textarea
+      rows={fullscreen ? undefined : 5}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className={cn(
+        "border-0 bg-transparent shadow-none focus-visible:ring-0",
+        fullscreen
+          ? "min-h-0 flex-1 resize-none rounded-none px-4 py-3 text-[15px] leading-7 sm:px-6"
+          : "min-h-[9rem] resize-y rounded-none px-3 pb-8 pt-2 leading-6",
+      )}
+      autoFocus={fullscreen}
+    />
+  );
+
+  if (fullscreen) {
+    return (
+      <div className="fixed inset-0 z-[70] flex min-h-0 flex-col bg-[var(--surface)]">
+        <div className="flex min-h-12 items-center justify-between border-b border-[var(--line)] px-3 sm:px-5">
+          <div className="min-w-0 text-sm font-semibold text-[var(--text)]">
+            body
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 rounded-[var(--r-sm)] text-[var(--text-mute)] hover:bg-[var(--surface-alt)]"
+            onClick={() => onFullscreenChange(false)}
+            title="退出全屏"
+            aria-label="退出全屏"
+          >
+            <Minimize2 className="h-4 w-4" />
+          </Button>
+        </div>
+        {textarea}
+      </div>
+    );
+  }
+
+  return (
+    <div className="group relative overflow-hidden rounded-[var(--r-sm)] border border-[var(--line-strong)] bg-[var(--surface)] transition-colors focus-within:border-[var(--accent)]">
+      <div className="flex items-center justify-between border-b border-[var(--line-soft)] px-2 py-1">
+        <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-[var(--text-fade)]">
+          <Grip className="h-3.5 w-3.5 shrink-0 text-[var(--text-mute)]" />
+          <span className="truncate">拖动右下角可拉开</span>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 rounded-[var(--r-sm)] text-[var(--text-mute)] hover:bg-[var(--surface-alt)] hover:text-[var(--accent)]"
+          onClick={() => onFullscreenChange(true)}
+          title="全屏编辑"
+          aria-label="全屏编辑"
+        >
+          <Maximize2 className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+      {textarea}
+      <div
+        className="pointer-events-none absolute bottom-2 right-2 flex h-5 w-5 items-end justify-end text-[var(--accent)] opacity-75 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"
+        aria-hidden
+      >
+        <Grip className="h-4 w-4 rotate-45" />
+      </div>
+    </div>
   );
 }
 

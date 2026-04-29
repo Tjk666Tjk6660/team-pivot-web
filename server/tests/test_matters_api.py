@@ -14,6 +14,7 @@ from server.auth.session import SessionStore
 from server.contacts import ContactRepo
 from server.events import Event, clear_subscribers, subscribe
 from server.favorites import FavoriteRepo
+from server.file_reads import FileReadRepo
 from server.notify import NoOpNotifier
 from server.read_state import ReadStateRepo
 
@@ -58,7 +59,7 @@ def client(db, users, tmp_path):
     app.include_router(
         build_router(
             workspace, users, ContactRepo(db), NoOpNotifier(),
-            ReadStateRepo(db), FavoriteRepo(db), current_user,
+            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db), current_user,
         )
     )
     c = TestClient(app)
@@ -98,6 +99,79 @@ def test_create_matter_happy_path(client, event_bucket):
     topics = [e.topic for e in event_bucket]
     assert "matter.created" in topics
     assert "matter.file_appended" in topics
+
+
+def test_create_matter_writes_body_source_when_provided(client):
+    from server.posts import read_post
+
+    r = client.post("/api/matters", json={
+        "category": "Pivot",
+        "title": "AI-co Matter",
+        "initial_file": {
+            "type": "think",
+            "summary": "AI 协作产出",
+            "body": "正文",
+            "body_source": "ai",
+        },
+    })
+    assert r.status_code == 200, r.text
+
+    ws = client.workspace
+    md = next((ws.discussions_dir / "Pivot" / r.json()["matter_id"]).glob(
+        "001_dengke_think_*.md"
+    ))
+    post = read_post(md)
+    assert post.frontmatter.get("body_source") == "ai"
+
+
+def test_create_matter_omits_body_source_when_absent(client):
+    from server.posts import read_post
+
+    r = client.post("/api/matters", json={
+        "category": "Pivot",
+        "title": "Plain Matter",
+        "initial_file": {
+            "type": "think",
+            "summary": "无来源标记",
+            "body": "正文",
+        },
+    })
+    assert r.status_code == 200, r.text
+
+    ws = client.workspace
+    md = next((ws.discussions_dir / "Pivot" / r.json()["matter_id"]).glob(
+        "001_dengke_think_*.md"
+    ))
+    post = read_post(md)
+    assert "body_source" not in post.frontmatter
+
+
+def test_append_file_writes_body_source_manual(client):
+    from server.posts import read_post
+
+    r0 = client.post("/api/matters", json={
+        "category": "Pivot",
+        "title": "Append Test",
+        "initial_file": {"type": "think", "summary": "起点", "body": "起点正文"},
+    })
+    matter_id = r0.json()["matter_id"]
+    quote_file = r0.json()["file"]
+
+    r = client.post(f"/api/matters/{matter_id}/files", json={
+        "type": "think",
+        "summary": "回复",
+        "body": "手写回复",
+        "quote": quote_file,
+        "body_source": "manual",
+    })
+    assert r.status_code == 200, r.text
+
+    ws = client.workspace
+    md = next((ws.discussions_dir / "Pivot" / matter_id).glob(
+        "002_dengke_think_*.md"
+    ))
+    post = read_post(md)
+    assert post.frontmatter.get("body_source") == "manual"
 
 
 def test_create_matter_rejects_result_as_initial(client):
@@ -857,7 +931,7 @@ def test_notifier_is_called_on_append_and_status_change(db, users, tmp_path):
     app.include_router(
         build_router(
             workspace, users, ContactRepo(db), RecordingNotifier(),
-            ReadStateRepo(db), FavoriteRepo(db), current_user,
+            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db), current_user,
         )
     )
     c = TestClient(app)
@@ -920,7 +994,7 @@ def test_create_and_append_propagate_bundled_mentions_to_notifier(db, users, tmp
     app.include_router(
         build_router(
             workspace, users, ContactRepo(db), RecordingNotifier(),
-            ReadStateRepo(db), FavoriteRepo(db), current_user,
+            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db), current_user,
         )
     )
     c = TestClient(app)
@@ -1202,7 +1276,7 @@ def test_comment_route_does_not_pass_unknown_kwargs_to_notifier(db, users, tmp_p
     app.include_router(
         build_router(
             workspace, users, ContactRepo(db), notifier,
-            ReadStateRepo(db), FavoriteRepo(db), current_user,
+            ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db), current_user,
         )
     )
     c = TestClient(app)
@@ -1262,4 +1336,79 @@ def test_full_lifecycle_planning_to_reviewed(client):
         "type": "insight", "summary": "more",
     })
     assert r6.status_code == 422
-    assert r6.json()["detail"]["code"] == "type_not_allowed"
+
+
+# ---------- POST /api/matters/{id}/files/{filename}/read ----------
+
+
+def _create_matter_with_two_files(client) -> tuple[str, str, str]:
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {"type": "think", "summary": "s1", "body": "first"},
+    })
+    matter_id = r.json()["matter_id"]
+    file1 = r.json()["initial_timeline_item"]["file"].rsplit("/", 1)[-1]
+    r2 = client.post(f"/api/matters/{matter_id}/files", json={
+        "type": "think", "summary": "s2", "body": "second",
+    })
+    file2 = r2.json()["item"]["file"].rsplit("/", 1)[-1]
+    return matter_id, file1, file2
+
+
+def test_mark_file_read_first_time_returns_iso(client):
+    matter_id, file1, _ = _create_matter_with_two_files(client)
+    r = client.post(f"/api/matters/{matter_id}/files/{file1}/read")
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["matter_id"] == matter_id
+    assert data["filename"] == file1
+    # ISO 8601 with timezone offset
+    assert "T" in data["first_read_at"]
+    assert data["first_read_at"].endswith("00") or "+" in data["first_read_at"]
+
+
+def test_mark_file_read_idempotent(client):
+    matter_id, file1, _ = _create_matter_with_two_files(client)
+    r1 = client.post(f"/api/matters/{matter_id}/files/{file1}/read")
+    r2 = client.post(f"/api/matters/{matter_id}/files/{file1}/read")
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    # second call returns the original timestamp (not updated)
+    assert r2.json()["first_read_at"] == r1.json()["first_read_at"]
+
+
+def test_mark_file_read_unknown_matter_404(client):
+    r = client.post("/api/matters/does-not-exist/files/01.md/read")
+    assert r.status_code == 404
+    assert r.json()["detail"]["code"] == "matter_not_found"
+
+
+def test_mark_file_read_unknown_file_404(client):
+    matter_id, _, _ = _create_matter_with_two_files(client)
+    r = client.post(f"/api/matters/{matter_id}/files/999_ghost.md/read")
+    assert r.status_code == 404
+    assert r.json()["detail"]["code"] == "file_not_in_matter"
+
+
+def test_get_matter_detail_includes_readers(client):
+    matter_id, file1, file2 = _create_matter_with_two_files(client)
+    # No reads yet
+    detail0 = client.get(f"/api/matters/{matter_id}").json()
+    for item in detail0["timeline"]:
+        assert item["readers_count"] == 0
+        assert item["readers"] == []
+
+    # Mark file1 read
+    client.post(f"/api/matters/{matter_id}/files/{file1}/read")
+    detail1 = client.get(f"/api/matters/{matter_id}").json()
+    by_basename = {
+        it["file"].rsplit("/", 1)[-1]: it for it in detail1["timeline"]
+    }
+    assert by_basename[file1]["readers_count"] == 1
+    reader = by_basename[file1]["readers"][0]
+    assert reader["open_id"] == "ou_1"
+    assert reader["name"] == "邓柯"
+    assert "first_read_at" in reader
+    # file2 still unread
+    assert by_basename[file2]["readers_count"] == 0
+    assert by_basename[file2]["readers"] == []

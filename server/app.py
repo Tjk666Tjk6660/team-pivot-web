@@ -30,6 +30,7 @@ from server.drafts import DraftRepo
 from server.feishu_contacts import FeishuContactSyncer
 from server.feishu_token import FeishuTokenManager
 from server.favorites import FavoriteRepo
+from server.file_reads import FileReadRepo
 from server.logging_setup import configure_logging
 from server.mcp.server import build_mcp_app
 from server.notify import FeishuNotifier, NoOpNotifier, Notifier
@@ -52,6 +53,7 @@ def create_app() -> FastAPI:
     drafts = DraftRepo(db)
     read_states = ReadStateRepo(db)
     favorites = FavoriteRepo(db)
+    file_reads = FileReadRepo(db)
     contacts = ContactRepo(db)
     settings = SettingsRepo(db)
     _migrate_legacy_workspace_env(settings)
@@ -137,7 +139,7 @@ def create_app() -> FastAPI:
     app.include_router(build_matters_events_router(current_user_dep))
     app.include_router(build_matters_router(
         workspace, users, contacts, notifier,
-        read_states, favorites, current_user_dep,
+        read_states, favorites, file_reads, current_user_dep,
     ))
     app.include_router(build_workspace_router(
         workspace, settings, current_user_dep, current_user_cookie_dep,

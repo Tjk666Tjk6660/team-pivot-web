@@ -6,6 +6,7 @@ import {
   ArrowUp,
   Bot,
   ChevronRight,
+  Loader2,
   Maximize2,
   Minimize2,
   Sparkles,
@@ -32,7 +33,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { AIPane } from "@/components/AIPane";
 import { CopyForAIButton } from "@/components/CopyForAIButton";
-import { MarkdownStyleSwitcher } from "@/components/markdown/MarkdownStyleSwitcher";
 import { useMarkdownStyle } from "@/components/markdown/MarkdownStyleProvider";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TimelineStrip } from "@/components/matter/TimelineStrip";
@@ -41,6 +41,8 @@ import {
   CreateFileForm,
   type FormSnapshot,
 } from "@/components/matter/CreateFileDialog";
+import { useConfirmPublishQuality } from "@/hooks/useConfirmPublishQuality";
+import { applyAIDraft } from "@/lib/bodySource";
 import {
   Dialog,
   DialogContent,
@@ -56,6 +58,11 @@ import {
 import { HomeWelcomePane } from "@/pages/HomeWelcomePane";
 import { useDashboard } from "@/pages/Dashboard";
 import { cn } from "@/lib/utils";
+import {
+  shouldNotifyBackgroundAIComplete,
+  shouldNotifyBackgroundAIOnClose,
+  shouldShowBackgroundAIControl,
+} from "@/lib/aiPanelState";
 import { useMatterEvents } from "@/events/MatterEventsProvider";
 import { scheduleRefresh } from "@/events/scheduleRefresh";
 
@@ -64,6 +71,21 @@ export function MatterDetailEmpty() {
 }
 
 const JUMP_CONTROL_MIN_SCROLL = 240;
+const AI_TOAST_STYLE = {
+  background: "color-mix(in srgb, var(--accent) 9%, var(--surface))",
+  border: "1px solid color-mix(in srgb, var(--accent) 30%, var(--line))",
+  borderLeft: "4px solid var(--accent)",
+  borderRadius: "var(--r-md)",
+  boxShadow: "0 16px 40px rgba(28, 25, 23, 0.16)",
+  color: "var(--text)",
+};
+const AI_TOAST_ACTION_STYLE = {
+  background: "var(--accent)",
+  border: "1px solid var(--accent)",
+  borderRadius: "var(--r-sm)",
+  color: "var(--accent-ink)",
+  fontWeight: 700,
+};
 
 // Stable compare for MatterDetail — returns true when nothing the view reads
 // has changed, so the silent refresh path can no-op and avoid re-rendering
@@ -106,12 +128,15 @@ export function MatterDetailPane() {
   const [searchParams, setSearchParams] = useSearchParams();
   const draftIdFromUrl = searchParams.get("draft");
   const { reloadLists, toggleMatterFavorite, ai } = useDashboard();
+  const { dialog: qualityDialog, confirm: confirmPublishQuality } =
+    useConfirmPublishQuality();
   const { effectiveStyle: markdownStyle } = useMarkdownStyle();
   const [data, setData] = useState<MatterDetailData | null | undefined>(
     undefined,
   );
   const [sessionOpenId, setSessionOpenId] = useState<string>("");
   const [sessionName, setSessionName] = useState<string>("");
+  const [sessionAvatarUrl, setSessionAvatarUrl] = useState<string>("");
   const [pendingCreate, setPendingCreate] = useState<{
     type: DocType;
     quote: string | null;
@@ -222,6 +247,7 @@ export function MatterDetailPane() {
   const [aiFillToken, setAiFillToken] = useState(0);
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const contentScrollRef = useRef<HTMLDivElement | null>(null);
+  const backgroundAIThreadRef = useRef<string | null>(null);
 
   const openAIForFile = (file: string) => {
     setPendingAIOrigin(file);
@@ -305,6 +331,8 @@ export function MatterDetailPane() {
     setConfirmDeleteOpen(false);
     setResultConfirmOpen(false);
     setReviewedConfirmOpen(false);
+    setAiOpen(false);
+    setAiMinimized(false);
     setAiFullscreen(false);
     setPendingAIOrigin(null);
     setHighlight(null);
@@ -371,10 +399,12 @@ export function MatterDetailPane() {
       .then((me) => {
         setSessionOpenId(me?.open_id ?? "");
         setSessionName(me?.name ?? "");
+        setSessionAvatarUrl(me?.avatar_url ?? "");
       })
       .catch(() => {
         setSessionOpenId("");
         setSessionName("");
+        setSessionAvatarUrl("");
       });
   }, []);
 
@@ -421,6 +451,62 @@ export function MatterDetailPane() {
       block: "center",
     });
   }, [pendingCreate]);
+
+  const activeAIThreadKey = ai.activeStream?.threadKey ?? null;
+  const currentThreadKey = data?.matter
+    ? data.matter.category
+      ? `${data.matter.category}/${data.matter.id}`
+      : data.matter.id
+    : null;
+
+  useEffect(() => {
+    if (!currentThreadKey) {
+      backgroundAIThreadRef.current = null;
+      return;
+    }
+    if (aiOpen) {
+      backgroundAIThreadRef.current = null;
+      return;
+    }
+    if (
+      shouldShowBackgroundAIControl({
+        activeThreadKey: activeAIThreadKey,
+        currentThreadKey,
+        aiOpen,
+      })
+    ) {
+      backgroundAIThreadRef.current = currentThreadKey;
+      return;
+    }
+    if (
+      shouldNotifyBackgroundAIComplete({
+        backgroundThreadKey: backgroundAIThreadRef.current,
+        activeThreadKey: activeAIThreadKey,
+        currentThreadKey,
+        aiOpen,
+      })
+    ) {
+      backgroundAIThreadRef.current = null;
+      toast.message("AI 已生成完成", {
+        description: "可以打开查看对话结果",
+        duration: 8000,
+        style: AI_TOAST_STYLE,
+        actionButtonStyle: AI_TOAST_ACTION_STYLE,
+        action: {
+          label: "打开",
+          onClick: () => {
+            setAiOpen(true);
+            setAiMinimized(false);
+            setAiFullscreen(false);
+          },
+        },
+      });
+      return;
+    }
+    if (backgroundAIThreadRef.current !== currentThreadKey) {
+      backgroundAIThreadRef.current = null;
+    }
+  }, [activeAIThreadKey, aiOpen, currentThreadKey]);
 
   if (data === undefined) {
     return (
@@ -503,11 +589,20 @@ export function MatterDetailPane() {
     if (snap.mentions && snap.mentions.open_ids.length > 0) {
       payload.mentions = snap.mentions;
     }
+    if (snap.body_source) payload.body_source = snap.body_source;
+    if (snap.body_source_snapshot)
+      payload.body_source_snapshot = snap.body_source_snapshot;
     return payload;
   };
 
   const saveDraftFromForm = async (snap: FormSnapshot) => {
     if (!matter_id || !pendingCreate) return;
+    // Mirror the latest snapshot into pendingInitial so subsequent form
+    // remounts (e.g. after AI fills <draft>, which bumps aiFillToken) restore
+    // user-entered fields like mentions / refer / status_change. Without this
+    // the AI fill path silently wipes any in-form fields that were never in
+    // pendingInitial to begin with.
+    setPendingInitial(snap);
     const matter_payload = buildMatterPayload(
       pendingCreate.type,
       pendingCreate.quote,
@@ -589,7 +684,10 @@ export function MatterDetailPane() {
     content: string,
     replyTo: string,
     summary?: string,
+    _aiTitle?: string,
   ): Promise<boolean> => {
+    // Reply path doesn't use the <title> hint — that's NewMatter only.
+    void _aiTitle;
     if (!matter_id) return false;
     if (!pendingCreate) {
       const status = matter.current_status;
@@ -613,10 +711,16 @@ export function MatterDetailPane() {
     // 跟着 body 一起覆盖 summary（如果 AI 这次返回了 <summary> 块）。
     // 没返回时保留旧 summary（一般也是空,fallback 到发布时的 onGenerateSummary）。
     const trimmedSummary = summary?.trim();
+    // AI <draft> reached us → the only path that promotes body_source to "ai".
+    // Snapshot the AI body so future user edits can be judged against it via
+    // computeAtPublish at submit time (one-way state machine, see design §二.2).
+    const aiState = applyAIDraft(content);
     const nextInitial: Partial<FormSnapshot> = {
       ...(pendingInitial ?? {}),
       body: content,
       ...(trimmedSummary ? { summary: trimmedSummary } : {}),
+      body_source: aiState.body_source,
+      body_source_snapshot: aiState.body_source_snapshot,
     };
     const matter_payload = buildMatterPayload(
       pendingCreate.type,
@@ -631,6 +735,8 @@ export function MatterDetailPane() {
         status_change: nextInitial.status_change,
         outcome: nextInitial.outcome,
         mentions: nextInitial.mentions,
+        body_source: aiState.body_source,
+        body_source_snapshot: aiState.body_source_snapshot,
       },
     );
     try {
@@ -658,6 +764,16 @@ export function MatterDetailPane() {
     }
     setPendingInitial(nextInitial);
     setAiFillToken((v) => v + 1);
+    // On narrow viewports (< xl), AIPane is a fullscreen overlay that hides
+    // the form/draft card. After a successful draft fill the user wants to
+    // see the result, so minimize the pane back to the bottom button — a
+    // tap on it reopens the chat without losing state.
+    if (
+      typeof window !== "undefined" &&
+      !window.matchMedia("(min-width: 1280px)").matches
+    ) {
+      setAiMinimized(true);
+    }
     return true;
   };
 
@@ -683,9 +799,21 @@ export function MatterDetailPane() {
   const threadKey = matter.category
     ? `${matter.category}/${matter.id}`
     : matter.id;
+  const showBackgroundAIControl = shouldShowBackgroundAIControl({
+    activeThreadKey: ai.activeStream?.threadKey,
+    currentThreadKey: threadKey,
+    aiOpen,
+  });
+  const notifyBackgroundAIOnClose = shouldNotifyBackgroundAIOnClose({
+    activeThreadKey: ai.activeStream?.threadKey,
+    currentThreadKey: threadKey,
+  });
+  const jumpControlVisible = timeline.length > 0 && jumpBounds.canScroll;
+  const avoidRightPane = aiOpen && !aiMinimized && !aiFullscreen;
 
   return (
     <div className="relative flex h-full min-h-0">
+      {qualityDialog}
       {/* 左：主内容 */}
       <div ref={contentScrollRef} className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-5xl px-3 py-3 sm:px-5 sm:py-5">
@@ -863,18 +991,6 @@ export function MatterDetailPane() {
             />
           </section>
 
-          <section className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-2.5 shadow-[var(--shadow-sm)]">
-            <div>
-              <h2 className="text-[13px] font-semibold text-[var(--text)]">
-                正文阅读
-              </h2>
-              <p className="mt-0.5 text-[11px] text-[var(--text-mute)]">
-                仅影响下方 matter 文档正文的 Markdown 渲染
-              </p>
-            </div>
-            <MarkdownStyleSwitcher />
-          </section>
-
           {/* ==== 文件流 ==== */}
           <section className="space-y-3">
             {timeline.map((item, i) => (
@@ -899,6 +1015,11 @@ export function MatterDetailPane() {
                 }}
                 highlighted={highlight === item.file}
                 markdownStyle={markdownStyle}
+                me={{
+                  open_id: sessionOpenId,
+                  name: sessionName,
+                  avatar_url: sessionAvatarUrl || null,
+                }}
               />
             ))}
             {pendingCreate && (
@@ -987,6 +1108,35 @@ export function MatterDetailPane() {
                       ? () => setConfirmDeleteOpen(true)
                       : undefined
                   }
+                  confirmPublishQuality={confirmPublishQuality}
+                  onSendToAI={(b) => {
+                    ai.setInput(threadKey, b);
+                    // Seed the reply target so AIPane's Send/Generate are
+                    // not stuck at "未指定起点帖子" disabled state. Use the
+                    // draft's quote — for think/act/verify this is always
+                    // the file the user is replying to.
+                    if (pendingCreate?.quote) {
+                      ai.setReplyTarget(
+                        matter.id,
+                        threadKey,
+                        pendingCreate.quote,
+                      );
+                    }
+                    setAiOpen(true);
+                    toast.success(
+                      "内容已填入 AI 输入框，可以继续追加说明再发送",
+                    );
+                  }}
+                  isAIBusy={
+                    !!ai.activeStream &&
+                    ai.activeStream.threadKey !== threadKey
+                  }
+                  busyTitle={
+                    ai.activeStream &&
+                    ai.activeStream.threadKey !== threadKey
+                      ? ai.activeStream.title
+                      : undefined
+                  }
                 />
               </article>
             )}
@@ -1065,6 +1215,13 @@ export function MatterDetailPane() {
                       setAiOpen(false);
                       setAiMinimized(false);
                       setAiFullscreen(false);
+                      if (notifyBackgroundAIOnClose) {
+                        toast.message("AI 在后台生成", {
+                          description: "右下角转圈按钮可以重新打开对话",
+                          duration: 6000,
+                          style: AI_TOAST_STYLE,
+                        });
+                      }
                     }}
                     title="关闭"
                   >
@@ -1088,10 +1245,23 @@ export function MatterDetailPane() {
         </>
       )}
 
-      {timeline.length > 0 && jumpBounds.canScroll && (
+      {showBackgroundAIControl && (
+        <AIBackgroundControl
+          stackAboveJump={jumpControlVisible}
+          avoidRightPane={avoidRightPane}
+          onOpen={() => {
+            setAiOpen(true);
+            setAiMinimized(false);
+            setAiFullscreen(false);
+          }}
+        />
+      )}
+
+      {jumpControlVisible && (
         <MatterJumpControl
           atTop={jumpBounds.top}
           atBottom={jumpBounds.bottom}
+          avoidRightPane={avoidRightPane}
           onTop={() =>
             contentScrollRef.current?.scrollTo({
               top: 0,
@@ -1210,19 +1380,55 @@ export function MatterDetailPane() {
   );
 }
 
+function AIBackgroundControl({
+  onOpen,
+  stackAboveJump,
+  avoidRightPane,
+}: {
+  onOpen: () => void;
+  stackAboveJump: boolean;
+  avoidRightPane: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title="AI 正在后台生成，点击打开对话"
+      aria-label="AI 正在后台生成，点击打开对话"
+      className={cn(
+        "fixed right-3 z-40 flex h-11 w-11 items-center justify-center rounded-full border border-[var(--accent-soft)] bg-[var(--surface)] text-[var(--accent)] shadow-[var(--shadow-lg)] transition hover:bg-[var(--accent-bg)] sm:right-7",
+        stackAboveJump
+          ? "bottom-[calc(7rem+5.75rem)] sm:bottom-[calc(2rem+5.75rem)]"
+          : "bottom-28 sm:bottom-8",
+        avoidRightPane && "xl:right-[calc(480px+1.75rem)]",
+      )}
+    >
+      <Bot className="h-4 w-4" />
+      <Loader2 className="absolute h-8 w-8 animate-spin text-[var(--accent)] opacity-70" />
+    </button>
+  );
+}
+
 function MatterJumpControl({
   atTop,
   atBottom,
   onTop,
   onBottom,
+  avoidRightPane,
 }: {
   atTop: boolean;
   atBottom: boolean;
   onTop: () => void;
   onBottom: () => void;
+  avoidRightPane: boolean;
 }) {
   return (
-    <div className="fixed bottom-28 right-3 z-40 flex w-11 flex-col items-center overflow-hidden rounded-full border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-lg)] sm:bottom-8 sm:right-7">
+    <div
+      className={cn(
+        "fixed bottom-28 right-3 z-40 flex w-11 flex-col items-center overflow-hidden rounded-full border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-lg)] sm:bottom-8 sm:right-7",
+        avoidRightPane && "xl:right-[calc(480px+1.75rem)]",
+      )}
+    >
       <button
         type="button"
         disabled={atTop}

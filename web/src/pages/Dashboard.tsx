@@ -36,6 +36,10 @@ import { ThreadListPane } from "@/components/ThreadListPane";
 import { cn } from "@/lib/utils";
 import { useMatterEvents } from "@/events/MatterEventsProvider";
 import { scheduleRefresh } from "@/events/scheduleRefresh";
+import {
+  mergeLoadedAIConversation,
+  setAIReplyTarget,
+} from "@/lib/aiConversationState";
 
 export type AIMsg = ChatMessage & { id: number; toolUses?: AIToolUse[] };
 
@@ -53,6 +57,11 @@ type ActiveAIStream = {
   threadKey: string;
   matter_id: string;
   title: string;
+} | null;
+
+type ActiveAIAbort = {
+  threadKey: string;
+  controller: AbortController;
 } | null;
 
 type DashboardContext = {
@@ -85,8 +94,11 @@ type DashboardContext = {
         content: string,
         replyTo: string,
         summary?: string,
+        title?: string,
       ) => Promise<boolean>;
+      mode?: "reply" | "new-matter";
     }) => Promise<void>;
+    stopMessage: (threadKey: string) => void;
   };
 };
 
@@ -102,28 +114,64 @@ function emptyAIThreadState(): AIThreadState {
   };
 }
 
+// Sentinel that AIPane's "生成草稿" button prefixes onto the user message
+// to trigger the AI's <draft>-emitting branch. Mirrored in AIPane.tsx.
+export const GENERATE_REPLY_DRAFT_TAG = "[[GENERATE_REPLY_DRAFT]]";
+
 // Matches `<draft>...</draft>` with an optional `type="..."` attribute.
 // The captured type (or "think" when omitted) drives future doc-type branches.
 const DRAFT_RE = /<draft(?:\s+type="([^"]*)")?\s*>([\s\S]*?)<\/draft>/i;
 // Optional `<summary>...</summary>` produced by the same AI call so the
 // publish step doesn't need a second AI round-trip to summarise.
 const SUMMARY_RE = /<summary>([\s\S]*?)<\/summary>/i;
+// Optional `<title>...</title>` produced in new-matter mode for the matter
+// title suggestion. Reply mode does not request it.
+const TITLE_RE = /<title>([\s\S]*?)<\/title>/i;
 
-function extractDraft(
-  text: string,
-): { draft: string; rest: string; type: string; summary?: string } | null {
+function extractDraft(text: string): {
+  draft: string;
+  rest: string;
+  type: string;
+  summary?: string;
+  title?: string;
+} | null {
   const m = text.match(DRAFT_RE);
   if (!m) return null;
   const summaryMatch = text.match(SUMMARY_RE);
-  // Strip both blocks from `rest` so the user-facing AI message doesn't
-  // show the raw <draft>/<summary> tags after streaming completes.
-  const rest = text.replace(DRAFT_RE, "").replace(SUMMARY_RE, "").trim();
+  const titleMatch = text.match(TITLE_RE);
+  // Strip all three blocks from `rest` so the user-facing AI message doesn't
+  // show the raw tags after streaming completes.
+  const rest = text
+    .replace(DRAFT_RE, "")
+    .replace(SUMMARY_RE, "")
+    .replace(TITLE_RE, "")
+    .trim();
   return {
     draft: m[2].trim(),
     rest,
     type: (m[1] || "think").toLowerCase(),
     summary: summaryMatch ? summaryMatch[1].trim() || undefined : undefined,
+    title: titleMatch ? titleMatch[1].trim() || undefined : undefined,
   };
+}
+
+// Virtual threadKey for NewMatter conversations: __newmatter__:<draftId>.
+// Bound to a draft so the same composer reopened later resumes the same chat.
+const NEW_MATTER_THREAD_PREFIX = "__newmatter__:";
+const SIDEBAR_RESIZE_CURSOR =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%235a3a1a' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 7 3 12l5 5'/%3E%3Cpath d='M16 7l5 5-5 5'/%3E%3Cpath d='M3 12h18'/%3E%3C/svg%3E\") 12 12, col-resize";
+
+export function newMatterThreadKey(draftId: string): string {
+  return `${NEW_MATTER_THREAD_PREFIX}${draftId}`;
+}
+
+export function isNewMatterThreadKey(key: string): boolean {
+  return key.startsWith(NEW_MATTER_THREAD_PREFIX);
+}
+
+function newMatterDraftIdFromKey(key: string): string | null {
+  if (!isNewMatterThreadKey(key)) return null;
+  return key.slice(NEW_MATTER_THREAD_PREFIX.length);
 }
 
 export function useDashboard() {
@@ -167,10 +215,18 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const [aiThreads, setAiThreads] = useState<Record<string, AIThreadState>>({});
   const [activeAIStream, setActiveAIStream] = useState<ActiveAIStream>(null);
-  const isThreadView = location.pathname.startsWith("/m/");
+  // Routes that take the full main pane on narrow screens. `/m/` is the
+  // matter detail view; `/new` is the NewMatter composer (also a full pane).
+  const isThreadView =
+    location.pathname.startsWith("/m/") || location.pathname.startsWith("/new");
+  // /new doesn't need the matter / draft list at all — the composer fills the
+  // whole main column and the AI assistant lives in its own right column.
+  const hideSidebar = location.pathname.startsWith("/new");
   const layoutRef = useRef<HTMLDivElement>(null);
   const aiThreadsRef = useRef<Record<string, AIThreadState>>({});
   const activeAIStreamRef = useRef<ActiveAIStream>(null);
+  const activeAIAbortRef = useRef<ActiveAIAbort>(null);
+  const aiThreadLoadsInFlightRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     aiThreadsRef.current = aiThreads;
@@ -257,6 +313,8 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   ) => {
     const current = aiThreadsRef.current[threadKey];
     if (current?.loaded || current?.loading) return;
+    if (aiThreadLoadsInFlightRef.current.has(threadKey)) return;
+    aiThreadLoadsInFlightRef.current.add(threadKey);
 
     setAiThreads((prev) => ({
       ...prev,
@@ -270,20 +328,9 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       const conv = await fetchAIConversation(matter_id);
       setAiThreads((prev) => {
         const existing = prev[threadKey] ?? emptyAIThreadState();
-        const mapped: AIMsg[] = conv.messages.map((m, idx) => ({
-          ...m,
-          id: idx + 1,
-        }));
         return {
           ...prev,
-          [threadKey]: {
-            ...existing,
-            loaded: true,
-            loading: false,
-            messages: mapped,
-            replyTarget: conv.reply_target,
-            nextId: mapped.length + 1,
-          },
+          [threadKey]: mergeLoadedAIConversation<AIMsg>(existing, conv),
         };
       });
     } catch {
@@ -295,6 +342,8 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
           loading: false,
         },
       }));
+    } finally {
+      aiThreadLoadsInFlightRef.current.delete(threadKey);
     }
   };
 
@@ -315,10 +364,8 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   ) => {
     setAiThreads((prev) => {
       const existing = prev[threadKey] ?? emptyAIThreadState();
-      const nextState: AIThreadState = {
-        ...existing,
-        replyTarget: value,
-      };
+      const { state: nextState, changed } = setAIReplyTarget(existing, value);
+      if (!changed) return prev;
       queueMicrotask(() =>
         persistThreadConversation(matter_id, threadKey, nextState),
       );
@@ -355,6 +402,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     rawText,
     hasReplyDraft,
     onUseDraftAsReply,
+    mode = "reply",
   }: {
     matter_id: string;
     threadKey: string;
@@ -365,7 +413,9 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       content: string,
       replyTo: string,
       summary?: string,
+      title?: string,
     ) => Promise<boolean>;
+    mode?: "reply" | "new-matter";
   }) => {
     const trimmed = rawText.trim();
     if (!trimmed) return;
@@ -378,12 +428,14 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
 
     const current = aiThreadsRef.current[threadKey] ?? emptyAIThreadState();
     if (current.streaming) return;
-    if (!current.replyTarget) {
+    if (mode === "reply" && !current.replyTarget) {
       toast.error("未找到起点帖子，请从某条帖子上点击「AI 回复」进入");
       return;
     }
 
-    const currentReplyTarget = current.replyTarget;
+    // new-matter mode has no replyTarget; use empty string when calling
+    // onUseDraftAsReply (handler ignores it).
+    const currentReplyTarget = current.replyTarget ?? "";
     const userMsg: AIMsg = {
       id: current.nextId,
       role: "user",
@@ -410,18 +462,22 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     }));
 
     setActiveAIStream({ threadKey, matter_id, title: threadTitle });
+    const controller = new AbortController();
+    activeAIAbortRef.current = { threadKey, controller };
     const historyForApi: ChatMessage[] = withUser.map(({ role, content }) => ({
       role,
       content,
     }));
 
+    let accumulated = "";
+    const toolUses: AIToolUse[] = [];
     try {
-      let accumulated = "";
-      const toolUses: AIToolUse[] = [];
       for await (const ev of streamAIChat(
         matter_id,
         historyForApi,
-        currentReplyTarget,
+        mode === "new-matter" ? null : currentReplyTarget,
+        controller.signal,
+        mode,
       )) {
         if (ev.kind === "delta") {
           accumulated += ev.delta;
@@ -477,6 +533,19 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
 
       const extracted = extractDraft(accumulated);
       let finalContent = accumulated;
+      // Quality-gate invariant: AI failure must NEVER promote body_source
+      // to "ai". onUseDraftAsReply (the only entry to applyAIDraft) is only
+      // invoked from the `extracted && extracted.type === "think"` branch
+      // below — empty / malformed / errored streams skip it entirely, so
+      // body / body_source on the consumer side stays untouched.
+      const userRequestedDraft = trimmed.startsWith(GENERATE_REPLY_DRAFT_TAG);
+      if (userRequestedDraft && !extracted) {
+        // GENERATE was triggered but the AI didn't produce a usable <draft>.
+        // Surface this explicitly so the user knows nothing was filled in.
+        toast.warning(
+          "AI 没有给出可用草稿，请补充更多上下文后再试一次",
+        );
+      }
       if (extracted) {
         if (extracted.type !== "think") {
           finalContent = extracted.rest
@@ -494,6 +563,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
               extracted.draft,
               currentReplyTarget,
               extracted.summary,
+              extracted.title,
             );
             finalContent = extracted.rest
               ? `${extracted.rest}\n\n_${ok ? "✅" : "⚠️"} ${ok ? "草稿已填入回复框" : "填入草稿失败"}_`
@@ -530,8 +600,44 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       }
     } catch (e) {
       const errText = e instanceof Error ? e.message : String(e);
+      const aborted =
+        e instanceof DOMException && e.name === "AbortError";
       if (e instanceof SessionExpiredError) {
         toast.error(errText);
+      } else if (!aborted) {
+        // Surface stream errors so the user notices — without this they would
+        // only see a small "_错误：…_" annotation in the message bubble. Caller
+        // may retry by sending the same message again; body / body_source on
+        // any consuming form stays untouched per the failure-fallback contract.
+        toast.error(`AI 调用失败：${errText}`);
+      }
+      if (aborted) {
+        const frozenToolUses = toolUses.map((t) => ({ ...t }));
+        let finalSnapshot: AIThreadState | null = null;
+        setAiThreads((prev) => {
+          const existing = prev[threadKey] ?? emptyAIThreadState();
+          const nextState: AIThreadState = {
+            ...existing,
+            messages: existing.messages.map((m) =>
+              m.id === assistantId
+                ? {
+                    ...m,
+                    content: accumulated
+                      ? `${accumulated}\n\n_已停止生成_`
+                      : "_已停止生成_",
+                    toolUses: frozenToolUses,
+                  }
+                : m,
+            ),
+            streaming: false,
+          };
+          finalSnapshot = nextState;
+          return { ...prev, [threadKey]: nextState };
+        });
+        if (finalSnapshot) {
+          persistThreadConversation(matter_id, threadKey, finalSnapshot);
+        }
+        return;
       }
       setAiThreads((prev) => {
         const existing = prev[threadKey] ?? emptyAIThreadState();
@@ -552,12 +658,47 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       setActiveAIStream((prev) =>
         prev?.threadKey === threadKey ? null : prev,
       );
+      if (activeAIAbortRef.current?.controller === controller) {
+        activeAIAbortRef.current = null;
+      }
     }
+  };
+
+  const stopMessage = (threadKey: string) => {
+    const activeAbort = activeAIAbortRef.current;
+    if (!activeAbort || activeAbort.threadKey !== threadKey) return;
+    activeAbort.controller.abort();
   };
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // One-shot cleanup of orphan __newmatter__: threads. A NewMatter draft can
+  // be deleted (via publish or manual remove) while its AIPane conversation
+  // sits in the in-memory ai store keyed by draftId. On Dashboard mount, drop
+  // any such thread whose draftId is no longer in the latest drafts list so
+  // the store doesn't accumulate dead entries across sessions.
+  const orphanCleanupDoneRef = useRef(false);
+  useEffect(() => {
+    if (orphanCleanupDoneRef.current) return;
+    if (drafts === null) return;
+    orphanCleanupDoneRef.current = true;
+    const liveIds = new Set(drafts.map((d) => d.id));
+    setAiThreads((prev) => {
+      let changed = false;
+      const next: Record<string, AIThreadState> = {};
+      for (const [k, v] of Object.entries(prev)) {
+        const draftId = newMatterDraftIdFromKey(k);
+        if (draftId && !liveIds.has(draftId)) {
+          changed = true;
+          continue;
+        }
+        next[k] = v;
+      }
+      return changed ? next : prev;
+    });
+  }, [drafts]);
 
   // Subscribe to SSE matter events + visibility/reconnect resume signals.
   // Both list-mutating events and resume should converge on a single debounced
@@ -741,10 +882,14 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
         <aside
           className={cn(
             "min-h-0 overflow-y-auto md:shrink-0 md:transition-[width] md:duration-200 md:ease-out",
-            // mobile visibility (route-based)
-            isThreadView ? "hidden md:block" : "block w-full",
+            // /new hides the sidebar entirely on every breakpoint.
+            hideSidebar
+              ? "hidden"
+              : isThreadView
+                ? "hidden md:block"
+                : "block w-full",
             // desktop width
-            sidebarOpen
+            sidebarOpen && !hideSidebar
               ? "md:w-[var(--sidebar-width)] md:border-r"
               : "md:w-0 md:overflow-hidden",
           )}
@@ -758,7 +903,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
               : ({ background: "var(--bg)" } as React.CSSProperties)
           }
         >
-          {sidebarOpen && (
+          {sidebarOpen && !hideSidebar && (
             <ThreadListPane
               drafts={drafts}
               matters={matters}
@@ -766,13 +911,14 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
             />
           )}
         </aside>
-        {sidebarOpen && (
+        {sidebarOpen && !hideSidebar && (
           <div
             className="group relative hidden w-3 shrink-0 cursor-col-resize items-stretch justify-center md:flex"
             onMouseDown={startSidebarResize}
+            style={{ cursor: SIDEBAR_RESIZE_CURSOR }}
             title="拖拽调整导航栏宽度"
           >
-            <div className="pointer-events-none flex items-center text-[var(--text-fade)] transition-colors group-hover:text-[var(--text-mute)]">
+            <div className="pointer-events-none flex items-center text-[var(--text-mute)] transition-colors group-hover:text-[var(--accent)]">
               <GripVertical className="h-3.5 w-3.5" />
             </div>
           </div>
@@ -797,6 +943,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
                   setReplyTarget,
                   clearThreadConversation,
                   sendMessage,
+                  stopMessage,
                 },
               } satisfies DashboardContext
             }
