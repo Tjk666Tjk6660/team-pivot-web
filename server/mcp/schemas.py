@@ -163,7 +163,17 @@ class CreateFileIn(BaseModel):
     body: str = ""
     quote: str | None = None
     refer: list[str] | None = None
-    owner: str | None = None
+    owner: str | None = Field(
+        default=None,
+        description=(
+            "OPTIONAL. Almost never needed. Backend auto-fills the owner from "
+            "the authenticated user (= the creator of this file). Only set "
+            "this when the user EXPLICITLY asks for someone ELSE to own the "
+            "file (e.g. '让 X 当 owner'). NEVER ask the user for their own "
+            "pinyin to fill this field — leave it null and the backend takes "
+            "care of it."
+        ),
+    )
     verifications: list[VerificationIn] | None = None
     outcome: str | None = None  # finished | cancelled (result only)
     status_change: StatusChangeIn | None = Field(
@@ -219,7 +229,14 @@ class CreateMatterIn(BaseModel):
     )
     owner: str | None = Field(
         default=None,
-        description="Optional owner pinyin. Leave null to default to the creator.",
+        description=(
+            "OPTIONAL. Almost never needed. Backend auto-fills the owner from "
+            "the authenticated user (= the creator of this matter). Only set "
+            "this when the user EXPLICITLY asks for someone ELSE to own the "
+            "matter (e.g. '让 X 当 owner'). NEVER ask the user for their own "
+            "pinyin to fill this field — leave it null and the backend takes "
+            "care of it."
+        ),
     )
     mentions: MentionIn | None = Field(
         default=None,
