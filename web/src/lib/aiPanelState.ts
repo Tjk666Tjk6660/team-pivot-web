@@ -37,3 +37,17 @@ export function shouldNotifyBackgroundAIComplete({
     activeThreadKey !== currentThreadKey
   );
 }
+
+const SCROLL_BOTTOM_THRESHOLD = 24;
+
+export function isNearScrollBottom({
+  scrollTop,
+  clientHeight,
+  scrollHeight,
+}: {
+  scrollTop: number;
+  clientHeight: number;
+  scrollHeight: number;
+}): boolean {
+  return scrollHeight - scrollTop - clientHeight <= SCROLL_BOTTOM_THRESHOLD;
+}

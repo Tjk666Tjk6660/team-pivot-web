@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   AlertCircle,
+  ArrowDown,
   Bot,
   BookOpen,
   CheckCircle2,
@@ -17,6 +18,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { isNearScrollBottom } from "@/lib/aiPanelState";
 import {
   GENERATE_REPLY_DRAFT_TAG as GENERATE_TAG,
   useDashboard,
@@ -66,10 +68,14 @@ export function AIPane({
   const { messages, replyTarget, input, streaming, loading, loaded } = state;
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const shouldStickToBottomRef = useRef(true);
+  const userScrollIntentRef = useRef(false);
+  const wasStreamingRef = useRef(streaming);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
 
   const [streamingHintIdx, setStreamingHintIdx] = useState(0);
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   useEffect(() => {
     if (!streaming) return;
     setStreamingHintIdx(Math.floor(Math.random() * STREAMING_HINTS.length));
@@ -103,11 +109,72 @@ export function AIPane({
   ]);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: "smooth",
+    const el = scrollRef.current;
+    if (!el || !shouldStickToBottomRef.current) return;
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior: "auto",
     });
+    setShowJumpToBottom(false);
   }, [messages]);
+
+  const updateScrollStickiness = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const nearBottom = isNearScrollBottom({
+      scrollTop: el.scrollTop,
+      clientHeight: el.clientHeight,
+      scrollHeight: el.scrollHeight,
+    });
+    if (nearBottom) {
+      shouldStickToBottomRef.current = true;
+      userScrollIntentRef.current = false;
+      setShowJumpToBottom(false);
+      return;
+    }
+    if (userScrollIntentRef.current) {
+      shouldStickToBottomRef.current = false;
+      setShowJumpToBottom(true);
+    }
+  };
+
+  const markUserScrollIntent = () => {
+    userScrollIntentRef.current = true;
+  };
+
+  const markKeyboardScrollIntent = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (
+      event.key === "ArrowUp" ||
+      event.key === "ArrowDown" ||
+      event.key === "PageUp" ||
+      event.key === "PageDown" ||
+      event.key === "Home" ||
+      event.key === "End" ||
+      event.key === " "
+    ) {
+      markUserScrollIntent();
+    }
+  };
+
+  const scrollToBottom = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    userScrollIntentRef.current = false;
+    shouldStickToBottomRef.current = true;
+    setShowJumpToBottom(false);
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior: "auto",
+    });
+  };
+
+  useEffect(() => {
+    const wasStreaming = wasStreamingRef.current;
+    wasStreamingRef.current = streaming;
+    if (streaming && !wasStreaming) {
+      scrollToBottom();
+    }
+  }, [streaming]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -216,10 +283,16 @@ export function AIPane({
         </div>
       )}
 
-      <div
-        ref={scrollRef}
-        className="min-h-[12rem] flex-1 space-y-3 overflow-y-auto px-1 py-1"
-      >
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={scrollRef}
+          onScroll={updateScrollStickiness}
+          onWheel={markUserScrollIntent}
+          onTouchMove={markUserScrollIntent}
+          onPointerDown={markUserScrollIntent}
+          onKeyDown={markKeyboardScrollIntent}
+          className="h-full space-y-3 overflow-y-auto px-1 py-1"
+        >
         {loading && (
           <p
             className="pt-4 text-center text-[11.5px] font-meta"
@@ -258,6 +331,30 @@ export function AIPane({
             />
           );
         })}
+        </div>
+        {showJumpToBottom && (
+          <button
+            type="button"
+            onClick={scrollToBottom}
+            title={streaming ? "AI 正在回复，回到底部" : "回到底部"}
+            aria-label={streaming ? "AI 正在回复，回到底部" : "回到底部"}
+            className={`absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center justify-center border bg-[var(--surface)] text-[var(--text-soft)] transition hover:bg-[var(--surface-alt)] hover:text-[var(--accent)] ${
+              streaming
+                ? "h-8 w-12 rounded-full border-[var(--line-strong)] shadow-[0_2px_10px_rgba(28,25,23,0.16)]"
+                : "h-9 w-9 rounded-full border-[var(--line)] shadow-[var(--shadow-lg)]"
+            }`}
+          >
+            {streaming ? (
+              <span className="flex items-center gap-1" aria-hidden>
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.24s]" />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.12s]" />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" />
+              </span>
+            ) : (
+              <ArrowDown className="h-4 w-4" />
+            )}
+          </button>
+        )}
       </div>
 
       <div

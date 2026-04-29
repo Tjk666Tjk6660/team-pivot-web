@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isNearScrollBottom,
   shouldNotifyBackgroundAIComplete,
   shouldNotifyBackgroundAIOnClose,
   shouldShowBackgroundAIControl,
@@ -112,6 +113,26 @@ describe("shouldNotifyBackgroundAIComplete", () => {
         activeThreadKey: null,
         currentThreadKey: "category/matter-1",
         aiOpen: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("isNearScrollBottom", () => {
+  it("treats the pane as sticky only when it is near the bottom", () => {
+    expect(
+      isNearScrollBottom({
+        scrollTop: 693,
+        clientHeight: 300,
+        scrollHeight: 1000,
+      }),
+    ).toBe(true);
+
+    expect(
+      isNearScrollBottom({
+        scrollTop: 500,
+        clientHeight: 300,
+        scrollHeight: 1000,
       }),
     ).toBe(false);
   });
