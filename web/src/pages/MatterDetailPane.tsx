@@ -6,6 +6,7 @@ import {
   ArrowUp,
   Bot,
   ChevronRight,
+  Loader2,
   Maximize2,
   Minimize2,
   Sparkles,
@@ -57,6 +58,11 @@ import {
 import { HomeWelcomePane } from "@/pages/HomeWelcomePane";
 import { useDashboard } from "@/pages/Dashboard";
 import { cn } from "@/lib/utils";
+import {
+  shouldNotifyBackgroundAIComplete,
+  shouldNotifyBackgroundAIOnClose,
+  shouldShowBackgroundAIControl,
+} from "@/lib/aiPanelState";
 import { useMatterEvents } from "@/events/MatterEventsProvider";
 import { scheduleRefresh } from "@/events/scheduleRefresh";
 
@@ -65,6 +71,21 @@ export function MatterDetailEmpty() {
 }
 
 const JUMP_CONTROL_MIN_SCROLL = 240;
+const AI_TOAST_STYLE = {
+  background: "color-mix(in srgb, var(--accent) 9%, var(--surface))",
+  border: "1px solid color-mix(in srgb, var(--accent) 30%, var(--line))",
+  borderLeft: "4px solid var(--accent)",
+  borderRadius: "var(--r-md)",
+  boxShadow: "0 16px 40px rgba(28, 25, 23, 0.16)",
+  color: "var(--text)",
+};
+const AI_TOAST_ACTION_STYLE = {
+  background: "var(--accent)",
+  border: "1px solid var(--accent)",
+  borderRadius: "var(--r-sm)",
+  color: "var(--accent-ink)",
+  fontWeight: 700,
+};
 
 // Stable compare for MatterDetail — returns true when nothing the view reads
 // has changed, so the silent refresh path can no-op and avoid re-rendering
@@ -226,6 +247,7 @@ export function MatterDetailPane() {
   const [aiFillToken, setAiFillToken] = useState(0);
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const contentScrollRef = useRef<HTMLDivElement | null>(null);
+  const backgroundAIThreadRef = useRef<string | null>(null);
 
   const openAIForFile = (file: string) => {
     setPendingAIOrigin(file);
@@ -429,6 +451,62 @@ export function MatterDetailPane() {
       block: "center",
     });
   }, [pendingCreate]);
+
+  const activeAIThreadKey = ai.activeStream?.threadKey ?? null;
+  const currentThreadKey = data?.matter
+    ? data.matter.category
+      ? `${data.matter.category}/${data.matter.id}`
+      : data.matter.id
+    : null;
+
+  useEffect(() => {
+    if (!currentThreadKey) {
+      backgroundAIThreadRef.current = null;
+      return;
+    }
+    if (aiOpen) {
+      backgroundAIThreadRef.current = null;
+      return;
+    }
+    if (
+      shouldShowBackgroundAIControl({
+        activeThreadKey: activeAIThreadKey,
+        currentThreadKey,
+        aiOpen,
+      })
+    ) {
+      backgroundAIThreadRef.current = currentThreadKey;
+      return;
+    }
+    if (
+      shouldNotifyBackgroundAIComplete({
+        backgroundThreadKey: backgroundAIThreadRef.current,
+        activeThreadKey: activeAIThreadKey,
+        currentThreadKey,
+        aiOpen,
+      })
+    ) {
+      backgroundAIThreadRef.current = null;
+      toast.message("AI 已生成完成", {
+        description: "可以打开查看对话结果",
+        duration: 8000,
+        style: AI_TOAST_STYLE,
+        actionButtonStyle: AI_TOAST_ACTION_STYLE,
+        action: {
+          label: "打开",
+          onClick: () => {
+            setAiOpen(true);
+            setAiMinimized(false);
+            setAiFullscreen(false);
+          },
+        },
+      });
+      return;
+    }
+    if (backgroundAIThreadRef.current !== currentThreadKey) {
+      backgroundAIThreadRef.current = null;
+    }
+  }, [activeAIThreadKey, aiOpen, currentThreadKey]);
 
   if (data === undefined) {
     return (
@@ -721,6 +799,17 @@ export function MatterDetailPane() {
   const threadKey = matter.category
     ? `${matter.category}/${matter.id}`
     : matter.id;
+  const showBackgroundAIControl = shouldShowBackgroundAIControl({
+    activeThreadKey: ai.activeStream?.threadKey,
+    currentThreadKey: threadKey,
+    aiOpen,
+  });
+  const notifyBackgroundAIOnClose = shouldNotifyBackgroundAIOnClose({
+    activeThreadKey: ai.activeStream?.threadKey,
+    currentThreadKey: threadKey,
+  });
+  const jumpControlVisible = timeline.length > 0 && jumpBounds.canScroll;
+  const avoidRightPane = aiOpen && !aiMinimized && !aiFullscreen;
 
   return (
     <div className="relative flex h-full min-h-0">
@@ -1126,6 +1215,13 @@ export function MatterDetailPane() {
                       setAiOpen(false);
                       setAiMinimized(false);
                       setAiFullscreen(false);
+                      if (notifyBackgroundAIOnClose) {
+                        toast.message("AI 在后台生成", {
+                          description: "右下角转圈按钮可以重新打开对话",
+                          duration: 6000,
+                          style: AI_TOAST_STYLE,
+                        });
+                      }
                     }}
                     title="关闭"
                   >
@@ -1149,10 +1245,23 @@ export function MatterDetailPane() {
         </>
       )}
 
-      {timeline.length > 0 && jumpBounds.canScroll && (
+      {showBackgroundAIControl && (
+        <AIBackgroundControl
+          stackAboveJump={jumpControlVisible}
+          avoidRightPane={avoidRightPane}
+          onOpen={() => {
+            setAiOpen(true);
+            setAiMinimized(false);
+            setAiFullscreen(false);
+          }}
+        />
+      )}
+
+      {jumpControlVisible && (
         <MatterJumpControl
           atTop={jumpBounds.top}
           atBottom={jumpBounds.bottom}
+          avoidRightPane={avoidRightPane}
           onTop={() =>
             contentScrollRef.current?.scrollTo({
               top: 0,
@@ -1271,19 +1380,55 @@ export function MatterDetailPane() {
   );
 }
 
+function AIBackgroundControl({
+  onOpen,
+  stackAboveJump,
+  avoidRightPane,
+}: {
+  onOpen: () => void;
+  stackAboveJump: boolean;
+  avoidRightPane: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title="AI 正在后台生成，点击打开对话"
+      aria-label="AI 正在后台生成，点击打开对话"
+      className={cn(
+        "fixed right-3 z-40 flex h-11 w-11 items-center justify-center rounded-full border border-[var(--accent-soft)] bg-[var(--surface)] text-[var(--accent)] shadow-[var(--shadow-lg)] transition hover:bg-[var(--accent-bg)] sm:right-7",
+        stackAboveJump
+          ? "bottom-[calc(7rem+5.75rem)] sm:bottom-[calc(2rem+5.75rem)]"
+          : "bottom-28 sm:bottom-8",
+        avoidRightPane && "xl:right-[calc(480px+1.75rem)]",
+      )}
+    >
+      <Bot className="h-4 w-4" />
+      <Loader2 className="absolute h-8 w-8 animate-spin text-[var(--accent)] opacity-70" />
+    </button>
+  );
+}
+
 function MatterJumpControl({
   atTop,
   atBottom,
   onTop,
   onBottom,
+  avoidRightPane,
 }: {
   atTop: boolean;
   atBottom: boolean;
   onTop: () => void;
   onBottom: () => void;
+  avoidRightPane: boolean;
 }) {
   return (
-    <div className="fixed bottom-28 right-3 z-40 flex w-11 flex-col items-center overflow-hidden rounded-full border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-lg)] sm:bottom-8 sm:right-7">
+    <div
+      className={cn(
+        "fixed bottom-28 right-3 z-40 flex w-11 flex-col items-center overflow-hidden rounded-full border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-lg)] sm:bottom-8 sm:right-7",
+        avoidRightPane && "xl:right-[calc(480px+1.75rem)]",
+      )}
+    >
       <button
         type="button"
         disabled={atTop}
