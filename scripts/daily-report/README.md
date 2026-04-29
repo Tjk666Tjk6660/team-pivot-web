@@ -56,7 +56,7 @@ sudo systemctl restart team-pivot-web.service
 | `daily_report.personal_enabled` | bool | true | 个人视角报告开关 |
 | `daily_report.time_window_hours` | int | 24 | 统计时间窗口(小时) |
 | `daily_report.push_time` | str | "09:30" | 每日推送时刻(HH:MM,Asia/Shanghai) |
-| `daily_report.allow_ai_read_body` | bool | false | AI 正文读取(预留,v0.2 暂未启用) |
+| `daily_report.push_freq` | str | "weekdays" | 推送频率,`"daily"` / `"weekdays"`(默认仅 Mon-Fri,跳过周末) |
 
 ---
 
@@ -129,5 +129,6 @@ sudo journalctl -u team-pivot-web.service -n 200 | grep daily_report
 
 - 多 worker 锁(SQLite 时间戳)
 - 补跑机制(检测到主服务从超过 push_time 状态启动则立即补一次)
-- AI 正文读取(`allow_ai_read_body` 配置项已预留)
+- AI 正文读取下钻(允许 LLM 在 summary 信息不足时自主读 markdown 正文)
+- 个人日报推到个人 IM 会话(当前统一发到 bot 在的群)
 - 周报 / 月报
