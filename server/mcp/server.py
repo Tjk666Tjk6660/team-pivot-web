@@ -62,25 +62,50 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
                 description=(
                     "Use this tool — NOT WebFetch — for any URL on a Pivot "
                     "host (e.g. `https://pivot.enclaws.*/m/<matter-id>`, "
-                    "optionally with `/f/<file-path>`). Pivot is a SPA, so "
-                    "WebFetch only returns an empty HTML shell; this tool "
-                    "resolves the URL into matter + file info via the "
-                    "authenticated backend. ALWAYS display the returned "
-                    "`user_facing_summary` to the user verbatim so they "
-                    "can confirm the correct context was loaded."
+                    "optionally with `/f/<file-path>`). "
+                    "Common user phrasings (usually triggered by a pasted URL): "
+                    "\"看一下这个帖子 <url>\", \"对这个 matter 评论 <url>\", "
+                    "\"summarize <url>\", \"打开这个链接\". "
+                    "Pivot is a SPA, so WebFetch only returns an empty HTML "
+                    "shell; this tool resolves the URL into matter + file info "
+                    "via the authenticated backend. ALWAYS display the returned "
+                    "`user_facing_summary` to the user verbatim so they can "
+                    "confirm the correct context was loaded."
                 ),
                 inputSchema=ResolveContextIn.model_json_schema(),
             ),
             Tool(
                 name="list_matters",
-                description="List matters visible to the current user. Supports status/owner/q filters.",
+                description=(
+                    "List matters visible to the current user. Supports "
+                    "status/owner/q filters. "
+                    "Common user phrasings: \"看一下所有 matter\", \"列一下 "
+                    "matter 列表\", \"看看 pivot 下面有哪些帖子\", \"最近有什么 "
+                    "matter\", \"谁在做什么\", \"有哪些进行中的 matter\", "
+                    "\"show me all matters\". "
+                    "Use this for OVERVIEW questions where the user does NOT "
+                    "name a specific matter; if they DO name one (or paste a "
+                    "URL), use `get_matter` / `resolve_context` instead. "
+                    "Filters: `status` accepts planning/executing/paused/"
+                    "finished/reviewed/cancelled; `owner` accepts pinyin "
+                    "(e.g. 'dengke'); `q` does fuzzy title search."
+                ),
                 inputSchema=ListMattersIn.model_json_schema(),
             ),
             Tool(
                 name="get_matter",
                 description=(
-                    "Return a matter's header + timeline metadata (no file bodies). "
-                    "Call read_files afterwards to fetch specific file bodies on demand."
+                    "Return a matter's header + timeline metadata (no file "
+                    "bodies). "
+                    "Common user phrasings: \"看下 X matter\", \"X 帖子里都有"
+                    "什么\", \"X matter 的 timeline\", \"X 的进度\", "
+                    "\"summarize matter X\". "
+                    "Use this when the user names a SPECIFIC matter (by id or "
+                    "title); for overview lists use `list_matters`; if the "
+                    "user pasted a Pivot URL, call `resolve_context` first to "
+                    "extract the matter_id. "
+                    "Call `read_files` afterwards to fetch specific file "
+                    "bodies on demand."
                 ),
                 inputSchema=GetMatterIn.model_json_schema(),
             ),
@@ -88,7 +113,11 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
                 name="read_files",
                 description=(
                     "Fetch the full text of one or more files within a matter. "
-                    "Always call get_matter first to see which files exist. "
+                    "Common user phrasings: \"看一下这条 think 的具体内容\", "
+                    "\"展开这篇 act\", \"X 文件里写了啥\", \"summarize this "
+                    "file\", \"读一下这条\". "
+                    "Always call get_matter first to see which files exist, "
+                    "then pick paths from its timeline. "
                     "Hard limits: at most 5 files and 50,000 total chars per call."
                 ),
                 inputSchema=ReadFilesIn.model_json_schema(),
