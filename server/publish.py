@@ -266,6 +266,7 @@ def _resolve_mentions_for_index(
 def _resolve_comments_mentions(
     comments: list[dict] | None,
     users: UserRepo | None,
+    contacts: ContactRepo | None,
     *,
     author: str,
 ) -> list[dict] | None:
@@ -274,7 +275,12 @@ def _resolve_comments_mentions(
       authored by the same user posting the file; CommentIn schema does not
       accept author from clients);
     - resolve each comment's mentions[] via _resolve_mentions_for_index.
-    Returns a new list; does not mutate input."""
+    Returns a new list; does not mutate input.
+
+    Note: Web 前端 MentionField 总是发真 open_id；MCP 客户端可能直接发 name/
+    pinyin。先经 contacts 转成 open_id，再走"已注册→pinyin / 未注册→保留
+    open_id"的分流，否则未注册联系人的拼音会被原样落盘、渲染兜底成拼音。
+    与 publish_matter_comment 的做法一致。"""
     if not comments:
         return comments
     out: list[dict] = []
@@ -282,8 +288,78 @@ def _resolve_comments_mentions(
         cc = dict(c)
         cc["author"] = author
         if cc.get("mentions"):
-            cc["mentions"] = _resolve_mentions_for_index(cc["mentions"], users)
+            open_ids = _resolve_mention_strings_to_open_ids(cc["mentions"], contacts)
+            cc["mentions"] = _resolve_mentions_for_index(open_ids, users)
         out.append(cc)
+    return out
+
+
+class AmbiguousMentionError(PublishError):
+    """One or more @-mention inputs matched multiple contacts.
+
+    Carries the structured candidate list so the API layer can return a 422
+    that the AI can show the user for disambiguation, e.g. "你想 @ 哪个刘宇？".
+    Each entry is `{"input": str, "candidates": [{"open_id": str, "name": str}]}`.
+    """
+
+    def __init__(self, ambiguities: list[dict]) -> None:
+        self.ambiguities = ambiguities
+        super().__init__(f"ambiguous_mention: {len(ambiguities)} input(s) matched multiple contacts")
+
+
+def _resolve_mention_strings_to_open_ids(
+    values: list[str] | None,
+    contacts: ContactRepo | None,
+) -> list[str]:
+    """Convert any user-supplied mention strings (open_id / union_id / name /
+    en_name) to actual Feishu open_ids for the notifier.
+
+    Web's MentionField always emits real open_ids, so this used to be a no-op
+    pass-through — but MCP tools accept name/en_name from AI, and the Feishu
+    notifier silently dropped every DM whose `<at id="…">` payload wasn't a
+    real open_id. We resolve via ContactRepo (the table also covers users
+    who only exist as Feishu contacts and never logged into Pivot).
+
+    Resolution policy:
+      - Unique match → use that contact's open_id.
+      - Multiple matches (e.g. 两个"刘宇") → raise AmbiguousMentionError so
+        the caller can ask the user to pick. We never silently pick one,
+        because @-pinging the wrong person is worse than no DM at all.
+      - No match but value looks like a Feishu ID (`ou_…` / `on_…`) → pass
+        through, guards against stale contact sync.
+      - No match and not an ID → drop with a warning. Lenient like
+        _resolve_mentions_for_index — one bad name shouldn't fail the
+        whole publish call.
+
+    Multiple ambiguous inputs are collected first, then raised together so
+    the user can resolve them all in one round-trip.
+    """
+    if not values:
+        return []
+    if contacts is None:
+        return [v for v in values if v]
+    out: list[str] = []
+    ambiguous: list[dict] = []
+    for v in values:
+        if not v:
+            continue
+        candidates = contacts.lookup_candidates(v)
+        if len(candidates) == 1:
+            out.append(candidates[0].open_id)
+        elif len(candidates) > 1:
+            ambiguous.append({
+                "input": v,
+                "candidates": [
+                    {"open_id": c.open_id, "name": c.name}
+                    for c in candidates
+                ],
+            })
+        elif v.startswith(("ou_", "on_")):
+            out.append(v)
+        else:
+            log.warning("mention_unresolvable input=%r (skipped)", v)
+    if ambiguous:
+        raise AmbiguousMentionError(ambiguous)
     return out
 
 
@@ -400,7 +476,7 @@ def publish_matter_create(
     item_input = dict(initial_item)
     if item_input.get("comments"):
         item_input["comments"] = _resolve_comments_mentions(
-            item_input["comments"], users, author=user.pinyin,
+            item_input["comments"], users, contacts, author=user.pinyin,
         )
 
     # Frontend (CreateFileDialog) bundles 圈人 + 留言 into comments[0] because
@@ -410,6 +486,12 @@ def publish_matter_create(
     # mentions silently fail to notify.
     notify_mention_open_ids, notify_mention_comments = _extract_notify_mentions(
         initial_item.get("comments")
+    )
+    # Resolve before write (see publish_matter_comment for rationale): an
+    # ambiguous @ aborts the create with a 422 + candidate list rather than
+    # leaving a half-written matter on disk.
+    notify_mention_resolved = _resolve_mention_strings_to_open_ids(
+        notify_mention_open_ids, contacts,
     )
 
     item = _build_timeline_item(
@@ -464,7 +546,7 @@ def publish_matter_create(
             author_name=user.name,
             filename=filename,
             body=md_body,
-            mention_open_ids=notify_mention_open_ids,
+            mention_open_ids=notify_mention_resolved or None,
             mention_comments=notify_mention_comments,
         )
     return {
@@ -525,13 +607,17 @@ def publish_matter_append(
     item_input = dict(item_body)
     if item_input.get("comments"):
         item_input["comments"] = _resolve_comments_mentions(
-            item_input["comments"], users, author=user.pinyin,
+            item_input["comments"], users, contacts, author=user.pinyin,
         )
 
     # Same mention bundling extraction as publish_matter_create — frontend
     # ships 圈人留言 in comments[0] and we need raw open_ids for the notifier.
     notify_mention_open_ids, notify_mention_comments = _extract_notify_mentions(
         item_body.get("comments")
+    )
+    # Resolve before write — see publish_matter_comment for rationale.
+    notify_mention_resolved = _resolve_mention_strings_to_open_ids(
+        notify_mention_open_ids, contacts,
     )
 
     item = _build_timeline_item(
@@ -580,7 +666,7 @@ def publish_matter_append(
             author_name=user.name,
             filename=filename,
             body=md_body,
-            mention_open_ids=notify_mention_open_ids,
+            mention_open_ids=notify_mention_resolved or None,
             mention_comments=notify_mention_comments,
         )
         sc = item.get("status_change")
@@ -632,6 +718,14 @@ def publish_matter_comment(
     if data is None:
         raise MatterNotFoundError(matter_id)
 
+    # Resolve @-mentions BEFORE any disk write — if a name/pinyin matches
+    # multiple contacts (e.g. 张博 / 张菠 both → "zhangbo"), we raise
+    # AmbiguousMentionError here so the route returns 422 with the candidate
+    # list and no half-written comment lingers in the matter index.
+    notify_open_ids = _resolve_mention_strings_to_open_ids(
+        list(mentions) if mentions else None, contacts,
+    )
+
     now = _now_iso()
     comment = {
         "body": body,
@@ -640,7 +734,11 @@ def publish_matter_comment(
     # mentions 入 index 时把已注册用户的 open_id 转成 pinyin，与 creator/owner
     # 同格式；未注册联系人保留 open_id（无 pinyin 可用）。通知发送一侧仍用原始
     # open_ids（见下方 notifier 调用），不受影响。
-    resolved_mentions = _resolve_mentions_for_index(mentions, users)
+    # 注意喂的是 notify_open_ids 而不是 mentions：MCP 客户端可以传 name/pinyin，
+    # _resolve_mentions_for_index 内部 users.get_by_any_id 仅命中 pinyin 而不会
+    # 查 contacts，导致未注册联系人的拼音被原样落盘 → 渲染兜底成拼音。先解析
+    # 为真 open_id 后再分流，保证 index 形态恒为 pinyin / open_id。
+    resolved_mentions = _resolve_mentions_for_index(notify_open_ids, users)
     if resolved_mentions:
         comment["mentions"] = resolved_mentions
 
@@ -665,7 +763,7 @@ def publish_matter_comment(
     )
 
     # Notifier: reuse the standalone-mention path so @-recipients get a DM.
-    if notifier is not None and mentions:
+    if notifier is not None and notify_open_ids:
         matter_meta = data.get("matter") or {}
         matter_title = matter_meta.get("title") or matter_id
         category = _derive_category_from_timeline(data) or "matters"
@@ -674,7 +772,7 @@ def publish_matter_comment(
             category=category, slug=matter_id, thread_title=matter_title,
             target_filename=target_basename,
             author_name=user.name,
-            mention_open_ids=list(mentions),
+            mention_open_ids=notify_open_ids,
             mention_comments=body,
         )
 

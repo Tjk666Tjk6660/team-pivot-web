@@ -217,11 +217,15 @@ def live_server(tmp_path) -> Iterator[dict]:
     users = UserRepo(db)
     api_tokens = ApiTokenRepo(db)
 
-    # Seed one user and mint a PAT for them.
+    # Seed one user and mint a PAT for them. Mirrors the auth flow which
+    # also populates contacts (so @-mention resolution by name/pinyin works).
     users.upsert_from_feishu(
         open_id="ou_1", union_id=None, name="邓柯", avatar_url="",
     )
     users.update_profile("ou_1", pinyin="dengke")
+    ContactRepo(db).upsert_from_login(
+        open_id="ou_1", union_id=None, name="邓柯", avatar_url="",
+    )
     plaintext, _ = api_tokens.create(user_open_id="ou_1", name="Test PAT")
 
     workspace = _WorkspaceStub(tmp_path)
@@ -340,12 +344,211 @@ async def _run_mcp_flow(base_url: str, token: str, matter_id: str) -> dict:
 
                 return {
                     "server_name": init.serverInfo.name,
+                    "instructions": init.instructions,
                     "tool_names": tool_names,
                     "resolved": resolved,
                     "before_timeline": before["timeline"],
                     "created": created,
                     "after_timeline": after["timeline"],
                 }
+
+
+async def _run_mcp_create_matter(base_url: str, token: str) -> dict:
+    """Create a brand-new Matter through MCP, then verify it via list/get."""
+    client = httpx.AsyncClient(
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=httpx.Timeout(10.0, read=30.0),
+        follow_redirects=True,
+        trust_env=False,
+    )
+    url = f"{base_url}/mcp"
+    async with client:
+        async with streamable_http_client(url, http_client=client) as (r, w, _):
+            async with ClientSession(r, w) as session:
+                await session.initialize()
+
+                cm_res = await session.call_tool(
+                    "create_matter",
+                    {
+                        "category": "Pivot",
+                        "title": "E2ECreatedByMcp",
+                        "type": "think",
+                        "summary": "通过 MCP 创建的新 Matter",
+                        "body": "# E2E\n\n正文",
+                    },
+                )
+                created = _parse_tool_result(cm_res)
+
+                # Verify via get_matter on the returned matter_id.
+                gm_res = await session.call_tool(
+                    "get_matter", {"matter_id": created["matter_id"]},
+                )
+                got = _parse_tool_result(gm_res)
+
+                return {"created": created, "got": got}
+
+
+def test_mcp_e2e_create_matter(live_server):
+    """End-to-end create_matter: through MCP → backend writes to disk → readable.
+
+    Proves the new tool routes to the backend, parses flat → nested input,
+    composes a sensible view_url, and the resulting Matter is queryable.
+    """
+    info = live_server
+    result = asyncio.run(_run_mcp_create_matter(
+        info["mcp_base_url"], info["token"],
+    ))
+
+    created = result["created"]
+    assert created.get("ok") is True, created
+    assert created["category"] == "Pivot"
+    assert created["title"] == "E2ECreatedByMcp"
+    assert created["matter_id"]
+    assert created["view_url"] == f"{info['api_base_url']}/m/{created['matter_id']}"
+    assert created["first_file"].endswith(".md")
+    assert "E2ECreatedByMcp" in created["summary_for_ai"]
+    assert created["view_url"] in created["summary_for_ai"]
+
+    # Newly created matter is in `planning` and has exactly one file.
+    got = result["got"]
+    assert got["matter"]["current_status"] == "planning"
+    assert got["matter"]["title"] == "E2ECreatedByMcp"
+    assert len(got["timeline"]) == 1
+    assert got["timeline"][0]["type"] == "think"
+    assert got["timeline"][0]["summary"] == "通过 MCP 创建的新 Matter"
+
+
+async def _run_mcp_create_matter_with_mention(
+    base_url: str, token: str,
+) -> dict:
+    """Create a Matter via MCP with a mentions block; return raw tool result."""
+    client = httpx.AsyncClient(
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=httpx.Timeout(10.0, read=30.0),
+        follow_redirects=True,
+        trust_env=False,
+    )
+    url = f"{base_url}/mcp"
+    async with client:
+        async with streamable_http_client(url, http_client=client) as (r, w, _):
+            async with ClientSession(r, w) as session:
+                await session.initialize()
+                cm_res = await session.call_tool(
+                    "create_matter",
+                    {
+                        "category": "Pivot",
+                        "title": "E2EMentionMcp",
+                        "type": "think",
+                        "summary": "带 @ 的 matter",
+                        "body": "正文",
+                        "mentions": {
+                            "targets": ["dengke"],
+                            "say": "请帮我 review",
+                        },
+                    },
+                )
+                return _parse_tool_result(cm_res)
+
+
+async def _run_mcp_add_comment(
+    base_url: str, token: str, matter_id: str, target_file: str,
+) -> dict:
+    """Append a @-mention comment to an existing file via MCP."""
+    client = httpx.AsyncClient(
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=httpx.Timeout(10.0, read=30.0),
+        follow_redirects=True,
+        trust_env=False,
+    )
+    url = f"{base_url}/mcp"
+    async with client:
+        async with streamable_http_client(url, http_client=client) as (r, w, _):
+            async with ClientSession(r, w) as session:
+                await session.initialize()
+                ac_res = await session.call_tool(
+                    "add_comment",
+                    {
+                        "matter_id": matter_id,
+                        "target_file": target_file,
+                        "body": "请帮我 review 这条",
+                        "mentions": ["dengke"],
+                    },
+                )
+                return _parse_tool_result(ac_res)
+
+
+def test_mcp_e2e_add_comment_with_mention(live_server):
+    """add_comment with mentions persists onto an existing file's comments[].
+
+    Reuses the seeded matter from the fixture so we exercise the
+    "@ 提及 on an already-existing file" path that the Web's @ 提及 button
+    targets.
+    """
+    info = live_server
+    result = asyncio.run(_run_mcp_add_comment(
+        info["mcp_base_url"], info["token"],
+        info["matter_id"], info["initial_file"],
+    ))
+    assert result.get("ok") is True, result
+    assert result["matter_id"] == info["matter_id"]
+    assert result["target_file"] == info["initial_file"]
+    assert "@ 提及" in result["summary_for_ai"]
+
+    with httpx.Client(
+        base_url=info["api_base_url"],
+        headers={"Authorization": f"Bearer {info['token']}"},
+        timeout=5.0,
+        trust_env=False,
+    ) as http:
+        r = http.get(f"/api/matters/{info['matter_id']}")
+        assert r.status_code == 200, r.text
+        data = r.json()
+
+    timeline = data.get("timeline") or []
+    initial = next((t for t in timeline if t.get("file") == info["initial_file"]), None)
+    assert initial is not None, "seeded initial file missing from timeline"
+    comments = initial.get("comments") or []
+    # The mention round-trips on the file as a new comment with body + mentions.
+    assert any(
+        c.get("body") == "请帮我 review 这条"
+        and "dengke" in (c.get("mentions") or [])
+        for c in comments
+    ), comments
+
+
+def test_mcp_e2e_create_matter_with_mention(live_server):
+    """create_matter with mentions persists the comment + @ on the initial file.
+
+    The seed user (邓柯, pinyin=dengke) is the only resolvable target in the
+    fixture, so we @ that user. Proves flat mentions block reaches the backend
+    as a nested `comments[]` and the backend records it on the file.
+    """
+    info = live_server
+    created = asyncio.run(_run_mcp_create_matter_with_mention(
+        info["mcp_base_url"], info["token"],
+    ))
+    assert created.get("ok") is True, created
+
+    # Pull the created file and verify the @ + say message round-tripped.
+    with httpx.Client(
+        base_url=info["api_base_url"],
+        headers={"Authorization": f"Bearer {info['token']}"},
+        timeout=5.0,
+        trust_env=False,
+    ) as http:
+        r = http.get(f"/api/matters/{created['matter_id']}")
+        assert r.status_code == 200, r.text
+        data = r.json()
+
+    timeline = data.get("timeline") or []
+    assert len(timeline) == 1
+    initial = timeline[0]
+    comments = initial.get("comments") or []
+    assert len(comments) == 1
+    assert comments[0]["body"] == "请帮我 review"
+    # Mention round-trips as whatever the AI sent (pinyin/name/open_id),
+    # backend stores it as-is and resolves at read-time for display.
+    assert "dengke" in (comments[0].get("mentions") or [])
 
 
 def test_mcp_e2e_full_flow(live_server):
@@ -361,8 +564,19 @@ def test_mcp_e2e_full_flow(live_server):
 
     # Handshake + tool discovery
     assert result["server_name"] == "pivot-mcp"
+    # Instructions are delivered at handshake so the LLM can introduce
+    # capabilities on the user's first message of the session.
+    instructions = result["instructions"] or ""
+    assert "Pivot MCP" in instructions, instructions
+    # Each tool name should appear in the instructions so the LLM has a
+    # concrete list to walk through during the introduction.
+    for tool in [
+        "resolve_context", "list_matters", "get_matter", "read_files",
+        "create_matter", "create_file", "add_comment",
+    ]:
+        assert tool in instructions, (tool, instructions)
     assert {"resolve_context", "list_matters", "get_matter", "read_files",
-            "create_file"} <= result["tool_names"]
+            "create_file", "create_matter", "add_comment"} <= result["tool_names"]
 
     # resolve_context
     resolved = result["resolved"]

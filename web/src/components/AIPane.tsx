@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   AlertCircle,
+  ArrowDown,
   Bot,
   BookOpen,
   CheckCircle2,
@@ -17,6 +18,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { isNearScrollBottom } from "@/lib/aiPanelState";
 import {
   GENERATE_REPLY_DRAFT_TAG as GENERATE_TAG,
   useDashboard,
@@ -66,10 +68,14 @@ export function AIPane({
   const { messages, replyTarget, input, streaming, loading, loaded } = state;
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const shouldStickToBottomRef = useRef(true);
+  const userScrollIntentRef = useRef(false);
+  const wasStreamingRef = useRef(streaming);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
 
   const [streamingHintIdx, setStreamingHintIdx] = useState(0);
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   useEffect(() => {
     if (!streaming) return;
     setStreamingHintIdx(Math.floor(Math.random() * STREAMING_HINTS.length));
@@ -103,11 +109,72 @@ export function AIPane({
   ]);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: "smooth",
+    const el = scrollRef.current;
+    if (!el || !shouldStickToBottomRef.current) return;
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior: "auto",
     });
+    setShowJumpToBottom(false);
   }, [messages]);
+
+  const updateScrollStickiness = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const nearBottom = isNearScrollBottom({
+      scrollTop: el.scrollTop,
+      clientHeight: el.clientHeight,
+      scrollHeight: el.scrollHeight,
+    });
+    if (nearBottom) {
+      shouldStickToBottomRef.current = true;
+      userScrollIntentRef.current = false;
+      setShowJumpToBottom(false);
+      return;
+    }
+    if (userScrollIntentRef.current) {
+      shouldStickToBottomRef.current = false;
+      setShowJumpToBottom(true);
+    }
+  };
+
+  const markUserScrollIntent = () => {
+    userScrollIntentRef.current = true;
+  };
+
+  const markKeyboardScrollIntent = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (
+      event.key === "ArrowUp" ||
+      event.key === "ArrowDown" ||
+      event.key === "PageUp" ||
+      event.key === "PageDown" ||
+      event.key === "Home" ||
+      event.key === "End" ||
+      event.key === " "
+    ) {
+      markUserScrollIntent();
+    }
+  };
+
+  const scrollToBottom = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    userScrollIntentRef.current = false;
+    shouldStickToBottomRef.current = true;
+    setShowJumpToBottom(false);
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior: "auto",
+    });
+  };
+
+  useEffect(() => {
+    const wasStreaming = wasStreamingRef.current;
+    wasStreamingRef.current = streaming;
+    if (streaming && !wasStreaming) {
+      scrollToBottom();
+    }
+  }, [streaming]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -216,10 +283,16 @@ export function AIPane({
         </div>
       )}
 
-      <div
-        ref={scrollRef}
-        className="min-h-[12rem] flex-1 space-y-3 overflow-y-auto px-1 py-1"
-      >
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={scrollRef}
+          onScroll={updateScrollStickiness}
+          onWheel={markUserScrollIntent}
+          onTouchMove={markUserScrollIntent}
+          onPointerDown={markUserScrollIntent}
+          onKeyDown={markKeyboardScrollIntent}
+          className="h-full space-y-3 overflow-y-auto px-1 py-1"
+        >
         {loading && (
           <p
             className="pt-4 text-center text-[11.5px] font-meta"
@@ -258,6 +331,30 @@ export function AIPane({
             />
           );
         })}
+        </div>
+        {showJumpToBottom && (
+          <button
+            type="button"
+            onClick={scrollToBottom}
+            title={streaming ? "AI 正在回复，回到底部" : "回到底部"}
+            aria-label={streaming ? "AI 正在回复，回到底部" : "回到底部"}
+            className={`absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center justify-center border bg-[var(--surface)] text-[var(--text-soft)] transition hover:bg-[var(--surface-alt)] hover:text-[var(--accent)] ${
+              streaming
+                ? "h-8 w-12 rounded-full border-[var(--line-strong)] shadow-[0_2px_10px_rgba(28,25,23,0.16)]"
+                : "h-9 w-9 rounded-full border-[var(--line)] shadow-[var(--shadow-lg)]"
+            }`}
+          >
+            {streaming ? (
+              <span className="flex items-center gap-1" aria-hidden>
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.24s]" />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.12s]" />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" />
+              </span>
+            ) : (
+              <ArrowDown className="h-4 w-4" />
+            )}
+          </button>
+        )}
       </div>
 
       <div
@@ -567,12 +664,37 @@ function fullActionText(t: AIToolUse): string {
         typeof t.arguments?.path === "string" ? t.arguments.path : "";
       return path ? path.split("/").pop() || path : "帖子";
     }
+    case "read_posts": {
+      const paths = toolPaths(t);
+      if (paths.length === 0) return "批量帖子";
+      const first = paths[0].split("/").pop() || paths[0];
+      return paths.length === 1
+        ? first
+        : `${paths.length} 篇：${first} 等`;
+    }
     default:
       return t.name;
   }
 }
 
 function TimelineRow({ tool }: { tool: AIToolUse }) {
+  if (tool.name === "read_posts") {
+    const paths = toolPaths(tool);
+    if (paths.length > 0) {
+      return (
+        <>
+          {paths.map((path, idx) => (
+            <TimelinePostRow
+              key={`${tool.id}-${path}-${idx}`}
+              path={path}
+              pending={!tool.output_summary}
+            />
+          ))}
+        </>
+      );
+    }
+  }
+
   const s = describeToolCall(tool);
   const pending = !tool.output_summary;
   return (
@@ -599,6 +721,39 @@ function TimelineRow({ tool }: { tool: AIToolUse }) {
   );
 }
 
+function TimelinePostRow({
+  path,
+  pending,
+}: {
+  path: string;
+  pending: boolean;
+}) {
+  const filename = path.split("/").pop() ?? path;
+  const label = prettifyPostFilename(filename) || "post";
+  return (
+    <li className="relative flex items-center gap-2">
+      <span
+        aria-hidden
+        className={`absolute -left-[15px] top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full ring-2 ring-[var(--surface)] ${
+          pending ? "bg-[var(--text-fade)] animate-pulse" : "bg-[var(--ok-500)]"
+        }`}
+      />
+      <span
+        className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded bg-[var(--surface-alt)] px-1.5 py-0.5 text-[var(--text-soft)] ring-1 ring-inset ring-[var(--line)]"
+        title={path}
+      >
+        <FileText className="h-3 w-3 shrink-0 text-[var(--text-mute)]" />
+        <span className="truncate">{label}</span>
+      </span>
+      {pending && (
+        <span className="shrink-0 animate-pulse text-[var(--text-fade)]">
+          …
+        </span>
+      )}
+    </li>
+  );
+}
+
 type ChipStyle = {
   Icon: typeof Search;
   tone: string;
@@ -606,6 +761,12 @@ type ChipStyle = {
   label: string;
   title: string;
 };
+
+function toolPaths(t: AIToolUse): string[] {
+  return Array.isArray(t.arguments?.paths)
+    ? t.arguments.paths.filter((p): p is string => typeof p === "string")
+    : [];
+}
 
 function describeToolCall(t: AIToolUse): ChipStyle {
   switch (t.name) {
@@ -651,6 +812,26 @@ function describeToolCall(t: AIToolUse): ChipStyle {
         iconTone: "text-[var(--text-mute)]",
         label: prettifyPostFilename(filename) || "post",
         title: path || "read_post",
+      };
+    }
+    case "read_posts": {
+      const paths = toolPaths(t);
+      const filenames = paths
+        .map((path) => path.split("/").pop() || path)
+        .filter(Boolean);
+      const preview = filenames
+        .slice(0, 3)
+        .map((name) => prettifyPostFilename(name))
+        .join(" / ");
+      return {
+        Icon: FileText,
+        tone: "bg-[var(--surface-alt)] text-[var(--text-soft)] ring-[var(--line)]",
+        iconTone: "text-[var(--text-mute)]",
+        label:
+          paths.length > 0
+            ? `批量读取 ${paths.length} 篇${preview ? `：${preview}` : ""}`
+            : "批量读取帖子",
+        title: paths.length > 0 ? paths.join("\n") : "read_posts",
       };
     }
     default:

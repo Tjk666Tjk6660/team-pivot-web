@@ -171,6 +171,26 @@ def test_read_post_accepts_path_without_discussions_prefix(tmp_path):
     assert "登录改造" in result
 
 
+def test_read_posts_reads_multiple_posts_in_one_call(tmp_path):
+    discussions, index = _setup_workspace(tmp_path)
+    tools = AITools(discussions, index)
+
+    result = tools.dispatch(
+        "read_posts",
+        {
+            "paths": [
+                "discussions/Pivot/auth-redesign/001_dengke_proposal_aaa.md",
+                "discussions/Pivot/auth-redesign/002_liuyu_reply_bbb.md",
+            ]
+        },
+    )
+
+    assert "001_dengke_proposal_aaa.md" in result
+    assert "002_liuyu_reply_bbb.md" in result
+    assert "登录改造" in result
+    assert "回复内容" in result
+
+
 def test_read_post_rejects_path_not_in_any_index(tmp_path):
     discussions, index = _setup_workspace(tmp_path)
     # Create a stray file that does NOT have a matching index entry.
@@ -291,5 +311,6 @@ def test_specs_include_all_tools(tmp_path):
         "search_indexes",
         "read_thread_index",
         "read_matter_index",
+        "read_posts",
         "read_post",
     }
