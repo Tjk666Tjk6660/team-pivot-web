@@ -371,6 +371,30 @@ def test_feishu_notifier_uses_auth_entry_thread_url():
     )
 
 
+def test_feishu_notifier_broadcast_card_delegates_to_broadcast(monkeypatch):
+    """`broadcast_card` is the public hook for periodic-job callers (daily
+    report etc). It must forward to `_broadcast` 1:1 without modifying the
+    card or the event tag."""
+    from server.notify import FeishuNotifier
+
+    class _StubTokens:
+        def get(self) -> str:
+            return "token"
+
+    captured: list[tuple[dict, str]] = []
+    n = FeishuNotifier(
+        tokens=_StubTokens(),
+        web_base_url="http://localhost:5173",
+        workspace=None,
+    )
+    monkeypatch.setattr(n, "_broadcast",
+                        lambda card, *, event: captured.append((card, event)))
+
+    card = {"schema": "2.0", "header": {"title": {"content": "test"}}}
+    n.broadcast_card(card, event="daily_report 2026-04-26")
+    assert captured == [(card, "daily_report 2026-04-26")]
+
+
 def test_feishu_notifier_post_url_lands_on_matter_detail():
     """Post-migration: per-post deep-link URL lands on /m/<matter_id>.
     The old /t/<cat>/<slug>?post=<anchor> route is gone (frontend has no

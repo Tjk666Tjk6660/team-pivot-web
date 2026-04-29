@@ -18,6 +18,33 @@ _LIST_CHATS_ENDPOINT = "https://open.feishu.cn/open-apis/im/v1/chats"
 _SEND_MESSAGE_ENDPOINT = "https://open.feishu.cn/open-apis/im/v1/messages"
 _TIMEOUT = 10.0
 
+# 偶发的 CN 网络冷连接 SSL 握手超时(`_ssl.c:993: handshake timed out`)
+# 在飞书 API 上不算少见。一次重试就能让 80%+ 的抖动通过,所以集中
+# 在两个 HTTP 调用包一层。
+_TRANSIENT_HTTP_ERRORS = (
+    httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ConnectError,
+)
+
+
+def _http_get_with_retry(url: str, **kwargs) -> httpx.Response:
+    """One retry on transient connection errors."""
+    try:
+        return httpx.get(url, **kwargs)
+    except _TRANSIENT_HTTP_ERRORS as e:
+        log.warning("notify GET transient %s, retrying once: %s",
+                    type(e).__name__, e)
+        return httpx.get(url, **kwargs)
+
+
+def _http_post_with_retry(url: str, **kwargs) -> httpx.Response:
+    """One retry on transient connection errors."""
+    try:
+        return httpx.post(url, **kwargs)
+    except _TRANSIENT_HTTP_ERRORS as e:
+        log.warning("notify POST transient %s, retrying once: %s",
+                    type(e).__name__, e)
+        return httpx.post(url, **kwargs)
+
 
 class Notifier(Protocol):
     def notify_new_thread(
@@ -308,6 +335,13 @@ class FeishuNotifier:
             post_url_builder=self._post_url,
         )
 
+    def broadcast_card(self, card: dict, *, event: str) -> None:
+        """Public hook for "send any card to all chats the bot is in".
+        Used by daily-report (and future periodic jobs like weekly digest)
+        that don't fit one of the existing notify_* shapes. Internally
+        delegates to `_broadcast`; failures are swallowed + logged inside."""
+        self._broadcast(card, event=event)
+
     def _broadcast(self, card: dict, *, event: str) -> None:
         try:
             token = self._tokens.get()
@@ -335,7 +369,7 @@ class FeishuNotifier:
             params: dict[str, object] = {"page_size": 100}
             if page_token:
                 params["page_token"] = page_token
-            resp = httpx.get(
+            resp = _http_get_with_retry(
                 _LIST_CHATS_ENDPOINT, params=params,
                 headers={"Authorization": f"Bearer {token}"}, timeout=_TIMEOUT,
             )
@@ -355,7 +389,7 @@ class FeishuNotifier:
 
     def _send(self, token: str, receive_id: str, receive_id_type: str, card: dict) -> bool:
         try:
-            resp = httpx.post(
+            resp = _http_post_with_retry(
                 _SEND_MESSAGE_ENDPOINT,
                 params={"receive_id_type": receive_id_type},
                 headers={
@@ -720,15 +754,20 @@ def _card_shell(
     header: str,
     template: str,
     markdown: str,
-    button_text: str,
-    thread_url: str,
+    button_text: str | None = None,
+    thread_url: str | None = None,
     directory_content: str | None = None,
     directory_post_count: int | None = None,
 ) -> dict:
+    """Build a Feishu interactive card (schema 2.0). Pass `button_text` and
+    `thread_url` together for a CTA button at the bottom; pass neither for
+    a button-less card (used by daily-report — that flow has no in-product
+    page worth deep-linking to)."""
     elements: list[dict] = [{"tag": "markdown", "content": markdown}]
     if directory_content:
         elements.append(_card_directory_panel(directory_content, directory_post_count))
-    elements.append(_card_button(button_text, thread_url))
+    if button_text and thread_url:
+        elements.append(_card_button(button_text, thread_url))
     return _card_payload(header, template, elements)
 
 

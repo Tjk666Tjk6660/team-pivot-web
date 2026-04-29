@@ -3,7 +3,7 @@ import {
   claudeCodePrompt,
   cursorDeepLink,
   codexCliCommand,
-  claudeDesktopConnectionInfo,
+  claudeDesktopJsonSnippet,
   CLAUDE_DESKTOP_UI_HINT,
 } from "./clientConfigs";
 
@@ -45,11 +45,19 @@ describe("clientConfigs", () => {
     expect(prompt).toContain("明文");
   });
 
-  it("claude desktop info has url+token and hint tells users to use UI", () => {
-    const info = claudeDesktopConnectionInfo("pvt_xxx");
-    expect(info).toContain("Bearer pvt_xxx");
-    expect(info).toContain("/mcp");
-    expect(CLAUDE_DESKTOP_UI_HINT).toContain("Settings");
-    expect(CLAUDE_DESKTOP_UI_HINT).toContain("Connectors");
+  it("claude desktop snippet embeds mcp-remote bridge, token, and url; hint points to config file", () => {
+    const snippet = claudeDesktopJsonSnippet("pvt_xxx");
+    // Must be valid JSON the user can paste straight into claude_desktop_config.json.
+    const parsed = JSON.parse(snippet);
+    expect(parsed.mcpServers.pivot.command).toBe("npx");
+    expect(parsed.mcpServers.pivot.args).toContain("mcp-remote");
+    expect(parsed.mcpServers.pivot.args).toContain(
+      "Authorization: Bearer pvt_xxx",
+    );
+    expect(parsed.mcpServers.pivot.args.some((a: string) => a.includes("/mcp")))
+      .toBe(true);
+    // Hint must steer users to the config file path, NOT the OAuth Connectors UI.
+    expect(CLAUDE_DESKTOP_UI_HINT).toContain("claude_desktop_config.json");
+    expect(CLAUDE_DESKTOP_UI_HINT).not.toContain("Connectors");
   });
 });

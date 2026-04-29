@@ -49,6 +49,29 @@ def test_update_profile_accepts_valid_pinyin(users):
     assert u.needs_setup is False
 
 
+def test_list_all_empty(users):
+    """No users → empty list, not None."""
+    assert users.list_all() == []
+
+
+def test_list_all_returns_all_registered(users):
+    """list_all 包含所有用户(含未配 pinyin 的新用户),按 name 排序。"""
+    users.upsert_from_feishu(open_id="ou_3", union_id=None, name="刘昱", avatar_url="")
+    users.upsert_from_feishu(open_id="ou_1", union_id=None, name="邓柯", avatar_url="")
+    users.upsert_from_feishu(open_id="ou_2", union_id=None, name="唐昆", avatar_url="")
+    users.update_profile("ou_1", pinyin="dengke")
+    # ou_2 / ou_3 没配 pinyin,模拟新人未完成 setup
+
+    rows = users.list_all()
+    assert len(rows) == 3
+    # 按 name 排序(中文按 codepoint),只校验内容齐全 + 没缺人
+    by_open_id = {u.open_id: u for u in rows}
+    assert by_open_id["ou_1"].pinyin == "dengke"
+    assert by_open_id["ou_2"].pinyin is None
+    assert by_open_id["ou_2"].needs_setup is True
+    assert by_open_id["ou_3"].name == "刘昱"
+
+
 def test_update_profile_partial_only_sets_given_fields(users):
     users.upsert_from_feishu(open_id="ou_1", union_id=None, name="x", avatar_url="")
     users.update_profile("ou_1", pinyin="dengke", github_username="ken-d")
