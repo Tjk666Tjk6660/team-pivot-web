@@ -4,7 +4,24 @@ import sqlite3
 from dataclasses import dataclass
 from time import time
 
+from pypinyin import Style, lazy_pinyin
+
 from server.db import Database
+
+
+def name_to_pinyin(name: str) -> str:
+    """Compute the canonical lookup key for @-mention by pinyin: connected,
+    lowercase, no tones, no spaces. Non-Han characters pass through lowercased
+    so mixed names like 'Alice李' still produce a stable key."""
+    if not name:
+        return ""
+    return "".join(lazy_pinyin(name, style=Style.NORMAL)).lower()
+
+
+def _normalize_pinyin_input(value: str) -> str:
+    """Strip whitespace and lowercase user-typed pinyin so 'Zhang Bo',
+    'ZhangBo' and 'zhangbo' all collapse to the same key."""
+    return "".join(value.split()).lower()
 
 
 @dataclass(frozen=True)
@@ -37,6 +54,47 @@ class ContactRepo:
                 (id_, id_),
             ).fetchone()
         return _row(row) if row else None
+
+    def lookup_candidates(self, value: str) -> list[Contact]:
+        """Find every contact that could match `value` for @-mention purposes.
+
+        Match order:
+          1. open_id / union_id (exact ID — always unique by schema, returns
+             at most 1 contact)
+          2. name / en_name / pinyin exact match (returns 0, 1, or N contacts;
+             pinyin is the normalized form 'zhangbo' computed at write time)
+
+        Returns:
+          []      — no match (and value isn't an obvious ID format)
+          [c]     — unique match, caller can use it directly
+          [c, …]  — ambiguous (e.g., 多个"刘宇" 或 张博/张菠 同音); caller MUST
+                    disambiguate rather than silently picking one.
+        """
+        if not value:
+            return []
+        pinyin_key = _normalize_pinyin_input(value)
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM contacts WHERE open_id=? OR union_id=?",
+                (value, value),
+            ).fetchone()
+            if row is not None:
+                return [_row(row)]
+            rows = conn.execute(
+                "SELECT * FROM contacts WHERE name=? OR en_name=? OR pinyin=?",
+                (value, value, pinyin_key),
+            ).fetchall()
+        return [_row(r) for r in rows]
+
+    def lookup_for_mention(self, value: str) -> Contact | None:
+        """Convenience wrapper: unique candidate, or None for missing/ambiguous.
+
+        Use this when the caller wants a single answer without the option to
+        disambiguate (e.g., display-time formatting). For dispatch paths that
+        SHOULD surface ambiguity to the user, use `lookup_candidates` directly.
+        """
+        candidates = self.lookup_candidates(value)
+        return candidates[0] if len(candidates) == 1 else None
 
     def get_many(self, open_ids: list[str]) -> dict[str, Contact]:
         if not open_ids:
@@ -74,12 +132,13 @@ class ContactRepo:
             for item in items:
                 conn.execute(
                     "INSERT INTO contacts"
-                    " (open_id, union_id, name, en_name, avatar_url, synced_at)"
-                    " VALUES (?,?,?,?,?,?)"
+                    " (open_id, union_id, name, en_name, pinyin, avatar_url, synced_at)"
+                    " VALUES (?,?,?,?,?,?,?)"
                     " ON CONFLICT(open_id) DO UPDATE SET"
                     " union_id=excluded.union_id,"
                     " name=excluded.name,"
                     " en_name=excluded.en_name,"
+                    " pinyin=excluded.pinyin,"
                     " avatar_url=excluded.avatar_url,"
                     " synced_at=excluded.synced_at",
                     (
@@ -87,6 +146,7 @@ class ContactRepo:
                         item.get("union_id"),
                         item["name"],
                         item.get("en_name"),
+                        name_to_pinyin(item["name"]),
                         item.get("avatar_url") or "",
                         now,
                     ),
@@ -107,18 +167,19 @@ class ContactRepo:
                 "SELECT en_name FROM contacts WHERE open_id=?",
                 (open_id,),
             ).fetchone()
+            pinyin = name_to_pinyin(name)
             if row is None:
                 conn.execute(
-                    "INSERT INTO contacts (open_id, union_id, name, en_name, avatar_url, synced_at)"
-                    " VALUES (?,?,?,?,?,?)",
-                    (open_id, union_id, name, None, avatar_url or "", now),
+                    "INSERT INTO contacts (open_id, union_id, name, en_name, pinyin, avatar_url, synced_at)"
+                    " VALUES (?,?,?,?,?,?,?)",
+                    (open_id, union_id, name, None, pinyin, avatar_url or "", now),
                 )
             else:
                 conn.execute(
                     "UPDATE contacts"
-                    " SET union_id=?, name=?, avatar_url=?, synced_at=?"
+                    " SET union_id=?, name=?, pinyin=?, avatar_url=?, synced_at=?"
                     " WHERE open_id=?",
-                    (union_id, name, avatar_url or "", now, open_id),
+                    (union_id, name, pinyin, avatar_url or "", now, open_id),
                 )
         got = self.get(open_id)
         assert got is not None

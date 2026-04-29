@@ -47,10 +47,14 @@ CREATE TABLE IF NOT EXISTS contacts (
     union_id TEXT,
     name TEXT NOT NULL,
     en_name TEXT,
+    pinyin TEXT,
     avatar_url TEXT NOT NULL DEFAULT '',
     synced_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name);
+-- idx_contacts_pinyin lives in _migrate so it can sequence after the ALTER
+-- TABLE that adds the pinyin column on legacy DBs (the column doesn't yet
+-- exist when SCHEMA runs there).
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     user_open_id TEXT NOT NULL,
@@ -150,6 +154,22 @@ def _migrate(conn) -> None:
             "ALTER TABLE ai_conversations ADD COLUMN schema_ver INTEGER NOT NULL DEFAULT 1"
         )
         conn.execute("DELETE FROM ai_conversations")
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(contacts)")}
+    if "pinyin" not in cols:
+        conn.execute("ALTER TABLE contacts ADD COLUMN pinyin TEXT")
+        # Backfill: compute pinyin from existing names so MCP @-by-pinyin
+        # works immediately without waiting for the next contacts sync.
+        from server.contacts import name_to_pinyin
+        for row in conn.execute("SELECT open_id, name FROM contacts").fetchall():
+            conn.execute(
+                "UPDATE contacts SET pinyin=? WHERE open_id=?",
+                (name_to_pinyin(row["name"] or ""), row["open_id"]),
+            )
+    # Idempotent: covers both freshly-created tables (column came from SCHEMA)
+    # and migrated ones (column came from the ALTER above). Cheap on every boot.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_contacts_pinyin ON contacts(pinyin)"
+    )
 
 
 class Database:
