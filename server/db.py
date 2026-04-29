@@ -92,6 +92,64 @@ CREATE TABLE IF NOT EXISTS file_reads (
 );
 CREATE INDEX IF NOT EXISTS idx_file_reads_matter
     ON file_reads(matter_id, filename);
+CREATE TABLE IF NOT EXISTS pivot_user (
+    id TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    pinyin TEXT,
+    email TEXT UNIQUE,
+    avatar_url TEXT NOT NULL DEFAULT '',
+    github_username TEXT,
+    role TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('admin','member')),
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','suspended','deleted')),
+    status_note TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    last_login_at REAL,
+    status_changed_at REAL,
+    status_changed_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pivot_user_role_status ON pivot_user(role, status);
+
+CREATE TABLE IF NOT EXISTS external_binding (
+    id TEXT PRIMARY KEY,
+    pivot_user_id TEXT NOT NULL REFERENCES pivot_user(id),
+    provider TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    external_union_id TEXT,
+    raw_profile TEXT,
+    password_hash TEXT,
+    bound_at REAL NOT NULL,
+    UNIQUE(provider, external_id)
+);
+CREATE INDEX IF NOT EXISTS idx_external_binding_user ON external_binding(pivot_user_id);
+
+CREATE TABLE IF NOT EXISTS join_application (
+    id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    external_union_id TEXT,
+    raw_profile TEXT NOT NULL,
+    suggested_match_user_id TEXT,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+    applied_at REAL NOT NULL,
+    reviewed_at REAL,
+    reviewed_by TEXT,
+    reject_reason TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_join_app_pending_unique
+    ON join_application(provider, external_id) WHERE status='pending';
+
+CREATE TABLE IF NOT EXISTS invite (
+    id TEXT PRIMARY KEY,
+    token_hash TEXT NOT NULL UNIQUE,
+    email TEXT NOT NULL,
+    display_name TEXT,
+    created_by TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL,
+    used_at REAL,
+    used_by_user_id TEXT
+);
 """
 
 
