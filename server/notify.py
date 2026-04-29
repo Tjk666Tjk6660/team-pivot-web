@@ -116,6 +116,10 @@ class Notifier(Protocol):
         author_name: str,
         mention_open_ids: list[str],
         mention_comments: str,
+        # Extra recipients who are NOT in the visible @-tag list but should
+        # still get a private DM — used for "comment on your own file" so the
+        # file's author/owner is told about activity even when not @-ed.
+        dm_extra_open_ids: list[str] | None = None,
     ) -> None: ...
 
 
@@ -224,19 +228,36 @@ class FeishuNotifier:
     def notify_standalone_mention(
         self, *, category, slug, thread_title, target_filename,
         author_name, mention_open_ids, mention_comments,
+        dm_extra_open_ids=None,
     ) -> None:
         post_url = self._post_url(category, slug, target_filename)
-        card = build_standalone_mention_card(
-            category=category,
-            thread_slug=slug,
-            thread_title=thread_title,
-            author_name=author_name,
-            target_filename=target_filename,
-            mention_open_ids=mention_open_ids,
-            mention_comments=mention_comments,
-            post_url=post_url,
-        )
-        self._broadcast(card, event=f"mention slug={slug} file={target_filename}")
+        if mention_open_ids:
+            card = build_standalone_mention_card(
+                category=category,
+                thread_slug=slug,
+                thread_title=thread_title,
+                author_name=author_name,
+                target_filename=target_filename,
+                mention_open_ids=mention_open_ids,
+                mention_comments=mention_comments,
+                post_url=post_url,
+            )
+            self._broadcast(card, event=f"mention slug={slug} file={target_filename}")
+        if dm_extra_open_ids:
+            # File author/owner: not in the broadcast card's <at> tags, so
+            # they wouldn't get any push from the group ping. DM them directly
+            # with a card that explains their file is being discussed.
+            dm = build_comment_on_your_file_dm_card(
+                author_name=author_name,
+                thread_title=thread_title,
+                target_filename=target_filename,
+                comments=mention_comments,
+                post_url=post_url,
+            )
+            self._dm_many(
+                dm_extra_open_ids, dm,
+                event=f"comment_on_your_file slug={slug} file={target_filename}",
+            )
 
     def notify_status_change(
         self, *, category, slug, thread_title, from_state, to_state, author_name, reason,
@@ -596,6 +617,36 @@ def build_standalone_mention_card(
         template="orange",
         markdown="\n\n".join([comment_line, info_block]),
         button_text="查看该帖子",
+        thread_url=post_url,
+    )
+
+
+def build_comment_on_your_file_dm_card(
+    *,
+    author_name: str,
+    thread_title: str,
+    target_filename: str,
+    comments: str | None,
+    post_url: str,
+) -> dict:
+    """DM card for the file author when someone comments on their file.
+
+    Distinct wording from build_mention_dm_card ("@了你") because the
+    recipient was NOT @-ed — they're being told because the comment lives
+    on a file they created or own.
+    """
+    lines = [
+        f"**{author_name}** 在你的文件「{target_filename}」上发了评论",
+        f"**主题**：{thread_title}",
+    ]
+    clean_comments = _oneline(comments)
+    if clean_comments:
+        lines.append(f"**内容**：{clean_comments}")
+    return _card_shell(
+        header="有人评论了你的文件",
+        template="orange",
+        markdown="<br>".join(lines),
+        button_text="去查看",
         thread_url=post_url,
     )
 

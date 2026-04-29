@@ -124,16 +124,22 @@ def _handle_comment_appended(
 ) -> None:
     payload = event.payload or {}
     target_file = payload.get("target_file") or ""
-    mentions = payload.get("mentions") or []
-    if not target_file or not mentions:
+    mentions = list(payload.get("mentions") or [])
+    # File author/owner are added by publish_matter_comment so the file's
+    # creator gets a red dot for activity on their own work even when not
+    # explicitly @-ed. Pre-resolved to open_ids upstream — no contacts
+    # lookup needed here.
+    file_author_open_ids = list(payload.get("file_author_open_ids") or [])
+    recipients = mentions + file_author_open_ids
+    if not target_file or not recipients:
         return
 
     filename = target_file.rsplit("/", 1)[-1]
     actor_pinyin = str(event.actor or "")
 
     inserted = 0
-    for mention_id in mentions:
-        target = users_repo.get_by_any_id(str(mention_id))
+    for recipient_id in recipients:
+        target = users_repo.get_by_any_id(str(recipient_id))
         if target is None:
             # unregistered contact — skip (they can't log in to see the red
             # dot anyway; DM still goes out via notify.py)
@@ -152,7 +158,7 @@ def _handle_comment_appended(
 
     log.info(
         "relevance mention rows written matter=%s file=%s inserted=%d/%d",
-        event.matter_id, filename, inserted, len(mentions),
+        event.matter_id, filename, inserted, len(recipients),
     )
 
 
