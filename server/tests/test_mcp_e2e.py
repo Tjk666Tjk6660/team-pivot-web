@@ -214,11 +214,15 @@ def live_server(tmp_path) -> Iterator[dict]:
     users = UserRepo(db)
     api_tokens = ApiTokenRepo(db)
 
-    # Seed one user and mint a PAT for them.
+    # Seed one user and mint a PAT for them. Mirrors the auth flow which
+    # also populates contacts (so @-mention resolution by name/pinyin works).
     users.upsert_from_feishu(
         open_id="ou_1", union_id=None, name="邓柯", avatar_url="",
     )
     users.update_profile("ou_1", pinyin="dengke")
+    ContactRepo(db).upsert_from_login(
+        open_id="ou_1", union_id=None, name="邓柯", avatar_url="",
+    )
     plaintext, _ = api_tokens.create(user_open_id="ou_1", name="Test PAT")
 
     workspace = _WorkspaceStub(tmp_path)

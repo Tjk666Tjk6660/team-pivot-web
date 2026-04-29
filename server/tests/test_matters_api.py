@@ -410,7 +410,10 @@ def test_result_cancelled_path(client):
 # ---------- comments ----------
 
 
-def test_append_comment_ok(client, event_bucket):
+def test_append_comment_ok(client, event_bucket, users):
+    users.upsert_from_feishu(open_id="ou_2", union_id=None, name="刘昱", avatar_url="")
+    users.update_profile("ou_2", pinyin="liuyu")
+
     r = client.post("/api/matters", json={
         "category": "Pivot", "title": "T",
         "initial_file": {"type": "think", "summary": "s", "body": ""},
@@ -421,7 +424,7 @@ def test_append_comment_ok(client, event_bucket):
     r2 = client.post(f"/api/matters/{matter_id}/comments", json={
         "target_file": target,
         "body": "同意",
-        "mentions": ["liuyu"],
+        "mentions": ["ou_2"],
     })
     assert r2.status_code == 200, r2.text
 
@@ -482,6 +485,80 @@ def test_comment_mentions_keep_open_id_for_unregistered(client):
     raw = read_matter_index(matter_index_path(client.workspace.index_dir, matter_id))
     on_disk_mentions = raw["timeline"][0]["comments"][0]["mentions"]
     assert on_disk_mentions == [unregistered], on_disk_mentions
+
+
+def test_comment_mcp_pinyin_input_renders_chinese_name(client, db):
+    """MCP add_comment 直传 pinyin（"zhangbo"），且该联系人只在 contacts、未
+    注册过 Pivot。旧逻辑把 "zhangbo" 原样写进 index，GET 渲染时 resolve_id
+    在 users/contacts 都找不到（contacts.get_by_any_id 不查 pinyin 列），兜底
+    返回原字符串，Web 上就显示 @zhangbo 而不是 @张菠。
+    Fix: publish 应先把名/拼音解析为 open_id 再走 _resolve_mentions_for_index。
+    回归 2026-04-29 用户报告的 MCP 圈人显示拼音 bug。"""
+    from server.contacts import ContactRepo
+    ContactRepo(db).upsert_many([{"open_id": "ou_zhangbo", "name": "张菠"}])
+
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+    target = r.json()["initial_timeline_item"]["file"]
+
+    r2 = client.post(f"/api/matters/{matter_id}/comments", json={
+        "target_file": target,
+        "body": "测试圈人",
+        "mentions": ["zhangbo"],
+    })
+    assert r2.status_code == 200, r2.text
+
+    detail = client.get(f"/api/matters/{matter_id}").json()
+    cm = detail["timeline"][0]["comments"][0]
+    assert cm["mentions_display"] == ["张菠"], cm
+
+
+def test_create_matter_mcp_pinyin_input_renders_chinese_name(client, db):
+    """create_matter 路径同 add_comment：MCP 直传 pinyin，未注册联系人渲染应是
+    中文名而非拼音。回归 2026-04-29 用户报告。"""
+    from server.contacts import ContactRepo
+    ContactRepo(db).upsert_many([{"open_id": "ou_zhangbo", "name": "张菠"}])
+
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {
+            "type": "think", "summary": "s", "body": "",
+            "comments": [{"body": "@ 张菠", "mentions": ["zhangbo"]}],
+        },
+    })
+    assert r.status_code == 200, r.text
+    matter_id = r.json()["matter_id"]
+
+    detail = client.get(f"/api/matters/{matter_id}").json()
+    cm = detail["timeline"][0]["comments"][0]
+    assert cm["mentions_display"] == ["张菠"], cm
+
+
+def test_append_file_mcp_pinyin_input_renders_chinese_name(client, db):
+    """append_file (POST /matters/{id}/files) 路径同 add_comment：MCP 直传
+    pinyin、未注册联系人，渲染应是中文名。回归 2026-04-29 用户报告。"""
+    from server.contacts import ContactRepo
+    ContactRepo(db).upsert_many([{"open_id": "ou_zhangbo", "name": "张菠"}])
+
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {"type": "act", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+
+    r2 = client.post(f"/api/matters/{matter_id}/files", json={
+        "type": "act", "summary": "go",
+        "status_change": {"from": "planning", "to": "executing"},
+        "comments": [{"body": "@ 张菠", "mentions": ["zhangbo"]}],
+    })
+    assert r2.status_code == 200, r2.text
+
+    detail = client.get(f"/api/matters/{matter_id}").json()
+    cm = detail["timeline"][1]["comments"][0]
+    assert cm["mentions_display"] == ["张菠"], cm
 
 
 def test_append_file_comments_mentions_resolved(client, users):
@@ -984,6 +1061,94 @@ def test_mcp_name_mentions_resolve_to_open_ids_for_notifier(db, users, tmp_path)
     })
     sm5 = next(kw for t, kw in calls if t == "standalone_mention")
     assert sm5["mention_open_ids"] == ["ou_dengke"]
+
+    # Case 6: AI passes pinyin (e.g. 'dengke' for 邓柯) → resolved.
+    # Contacts table has no pinyin column from sync; the publish path relies
+    # on ContactRepo computing pinyin from `name` at write time.
+    calls.clear()
+    c.post(f"/api/matters/{matter_id}/comments", json={
+        "target_file": target_file, "body": "ping by pinyin",
+        "mentions": ["dengke"],
+    })
+    sm6 = next(kw for t, kw in calls if t == "standalone_mention")
+    assert sm6["mention_open_ids"] == ["ou_dengke"]
+
+
+def test_comment_with_ambiguous_pinyin_returns_422_with_candidates(db, users, tmp_path):
+    """Two contacts share pinyin 'zhangbo' (张博 + 张菠). MCP圈人 with 'zhangbo'
+    must NOT silently pick one — it must:
+      1. Refuse the write (no half-applied state on disk)
+      2. Return 422 with the structured candidate list so AI can ask the user
+         "你想 @ 哪个 zhangbo?" and re-issue with the chosen open_id.
+    """
+    calls: list[tuple[str, dict]] = []
+
+    class RecordingNotifier:
+        def notify_new_thread(self, **kw): calls.append(("new_thread", kw))
+        def notify_new_reply(self, **kw):  calls.append(("new_reply", kw))
+        def notify_status_change(self, **kw): calls.append(("status_change", kw))
+        def notify_standalone_mention(self, **kw): calls.append(("standalone_mention", kw))
+
+    workspace = _WorkspaceStub(tmp_path)
+    users.upsert_from_feishu(open_id="ou_creator", union_id=None, name="作者", avatar_url="")
+    users.update_profile("ou_creator", pinyin="zuozhe")
+    sessions = SessionStore(db)
+    sid = sessions.create("ou_creator")
+    current_user = make_current_user(sessions, users, ApiTokenRepo(db))
+
+    contacts = ContactRepo(db)
+    contacts.upsert_many([
+        {"open_id": "ou_zhangbo1", "name": "张博"},
+        {"open_id": "ou_zhangbo2", "name": "张菠"},
+    ])
+
+    app = FastAPI()
+    app.include_router(
+        build_router(
+            workspace, users, contacts, RecordingNotifier(),
+            ReadStateRepo(db), FavoriteRepo(db), current_user,
+        )
+    )
+    c = TestClient(app)
+    c.cookies.set("sid", sid)
+
+    r = c.post("/api/matters", json={
+        "category": "Pivot", "title": "Ambig",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+    target_file = r.json()["initial_timeline_item"]["file"]
+
+    calls.clear()
+    r2 = c.post(f"/api/matters/{matter_id}/comments", json={
+        "target_file": target_file,
+        "body": "请 review",
+        "mentions": ["zhangbo"],
+    })
+
+    # 422 + structured ambiguities: { code, ambiguities: [{input, candidates}] }
+    assert r2.status_code == 422, r2.text
+    detail = r2.json()["detail"]
+    assert detail["code"] == "ambiguous_mention"
+    assert len(detail["ambiguities"]) == 1
+    a = detail["ambiguities"][0]
+    assert a["input"] == "zhangbo"
+    candidate_ids = sorted(c["open_id"] for c in a["candidates"])
+    assert candidate_ids == ["ou_zhangbo1", "ou_zhangbo2"]
+    assert {c["open_id"]: c["name"] for c in a["candidates"]} == {
+        "ou_zhangbo1": "张博",
+        "ou_zhangbo2": "张菠",
+    }
+
+    # No notifier dispatch
+    assert not any(t == "standalone_mention" for t, _ in calls)
+
+    # No comment written: re-fetching the matter should still show the original
+    # timeline item with no comments attached.
+    r3 = c.get(f"/api/matters/{matter_id}")
+    assert r3.status_code == 200
+    timeline = r3.json()["timeline"]
+    assert all(not (t.get("comments") or []) for t in timeline), timeline
 
 
 def test_comment_route_does_not_pass_unknown_kwargs_to_notifier(db, users, tmp_path):
