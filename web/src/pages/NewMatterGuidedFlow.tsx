@@ -27,6 +27,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { MentionField, emptyMention } from "@/components/MentionField";
+import { OwnerPicker } from "@/components/matter/OwnerPicker";
 
 /** Snapshot the classic form hands to the guided flow when the user picks
  *  "进行 AI 讨论" in the publish quality gate. The guided flow skips the
@@ -36,6 +37,7 @@ export type ClassicBridgeSnapshot = {
   title: string;
   category: string;
   docType: DocType;
+  matterOwner: { openId: string; name: string };
   mentions: MentionBlock;
 };
 
@@ -52,6 +54,7 @@ type Phase =
   | "type"
   | "category"
   | "title"
+  | "owner"
   | "mentions"
   | "drafting"
   | "review";
@@ -61,6 +64,7 @@ const PHASE_ORDER: Phase[] = [
   "type",
   "category",
   "title",
+  "owner",
   "mentions",
   "drafting",
   "review",
@@ -71,6 +75,7 @@ const PHASE_LABEL: Record<Phase, string> = {
   type: "类型",
   category: "种类",
   title: "标题",
+  owner: "责任人",
   mentions: "圈人",
   drafting: "AI 起草",
   review: "确认发布",
@@ -81,16 +86,18 @@ type StepData = {
   docType: DocType;
   category: string;
   title: string;
+  matterOwner: { openId: string; name: string };
   mentions: MentionBlock;
   body: string;
   summary: string;
 };
 
-const initialData = (): StepData => ({
+const initialData = (me: Me): StepData => ({
   topic: "",
   docType: "think",
   category: "",
   title: "",
+  matterOwner: { openId: me.open_id, name: me.name },
   mentions: emptyMention(),
   body: "",
   summary: "",
@@ -103,7 +110,7 @@ type Bubble =
 const aiOpener: Bubble = {
   kind: "ai",
   key: "opener",
-  text: "你好，我会用 6 步帮你把想发起的讨论整理成一篇可发布的 matter。先告诉我，你想讨论什么？一句话即可。",
+  text: "你好，我会用 7 步帮你把想发起的讨论整理成一篇可发布的 matter。先告诉我，你想讨论什么？一句话即可。",
 };
 
 export function NewMatterGuidedFlow({
@@ -128,11 +135,12 @@ export function NewMatterGuidedFlow({
           docType: initialBridge!.docType,
           category: initialBridge!.category,
           title: initialBridge!.title,
+          matterOwner: initialBridge!.matterOwner,
           mentions: initialBridge!.mentions,
           body: "",
           summary: "",
         }
-      : initialData(),
+      : initialData(me),
   );
   const [bubbles, setBubbles] = useState<Bubble[]>(() =>
     hasBridge ? buildBridgeBubbles(initialBridge!) : [aiOpener],
@@ -206,7 +214,7 @@ export function NewMatterGuidedFlow({
   }, [data.mentions.open_ids]);
 
   const phaseIndex = PHASE_ORDER.indexOf(phase);
-  const phaseDisplayIndex = phase === "review" ? 6 : phaseIndex + 1;
+  const phaseDisplayIndex = phase === "review" ? 7 : phaseIndex + 1;
 
   const advanceToNextAI = (next: Phase) => {
     setPhase(next);
@@ -259,7 +267,18 @@ export function NewMatterGuidedFlow({
     if (!trimmed) return toast.error("请填一个标题");
     if (trimmed.length > 200) return toast.error("标题不能超过 200 字");
     setData((d) => ({ ...d, title: trimmed }));
-    recordUserAndAdvance(`标题：${trimmed}`, "mentions");
+    recordUserAndAdvance(`标题：${trimmed}`, "owner");
+  };
+
+  const submitOwner = (owner: { openId: string; name: string }) => {
+    setData((d) => ({ ...d, matterOwner: owner }));
+    recordUserAndAdvance(`责任人：${owner.name || owner.openId || "我"}`, "mentions");
+  };
+
+  const skipOwner = () => {
+    const self = { openId: me.open_id, name: me.name };
+    setData((d) => ({ ...d, matterOwner: self }));
+    recordUserAndAdvance("责任人：默认我自己", "mentions");
   };
 
   const submitMentions = (mb: MentionBlock) => {
@@ -474,6 +493,10 @@ export function NewMatterGuidedFlow({
       const r = await createMatter({
         category: data.category.trim(),
         title: data.title.trim(),
+        owner_open_id:
+          data.matterOwner.openId && data.matterOwner.openId !== me.open_id
+            ? data.matterOwner.openId
+            : undefined,
         initial_file: {
           type: data.docType,
           summary: data.summary.trim(),
@@ -524,7 +547,7 @@ export function NewMatterGuidedFlow({
             </Button>
             <div className="flex items-center gap-3">
               <span className="text-xs text-[var(--text-mute)]">
-                第 {phaseDisplayIndex} / 6 步 · {PHASE_LABEL[phase]}
+                第 {phaseDisplayIndex} / 7 步 · {PHASE_LABEL[phase]}
               </span>
               <button
                 type="button"
@@ -575,6 +598,14 @@ export function NewMatterGuidedFlow({
                 topic={data.topic}
                 docType={data.docType}
                 onSubmit={submitTitle}
+              />
+            )}
+            {phase === "owner" && (
+              <OwnerStep
+                value={data.matterOwner}
+                me={me}
+                onSubmit={submitOwner}
+                onSkip={skipOwner}
               />
             )}
             {phase === "mentions" && (
@@ -732,6 +763,8 @@ function aiQuestionFor(
         : "归到哪个种类？还没有种类，请直接新建一个名字（≤ 20 字）。";
     case "title":
       return `标题想叫什么？建议写一句完整的主题句，不要太短。${data.topic ? `（话题：${data.topic.slice(0, 40)}${data.topic.length > 40 ? "…" : ""}）` : ""}`;
+    case "owner":
+      return "这件事由谁负责推进？默认是你，也可以指定别人。";
     case "mentions":
       return "想圈谁来 review？可选——可以加几个人 + 留一句话，也可以跳过。";
     case "drafting":
@@ -753,6 +786,7 @@ function buildDraftPrompt(d: StepData, existingBody?: string): string {
     `- 类型：${d.docType}（think = 判断/方案，act = 推进一项行动）`,
     `- 种类：${d.category}`,
     `- 标题（用户已选）：${d.title}`,
+    `- Matter 责任人：${d.matterOwner.name || d.matterOwner.openId || "默认当前用户"}`,
     `- 用户想讨论的话题：${d.topic || (existingBody?.slice(0, 80) ?? "")}`,
   ];
   if (d.mentions.open_ids.length > 0) {
@@ -800,6 +834,7 @@ function buildBridgeBubbles(b: ClassicBridgeSnapshot): Bubble[] {
         `标题：${b.title}`,
         `种类：${b.category}`,
         `类型：${b.docType}`,
+        `责任人：${b.matterOwner.name || b.matterOwner.openId || "默认我自己"}`,
         b.mentions.open_ids.length > 0
           ? `圈了 ${b.mentions.open_ids.length} 人 · ${b.mentions.comments.trim()}`
           : "暂不圈人",
@@ -1060,6 +1095,50 @@ function suggestTitle(topic: string, type: DocType): string {
   return type === "act" ? `推进：${base}` : base;
 }
 
+function OwnerStep({
+  value,
+  me,
+  onSubmit,
+  onSkip,
+}: {
+  value: { openId: string; name: string };
+  me: Me;
+  onSubmit: (v: { openId: string; name: string }) => void;
+  onSkip: () => void;
+}) {
+  const [local, setLocal] = useState(value);
+  return (
+    <div className="space-y-2">
+      <OwnerPicker
+        value={local.openId}
+        onChange={(openId, name) => setLocal({ openId, name })}
+        sessionOpenId={me.open_id}
+        sessionName={me.name}
+        displayName={local.name}
+        dropdownMode="inline"
+      />
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Button
+          type="button"
+          variant="ghost"
+          className="rounded-[var(--r-md)]"
+          onClick={onSkip}
+        >
+          默认我自己
+        </Button>
+        <Button
+          type="button"
+          className="rounded-[var(--r-md)]"
+          onClick={() => onSubmit(local)}
+          disabled={!local.openId}
+        >
+          继续 →
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function MentionsStep({
   value,
   resolvedNames,
@@ -1192,8 +1271,15 @@ function PreviewPanel({
       <PreviewRow label="种类" filled={reached("title") && !!data.category}>
         {data.category || <Empty />}
       </PreviewRow>
-      <PreviewRow label="标题" filled={reached("mentions") && !!data.title}>
+      <PreviewRow label="标题" filled={reached("owner") && !!data.title}>
         {data.title || <Empty />}
+      </PreviewRow>
+      <PreviewRow label="责任人" filled={reached("mentions") && !!data.matterOwner.openId}>
+        {!reached("mentions") ? (
+          <Empty />
+        ) : (
+          <span>{data.matterOwner.name || data.matterOwner.openId || "我"}</span>
+        )}
       </PreviewRow>
       <PreviewRow
         label="圈人"

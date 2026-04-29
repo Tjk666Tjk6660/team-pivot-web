@@ -874,11 +874,12 @@ def test_notifier_is_called_on_append_and_status_change(db, users, tmp_path):
     class RecordingNotifier:
         def notify_new_thread(
             self, *, category, slug, title, author_name, filename,
-            body=None, mention_open_ids=None, mention_comments=None,
+            body=None, owner_open_id=None, mention_open_ids=None, mention_comments=None,
         ):
             calls.append(("new_thread", {
                 "category": category, "slug": slug, "title": title,
                 "author_name": author_name, "filename": filename, "body": body,
+                "owner_open_id": owner_open_id,
                 "mention_open_ids": mention_open_ids,
                 "mention_comments": mention_comments,
             }))
@@ -983,6 +984,7 @@ def test_create_and_append_propagate_bundled_mentions_to_notifier(db, users, tmp
         def notify_new_thread(self, **kw): calls.append(("new_thread", kw))
         def notify_new_reply(self, **kw):  calls.append(("new_reply", kw))
         def notify_status_change(self, **kw): calls.append(("status_change", kw))
+        def notify_owner_change(self, **kw): calls.append(("owner_change", kw))
         def notify_standalone_mention(self, **kw): calls.append(("standalone_mention", kw))
 
     workspace = _WorkspaceStub(tmp_path)
@@ -1018,7 +1020,11 @@ def test_create_and_append_propagate_bundled_mentions_to_notifier(db, users, tmp
     matter_id = r.json()["matter_id"]
 
     new_thread_kw = next(kw for t, kw in calls if t == "new_thread")
-    assert new_thread_kw["mention_open_ids"] == ["ou_alice000000000000", "ou_bob00000000000000"]
+    assert new_thread_kw["mention_open_ids"] == [
+        "ou_alice000000000000",
+        "ou_bob00000000000000",
+    ]
+    assert new_thread_kw["owner_open_id"] == "ou_1"
     assert new_thread_kw["mention_comments"] == "请关注一下"
 
     # append with bundled mention
@@ -1246,7 +1252,7 @@ def test_comment_route_does_not_pass_unknown_kwargs_to_notifier(db, users, tmp_p
 
         def notify_new_thread(
             self, *, category, slug, title, author_name, filename,
-            body=None, mention_open_ids=None, mention_comments=None,
+            body=None, owner_open_id=None, mention_open_ids=None, mention_comments=None,
         ):
             self.calls.append("new_thread")
 

@@ -12,7 +12,7 @@ import {
   type MatterStatus,
   type MentionBlock,
   type Reader,
-  type TimelineItem,
+  type TimelineFileItem,
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import { CopyForAIButton } from "@/components/CopyForAIButton";
@@ -84,7 +84,7 @@ export function FileCard({
   markdownStyle,
   me,
 }: {
-  item: TimelineItem;
+  item: TimelineFileItem;
   index: number;
   matterId: string;
   matterStatus: MatterStatus;
@@ -615,7 +615,7 @@ function JudgementChip({ judgement }: { judgement: Judgement }) {
   );
 }
 
-function CommentsBlock({ item }: { item: TimelineItem }) {
+function CommentsBlock({ item }: { item: TimelineFileItem }) {
   if (item.comments.length === 0) return null;
 
   return (

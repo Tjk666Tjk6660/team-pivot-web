@@ -100,6 +100,12 @@ function NewMatterClassicForm({
   const [bodyState, setBodyState] = useState<BodySourceState>({
     body_source: "manual",
   });
+  const [matterOwner, setMatterOwner] = useState<{ openId: string; name: string }>(
+    () => ({
+      openId: me.open_id,
+      name: me.name,
+    }),
+  );
   const [owner, setOwner] = useState<string>(me.open_id);
   const [ownerDisplayName, setOwnerDisplayName] = useState<string>(me.name);
   const [mentions, setMentions] = useState<MentionBlock>(() => emptyMention());
@@ -148,6 +154,16 @@ function NewMatterClassicForm({
           const payload = (candidate.matter_payload ?? {}) as Record<string, unknown>;
           const dt = String(payload.doc_type ?? "");
           if (dt === "act" || dt === "think") setInitialType(dt);
+          const matterOwnerOpenId = String(payload.matter_owner ?? "");
+          if (matterOwnerOpenId) {
+            const matterOwnerName = String(payload.matter_owner_display ?? "");
+            setMatterOwner({
+              openId: matterOwnerOpenId,
+              name:
+                matterOwnerName ||
+                (matterOwnerOpenId === me.open_id ? me.name : ""),
+            });
+          }
           const ow = String(payload.owner ?? "");
           if (ow) {
             setOwner(ow);
@@ -228,6 +244,8 @@ function NewMatterClassicForm({
       body_md: body,
       matter_payload: {
         doc_type: initialType,
+        matter_owner: matterOwner.openId,
+        matter_owner_display: matterOwner.name,
         ...(owner ? { owner, owner_display: ownerDisplayName } : {}),
         body_source: bodyState.body_source,
         ...(bodyState.body_source_snapshot
@@ -239,7 +257,8 @@ function NewMatterClassicForm({
     enabled: draftLoaded && isDirty && stage === "idle",
     deps: [
       draftLoaded, isDirty, stage,
-      title, category, body, initialType, owner, ownerDisplayName,
+      title, category, body, initialType,
+      matterOwner.openId, matterOwner.name, owner, ownerDisplayName,
       bodyState.body_source, bodyState.body_source_snapshot,
       mentions.open_ids.length, mentions.comments,
     ],
@@ -314,6 +333,10 @@ function NewMatterClassicForm({
       const r = await createMatter({
         category: category.trim(),
         title: title.trim(),
+        owner_open_id:
+          matterOwner.openId && matterOwner.openId !== me.open_id
+            ? matterOwner.openId
+            : undefined,
         initial_file: {
           type: initialType,
           summary,
@@ -373,6 +396,7 @@ function NewMatterClassicForm({
         title: title.trim(),
         category: category.trim(),
         docType: initialType,
+        matterOwner,
         mentions,
       });
       toast.success("已切换到 AI 引导，正在为你重新起草…");
@@ -518,6 +542,30 @@ function NewMatterClassicForm({
                     required
                     maxLength={200}
                     className="h-11 rounded-[var(--r-md)] bg-[var(--surface-alt)]"
+                  />
+                </div>
+              </div>
+
+              <div className="editor-divider border-t" />
+
+              {/* Matter owner */}
+              <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+                <div className="space-y-2">
+                  <div className="section-kicker">责任人</div>
+                  <p className="text-sm leading-6 text-[var(--text-mute)]">
+                    推进这件事的人，可选。默认你自己。
+                  </p>
+                </div>
+                <div className="grid gap-2">
+                  <Label>责任人</Label>
+                  <OwnerPicker
+                    value={matterOwner.openId}
+                    onChange={(openId, name) => {
+                      setMatterOwner({ openId, name });
+                    }}
+                    sessionOpenId={me.open_id}
+                    sessionName={me.name}
+                    displayName={matterOwner.name}
                   />
                 </div>
               </div>

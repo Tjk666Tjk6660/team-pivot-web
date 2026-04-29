@@ -7,6 +7,7 @@ import {
   FolderTree,
   Star,
   Trash2,
+  UserRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -318,11 +319,17 @@ function MatterRow({ matter }: { matter: MatterSummary }) {
             <div className="mt-1 flex items-center gap-2">
               <div
                 className={cn(
-                  "min-w-0 flex-1 truncate text-[10px] leading-5 text-[var(--text-mute)] group-hover:text-[var(--text-soft)] md:text-[11px]",
+                  "flex min-w-0 flex-1 items-center gap-1.5 text-[10px] leading-5 text-[var(--text-mute)] group-hover:text-[var(--text-soft)] md:text-[11px]",
                   isActive && "text-[var(--accent)]",
                 )}
               >
-                {meta}
+                <OwnerInline matter={matter} />
+                {meta && (
+                  <>
+                    <span className="shrink-0 text-[var(--text-fade)]">·</span>
+                    <span className="min-w-0 truncate">{meta}</span>
+                  </>
+                )}
               </div>
               <span className="shrink-0">
                 <StatusBadge
@@ -335,6 +342,27 @@ function MatterRow({ matter }: { matter: MatterSummary }) {
         )}
       </NavLink>
     </div>
+  );
+}
+
+function OwnerInline({ matter }: { matter: MatterSummary }) {
+  const label = matter.owner_display || "未分配";
+  return (
+    <span
+      className="inline-flex min-w-0 max-w-[6.75rem] shrink-0 items-center gap-1 text-[var(--text-mute)]"
+      title={`负责人：${label}`}
+    >
+      {matter.owner_avatar_url ? (
+        <img
+          src={matter.owner_avatar_url}
+          alt=""
+          className="h-3.5 w-3.5 shrink-0 rounded-full object-cover"
+        />
+      ) : (
+        <UserRound className="h-3.5 w-3.5 shrink-0 text-[var(--text-fade)]" />
+      )}
+      <span className="min-w-0 truncate">{label}</span>
+    </span>
   );
 }
 

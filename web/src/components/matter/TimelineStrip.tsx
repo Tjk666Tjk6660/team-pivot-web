@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import type { TimelineItem } from "@/api";
+import { isTimelineFileItem, type TimelineItem } from "@/api";
 import { cn } from "@/lib/utils";
 import { relativeTime } from "@/lib/time";
 import { TYPE_VISUAL, shortFile } from "./timeline-config";
@@ -234,39 +234,55 @@ export function TimelineStrip({
           {items.map((item, i) => {
             const pos = layout.positions[i];
             if (!pos) return null;
-            const cfg = TYPE_VISUAL[item.type];
-            const active = highlight === item.file;
+            const itemIsFile = isTimelineFileItem(item);
+            const fileItem = itemIsFile ? item : null;
+            const actorLabel = itemIsFile ? item.creator : item.actor;
+            const cfg = fileItem ? TYPE_VISUAL[fileItem.type] : null;
+            const active = !!fileItem && highlight === fileItem.file;
+            const key = fileItem ? fileItem.file : `owner-${item.created_at}-${i}`;
             return (
               <button
-                key={item.file}
+                key={key}
                 type="button"
-                onClick={() => onJump(item.file)}
-                className="absolute flex flex-col items-center focus:outline-none"
+                disabled={!fileItem}
+                onClick={() => fileItem && onJump(fileItem.file)}
+                className="absolute flex flex-col items-center focus:outline-none disabled:cursor-default"
                 style={{
                   left: pos.x - 56,
                   top: pos.y - DOT_SIZE / 2,
                   width: 112,
                 }}
-                title={`${item.type} #${i + 1} · ${shortFile(item.file)} · ${item.summary}`}
+                title={
+                  fileItem
+                    ? `${fileItem.type} #${i + 1} · ${shortFile(fileItem.file)} · ${fileItem.summary}`
+                    : `owner_change #${i + 1}`
+                }
               >
                 <span
                   className={cn(
-                    "flex h-6 w-6 items-center justify-center rounded-full border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-sm)] transition-transform",
+                    "flex h-6 w-6 items-center justify-center border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-sm)] transition-transform",
+                    fileItem ? "rounded-full" : "rotate-45 rounded-[3px]",
                     active && "scale-125 shadow-[var(--shadow-lg)]",
                   )}
                 >
-                  <span className={cn("block h-3.5 w-3.5 rounded-full", cfg.dot)} />
+                  <span
+                    className={cn(
+                      "block h-3.5 w-3.5",
+                      fileItem ? "rounded-full" : "rounded-[2px] bg-[var(--text-fade)]",
+                      cfg?.dot,
+                    )}
+                  />
                 </span>
                 <span
                   className={cn(
                     "mt-1 text-[10px] font-semibold uppercase tracking-wide",
-                    cfg.pill,
+                    cfg?.pill ?? "text-[var(--text-mute)]",
                   )}
                 >
                   {item.type} #{i + 1}
                 </span>
                 <span className="max-w-full truncate text-[10px] font-medium text-[var(--text-soft)]">
-                  {item.creator}
+                  {actorLabel}
                 </span>
                 <span className="text-[10px] text-[var(--text-mute)]">
                   {relativeTime(item.created_at)}

@@ -17,7 +17,7 @@ from server.git_ops import (
     push,
     set_remote_url,
 )
-from server.recovery import repair_partial_writes
+from server.recovery import repair_partial_writes, warn_missing_matter_owner
 
 log = logging.getLogger(__name__)
 
@@ -75,12 +75,15 @@ class Workspace:
             return 0
         with self.write_lock:
             fixed = repair_partial_writes(self.discussions_dir, self.index_dir)
+            missing_owner = warn_missing_matter_owner(self.index_dir)
             dirty = _is_dirty(self.path)
             if fixed > 0:
                 log.info("recovery fixed=%d partial write(s)", fixed)
-            elif dirty:
+            if missing_owner > 0:
+                log.warning("recovery found %d matter index(es) missing owner", missing_owner)
+            if fixed == 0 and missing_owner == 0 and dirty:
                 log.warning("recovery found dirty working tree (no un-indexed posts)")
-            else:
+            elif fixed == 0 and missing_owner == 0:
                 log.debug("recovery no-op")
             if fixed > 0 or dirty:
                 changed = commit(

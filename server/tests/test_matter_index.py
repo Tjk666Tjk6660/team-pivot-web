@@ -7,6 +7,7 @@ from server.matter_index import (
     ValidationError,
     append_comment,
     append_file_item,
+    apply_owner_change,
     create_matter_index,
     matter_index_path,
     read_matter_index,
@@ -642,3 +643,206 @@ def test_reverse_write_field_appears_in_canonical_position(tmp_path):
         f"verifications_received should appear after summary in act item, got "
         f"summary@{idx_summary} received@{idx_received}"
     )
+
+
+# ---------- matter-level owner + owner_change ----------
+
+
+def test_create_matter_index_with_matter_owner_writes_field(tmp_path):
+    path = matter_index_path(tmp_path / "index", "m")
+    create_matter_index(
+        path,
+        matter_id="m",
+        title="m",
+        initial_item=_initial_think(),
+        now_iso="2026-04-23T10:00:00+08:00",
+        matter_owner="alice",
+    )
+    data = read_matter_index(path)
+    assert data["matter"]["owner"] == "alice"
+
+
+def test_create_matter_index_without_matter_owner_omits_field(tmp_path):
+    path = _bootstrap(tmp_path)
+    data = read_matter_index(path)
+    assert "owner" not in data["matter"]
+
+
+def test_create_matter_index_matter_owner_key_order(tmp_path):
+    """matter.owner sits between current_status and created_at."""
+    path = matter_index_path(tmp_path / "index", "m")
+    create_matter_index(
+        path,
+        matter_id="m",
+        title="m",
+        initial_item=_initial_think(),
+        now_iso="2026-04-23T10:00:00+08:00",
+        matter_owner="alice",
+    )
+    raw = path.read_text(encoding="utf-8")
+    matter_block = raw.split("matter:", 1)[1].split("timeline:", 1)[0]
+    idx_status = matter_block.find("current_status:")
+    idx_owner = matter_block.find("owner:")
+    idx_created = matter_block.find("created_at:")
+    assert 0 < idx_status < idx_owner < idx_created
+
+
+def test_apply_owner_change_appends_event_and_updates_matter_owner(tmp_path):
+    path = matter_index_path(tmp_path / "index", "m")
+    create_matter_index(
+        path,
+        matter_id="m",
+        title="m",
+        initial_item=_initial_think(),
+        now_iso="2026-04-23T10:00:00+08:00",
+        matter_owner="alice",
+    )
+    apply_owner_change(
+        path,
+        item={
+            "type": "owner_change",
+            "actor": "alice",
+            "from_owner": "alice",
+            "to_owner": "bob",
+            "reason": "lead change",
+        },
+        now_iso="2026-04-23T11:00:00+08:00",
+    )
+    data = read_matter_index(path)
+    assert data["matter"]["owner"] == "bob"
+    assert data["matter"]["updated_at"] == "2026-04-23T11:00:00+08:00"
+    assert data["matter"]["current_status"] == "planning"  # unchanged
+    last = data["timeline"][-1]
+    assert last["type"] == "owner_change"
+    assert last["actor"] == "alice"
+    assert last["from_owner"] == "alice"
+    assert last["to_owner"] == "bob"
+    assert last["reason"] == "lead change"
+
+
+def test_apply_owner_change_with_status_change_updates_both(tmp_path):
+    path = matter_index_path(tmp_path / "index", "m")
+    create_matter_index(
+        path,
+        matter_id="m",
+        title="m",
+        initial_item=_initial_think(),
+        now_iso="2026-04-23T10:00:00+08:00",
+        matter_owner="alice",
+    )
+    apply_owner_change(
+        path,
+        item={
+            "type": "owner_change",
+            "actor": "alice",
+            "from_owner": "alice",
+            "to_owner": "bob",
+            "reason": "kick off execution",
+            "status_change": {"from": "planning", "to": "executing"},
+        },
+        now_iso="2026-04-23T11:00:00+08:00",
+    )
+    data = read_matter_index(path)
+    assert data["matter"]["owner"] == "bob"
+    assert data["matter"]["current_status"] == "executing"
+    last = data["timeline"][-1]
+    assert last["status_change"] == {"from": "planning", "to": "executing"}
+
+
+def test_apply_owner_change_when_unassigned(tmp_path):
+    """Transferring an unassigned matter (matter.owner missing) must succeed."""
+    path = _bootstrap(tmp_path)  # no matter_owner → owner field absent
+    apply_owner_change(
+        path,
+        item={
+            "type": "owner_change",
+            "actor": "dengke",
+            "from_owner": None,
+            "to_owner": "bob",
+            "reason": "claim ownership",
+        },
+        now_iso="2026-04-23T11:00:00+08:00",
+    )
+    data = read_matter_index(path)
+    assert data["matter"]["owner"] == "bob"
+    last = data["timeline"][-1]
+    assert last["from_owner"] is None
+    assert last["to_owner"] == "bob"
+
+
+def test_apply_owner_change_invalid_raises_validation_error(tmp_path):
+    path = matter_index_path(tmp_path / "index", "m")
+    create_matter_index(
+        path,
+        matter_id="m",
+        title="m",
+        initial_item=_initial_think(),
+        now_iso="2026-04-23T10:00:00+08:00",
+        matter_owner="alice",
+    )
+    # from_owner mismatch → owner_stale
+    with pytest.raises(ValidationError) as exc:
+        apply_owner_change(
+            path,
+            item={
+                "type": "owner_change",
+                "actor": "alice",
+                "from_owner": "ghost",
+                "to_owner": "bob",
+                "reason": "x",
+            },
+            now_iso="2026-04-23T11:00:00+08:00",
+        )
+    assert exc.value.result.code == "owner_stale"
+
+
+def test_apply_owner_change_unknown_matter_raises(tmp_path):
+    path = matter_index_path(tmp_path / "index", "ghost")
+    with pytest.raises(FileNotFoundError):
+        apply_owner_change(
+            path,
+            item={
+                "type": "owner_change",
+                "actor": "a",
+                "from_owner": None,
+                "to_owner": "b",
+                "reason": "x",
+            },
+            now_iso="2026-04-23T11:00:00+08:00",
+        )
+
+
+def test_apply_owner_change_yaml_key_order(tmp_path):
+    """owner_change entry serializes with type → created_at → actor → ..."""
+    path = matter_index_path(tmp_path / "index", "m")
+    create_matter_index(
+        path,
+        matter_id="m",
+        title="m",
+        initial_item=_initial_think(),
+        now_iso="2026-04-23T10:00:00+08:00",
+        matter_owner="alice",
+    )
+    apply_owner_change(
+        path,
+        item={
+            # Pass keys in deliberately wrong order to confirm reorder works
+            "reason": "x",
+            "to_owner": "bob",
+            "from_owner": "alice",
+            "actor": "alice",
+            "type": "owner_change",
+            "status_change": {"from": "planning", "to": "executing"},
+        },
+        now_iso="2026-04-23T11:00:00+08:00",
+    )
+    raw = path.read_text(encoding="utf-8")
+    # Locate the owner_change entry block (last one in timeline)
+    oc_block = raw.split("- type: owner_change", 1)[1]
+    # Each field must appear in canonical order before the next
+    expected_order = ["created_at:", "actor:", "from_owner:", "to_owner:", "reason:", "status_change:"]
+    last_idx = -1
+    for marker in expected_order:
+        idx = oc_block.find(marker)
+        assert idx > last_idx, f"{marker} out of order"
+        last_idx = idx
