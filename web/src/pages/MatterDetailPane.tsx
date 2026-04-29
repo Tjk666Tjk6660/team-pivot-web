@@ -32,7 +32,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { AIPane } from "@/components/AIPane";
 import { CopyForAIButton } from "@/components/CopyForAIButton";
-import { MarkdownStyleSwitcher } from "@/components/markdown/MarkdownStyleSwitcher";
 import { useMarkdownStyle } from "@/components/markdown/MarkdownStyleProvider";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TimelineStrip } from "@/components/matter/TimelineStrip";
@@ -116,6 +115,7 @@ export function MatterDetailPane() {
   );
   const [sessionOpenId, setSessionOpenId] = useState<string>("");
   const [sessionName, setSessionName] = useState<string>("");
+  const [sessionAvatarUrl, setSessionAvatarUrl] = useState<string>("");
   const [pendingCreate, setPendingCreate] = useState<{
     type: DocType;
     quote: string | null;
@@ -375,10 +375,12 @@ export function MatterDetailPane() {
       .then((me) => {
         setSessionOpenId(me?.open_id ?? "");
         setSessionName(me?.name ?? "");
+        setSessionAvatarUrl(me?.avatar_url ?? "");
       })
       .catch(() => {
         setSessionOpenId("");
         setSessionName("");
+        setSessionAvatarUrl("");
       });
   }, []);
 
@@ -898,18 +900,6 @@ export function MatterDetailPane() {
             />
           </section>
 
-          <section className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-2.5 shadow-[var(--shadow-sm)]">
-            <div>
-              <h2 className="text-[13px] font-semibold text-[var(--text)]">
-                正文阅读
-              </h2>
-              <p className="mt-0.5 text-[11px] text-[var(--text-mute)]">
-                仅影响下方 matter 文档正文的 Markdown 渲染
-              </p>
-            </div>
-            <MarkdownStyleSwitcher />
-          </section>
-
           {/* ==== 文件流 ==== */}
           <section className="space-y-3">
             {timeline.map((item, i) => (
@@ -934,6 +924,11 @@ export function MatterDetailPane() {
                 }}
                 highlighted={highlight === item.file}
                 markdownStyle={markdownStyle}
+                me={{
+                  open_id: sessionOpenId,
+                  name: sessionName,
+                  avatar_url: sessionAvatarUrl || null,
+                }}
               />
             ))}
             {pendingCreate && (

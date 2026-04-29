@@ -52,7 +52,11 @@ function ThemeSwatch({
   );
 }
 
-export function MarkdownStyleSwitcher() {
+export function MarkdownStyleSwitcher({
+  align = "right",
+}: {
+  align?: "left" | "right";
+}) {
   const { styles, effectiveStyle, loading, setUserStyle } = useMarkdownStyle();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -111,7 +115,11 @@ export function MarkdownStyleSwitcher() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-2 w-80 overflow-hidden rounded-[var(--r-md)] border border-[var(--line-strong)] bg-[var(--surface)] p-2 shadow-[var(--shadow-lg)]">
+        <div
+          className={`absolute top-full z-50 mt-2 w-80 overflow-hidden rounded-[var(--r-md)] border border-[var(--line-strong)] bg-[var(--surface)] p-2 shadow-[var(--shadow-lg)] ${
+            align === "right" ? "right-0" : "left-0"
+          }`}
+        >
           <div className="mb-1 flex items-center justify-between px-2 py-1">
             <span className="text-[11px] font-semibold text-[var(--text)]">
               Markdown 正文主题

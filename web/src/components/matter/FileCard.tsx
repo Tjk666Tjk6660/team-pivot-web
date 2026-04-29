@@ -5,12 +5,14 @@ import remarkGfm from "remark-gfm";
 import { MermaidBlock } from "./MermaidBlock";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
-import type {
-  DocType,
-  Judgement,
-  MatterStatus,
-  MentionBlock,
-  TimelineItem,
+import {
+  markFileRead,
+  type DocType,
+  type Judgement,
+  type MatterStatus,
+  type MentionBlock,
+  type Reader,
+  type TimelineItem,
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import { CopyForAIButton } from "@/components/CopyForAIButton";
@@ -30,6 +32,7 @@ import {
   TYPE_VISUAL,
   shortFile,
 } from "./timeline-config";
+import { ReadersRow } from "./ReadersRow";
 
 const COLLAPSE_HEIGHT = 208;
 
@@ -70,6 +73,7 @@ export function FileCard({
   registerRef,
   highlighted,
   markdownStyle,
+  me,
 }: {
   item: TimelineItem;
   index: number;
@@ -82,19 +86,55 @@ export function FileCard({
   registerRef?: (el: HTMLDivElement | null) => void;
   highlighted?: boolean;
   markdownStyle: MarkdownStyleId;
+  me: { open_id: string; name: string; avatar_url: string | null };
 }) {
   const cfg = TYPE_VISUAL[item.type];
   const [expanded, setExpanded] = useState(false);
   const [canExpand, setCanExpand] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLElement | null>(null);
   const allowed = ALLOWED_TYPES_BY_STATUS[matterStatus];
   const allowThink = allowed.includes("think");
   const allowAct = allowed.includes("act");
   const allowVerify = allowed.includes("verify");
 
+  // Local mirror of readers for optimistic updates. Reset when the parent's
+  // server-side readers change (refetch after SSE / visibility resume).
+  const [readers, setReaders] = useState<Reader[]>(item.readers ?? []);
   useEffect(() => {
+    setReaders(item.readers ?? []);
+  }, [item.readers]);
+
+  // Session-level dedupe: each FileCard instance reports a given file at most
+  // once. Reset on file change so navigating between matters works.
+  const markedRef = useRef(false);
+  useEffect(() => {
+    markedRef.current = false;
     setExpanded(false);
   }, [item.file]);
+
+  const fileBasename = item.file.split("/").pop() ?? item.file;
+
+  const triggerMark = () => {
+    if (markedRef.current) return;
+    if (!me.open_id) return;
+    markedRef.current = true;
+    const optimistic: Reader = {
+      open_id: me.open_id,
+      name: me.name || me.open_id,
+      avatar_url: me.avatar_url,
+      first_read_at: new Date().toISOString(),
+    };
+    const already = readers.some((r) => r.open_id === me.open_id);
+    if (!already) setReaders((prev) => [...prev, optimistic]);
+    void markFileRead(matterId, fileBasename).catch(() => {
+      // Roll back optimistic insert and allow retry.
+      markedRef.current = false;
+      if (!already) {
+        setReaders((prev) => prev.filter((r) => r.open_id !== me.open_id));
+      }
+    });
+  };
 
   useLayoutEffect(() => {
     const el = bodyRef.current;
@@ -113,9 +153,38 @@ export function FileCard({
     return () => ro.disconnect();
   }, [item.body]);
 
+  // Short-form auto-mark: only when the body is fully revealed (no expand
+  // affordance). Long-form requires the user to click "展开全文 ↓" — that
+  // path is wired on the button onClick below.
+  useEffect(() => {
+    if (canExpand) return;
+    if (markedRef.current) return;
+    if (!item.body) return;
+    const el = cardRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting && entry.intersectionRatio >= 0.5) {
+            triggerMark();
+            observer.disconnect();
+            break;
+          }
+        }
+      },
+      { threshold: 0.5 },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canExpand, item.body, item.file]);
+
   return (
     <article
-      ref={registerRef}
+      ref={(el) => {
+        cardRef.current = el;
+        registerRef?.(el as HTMLDivElement | null);
+      }}
       className={cn(
         "scroll-mt-24 rounded-[var(--r-md)] border border-[var(--line)] border-l-[6px] bg-[var(--surface)] p-4 shadow-[var(--shadow-sm)] sm:p-5",
         cfg.side,
@@ -266,7 +335,10 @@ export function FileCard({
           {canExpand && (
             <button
               type="button"
-              onClick={() => setExpanded((v) => !v)}
+              onClick={() => {
+                if (!expanded) triggerMark();
+                setExpanded((v) => !v);
+              }}
               className="mt-1 text-xs text-[var(--accent)] hover:underline"
             >
               {expanded ? "收起 ↑" : "展开全文 ↓"}
@@ -277,6 +349,8 @@ export function FileCard({
 
       {/* comments (read-only; "添加评论" was removed — use the @ 提及 button at the top to leave a note instead) */}
       <CommentsBlock item={item} />
+
+      <ReadersRow readers={readers} />
 
       {/* 三入口 */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-[var(--line-soft)] pt-3">

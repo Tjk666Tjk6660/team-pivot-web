@@ -96,6 +96,13 @@ export type TimelineComment = {
   mentions_display?: string[];
 };
 
+export type Reader = {
+  open_id: string;
+  name: string;
+  avatar_url: string | null;
+  first_read_at: string;
+};
+
 export type TimelineItem = {
   file: string;
   created_at: string;
@@ -111,6 +118,8 @@ export type TimelineItem = {
   body: string;
   verifications?: Verification[];
   outcome?: Outcome;
+  readers_count?: number;
+  readers?: Reader[];
 };
 
 export type MatterSummary = {
@@ -276,6 +285,25 @@ export async function markMatterRead(matterId: string): Promise<void> {
     `/api/matters/${encodeURIComponent(matterId)}/read`,
     { method: "POST", credentials: "include" },
   );
+}
+
+export async function markFileRead(
+  matterId: string,
+  filename: string,
+): Promise<{ matter_id: string; filename: string; first_read_at: string }> {
+  const r = await fetch(
+    `/api/matters/${encodeURIComponent(matterId)}/files/${encodeURIComponent(filename)}/read`,
+    { method: "POST", credentials: "include" },
+  );
+  if (!r.ok) {
+    await throwIfSessionExpired(r);
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    const detail = typeof d.detail === "string"
+      ? d.detail
+      : d.detail?.message || d.detail?.code || `mark file read failed: ${r.status}`;
+    throw new Error(detail);
+  }
+  return await r.json();
 }
 
 export async function setMatterFavorite(

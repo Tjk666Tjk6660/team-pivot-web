@@ -79,6 +79,15 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     expires_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_open_id);
+CREATE TABLE IF NOT EXISTS file_reads (
+    user_open_id  TEXT NOT NULL,
+    matter_id     TEXT NOT NULL,
+    filename      TEXT NOT NULL,
+    first_read_at REAL NOT NULL,
+    PRIMARY KEY (user_open_id, matter_id, filename)
+);
+CREATE INDEX IF NOT EXISTS idx_file_reads_matter
+    ON file_reads(matter_id, filename);
 """
 
 
