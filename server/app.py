@@ -137,11 +137,7 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await daily_report_scheduler.start()
-        try:
-            async with mcp_app.router.lifespan_context(mcp_app):
-                yield
-        finally:
-            await daily_report_scheduler.stop()
+
         # Cold-start vs warm-start is decided by table state, not config:
         # an empty relevance_events table means we've never run before —
         # historical activity should land as already-read so users don't get
@@ -183,6 +179,7 @@ def create_app() -> FastAPI:
                 await hourly_task
             except (asyncio.CancelledError, Exception):
                 pass
+            await daily_report_scheduler.stop()
 
     app = FastAPI(title="team-pivot-web", lifespan=lifespan)
     app.add_middleware(
