@@ -63,7 +63,7 @@ export function AdminLayout() {
           </ul>
           <NavGroup title="用户管理">
             <NavItem to="/admin/applications">加入申请</NavItem>
-            <NavItem to="/admin/users">用户</NavItem>
+            <NavItem to="/admin/users">用户列表</NavItem>
             <NavItem to="/admin/roles">角色</NavItem>
             <NavItem to="/admin/invites">邀请</NavItem>
           </NavGroup>

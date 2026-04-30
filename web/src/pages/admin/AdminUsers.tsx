@@ -62,7 +62,7 @@ export function AdminUsers() {
     <div className="mx-auto max-w-5xl p-6">
       <header className="mb-5 flex flex-wrap items-center gap-3">
         <h1 className="m-0 text-[22px]" style={titleStyle}>
-          用户管理
+          用户列表
         </h1>
         <div className="flex flex-1 items-center justify-end gap-3">
           <Input
