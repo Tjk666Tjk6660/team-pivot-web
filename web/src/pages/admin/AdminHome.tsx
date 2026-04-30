@@ -67,16 +67,6 @@ export function AdminHome() {
       </p>
 
       <section>
-        <SectionTitle index={1} hint="必填" title="数据仓库" />
-        <WorkspaceConfigSection onAdminLost={onAdminLost} />
-      </section>
-
-      <section>
-        <SectionTitle index={2} hint="必填" title="AI 助手" />
-        <AISettingsSection onAdminLost={onAdminLost} />
-      </section>
-
-      <section>
         <div
           className="mb-3 text-[10.5px] font-bold uppercase tracking-[0.22em] font-meta"
           style={{ color: "var(--text-mute)" }}
@@ -104,6 +94,16 @@ export function AdminHome() {
             to="/admin/invites"
           />
         </div>
+      </section>
+
+      <section>
+        <SectionTitle index={1} hint="必填" title="数据仓库" />
+        <WorkspaceConfigSection onAdminLost={onAdminLost} />
+      </section>
+
+      <section>
+        <SectionTitle index={2} hint="必填" title="AI 助手" />
+        <AISettingsSection onAdminLost={onAdminLost} />
       </section>
     </PageShell>
   );
