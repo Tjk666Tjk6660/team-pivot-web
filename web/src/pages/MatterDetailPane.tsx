@@ -472,6 +472,32 @@ export function MatterDetailPane() {
     });
   }, [pendingCreate]);
 
+  // 从 /admin/scoring 的 EvidenceDialog 跳过来时, URL 形如 /m/X#file=001_xx.md。
+  // 数据加载完后按 basename 找到对应 timeline 文件,调 onJump 滚动+高亮,
+  // 然后清掉 hash 避免后续渲染重复触发。
+  useEffect(() => {
+    if (!data?.timeline) return;
+    const m = window.location.hash.match(/^#file=(.+)$/);
+    if (!m) return;
+    const filename = decodeURIComponent(m[1]);
+    const target = data.timeline.find(
+      (item) =>
+        isTimelineFileItem(item) &&
+        (item.file === filename || item.file.endsWith("/" + filename)),
+    );
+    if (!target || !isTimelineFileItem(target)) return;
+    const t = window.setTimeout(() => {
+      onJump(target.file);
+      window.history.replaceState(
+        null,
+        "",
+        window.location.pathname + window.location.search,
+      );
+    }, 250);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
   const activeAIThreadKey = ai.activeStream?.threadKey ?? null;
   const currentThreadKey = data?.matter
     ? data.matter.category

@@ -1,0 +1,337 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+import yaml
+
+from server.db import Database
+from server.events import (
+    TOPIC_FILE_APPENDED,
+    TOPIC_RESULT_CREATED,
+    clear_subscribers,
+    emit,
+)
+from server.pivot_users import PivotUserRepo
+from server.scoring.store import ScoringJob
+from server.scoring.trigger import KEY_ENABLED, install
+from server.settings import SettingsRepo
+
+
+# ---------- fixtures ----------
+
+
+class _StubWorkspace:
+    """Minimal workspace stand-in with a real on-disk index_dir."""
+
+    def __init__(self, root: Path) -> None:
+        self.path = root
+        (root / "index").mkdir(parents=True, exist_ok=True)
+
+    @property
+    def index_dir(self) -> Path:
+        return self.path / "index"
+
+
+class _RecordingQueue:
+    """Captures enqueue() calls instead of really queueing."""
+
+    def __init__(self) -> None:
+        self.jobs: list[ScoringJob] = []
+
+    def enqueue(self, job: ScoringJob) -> None:
+        self.jobs.append(job)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_event_bus():
+    clear_subscribers()
+    yield
+    clear_subscribers()
+
+
+@pytest.fixture
+def db(tmp_path):
+    return Database(tmp_path / "test.db")
+
+
+@pytest.fixture
+def pivot_users(db):
+    return PivotUserRepo(db)
+
+
+@pytest.fixture
+def settings(db):
+    s = SettingsRepo(db)
+    s.set(KEY_ENABLED, "1")
+    return s
+
+
+@pytest.fixture
+def workspace(tmp_path):
+    return _StubWorkspace(tmp_path)
+
+
+@pytest.fixture
+def queue():
+    return _RecordingQueue()
+
+
+@pytest.fixture
+def trigger_installed(workspace, settings, pivot_users, queue):
+    unsub = install(
+        workspace=workspace, settings=settings, pivot_users=pivot_users,
+        queue=queue,
+    )
+    yield queue
+    unsub()
+
+
+# ---------- helpers ----------
+
+
+def _write_matter(workspace, matter_id: str, *, owner: str | None, category="eng") -> None:
+    path = workspace.index_dir / f"{matter_id}.index.yaml"
+    data = {
+        "matter": {
+            "id": matter_id,
+            "title": "客户验收流程优化",
+            "current_status": "finished",
+            "created_at": "2026-04-20T10:00:00+08:00",
+            "updated_at": "2026-04-29T18:30:00+08:00",
+        },
+        "timeline": [
+            {
+                "file": f"discussions/{category}/{matter_id}/001_zhangsan_act_xx.md",
+                "type": "act", "creator": "zhangsan", "owner": "zhangsan",
+                "summary": "first act", "created_at": "2026-04-20T10:00:00+08:00",
+            },
+            {
+                "file": f"discussions/{category}/{matter_id}/003_zhangsan_result_xx.md",
+                "type": "result", "creator": "zhangsan", "owner": "zhangsan",
+                "summary": "done", "outcome": "finished",
+                "created_at": "2026-04-29T18:30:00+08:00",
+                "status_change": {"from": "executing", "to": "finished"},
+            },
+        ],
+    }
+    if owner is not None:
+        data["matter"]["owner"] = owner
+    path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+
+def _emit_result_finished(matter_id: str, *, actor: str = "zhangsan") -> None:
+    emit(
+        TOPIC_RESULT_CREATED,
+        matter_id=matter_id, actor=actor,
+        at="2026-04-29T18:30:00+08:00",
+        payload={
+            "file": f"discussions/eng/{matter_id}/003_zhangsan_result_xx.md",
+            "outcome": "finished",
+        },
+    )
+
+
+# ---------- happy path ----------
+
+
+def test_enqueues_when_finished(trigger_installed, workspace, pivot_users):
+    queue = trigger_installed
+    owner = pivot_users.create(
+        display_name="张三", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    _write_matter(workspace, "auth-redesign", owner="zhangsan")
+
+    _emit_result_finished("auth-redesign")
+
+    assert len(queue.jobs) == 1
+    job = queue.jobs[0]
+    assert job.matter_id == "auth-redesign"
+    assert job.matter_category == "eng"
+    assert job.subject_user_id == owner.id
+    assert job.triggered_by == "auto"
+    assert job.triggered_actor_id == owner.id
+
+
+def test_enqueues_with_actor_resolved(trigger_installed, workspace, pivot_users):
+    """If actor pinyin maps to a different user (not the owner), still resolved."""
+    queue = trigger_installed
+    owner = pivot_users.create(
+        display_name="张三", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    actor = pivot_users.create(
+        display_name="李四", pinyin="lisi", email=None, avatar_url="",
+    )
+    _write_matter(workspace, "m", owner="zhangsan")
+
+    _emit_result_finished("m", actor="lisi")
+
+    assert len(queue.jobs) == 1
+    assert queue.jobs[0].subject_user_id == owner.id
+    assert queue.jobs[0].triggered_actor_id == actor.id
+
+
+def test_enqueues_with_unresolved_actor_keeps_none(
+    trigger_installed, workspace, pivot_users,
+):
+    """Actor pinyin not in DB → actor_id stays None, but still enqueues."""
+    queue = trigger_installed
+    pivot_users.create(
+        display_name="张三", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    _write_matter(workspace, "m", owner="zhangsan")
+
+    _emit_result_finished("m", actor="ghost-pinyin")
+
+    assert len(queue.jobs) == 1
+    assert queue.jobs[0].triggered_actor_id is None
+
+
+# ---------- filtering ----------
+
+
+def test_does_not_enqueue_when_disabled(workspace, settings, pivot_users, queue):
+    """scoring.enabled=0 → no enqueue even if everything else is set up."""
+    settings.set(KEY_ENABLED, "0")
+    pivot_users.create(
+        display_name="张三", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    _write_matter(workspace, "m", owner="zhangsan")
+
+    unsub = install(
+        workspace=workspace, settings=settings, pivot_users=pivot_users,
+        queue=queue,
+    )
+    try:
+        _emit_result_finished("m")
+    finally:
+        unsub()
+
+    assert queue.jobs == []
+
+
+def test_does_not_enqueue_when_disabled_via_falsy_strings(
+    workspace, settings, pivot_users, queue,
+):
+    for v in ["0", "false", "False", "off", "no", ""]:
+        settings.set(KEY_ENABLED, v)
+        pivot_users.create(
+            display_name=f"u{v}", pinyin=f"u_{hash(v) & 0xff:x}",
+            email=None, avatar_url="",
+        )
+
+    pivot_users.create(
+        display_name="zs", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    _write_matter(workspace, "m", owner="zhangsan")
+
+    unsub = install(
+        workspace=workspace, settings=settings, pivot_users=pivot_users,
+        queue=queue,
+    )
+    try:
+        _emit_result_finished("m")
+    finally:
+        unsub()
+    assert queue.jobs == []
+
+
+def test_does_not_enqueue_for_cancelled_outcome(trigger_installed, workspace, pivot_users):
+    """Decision C: only finished outcome triggers."""
+    queue = trigger_installed
+    pivot_users.create(
+        display_name="zs", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    _write_matter(workspace, "m", owner="zhangsan")
+
+    emit(
+        TOPIC_RESULT_CREATED,
+        matter_id="m", actor="zhangsan",
+        at="2026-04-29T18:30:00+08:00",
+        payload={"file": "discussions/eng/m/x.md", "outcome": "cancelled"},
+    )
+    assert queue.jobs == []
+
+
+def test_does_not_enqueue_for_other_topics(trigger_installed, workspace, pivot_users):
+    """File appended events should be ignored."""
+    queue = trigger_installed
+    pivot_users.create(
+        display_name="zs", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    _write_matter(workspace, "m", owner="zhangsan")
+
+    emit(
+        TOPIC_FILE_APPENDED,
+        matter_id="m", actor="zhangsan",
+        at="2026-04-29T18:30:00+08:00",
+        payload={"file": "discussions/eng/m/01.md", "type": "act"},
+    )
+    assert queue.jobs == []
+
+
+# ---------- owner resolution paths ----------
+
+
+def test_does_not_enqueue_when_index_missing(trigger_installed, workspace):
+    """Index file not on disk (rare race) → skip + log."""
+    queue = trigger_installed
+    _emit_result_finished("nonexistent")
+    assert queue.jobs == []
+
+
+def test_does_not_enqueue_when_owner_empty(trigger_installed, workspace, pivot_users):
+    """matter.owner missing → skip per design 1.1 边界."""
+    queue = trigger_installed
+    pivot_users.create(
+        display_name="zs", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    _write_matter(workspace, "m", owner=None)
+    _emit_result_finished("m")
+    assert queue.jobs == []
+
+
+def test_does_not_enqueue_when_owner_unresolvable(
+    trigger_installed, workspace, pivot_users,
+):
+    """Owner pinyin not in pivot_user table → skip (decision A: 不入队，不留 run)."""
+    queue = trigger_installed
+    pivot_users.create(
+        display_name="lisi", pinyin="lisi", email=None, avatar_url="",
+    )
+    _write_matter(workspace, "m", owner="ghost_owner")
+    _emit_result_finished("m")
+    assert queue.jobs == []
+
+
+def test_resolves_to_active_when_multiple_users_share_pinyin(
+    trigger_installed, workspace, pivot_users,
+):
+    """Active beats deleted at resolve time (sanity check matches resolve.py spec)."""
+    queue = trigger_installed
+    deleted = pivot_users.create(
+        display_name="zs old", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    pivot_users.update_status(
+        user_id=deleted.id, status="deleted", note=None, changed_by=deleted.id,
+    )
+    active = pivot_users.create(
+        display_name="zs new", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    _write_matter(workspace, "m", owner="zhangsan")
+
+    _emit_result_finished("m")
+    assert len(queue.jobs) == 1
+    assert queue.jobs[0].subject_user_id == active.id
+
+
+# ---------- robustness ----------
+
+
+def test_trigger_does_not_raise_on_corrupt_index(trigger_installed, workspace):
+    """Bad yaml → trigger logs + returns; never bubbles up to break publish flow."""
+    queue = trigger_installed
+    bad = workspace.index_dir / "m.index.yaml"
+    bad.write_text("not: [valid: yaml", encoding="utf-8")
+    _emit_result_finished("m")
+    assert queue.jobs == []  # silently dropped

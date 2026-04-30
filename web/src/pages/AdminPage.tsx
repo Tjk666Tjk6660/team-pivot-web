@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ScoringConfigSection } from "@/components/admin/scoring/ScoringConfigSection";
 
 const SUGGESTED_MODELS = [
   "anthropic/claude-sonnet-4-5",
@@ -154,6 +155,7 @@ export function AdminPage() {
             <div className="space-y-6">
               <MarkdownSettingsSection onAdminLost={onAdminLost} />
               <AISettingsSection onAdminLost={onAdminLost} />
+              <ScoringConfigSection onAdminLost={onAdminLost} />
             </div>
           </div>
         </main>
