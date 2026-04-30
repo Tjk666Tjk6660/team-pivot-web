@@ -270,6 +270,66 @@ def test_parse_accepts_complete_comment_evidence(index_data):
     assert out.scores[0].evidence[0].source_kind == "comment"
 
 
+# ---------- source_kind inference (defensive against AI omissions) ----------
+
+
+def test_parse_infers_file_when_source_kind_missing(index_data):
+    """AI sometimes drops source_kind on later items — infer from absence
+    of comment metadata."""
+    bad_dict = json.loads(_good_output())
+    del bad_dict["scores"][0]["evidence"][0]["source_kind"]
+    out = parse_and_validate(
+        json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+    )
+    assert out.scores[0].evidence[0].source_kind == "file"
+
+
+def test_parse_infers_comment_when_comment_meta_present(index_data):
+    """source_kind missing + comment fields present → infer 'comment'."""
+    bad_dict = json.loads(_good_output())
+    bad_dict["scores"][0]["evidence"][0].update({
+        "source_comment_created_at": "2026-04-22T14:00:00+08:00",
+        "source_comment_author": "lisi",
+    })
+    bad_dict["scores"][0]["evidence"][0].pop("source_kind", None)
+    out = parse_and_validate(
+        json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+    )
+    assert out.scores[0].evidence[0].source_kind == "comment"
+
+
+def test_parse_explicit_source_kind_overrides_inference(index_data):
+    """If AI explicitly sets source_kind, trust it even if heuristic disagrees.
+
+    (Edge case: AI sets source_kind='file' but also fills comment fields —
+    we trust AI's explicit declaration. The downstream completeness check
+    will still catch genuinely malformed records.)"""
+    bad_dict = json.loads(_good_output())
+    bad_dict["scores"][0]["evidence"][0]["source_kind"] = "file"
+    out = parse_and_validate(
+        json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+    )
+    assert out.scores[0].evidence[0].source_kind == "file"
+
+
+def test_parse_inferred_comment_still_validates_completeness(index_data):
+    """If we infer 'comment' from one comment field but the other is missing,
+    the comment-completeness check should still reject it."""
+    bad_dict = json.loads(_good_output())
+    bad_dict["scores"][0]["evidence"][0].update({
+        # Only set author, not created_at — incomplete
+        "source_comment_author": "lisi",
+    })
+    bad_dict["scores"][0]["evidence"][0].pop("source_kind", None)
+    # Inferred source_kind=comment (because author is set), then
+    # _validate_comment_evidence_completeness should reject due to missing
+    # created_at.
+    with pytest.raises(SchemaError, match="created_at"):
+        parse_and_validate(
+            json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+        )
+
+
 # ---------- enum + range guards (pydantic level) ----------
 
 

@@ -600,6 +600,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/77/ca/b45c378e6e8d0b90577288b533e04e95b7afd61bb1d51b6c263176435489/pydantic-2.13.2-py3-none-any.whl", hash = "sha256:a525087f4c03d7e7456a3de89b64cd693d2229933bb1068b9af6befd5563694e", size = 471947, upload-time = "2026-04-17T09:31:57.541Z" },
 ]
 
+[package.optional-dependencies]
+email = [
+    { name = "email-validator" },
+]
+
 [[package]]
 name = "pydantic-core"
 version = "2.46.2"
@@ -990,6 +995,7 @@ dependencies = [
     { name = "itsdangerous" },
     { name = "lark-oapi" },
     { name = "mcp" },
+    { name = "pydantic", extra = ["email"] },
     { name = "pypinyin" },
     { name = "python-dotenv" },
     { name = "tzdata" },
@@ -1012,6 +1018,7 @@ requires-dist = [
     { name = "itsdangerous", specifier = ">=2.2" },
     { name = "lark-oapi", specifier = ">=1.4" },
     { name = "mcp", specifier = ">=1.0" },
+    { name = "pydantic", extras = ["email"], specifier = ">=2.13.2" },
     { name = "pypinyin", specifier = ">=0.55.0" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "tzdata", specifier = ">=2025.2" },

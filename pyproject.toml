@@ -19,6 +19,7 @@ dependencies = [
     # ZoneInfoNotFoundError. Including unconditionally is the simplest
     # cross-platform fix; the wheel is small.
     "tzdata>=2025.2",
+    "pydantic[email]>=2.13.2",
 ]
 
 [dependency-groups]
