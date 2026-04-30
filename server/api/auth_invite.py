@@ -93,6 +93,7 @@ def build_router(
                     "id": user.id,
                     "display_name": user.display_name,
                     "role": user.role,
+                    "roles": user.roles,
                     "status": user.status,
                 },
             }

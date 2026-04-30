@@ -50,7 +50,8 @@ def build_router(
                 "user": {
                     "id": user.id,
                     "display_name": user.display_name,
-                    "role": user.role,
+                    "role": user.role,         # primary role (legacy clients)
+                    "roles": user.roles,       # full role list (current clients)
                     "status": user.status,
                 },
             }
