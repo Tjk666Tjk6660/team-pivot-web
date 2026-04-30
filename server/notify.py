@@ -126,6 +126,19 @@ class Notifier(Protocol):
         admin_open_ids: list[str],
     ) -> None: ...
 
+    def notify_application_approved(
+        self,
+        *,
+        applicant_open_id: str,
+        merged: bool,
+    ) -> None: ...
+
+    def notify_application_rejected(
+        self,
+        *,
+        applicant_open_id: str,
+    ) -> None: ...
+
 
 class NoOpNotifier:
     def notify_new_thread(self, **_: object) -> None: pass
@@ -134,6 +147,8 @@ class NoOpNotifier:
     def notify_owner_change(self, **_: object) -> None: pass
     def notify_standalone_mention(self, **_: object) -> None: pass
     def notify_application_created(self, **_: object) -> None: pass
+    def notify_application_approved(self, **_: object) -> None: pass
+    def notify_application_rejected(self, **_: object) -> None: pass
 
 
 class FeishuNotifier:
@@ -238,6 +253,23 @@ class FeishuNotifier:
         admin_open_ids: list[str],
     ) -> None:
         # TODO(Task 21): real card builder — send DM to each admin open_id
+        pass
+
+    def notify_application_approved(
+        self,
+        *,
+        applicant_open_id: str,
+        merged: bool,
+    ) -> None:
+        # TODO(Task 21): DM the applicant via feishu open_id with approval card
+        pass
+
+    def notify_application_rejected(
+        self,
+        *,
+        applicant_open_id: str,
+    ) -> None:
+        # TODO(Task 21): DM the applicant via feishu open_id with rejection card
         pass
 
     def notify_standalone_mention(
