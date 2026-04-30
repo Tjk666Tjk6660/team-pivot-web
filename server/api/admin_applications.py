@@ -98,6 +98,23 @@ def build_router(
                 raise HTTPException(status_code=400, detail="invalid_merge_target")
             target_id = target.id
             merge = True
+            # 合并到已有 pivot_user 时，把申请人 raw_profile 里的飞书
+            # 头像 / 名字同步过去 —— 仅当目标当前 avatar_url 为空（典型
+            # 是邀请码注册的邮箱用户从未有过头像）才覆盖，避免冲掉之前
+            # 飞书登录已同步好的真实头像。display_name 同理。
+            target_avatar = a.raw_profile.get("avatar_url") if isinstance(
+                a.raw_profile.get("avatar_url"), str
+            ) else None
+            target_name = a.raw_profile.get("name") if isinstance(
+                a.raw_profile.get("name"), str
+            ) else None
+            updates: dict[str, str] = {}
+            if not target.avatar_url and target_avatar:
+                updates["avatar_url"] = target_avatar
+            if target_name and target.display_name in ("", "Unknown"):
+                updates["display_name"] = target_name
+            if updates:
+                pivot_users.update_profile(target.id, **updates)
         try:
             bindings.bind(
                 pivot_user_id=target_id,

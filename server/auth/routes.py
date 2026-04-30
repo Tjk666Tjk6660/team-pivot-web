@@ -172,6 +172,18 @@ def build_router(
                     f"{post_login_redirect}login?reason=deleted",
                     status_code=302,
                 )
+            # 飞书最新头像 / 名字同步到 pivot_user，only-when-changed 避免每次
+            # 登录都写盘。这样邀请码注册的用户后来绑飞书后再登录，飞书头像
+            # 就会自动落到 pivot_user.avatar_url，圈人候选与 admin 列表都能
+            # 显示真实头像而不是空 / 占位首字母。
+            updates: dict[str, str] = {}
+            fresh_avatar = info.avatar_url or ""
+            if fresh_avatar and fresh_avatar != user.avatar_url:
+                updates["avatar_url"] = fresh_avatar
+            if info.name and info.name != user.display_name:
+                updates["display_name"] = info.name
+            if updates:
+                pivot_users.update_profile(user.id, **updates)
             pivot_users.touch_last_login(user.id)
             sid = sessions.create(
                 pivot_user_id=user.id, user_access_token=token.access_token
