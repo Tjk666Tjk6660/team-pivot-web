@@ -12,6 +12,7 @@ from server.api.admin_applications import (
     build_router as build_admin_applications_router,
 )
 from server.api.admin_invites import build_router as build_admin_invites_router
+from server.api.admin_scoring import build_router as build_admin_scoring_router
 from server.api.admin_users import build_router as build_admin_users_router
 from server.api.ai import build_router as build_ai_router
 from server.api.app_home import build_router as build_app_home_router
@@ -64,6 +65,9 @@ from server.relevance_scanner import (
     schedule_hourly_scan,
 )
 from server.relevance_writer import install as install_relevance_writer
+from server.scoring.store import ScoringStore
+from server.scoring.trigger import install as install_scoring_trigger
+from server.scoring.worker import ScoringQueue, ScoringWorker
 from server.settings import SettingsRepo
 from server.user_preferences import UserPreferenceRepo
 from server.users import UserRepo
@@ -141,6 +145,23 @@ def create_app() -> FastAPI:
         workspace=workspace, users_repo=users, repo=relevance_events,
     )
 
+    # Scoring system: TOPIC_RESULT_CREATED → trigger → ScoringQueue → background
+    # worker → AI eval → matter_scores rows. v1 admin-only (decision B);
+    # disabled by default (settings 'scoring.enabled' = '0').
+    scoring_store = ScoringStore(db)
+    swept_runs = scoring_store.sweep_orphans()
+    if swept_runs > 0:
+        log.info("scoring orphan runs swept on startup purged=%d", swept_runs)
+    scoring_queue = ScoringQueue()
+    scoring_worker = ScoringWorker(
+        queue=scoring_queue, store=scoring_store, workspace=workspace,
+        settings=settings, pivot_users=pivot_users,
+    )
+    scoring_unsubscribe = install_scoring_trigger(
+        workspace=workspace, settings=settings, pivot_users=pivot_users,
+        queue=scoring_queue,
+    )
+
     # Build MCP sub-app once; FastAPI does not propagate lifespan to mounted
     # sub-apps, so we enter its lifespan_context from our own lifespan below.
     # The sub-app enforces PAT bearer auth on every HTTP request using the
@@ -160,6 +181,7 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await daily_report_scheduler.start()
+        await scoring_worker.start()
 
         # Cold-start vs warm-start is decided by table state, not config:
         # an empty relevance_events table means we've never run before —
@@ -202,6 +224,8 @@ def create_app() -> FastAPI:
                 await hourly_task
             except (asyncio.CancelledError, Exception):
                 pass
+            await scoring_worker.stop()
+            scoring_unsubscribe()
             await daily_report_scheduler.stop()
 
     app = FastAPI(title="team-pivot-web", lifespan=lifespan)
@@ -292,6 +316,11 @@ def create_app() -> FastAPI:
     app.include_router(
         build_admin_invites_router(invites, admin_user_cookie_dep)
     )
+    app.include_router(build_admin_scoring_router(
+        store=scoring_store, queue=scoring_queue,
+        workspace=workspace, settings=settings, pivot_users=pivot_users,
+        admin_user_dep=admin_user_cookie_dep,
+    ))
 
     # MCP Streamable HTTP endpoint for external AI clients. PAT auth is
     # enforced inside the sub-app; this file only wires the mount.

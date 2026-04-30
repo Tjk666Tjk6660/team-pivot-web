@@ -1433,3 +1433,228 @@ export async function createInvite(
 export async function revokeInvite(id: string): Promise<{ revoked: true }> {
   return jsonDelete(`/api/admin/invites/${encodeURIComponent(id)}`);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scoring (admin only — uses session cookie + role check via adminFetch)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ScoringConfig = {
+  enabled: boolean;
+  visibility: "admin_only" | "subjects" | "all";
+  model: string;
+  timeout_seconds: number;
+};
+
+export type ScoringRunSummary = {
+  run_id: string;
+  matter_id: string;
+  matter_title: string | null;
+  matter_category: string;
+  subject_user_id: string;
+  subject_display: string | null;
+  subject_avatar_url: string | null;
+  subject_status: string | null;
+  triggered_by: string;
+  triggered_actor_id: string | null;
+  status: "queued" | "running" | "success" | "failed" | "skipped";
+  error: string | null;
+  model: string | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  started_at: number;
+  finished_at: number | null;
+  timeline_hash: string;
+  score: { overall: number; confidence: string } | null;
+};
+
+export type ScoringRunsList = {
+  items: ScoringRunSummary[];
+  total: number;
+  has_more: boolean;
+};
+
+export type ScoringDimensions = {
+  delivery: number | null;
+  accountability: number | null;
+  collaboration: number | null;
+  judgment: number | null;
+  process: number | null;
+};
+
+export type ScoringEvidenceItem = {
+  id: number;
+  dimension: keyof ScoringDimensions;
+  polarity: "positive" | "negative" | "neutral";
+  confidence: "low" | "medium" | "high";
+  source_kind: "file" | "comment";
+  source_filename: string;
+  source_file_type: string;
+  source_comment_created_at: string | null;
+  source_comment_author_id: string | null;
+  source_comment_author_display: string | null;
+  weight_applied: number;
+  quote: string;
+  explanation: string;
+};
+
+export type ScoringRunDetail = {
+  run: ScoringRunSummary;
+  score: {
+    run_id: string;
+    subject_user_id: string;
+    matter_id: string;
+    overall: number;
+    confidence: string;
+    rationale: string;
+    dimensions: ScoringDimensions;
+    human_override:
+      | { overall: number | null; note: string | null; by: string | null; at: number | null }
+      | null;
+  } | null;
+  evidence: ScoringEvidenceItem[];
+};
+
+export type CommenterWeight = {
+  pivot_user_id: string;
+  weight: number;
+  label: string;
+  note: string | null;
+  updated_at: number;
+  updated_by: string;
+  user_display: string | null;
+  user_avatar_url: string | null;
+  user_pinyin: string | null;
+  user_status: string | null;
+};
+
+export type ScoringUserSearchHit = {
+  pivot_user_id: string;
+  display_name: string;
+  pinyin: string | null;
+  email: string | null;
+  avatar_url: string;
+  role: string;
+};
+
+export async function fetchScoringConfig(): Promise<ScoringConfig> {
+  const r = await adminFetch("/api/admin/scoring/config");
+  if (!r.ok) throw new Error(`/api/admin/scoring/config failed: ${r.status}`);
+  return (await r.json()) as ScoringConfig;
+}
+
+export async function updateScoringConfig(body: ScoringConfig): Promise<void> {
+  const r = await adminFetch("/api/admin/scoring/config", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `update scoring config failed: ${r.status}`);
+  }
+}
+
+export async function fetchScoringRuns(params: {
+  status?: string;
+  matter_id?: string;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<ScoringRunsList> {
+  const qs = new URLSearchParams();
+  if (params.status) qs.set("status", params.status);
+  if (params.matter_id) qs.set("matter_id", params.matter_id);
+  if (params.limit !== undefined) qs.set("limit", String(params.limit));
+  if (params.offset !== undefined) qs.set("offset", String(params.offset));
+  const url = `/api/admin/scoring/runs${qs.toString() ? `?${qs}` : ""}`;
+  const r = await adminFetch(url);
+  if (!r.ok) throw new Error(`/api/admin/scoring/runs failed: ${r.status}`);
+  return (await r.json()) as ScoringRunsList;
+}
+
+export async function fetchScoringRunDetail(runId: string): Promise<ScoringRunDetail> {
+  const r = await adminFetch(`/api/admin/scoring/runs/${encodeURIComponent(runId)}`);
+  if (!r.ok) throw new Error(`/api/admin/scoring/runs/${runId} failed: ${r.status}`);
+  return (await r.json()) as ScoringRunDetail;
+}
+
+export async function triggerScoringRerun(matterId: string): Promise<{
+  ok: boolean;
+  matter_id: string;
+  queued: boolean;
+  message: string;
+}> {
+  const r = await adminFetch(
+    `/api/admin/scoring/matters/${encodeURIComponent(matterId)}/rerun`,
+    { method: "POST" },
+  );
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    const detail = typeof d.detail === "string" ? d.detail : d.detail?.message || JSON.stringify(d.detail);
+    throw new Error(detail || `rerun failed: ${r.status}`);
+  }
+  return r.json();
+}
+
+export async function listCommenterWeights(): Promise<{ items: CommenterWeight[] }> {
+  const r = await adminFetch("/api/admin/scoring/commenter-weights");
+  if (!r.ok) throw new Error(`/api/admin/scoring/commenter-weights failed: ${r.status}`);
+  return (await r.json()) as { items: CommenterWeight[] };
+}
+
+export async function upsertCommenterWeight(body: {
+  pivot_user_id: string;
+  weight: number;
+  label: string;
+  note?: string | null;
+}): Promise<CommenterWeight> {
+  const r = await adminFetch("/api/admin/scoring/commenter-weights", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    const detail = typeof d.detail === "string" ? d.detail : d.detail?.message || JSON.stringify(d.detail);
+    throw new Error(detail || `upsert weight failed: ${r.status}`);
+  }
+  return (await r.json()) as CommenterWeight;
+}
+
+export async function updateCommenterWeight(
+  userId: string,
+  body: { weight?: number; label?: string; note?: string | null },
+): Promise<CommenterWeight> {
+  const r = await adminFetch(
+    `/api/admin/scoring/commenter-weights/${encodeURIComponent(userId)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `update weight failed: ${r.status}`);
+  }
+  return (await r.json()) as CommenterWeight;
+}
+
+export async function deleteCommenterWeight(userId: string): Promise<void> {
+  const r = await adminFetch(
+    `/api/admin/scoring/commenter-weights/${encodeURIComponent(userId)}`,
+    { method: "DELETE" },
+  );
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `delete weight failed: ${r.status}`);
+  }
+}
+
+export async function searchScoringUsers(q: string): Promise<{
+  items: ScoringUserSearchHit[];
+}> {
+  const url = `/api/admin/scoring/users-search?q=${encodeURIComponent(q)}`;
+  const r = await adminFetch(url);
+  if (!r.ok) throw new Error(`search users failed: ${r.status}`);
+  return (await r.json()) as { items: ScoringUserSearchHit[] };
+}

@@ -171,6 +171,84 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     updated_at   REAL NOT NULL,
     PRIMARY KEY (pivot_user_id, key)
 );
+-- Scoring system (Matter 进入 finished 后由 AI 基于时间线生成 owner 评分)
+-- See AI-docs/designs/scoring-system-v0.3.md for the design rationale.
+-- pivot_user_id columns reference pivot_user(id) — informational only since
+-- PRAGMA foreign_keys is not enabled; values are kept valid by construction
+-- (resolve.py looks up pivot_user before writing).
+CREATE TABLE IF NOT EXISTS matter_scoring_runs (
+    run_id              TEXT PRIMARY KEY,
+    matter_id           TEXT NOT NULL,
+    matter_category     TEXT NOT NULL,
+    subject_user_id     TEXT NOT NULL,
+    triggered_by        TEXT NOT NULL,
+    triggered_actor_id  TEXT,
+    status              TEXT NOT NULL,
+    error               TEXT,
+    model               TEXT,
+    prompt_tokens       INTEGER,
+    completion_tokens   INTEGER,
+    started_at          REAL NOT NULL,
+    finished_at         REAL,
+    timeline_hash       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_scoring_runs_matter
+    ON matter_scoring_runs(matter_id, started_at DESC);
+-- Partial unique index: only one in-flight run per (matter, timeline_hash).
+-- Skipped/failed/success runs are excluded — we allow multiple success rows
+-- (admin reruns are an audit trail; UI shows the latest). The has_success()
+-- check in worker.py is what actually blocks duplicate auto-triggers; this
+-- index only protects against concurrent in-flight collisions.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scoring_runs_idempotency
+    ON matter_scoring_runs(matter_id, timeline_hash)
+    WHERE status IN ('queued','running');
+CREATE TABLE IF NOT EXISTS matter_scores (
+    run_id            TEXT NOT NULL,
+    subject_user_id   TEXT NOT NULL,
+    matter_id         TEXT NOT NULL,
+    overall           REAL NOT NULL,
+    confidence        TEXT NOT NULL,
+    rationale         TEXT NOT NULL,
+    delivery          REAL,
+    accountability    REAL,
+    collaboration     REAL,
+    judgment          REAL,
+    process           REAL,
+    human_override_overall REAL,
+    human_override_note    TEXT,
+    human_override_by      TEXT,
+    human_override_at      REAL,
+    PRIMARY KEY (run_id, subject_user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_matter_scores_matter
+    ON matter_scores(matter_id, subject_user_id);
+CREATE TABLE IF NOT EXISTS matter_score_evidence (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id                      TEXT NOT NULL,
+    matter_id                   TEXT NOT NULL,
+    subject_user_id             TEXT NOT NULL,
+    dimension                   TEXT NOT NULL,
+    polarity                    TEXT NOT NULL,
+    confidence                  TEXT NOT NULL,
+    source_kind                 TEXT NOT NULL,
+    source_filename             TEXT NOT NULL,
+    source_file_type            TEXT NOT NULL,
+    source_comment_created_at   TEXT,
+    source_comment_author_id    TEXT,
+    weight_applied              REAL NOT NULL DEFAULT 1.0,
+    quote                       TEXT NOT NULL,
+    explanation                 TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_run_subject
+    ON matter_score_evidence(run_id, subject_user_id, dimension);
+CREATE TABLE IF NOT EXISTS scoring_commenter_weights (
+    pivot_user_id   TEXT PRIMARY KEY,
+    weight          REAL NOT NULL,
+    label           TEXT NOT NULL,
+    note            TEXT,
+    updated_at      REAL NOT NULL,
+    updated_by      TEXT NOT NULL
+);
 """
 
 
@@ -248,6 +326,17 @@ def _migrate(conn) -> None:
     # and migrated ones (column came from the ALTER above). Cheap on every boot.
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_contacts_pinyin ON contacts(pinyin)"
+    )
+    # Scoring v0.3 → v0.3.1: relax idempotency idx (drop 'success' from the
+    # active-statuses set) so admin reruns can record a new run alongside
+    # prior successes. CREATE UNIQUE INDEX IF NOT EXISTS in SCHEMA wouldn't
+    # change a pre-existing index definition; explicit DROP+CREATE forces
+    # the new shape on dev DBs that were created against the old SCHEMA.
+    conn.execute("DROP INDEX IF EXISTS idx_scoring_runs_idempotency")
+    conn.execute(
+        "CREATE UNIQUE INDEX idx_scoring_runs_idempotency"
+        " ON matter_scoring_runs(matter_id, timeline_hash)"
+        " WHERE status IN ('queued','running')"
     )
 
 

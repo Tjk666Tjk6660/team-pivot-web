@@ -11,6 +11,7 @@ import { SettingsExternalAI } from "@/pages/SettingsExternalAI";
 import { AdminPage } from "@/pages/AdminPage";
 import { AdminApplications } from "@/pages/admin/AdminApplications";
 import { AdminInvites } from "@/pages/admin/AdminInvites";
+import { AdminScoringPage } from "@/pages/admin/AdminScoringPage";
 import { AdminUsers } from "@/pages/admin/AdminUsers";
 import { MatterDetailEmpty, MatterDetailPane } from "@/pages/MatterDetailPane";
 import { NewMatter } from "@/pages/NewMatter";
@@ -78,6 +79,7 @@ export function App() {
           <Route path="/admin/applications" element={<AdminApplications />} />
           <Route path="/admin/users" element={<AdminUsers />} />
           <Route path="/admin/invites" element={<AdminInvites />} />
+          <Route path="/admin/scoring" element={<AdminScoringPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </MatterEventsProvider>
