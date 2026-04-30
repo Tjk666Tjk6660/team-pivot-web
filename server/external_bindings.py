@@ -90,6 +90,33 @@ class ExternalBindingRepo:
             ).fetchone()
         return _row_to_binding(row) if row else None
 
+    def lookup_any_provider(
+        self, external_id: str,
+    ) -> ExternalBinding | None:
+        """Look up a binding by external_id alone (or by external_union_id),
+        regardless of provider. Used by the display resolver to translate a
+        legacy feishu open_id / union_id (frontmatter pre-migration) into the
+        owning pivot_user.id.
+
+        Match priority is "exact external_id first, then external_union_id" so
+        a feishu open_id (which lives in external_id) wins over a union_id
+        match on some other provider's row.
+        """
+        if not external_id:
+            return None
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM external_binding WHERE external_id=? LIMIT 1",
+                (external_id,),
+            ).fetchone()
+            if row is None:
+                row = conn.execute(
+                    "SELECT * FROM external_binding"
+                    " WHERE external_union_id=? LIMIT 1",
+                    (external_id,),
+                ).fetchone()
+        return _row_to_binding(row) if row else None
+
     def list_for_user(self, pivot_user_id: str) -> list[ExternalBinding]:
         with self._db.connect() as conn:
             rows = conn.execute(

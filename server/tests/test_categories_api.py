@@ -8,8 +8,11 @@ from server.api_tokens import ApiTokenRepo
 from server.auth.deps import make_current_user
 from server.auth.session import SessionStore
 from server.contacts import ContactRepo
+from server.external_bindings import ExternalBindingRepo
 from server.favorites import FavoriteRepo
+from server.mentions import DisplayResolver
 from server.notify import NoOpNotifier
+from server.pivot_users import PivotUserRepo
 from server.read_state import ReadStateRepo
 
 from .test_discussions_api import _WorkspaceStub, _write_post
@@ -33,6 +36,7 @@ def _write_index(index_dir, slug: str, last_updated: str) -> None:
 
 def _build_app(db, users, contacts, discussions, index_dir):
     current_user = make_current_user(SessionStore(db), users, ApiTokenRepo(db))
+    resolver = DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), contacts)
     app = FastAPI()
     app.include_router(
         build_router(
@@ -42,6 +46,7 @@ def _build_app(db, users, contacts, discussions, index_dir):
             NoOpNotifier(),
             ReadStateRepo(db),
             FavoriteRepo(db),
+            resolver,
             current_user,
         )
     )

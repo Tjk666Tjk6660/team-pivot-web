@@ -59,6 +59,9 @@ from server.file_reads import FileReadRepo
 from server.mcp.server import build_mcp_app
 from server.notify import NoOpNotifier
 from server.read_state import ReadStateRepo
+from server.external_bindings import ExternalBindingRepo
+from server.mentions import DisplayResolver
+from server.pivot_users import PivotUserRepo
 from server.relevance_events import RelevanceEventsRepo
 from server.users import UserRepo
 
@@ -110,7 +113,7 @@ def _build_combined_app(db: Database, users: UserRepo,
         build_matters_router(
             workspace, users, ContactRepo(db), NoOpNotifier(),
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
-            RelevanceEventsRepo(db), current_user,
+            RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), ContactRepo(db)), current_user,
         )
     )
     app.mount("/mcp", mcp_app)

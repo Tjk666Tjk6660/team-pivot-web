@@ -10,9 +10,16 @@ from server.api_tokens import ApiTokenRepo
 from server.auth.deps import make_current_user
 from server.auth.session import SessionStore
 from server.contacts import ContactRepo
+from server.external_bindings import ExternalBindingRepo
 from server.favorites import FavoriteRepo
+from server.mentions import DisplayResolver
 from server.notify import NoOpNotifier
+from server.pivot_users import PivotUserRepo
 from server.read_state import ReadStateRepo
+
+
+def _resolver(db, contacts) -> DisplayResolver:
+    return DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), contacts)
 
 
 class _WorkspaceStub:
@@ -64,6 +71,7 @@ def test_threads_route_uses_contact_fallback_for_author_display(db, users, tmp_p
             NoOpNotifier(),
             ReadStateRepo(db),
             FavoriteRepo(db),
+            _resolver(db, contacts),
             current_user,
         )
     )
@@ -96,6 +104,7 @@ def test_create_thread_accepts_chinese_category(db, users, tmp_path):
             NoOpNotifier(),
             ReadStateRepo(db),
             FavoriteRepo(db),
+            _resolver(db, contacts),
             current_user,
         )
     )
@@ -139,6 +148,7 @@ def test_threads_route_marks_favorites_for_current_user(db, users, tmp_path):
             NoOpNotifier(),
             ReadStateRepo(db),
             favorites,
+            _resolver(db, contacts),
             current_user,
         )
     )
@@ -176,6 +186,7 @@ def test_toggle_thread_favorite(db, users, tmp_path):
             NoOpNotifier(),
             ReadStateRepo(db),
             favorites,
+            _resolver(db, contacts),
             current_user,
         )
     )
@@ -220,6 +231,7 @@ def test_thread_detail_includes_favorite_flag(db, users, tmp_path):
             NoOpNotifier(),
             ReadStateRepo(db),
             favorites,
+            _resolver(db, contacts),
             current_user,
         )
     )
@@ -261,6 +273,7 @@ def test_thread_detail_includes_author_avatar_url(db, users, tmp_path):
             NoOpNotifier(),
             ReadStateRepo(db),
             FavoriteRepo(db),
+            _resolver(db, contacts),
             current_user,
         )
     )

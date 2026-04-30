@@ -10,7 +10,7 @@ from server.inbox import (
     compute_matter_inbox,
     latest_post_filename,
 )
-from server.mentions import resolve_id
+from server.mentions import DisplayResolver, resolve_id
 from server.read_state import ReadStateRepo
 from server.users import User, UserRepo
 from server.workspace import Workspace
@@ -23,6 +23,7 @@ def build_router(
     users: UserRepo,
     contacts,
     read_states: ReadStateRepo,
+    resolver: DisplayResolver,
     current_user: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
@@ -49,14 +50,14 @@ def build_router(
                         "slug": it.meta.slug,
                         "title": it.meta.title,
                         "author": it.meta.author,
-                        "author_display": resolve_id(it.meta.author, users, contacts),
+                        "author_display": resolve_id(it.meta.author, resolver),
                         "status": it.meta.status,
                         "last_updated": it.meta.last_updated,
                         "post_count": it.meta.post_count,
                     },
                     "unread_count": it.unread_count,
                     "last_post_filename": it.last_post_filename,
-                    "last_post_author_display": resolve_id(it.last_post_author, users, contacts),
+                    "last_post_author_display": resolve_id(it.last_post_author, resolver),
                 }
                 for it in items
             ],
@@ -71,7 +72,7 @@ def build_router(
                     "unread_count": m.unread_count,
                     "last_file_type": m.last_file_type,
                     "last_summary": m.last_summary,
-                    "last_file_author_display": resolve_id(m.last_file_author, users, contacts),
+                    "last_file_author_display": resolve_id(m.last_file_author, resolver),
                 }
                 for m in matter_items
             ],

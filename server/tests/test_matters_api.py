@@ -17,6 +17,9 @@ from server.favorites import FavoriteRepo
 from server.file_reads import FileReadRepo
 from server.notify import NoOpNotifier
 from server.read_state import ReadStateRepo
+from server.external_bindings import ExternalBindingRepo
+from server.mentions import DisplayResolver
+from server.pivot_users import PivotUserRepo
 from server.relevance_events import RelevanceEventsRepo
 
 
@@ -61,7 +64,7 @@ def client(db, users, tmp_path):
         build_router(
             workspace, users, ContactRepo(db), NoOpNotifier(),
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
-            RelevanceEventsRepo(db), current_user,
+            RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), ContactRepo(db)), current_user,
         )
     )
     c = TestClient(app)
@@ -935,7 +938,7 @@ def test_notifier_is_called_on_append_and_status_change(db, users, tmp_path):
         build_router(
             workspace, users, ContactRepo(db), RecordingNotifier(),
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
-            RelevanceEventsRepo(db), current_user,
+            RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), ContactRepo(db)), current_user,
         )
     )
     c = TestClient(app)
@@ -1000,7 +1003,7 @@ def test_create_and_append_propagate_bundled_mentions_to_notifier(db, users, tmp
         build_router(
             workspace, users, ContactRepo(db), RecordingNotifier(),
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
-            RelevanceEventsRepo(db), current_user,
+            RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), ContactRepo(db)), current_user,
         )
     )
     c = TestClient(app)
@@ -1088,7 +1091,7 @@ def test_mcp_name_mentions_resolve_to_open_ids_for_notifier(db, users, tmp_path)
         build_router(
             workspace, users, contacts, RecordingNotifier(),
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
-            RelevanceEventsRepo(db), current_user,
+            RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), ContactRepo(db)), current_user,
         )
     )
     c = TestClient(app)
@@ -1192,7 +1195,7 @@ def test_comment_with_ambiguous_pinyin_returns_422_with_candidates(db, users, tm
         build_router(
             workspace, users, contacts, RecordingNotifier(),
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
-            RelevanceEventsRepo(db), current_user,
+            RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), ContactRepo(db)), current_user,
         )
     )
     c = TestClient(app)
@@ -1289,7 +1292,7 @@ def test_comment_route_does_not_pass_unknown_kwargs_to_notifier(db, users, tmp_p
         build_router(
             workspace, users, ContactRepo(db), notifier,
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
-            RelevanceEventsRepo(db), current_user,
+            RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), ContactRepo(db)), current_user,
         )
     )
     c = TestClient(app)

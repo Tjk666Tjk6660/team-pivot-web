@@ -1,50 +1,102 @@
+"""Display resolution for any "user reference string" that appears in stored
+content (frontmatter `author` / `creator` / `owner` / `mentions[]`, comment
+mentions, render-time @-replacement in body text).
+
+The resolver is "direct-lookup with binding fallback" (see design §7.1):
+
+  1. Direct lookup against `pivot_user.id` — the steady-state path for new
+     content written under the §7.1.1 storage contract (Task 19.5+).
+  2. Fallback through `external_binding` for legacy frontmatter that still
+     stores feishu open_id / union_id from before the migration.
+  3. Optional `contacts` fallback for external feishu users who never logged
+     in (we have a name + avatar from the contact-sync pull but no
+     pivot_user row).
+  4. Echo the original ref back with status='unknown' if nothing matches —
+     never throws.
+
+The resolver memoises results within its lifetime; callers MUST call
+``invalidate()`` after profile / status / binding changes so subsequent
+renders see fresh state. Tests can rebuild a fresh resolver per case.
+"""
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from functools import lru_cache
 
 from server.contacts import ContactRepo
-from server.users import UserRepo
+from server.external_bindings import ExternalBindingRepo
+from server.pivot_users import PivotUserRepo
 
 _FEISHU_ID_RE = re.compile(r"\b(?:ou|on)_[a-zA-Z0-9]{16,}\b")
 
 
-def resolve_id(
-    value: str | None,
-    users: UserRepo,
-    contacts: ContactRepo | None = None,
-) -> str | None:
+@dataclass(frozen=True)
+class DisplayInfo:
+    display_name: str
+    avatar_url: str
+    status: str  # 'active' | 'suspended' | 'deleted' | 'unknown'
+
+
+class DisplayResolver:
+    def __init__(
+        self,
+        pivot_users: PivotUserRepo,
+        bindings: ExternalBindingRepo,
+        contacts: ContactRepo | None = None,
+    ) -> None:
+        self._pivot_users = pivot_users
+        self._bindings = bindings
+        self._contacts = contacts
+        self._cached = lru_cache(maxsize=2048)(self._resolve_uncached)
+
+    def resolve(self, ref: str | None) -> DisplayInfo:
+        if not ref:
+            return DisplayInfo("", "", "unknown")
+        return self._cached(ref)
+
+    def invalidate(self) -> None:
+        self._cached.cache_clear()
+
+    def _resolve_uncached(self, ref: str) -> DisplayInfo:
+        u = self._pivot_users.get(ref)
+        if u is not None:
+            return DisplayInfo(u.display_name, u.avatar_url, u.status)
+
+        binding = self._bindings.lookup_any_provider(ref)
+        if binding is not None:
+            u = self._pivot_users.get(binding.pivot_user_id)
+            if u is not None:
+                return DisplayInfo(u.display_name, u.avatar_url, u.status)
+
+        if self._contacts is not None:
+            c = self._contacts.get_by_any_id(ref)
+            if c is not None:
+                return DisplayInfo(c.name, c.avatar_url or "", "unknown")
+
+        return DisplayInfo(ref, "", "unknown")
+
+
+def resolve_id(value: str | None, resolver: DisplayResolver) -> str | None:
     if not value:
         return value
-    u = users.get_by_any_id(value)
-    if u:
-        return u.name
-    c = contacts.get_by_any_id(value) if contacts else None
-    return c.name if c else value
+    return resolver.resolve(value).display_name or value
 
 
 def resolve_avatar_url(
-    value: str | None,
-    users: UserRepo,
-    contacts: ContactRepo | None = None,
+    value: str | None, resolver: DisplayResolver,
 ) -> str | None:
     if not value:
         return None
-    u = users.get_by_any_id(value)
-    if u and u.avatar_url:
-        return u.avatar_url
-    c = contacts.get_by_any_id(value) if contacts else None
-    if c and c.avatar_url:
-        return c.avatar_url
-    return None
+    return resolver.resolve(value).avatar_url or None
 
 
-def resolve_text(text: str, users: UserRepo, contacts: ContactRepo | None = None) -> str:
+def resolve_text(text: str, resolver: DisplayResolver) -> str:
     def repl(m: re.Match[str]) -> str:
-        oid = m.group(0)
-        u = users.get_by_any_id(oid)
-        if u:
-            return f"@{u.name}"
-        c = contacts.get_by_any_id(oid) if contacts else None
-        return f"@{c.name}" if c else oid
+        ref = m.group(0)
+        info = resolver.resolve(ref)
+        if info.status != "unknown" or info.display_name != ref:
+            return f"@{info.display_name}"
+        return ref
 
     return _FEISHU_ID_RE.sub(repl, text)

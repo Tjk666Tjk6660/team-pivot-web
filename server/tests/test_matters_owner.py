@@ -23,6 +23,9 @@ from server.favorites import FavoriteRepo
 from server.file_reads import FileReadRepo
 from server.notify import NoOpNotifier
 from server.read_state import ReadStateRepo
+from server.external_bindings import ExternalBindingRepo
+from server.mentions import DisplayResolver
+from server.pivot_users import PivotUserRepo
 from server.relevance_events import RelevanceEventsRepo
 
 
@@ -85,7 +88,7 @@ def client(db, users, tmp_path):
         build_router(
             workspace, users, ContactRepo(db), notifier,
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
-            RelevanceEventsRepo(db), current_user,
+            RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), ContactRepo(db)), current_user,
         )
     )
     c = TestClient(app)

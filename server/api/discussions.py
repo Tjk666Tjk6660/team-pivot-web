@@ -12,7 +12,12 @@ from server.contacts import ContactRepo
 from server.favorites import FavoriteRepo
 from server.inbox import compute_unread_counts
 from server.index_files import change_thread_status, get_mentions_by_file
-from server.mentions import resolve_avatar_url, resolve_id, resolve_text
+from server.mentions import (
+    DisplayResolver,
+    resolve_avatar_url,
+    resolve_id,
+    resolve_text,
+)
 from server.notify import Notifier
 from server.publish import (
     PublishError,
@@ -76,6 +81,7 @@ def build_router(
     notifier: Notifier,
     read_states: ReadStateRepo,
     favorites: FavoriteRepo,
+    resolver: DisplayResolver,
     current_user: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
@@ -150,8 +156,7 @@ def build_router(
             "items": [
                 _meta(
                     m,
-                    users,
-                    contacts,
+                    resolver,
                     unread.get(f"{m.category}/{m.slug}", 0),
                     favorite=(f"{m.category}/{m.slug}" in favorite_keys),
                 )
@@ -172,8 +177,7 @@ def build_router(
         return {
             "meta": _meta(
                 detail.meta,
-                users,
-                contacts,
+                resolver,
                 unread_count=0,
                 favorite=favorites.has(user.open_id, thread_key),
             ),
@@ -181,11 +185,11 @@ def build_router(
                 {
                     "filename": p.filename,
                     "frontmatter": p.frontmatter,
-                    "body": resolve_text(p.body, users, contacts),
-                    "author_display": resolve_id(p.frontmatter.get("author"), users, contacts),
-                    "author_avatar_url": resolve_avatar_url(p.frontmatter.get("author"), users, contacts),
+                    "body": resolve_text(p.body, resolver),
+                    "author_display": resolve_id(p.frontmatter.get("author"), resolver),
+                    "author_avatar_url": resolve_avatar_url(p.frontmatter.get("author"), resolver),
                     "mentions": [
-                        {**m, "author_display": resolve_id(m.get("author_id"), users, contacts)}
+                        {**m, "author_display": resolve_id(m.get("author_id"), resolver)}
                         for m in mentions_map.get(p.filename, [])
                     ],
                 }
@@ -319,8 +323,7 @@ def build_router(
 
 def _meta(
     m: ThreadMeta,
-    users: UserRepo,
-    contacts: ContactRepo,
+    resolver: DisplayResolver,
     unread_count: int = 0,
     favorite: bool = False,
 ) -> dict:
@@ -329,7 +332,7 @@ def _meta(
         "slug": m.slug,
         "title": m.title,
         "author": m.author,
-        "author_display": resolve_id(m.author, users, contacts),
+        "author_display": resolve_id(m.author, resolver),
         "status": m.status,
         "last_updated": m.last_updated,
         "post_count": m.post_count,

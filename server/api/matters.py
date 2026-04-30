@@ -23,7 +23,12 @@ from server.matter_index import (
     read_matter_index,
 )
 from server.matter_validator import validate_append
-from server.mentions import resolve_avatar_url, resolve_id, resolve_text
+from server.mentions import (
+    DisplayResolver,
+    resolve_avatar_url,
+    resolve_id,
+    resolve_text,
+)
 from server.notify import Notifier
 from server.posts import read_post
 from server.publish import (
@@ -134,6 +139,7 @@ def build_router(
     favorites: FavoriteRepo,
     file_reads: FileReadRepo,
     relevance_repo: RelevanceEventsRepo,
+    resolver: DisplayResolver,
     current_user: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
@@ -159,7 +165,7 @@ def build_router(
             data = read_matter_index(path)
             if data is None:
                 continue
-            summary = _summarize_matter(data, users, contacts)
+            summary = _summarize_matter(data, resolver)
             if status and summary.get("current_status") != status:
                 continue
             if owner and not _matter_has_owner(data, owner):
@@ -191,12 +197,12 @@ def build_router(
         data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
         if data is None:
             raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
-        rendered = _render_matter_detail(workspace, data, users, contacts)
+        rendered = _render_matter_detail(workspace, data, resolver)
         category = _matter_category(data)
         key = f"{category}/{matter_id}" if category else matter_id
         rendered["matter"]["category"] = category
         rendered["matter"]["favorite"] = favorites.has(user.open_id, key)
-        _inject_readers(rendered["timeline"], matter_id, file_reads, users, contacts)
+        _inject_readers(rendered["timeline"], matter_id, file_reads, resolver)
         _inject_relevance(
             rendered["timeline"], matter_id, user.open_id, relevance_repo,
         )
@@ -597,8 +603,7 @@ def _list_index_files(index_dir: Path) -> list[Path]:
 
 def _summarize_matter(
     data: dict,
-    users: UserRepo | None = None,
-    contacts: ContactRepo | None = None,
+    resolver: DisplayResolver | None = None,
 ) -> dict:
     matter = data.get("matter") or {}
     timeline = data.get("timeline") or []
@@ -617,21 +622,21 @@ def _summarize_matter(
         "last_file_type": last_file.get("type"),
         "last_summary": last_file.get("summary"),
     }
-    if users is not None:
+    if resolver is not None:
         # creator = original first file's creator (matter.creator equivalent).
         first_file = file_items[0] if file_items else {}
         creator = first_file.get("creator")
         out["creator"] = creator
-        out["creator_display"] = resolve_id(creator, users, contacts)
-        out["creator_avatar_url"] = resolve_avatar_url(creator, users, contacts)
+        out["creator_display"] = resolve_id(creator, resolver)
+        out["creator_avatar_url"] = resolve_avatar_url(creator, resolver)
         # matter-level owner: prefer matter.owner; for legacy indexes where
         # the key is missing, fall back to first timeline file owner/creator.
         # Explicit owner: null still means unassigned.
         owner = _effective_matter_owner(data)
         out["owner"] = owner
-        out["owner_display"] = resolve_id(owner, users, contacts) if owner else None
+        out["owner_display"] = resolve_id(owner, resolver) if owner else None
         out["owner_avatar_url"] = (
-            resolve_avatar_url(owner, users, contacts) if owner else None
+            resolve_avatar_url(owner, resolver) if owner else None
         )
     return out
 
@@ -679,13 +684,12 @@ def _matter_last_activity_at(data: dict) -> str:
 def _render_matter_detail(
     workspace: Workspace,
     data: dict,
-    users: UserRepo,
-    contacts: ContactRepo,
+    resolver: DisplayResolver,
 ) -> dict:
     matter = data.get("matter") or {}
     timeline_out = []
     for item in data.get("timeline") or []:
-        rendered = _render_item(workspace, item, users, contacts)
+        rendered = _render_item(workspace, item, resolver)
         timeline_out.append(rendered)
     # last_file_type / last_summary skip owner_change events (no summary).
     file_items = [t for t in timeline_out if t.get("type") not in {"owner_change"}]
@@ -699,9 +703,9 @@ def _render_matter_detail(
         "last_file_type": last_file["type"] if last_file else None,
         "last_summary": last_file.get("summary") if last_file else None,
         "owner": owner,
-        "owner_display": resolve_id(owner, users, contacts) if owner else None,
+        "owner_display": resolve_id(owner, resolver) if owner else None,
         "owner_avatar_url": (
-            resolve_avatar_url(owner, users, contacts) if owner else None
+            resolve_avatar_url(owner, resolver) if owner else None
         ),
     }
     return {"matter": matter_out, "timeline": timeline_out}
@@ -721,14 +725,13 @@ def _effective_matter_owner(data: dict) -> str | None:
 def _render_item(
     workspace: Workspace,
     item: dict,
-    users: UserRepo,
-    contacts: ContactRepo,
+    resolver: DisplayResolver,
 ) -> dict:
     # Owner_change events have a different shape — no file / body / creator /
     # comments / readers. Branch early so the file-type defaults below don't
     # pollute event entries.
     if item.get("type") == "owner_change":
-        return _render_owner_change_item(item, users, contacts)
+        return _render_owner_change_item(item, resolver)
     out = dict(item)
     # Per pivot-interface.md: every timeline entry carries `expanded: false` and `body`.
     out.setdefault("quote", None)
@@ -740,24 +743,24 @@ def _render_item(
     # Name resolution (reuse users→contacts→open_id chain from thread path).
     creator = out.get("creator")
     owner = out.get("owner")
-    out["creator_display"] = resolve_id(creator, users, contacts)
-    out["creator_avatar_url"] = resolve_avatar_url(creator, users, contacts)
-    out["owner_display"] = resolve_id(owner, users, contacts)
-    out["owner_avatar_url"] = resolve_avatar_url(owner, users, contacts)
+    out["creator_display"] = resolve_id(creator, resolver)
+    out["creator_avatar_url"] = resolve_avatar_url(creator, resolver)
+    out["owner_display"] = resolve_id(owner, resolver)
+    out["owner_avatar_url"] = resolve_avatar_url(owner, resolver)
     # Comments: resolve author_display + mentions_display.
     resolved_comments = []
     for c in out.get("comments") or []:
         cc = dict(c)
         author = cc.get("author")
         if author:
-            cc["author_display"] = resolve_id(author, users, contacts)
+            cc["author_display"] = resolve_id(author, resolver)
         if cc.get("mentions"):
             cc["mentions_display"] = [
-                resolve_id(m, users, contacts) for m in cc["mentions"]
+                resolve_id(m, resolver) for m in cc["mentions"]
             ]
         # Also resolve @ids inside the comment body text.
         if cc.get("body"):
-            cc["body"] = resolve_text(cc["body"], users, contacts)
+            cc["body"] = resolve_text(cc["body"], resolver)
         resolved_comments.append(cc)
     out["comments"] = resolved_comments
     return out
@@ -765,8 +768,7 @@ def _render_item(
 
 def _render_owner_change_item(
     item: dict,
-    users: UserRepo,
-    contacts: ContactRepo,
+    resolver: DisplayResolver,
 ) -> dict:
     """Render an owner_change timeline event with display + avatar resolution.
 
@@ -776,23 +778,23 @@ def _render_owner_change_item(
     """
     out = dict(item)
     actor = out.get("actor")
-    out["actor_display"] = resolve_id(actor, users, contacts) if actor else None
+    out["actor_display"] = resolve_id(actor, resolver) if actor else None
     out["actor_avatar_url"] = (
-        resolve_avatar_url(actor, users, contacts) if actor else None
+        resolve_avatar_url(actor, resolver) if actor else None
     )
     from_owner = out.get("from_owner")
     out["from_owner_display"] = (
-        resolve_id(from_owner, users, contacts) if from_owner else None
+        resolve_id(from_owner, resolver) if from_owner else None
     )
     out["from_owner_avatar_url"] = (
-        resolve_avatar_url(from_owner, users, contacts) if from_owner else None
+        resolve_avatar_url(from_owner, resolver) if from_owner else None
     )
     to_owner = out.get("to_owner")
     out["to_owner_display"] = (
-        resolve_id(to_owner, users, contacts) if to_owner else None
+        resolve_id(to_owner, resolver) if to_owner else None
     )
     out["to_owner_avatar_url"] = (
-        resolve_avatar_url(to_owner, users, contacts) if to_owner else None
+        resolve_avatar_url(to_owner, resolver) if to_owner else None
     )
     # Frontend timeline iterates over a heterogeneous list — keep readers_count
     # at 0 (consistent with FileCard's empty state) so consumers don't have to
@@ -837,8 +839,7 @@ def _inject_readers(
     timeline: list[dict],
     matter_id: str,
     file_reads: FileReadRepo,
-    users: UserRepo,
-    contacts: ContactRepo,
+    resolver: DisplayResolver,
 ) -> None:
     by_file = file_reads.list_for_matter(matter_id)
     for item in timeline:
@@ -847,19 +848,18 @@ def _inject_readers(
         readers_raw = by_file.get(basename, [])
         item["readers_count"] = len(readers_raw)
         item["readers"] = [
-            _reader_to_dict(r, users, contacts) for r in readers_raw
+            _reader_to_dict(r, resolver) for r in readers_raw
         ]
 
 
 def _reader_to_dict(
     entry: ReaderEntry,
-    users: UserRepo,
-    contacts: ContactRepo,
+    resolver: DisplayResolver,
 ) -> dict:
     return {
         "open_id": entry.open_id,
-        "name": resolve_id(entry.open_id, users, contacts),
-        "avatar_url": resolve_avatar_url(entry.open_id, users, contacts),
+        "name": resolve_id(entry.open_id, resolver),
+        "avatar_url": resolve_avatar_url(entry.open_id, resolver),
         "first_read_at": _ts_to_iso(entry.first_read_at),
     }
 

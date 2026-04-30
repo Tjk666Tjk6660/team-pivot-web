@@ -52,6 +52,7 @@ from server.invites import InviteRepo
 from server.join_applications import JoinApplicationRepo
 from server.logging_setup import configure_logging
 from server.mcp.server import build_mcp_app
+from server.mentions import DisplayResolver
 from server.notify import FeishuNotifier, NoOpNotifier, Notifier
 from server.ai_conversations import AIConversationRepo
 from server.pivot_users import PivotUserRepo
@@ -107,6 +108,7 @@ def create_app() -> FastAPI:
         redirect_uri=cfg.feishu_redirect_uri,
     )
     sessions = SessionStore(db)
+    resolver = DisplayResolver(pivot_users, bindings, contacts)
     purged = sessions.sweep_expired()
     if purged > 0:
         log.info("sessions swept on startup purged=%d", purged)
@@ -237,7 +239,8 @@ def create_app() -> FastAPI:
         )
     )
     app.include_router(build_discussions_router(
-        workspace, users, contacts, notifier, read_states, favorites, current_user_dep,
+        workspace, users, contacts, notifier, read_states, favorites,
+        resolver, current_user_dep,
     ))
     # The events stream MUST be registered before the matters router,
     # otherwise GET /api/matters/{matter_id} matches first and treats
@@ -246,7 +249,7 @@ def create_app() -> FastAPI:
     app.include_router(build_matters_router(
         workspace, users, contacts, notifier,
         read_states, favorites, file_reads, relevance_events,
-        current_user_dep,
+        resolver, current_user_dep,
     ))
     app.include_router(build_preferences_router(user_prefs, current_user_dep))
     app.include_router(build_workspace_router(
@@ -262,7 +265,7 @@ def create_app() -> FastAPI:
         workspace, drafts, contacts, notifier, current_user_dep,
     ))
     app.include_router(build_inbox_router(
-        workspace, users, contacts, read_states, current_user_dep,
+        workspace, users, contacts, read_states, resolver, current_user_dep,
     ))
     app.include_router(build_contacts_router(
         sessions, contacts, syncer, current_user_dep, current_user_cookie_dep,
