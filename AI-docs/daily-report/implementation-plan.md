@@ -39,18 +39,18 @@ web/src/pages/admin/
 新增两张表(见 `server/db.py` SCHEMA):
 
 ```sql
+-- view / status / push_freq / channel / receiver_type / window_hours 的合法值
+-- 都在代码层(jobs_repo Literal + Pydantic JobIn/JobUpdateIn)校验,DB 不加 CHECK
 CREATE TABLE daily_report_jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
-  view TEXT NOT NULL CHECK(view IN ('company', 'personal')),
-  status TEXT NOT NULL DEFAULT 'active'
-    CHECK(status IN ('active', 'paused', 'archived')),
+  view TEXT NOT NULL,                            -- 'company' | 'personal'
+  status TEXT NOT NULL DEFAULT 'active',         -- 'active' | 'paused' | 'archived'
   push_time TEXT NOT NULL,                       -- "HH:MM"
-  push_freq TEXT NOT NULL DEFAULT 'weekdays',  -- 校验在代码层(jobs_repo.PushFreq)
-  window_hours INTEGER NOT NULL DEFAULT 24
-    CHECK(window_hours BETWEEN 1 AND 168),
-  channel TEXT NOT NULL DEFAULT 'feishu' CHECK(channel IN ('feishu')),
-  receiver_type TEXT NOT NULL CHECK(receiver_type IN ('groups', 'users')),
+  push_freq TEXT NOT NULL DEFAULT 'weekdays',    -- 11 值,见 jobs_repo.PushFreq
+  window_hours INTEGER NOT NULL DEFAULT 24,      -- 1-168 由 Pydantic 守
+  channel TEXT NOT NULL DEFAULT 'feishu',        -- v1 仅 feishu
+  receiver_type TEXT NOT NULL,                   -- 'groups' | 'users'
   receiver_ids TEXT,                             -- JSON array; NULL = 全部 bot 群
   next_run_at REAL,
   last_run_id INTEGER,
@@ -84,9 +84,9 @@ CREATE TABLE daily_report_runs (
 
 外键关系**不走 DB cascade**:每天 365 天清理时,代码层先 `UPDATE jobs SET last_run_id=NULL WHERE last_run_id IN (...)`,再 `DELETE FROM runs WHERE id IN (...)`。
 
-`push_freq` 的合法值集合(`daily / weekdays / mon-sun / month_start / month_end`)在代码层维护(`jobs_repo.PushFreq` Literal + Pydantic 校验),**不**进 SQLite CHECK 约束 — 后续扩枚举(weekly / quarterly / cron 等)直接改 Literal,不用走表重建迁移。
+`daily_report_jobs` 的所有字段值集合(`view / status / push_freq / channel / receiver_type` + `window_hours` 数值范围)都在代码层维护(`jobs_repo` Literal 类型 + Pydantic `JobIn`/`JobUpdateIn` 校验),**不**进 SQLite CHECK 约束 — SQLite 的 CHECK 不支持 ALTER,后续扩枚举不需要走表重建迁移。
 
-> **老库迁移**:v2 上线初期 push_freq 上挂了 `CHECK IN ('daily','weekdays')`。`db.py::_drop_daily_report_jobs_push_freq_check()` 会检测并重建表去掉 CHECK,幂等。新部署直接由 SCHEMA 建无 CHECK 表,跳过迁移。
+> 注:`daily_report_runs` 表的 `trigger_type` / `status` 仍带 CHECK,这两个枚举短期不会扩,等真要动时再顺手清。
 
 ## 调度状态机(`job_scheduler.py`)
 

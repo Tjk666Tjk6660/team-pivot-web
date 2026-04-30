@@ -37,24 +37,24 @@
 ### 1.1 jobs 表
 
 ```sql
+-- 字段值集合(view / status / push_freq / channel / receiver_type)统一在
+-- 代码层校验(jobs_repo Literal + Pydantic JobIn/JobUpdateIn);
+-- window_hours 范围(1-168)同样在 Pydantic 层守。SQLite CHECK 不支持 ALTER,
+-- 放表里只会成为扩枚举的绊脚石。
 CREATE TABLE daily_report_jobs (
   id                    INTEGER PRIMARY KEY AUTOINCREMENT,
   name                  TEXT NOT NULL,                                 -- 用户命名
-  view                  TEXT NOT NULL CHECK(view IN ('company', 'personal')),
+  view                  TEXT NOT NULL,                                 -- 'company' | 'personal'
 
   -- 调度配置
-  status                TEXT NOT NULL DEFAULT 'active'
-                        CHECK(status IN ('active', 'paused', 'archived')),
+  status                TEXT NOT NULL DEFAULT 'active',                -- 'active' | 'paused' | 'archived'
   push_time             TEXT NOT NULL,                                 -- 'HH:MM' (Asia/Shanghai)
-  push_freq             TEXT NOT NULL DEFAULT 'weekdays',  -- 校验在代码层(jobs_repo.PushFreq Literal)
-  window_hours          INTEGER NOT NULL DEFAULT 24
-                        CHECK(window_hours BETWEEN 1 AND 168),
+  push_freq             TEXT NOT NULL DEFAULT 'weekdays',              -- 见 jobs_repo.PushFreq(共 11 值)
+  window_hours          INTEGER NOT NULL DEFAULT 24,                   -- Pydantic 层限定 1-168
 
   -- 渠道 + 发送目标
-  channel               TEXT NOT NULL DEFAULT 'feishu'
-                        CHECK(channel IN ('feishu')),                  -- v1 仅 feishu
-  receiver_type         TEXT NOT NULL
-                        CHECK(receiver_type IN ('groups', 'users')),
+  channel               TEXT NOT NULL DEFAULT 'feishu',                -- v1 仅 feishu
+  receiver_type         TEXT NOT NULL,                                 -- 'groups' | 'users'
   receiver_ids          TEXT,                                          -- JSON array;NULL = 默认全部 bot 群(只对 groups 有效)
 
   -- 运行状态
