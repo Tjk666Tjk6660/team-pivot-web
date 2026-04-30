@@ -1,12 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, X } from "lucide-react";
-import { searchContacts, type Contact } from "@/api";
+import { searchPivotUsers, type PivotUserOption } from "@/api";
 import { cn } from "@/lib/utils";
 
-// owner 存飞书 open_id（规范唯一键）。
-// 显示层由服务端 name resolver 兜底（users → contacts → 原始值，见 pivot-memo.md §5）。
-// 前端这里靠 displayName 缓存最近一次挑选的展示名，避免下拉关闭后显示裸 open_id。
+// OwnerPicker submits pivot_user.id. The server persists pinyin in the matter
+// index and resolves display/avatar through pivot_user at render time.
 
 export function OwnerPicker({
   value,
@@ -27,7 +26,7 @@ export function OwnerPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<Contact[]>([]);
+  const [results, setResults] = useState<PivotUserOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [menuRect, setMenuRect] = useState<{
     left: number;
@@ -93,7 +92,7 @@ export function OwnerPicker({
     debounceRef.current = window.setTimeout(async () => {
       setLoading(true);
       try {
-        setResults(await searchContacts(query));
+        setResults(await searchPivotUsers(query));
       } catch {
         setResults([]);
       } finally {
@@ -117,8 +116,8 @@ export function OwnerPicker({
     setOpen(false);
   };
 
-  const pickContact = (c: Contact) => {
-    onChange(c.open_id, c.name);
+  const pickUser = (c: PivotUserOption) => {
+    onChange(c.id, c.display_name);
     setOpen(false);
     setQuery("");
   };
@@ -150,7 +149,7 @@ export function OwnerPicker({
             sessionOpenId={sessionOpenId}
             sessionName={sessionName}
             pickSelf={pickSelf}
-            pickContact={pickContact}
+            pickContact={pickUser}
             maxListHeight={220}
           />
         </div>
@@ -175,7 +174,7 @@ export function OwnerPicker({
             sessionOpenId={sessionOpenId}
             sessionName={sessionName}
             pickSelf={pickSelf}
-            pickContact={pickContact}
+            pickContact={pickUser}
             maxListHeight={menuRect.maxHeight - 49}
           />
         </div>,
@@ -200,12 +199,12 @@ function OwnerPickerMenuContent({
   query: string;
   setQuery: (query: string) => void;
   loading: boolean;
-  results: Contact[];
+  results: PivotUserOption[];
   value: string;
   sessionOpenId: string;
   sessionName: string;
   pickSelf: () => void;
-  pickContact: (contact: Contact) => void;
+  pickContact: (contact: PivotUserOption) => void;
   maxListHeight: number;
 }) {
   return (
@@ -260,10 +259,10 @@ function OwnerPickerMenuContent({
         )}
         {!loading &&
           results.map((c) => {
-            const selected = value === c.open_id;
+            const selected = value === c.id;
             return (
               <button
-                key={c.open_id}
+                key={c.id}
                 type="button"
                 onClick={() => pickContact(c)}
                 className={cn(
@@ -276,9 +275,9 @@ function OwnerPickerMenuContent({
                 ) : (
                   <span className="h-5 w-5 rounded-full bg-[var(--line-strong)]" />
                 )}
-                <span className="text-[var(--text)]">{c.name}</span>
-                {c.en_name && (
-                  <span className="text-xs text-[var(--text-mute)]">（{c.en_name}）</span>
+                <span className="text-[var(--text)]">{c.display_name}</span>
+                {c.pinyin && (
+                  <span className="text-xs text-[var(--text-mute)]">（{c.pinyin}）</span>
                 )}
                 {selected && <span className="ml-auto text-xs text-[var(--accent)]">✓</span>}
               </button>

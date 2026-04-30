@@ -12,6 +12,7 @@ from server.auth.deps import require_profile
 from server.contacts import ContactRepo
 from server.db import Database
 from server.events import TOPIC_MATTER_VISIBILITY_CHANGED, emit
+from server.external_bindings import ExternalBindingRepo
 from server.favorites import FavoriteRepo
 from server.file_reads import FileReadRepo, ReaderEntry
 from server.inbox import (
@@ -34,6 +35,7 @@ from server.mentions import (
     resolve_text,
 )
 from server.notify import Notifier
+from server.pivot_users import PivotUserRepo
 from server.posts import read_post
 from server.publish import (
     AmbiguousMentionError,
@@ -156,6 +158,8 @@ def build_router(
     resolver: DisplayResolver,
     current_user: Callable,
     db: Database | None = None,
+    pivot_users: PivotUserRepo | None = None,
+    bindings: ExternalBindingRepo | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
 
@@ -420,6 +424,8 @@ def build_router(
                 contacts=contacts,
                 notifier=notifier,
                 users=users,
+                pivot_users=pivot_users,
+                bindings=bindings,
                 file_reads=file_reads,
                 visibility=visibility,
                 new_category_visibility=new_category_visibility,
@@ -487,6 +493,8 @@ def build_router(
                 contacts=contacts,
                 notifier=notifier,
                 users=users,
+                pivot_users=pivot_users,
+                bindings=bindings,
             )
         except MatterNotFoundError as e:
             raise HTTPException(
@@ -555,6 +563,8 @@ def build_router(
                 contacts=contacts,
                 notifier=notifier,
                 users=users,
+                pivot_users=pivot_users,
+                bindings=bindings,
                 file_reads=file_reads,
             )
         except MatterNotFoundError as e:
@@ -606,6 +616,8 @@ def build_router(
                 contacts=contacts,
                 notifier=notifier,
                 users=users,
+                pivot_users=pivot_users,
+                bindings=bindings,
                 file_reads=file_reads,
             )
         except MatterNotFoundError as e:
