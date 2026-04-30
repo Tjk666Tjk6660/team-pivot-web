@@ -187,11 +187,26 @@ def build_router(
     jobs_repo: JobsRepo,
     runs_repo: RunsRepo,
     current_user_cookie_only: Callable,
+    index_dir_provider: Callable[[], Path] | None = None,
+    users_db_path: Path | None = None,
 ) -> APIRouter:
+    """v2 daily report admin router.
+
+    `index_dir_provider`(dev override):返回 matter index 目录路径的 callable。
+        默认 None → 用 `workspace.path / "index"`(正常路径)。
+        Dev 时由 app.py 注入 lambda,优先返回 cfg.daily_report_index_dir_override。
+    `users_db_path`(dev override):personal 视角的全员列表来源(只读)。
+        默认 None → 用 `db_path`(正常路径)。
+    """
     router = APIRouter(
         prefix="/api/admin/daily-report",
         dependencies=[Depends(require_admin)],
     )
+
+    def _index_dir() -> Path:
+        if index_dir_provider is not None:
+            return index_dir_provider()
+        return workspace.path / "index"
 
     # ------------------ jobs CRUD --------------------------- #
 
@@ -350,10 +365,11 @@ def build_router(
                 job=job, run_id=run_id,
                 runs_repo=runs_repo,
                 db_path=db_path,
-                workspace_index_dir=workspace.path / "index",
+                workspace_index_dir=_index_dir(),
                 notifier=notifier,
                 dry_run=body.dry_run,
                 no_ai=body.no_ai,
+                users_db_path=users_db_path,
             ),
             name=f"daily-report-run-now-{job_id}",
             daemon=True,
@@ -403,11 +419,12 @@ def build_router(
                 job=dummy, run_id=run_id,
                 runs_repo=runs_repo,
                 db_path=db_path,
-                workspace_index_dir=workspace.path / "index",
+                workspace_index_dir=_index_dir(),
                 notifier=notifier,
                 dry_run=body.dry_run,
                 no_ai=body.no_ai,
                 explicit_window=explicit_window,
+                users_db_path=users_db_path,
             ),
             name=f"daily-report-manual-{run_id}",
             daemon=True,
@@ -502,6 +519,7 @@ def _run_job_in_thread(
     dry_run: bool,
     no_ai: bool,
     explicit_window: TimeWindow | None = None,
+    users_db_path: Path | None = None,
 ) -> None:
     """跑 runner.run_daily_report_for_job + UPDATE runs.finish。
     与 JobScheduler 的 _run_one_job_safely 类似但不更新 jobs 表(因为是 ad-hoc)。"""
@@ -514,6 +532,7 @@ def _run_job_in_thread(
             notifier=notifier,
             dry_run=dry_run, no_ai=no_ai,
             explicit_window=explicit_window,
+            users_db_path=users_db_path,
         )
         if rc == 0:
             status = "succeeded"

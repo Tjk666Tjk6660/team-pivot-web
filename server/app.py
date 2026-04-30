@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -131,13 +132,34 @@ def create_app() -> FastAPI:
 
     jobs_repo = JobsRepo(db)
     runs_repo = RunsRepo(db)
+
+    # Dev-time daily-report overrides(.env 控制):仅影响日报路径,业务其他
+    # 路径完全不动。
+    # - DAILY_REPORT_INDEX_DIR_OVERRIDE:让日报读指定 matter index 目录
+    #   (通常指向已克隆好的生产数据快照),其余业务仍用 /admin 配置的 dev workspace
+    # - DAILY_REPORT_USERS_DB_PATH:让日报通过 mode=ro 只读打开此 sqlite 取
+    #   users(personal 视角全员列表),AI 配置 / sessions / runs 仍走主 data.db
+    dr_index_override = cfg.daily_report_index_dir_override
+    dr_users_db = cfg.daily_report_users_db_path
+
+    def _dr_index_dir() -> Path:
+        if dr_index_override is not None:
+            return dr_index_override
+        return workspace.path / "index"
+
+    if dr_index_override is not None:
+        log.info("daily-report index dir overridden: %s", dr_index_override)
+    if dr_users_db is not None:
+        log.info("daily-report users db overridden: %s (read-only)", dr_users_db)
+
     daily_report_scheduler = JobScheduler(
         db_path=cfg.data_dir / "data.db",
-        workspace_index_dir_provider=lambda: workspace.path / "index",
+        workspace_index_dir_provider=_dr_index_dir,
         jobs_repo=jobs_repo,
         runs_repo=runs_repo,
         settings=settings,
         notifier=notifier,
+        users_db_path=dr_users_db,
     )
 
     @asynccontextmanager
@@ -230,6 +252,8 @@ def create_app() -> FastAPI:
         jobs_repo=jobs_repo,
         runs_repo=runs_repo,
         current_user_cookie_only=current_user_cookie_dep,
+        index_dir_provider=_dr_index_dir,
+        users_db_path=dr_users_db,
     ))
     app.include_router(build_drafts_router(
         workspace, drafts, contacts, notifier, current_user_dep,
