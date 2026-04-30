@@ -392,5 +392,3 @@ function fmtDate(epoch: number): string {
   return d.toLocaleString();
 }
 
-// Re-export for convenience
-export { clearAdminPassword } from "@/api";

@@ -718,25 +718,9 @@ export type AISettings = {
   max_rounds: number;
 };
 
-// Legacy admin-password machinery — kept as no-ops for one release while
-// AdminPage.tsx still calls these helpers. The server-side X-Admin-Password
-// gate was removed in Task 15 (admin endpoints now check pivot_user.role
-// over the cookie session); the header is no longer sent on the wire.
-// Task 31 strips the call sites and these helpers can then be deleted.
-export const ADMIN_PW_HEADER = "X-Admin-Password";
-
-export function getAdminPassword(): string | null {
-  return null;
-}
-
-export function setAdminPassword(_pw: string): void {
-  /* no-op: server no longer accepts X-Admin-Password */
-}
-
-export function clearAdminPassword(): void {
-  /* no-op */
-}
-
+/** Thrown by adminFetch when the server returns admin_required (401/403).
+ *  Callers (admin sections in AdminPage.tsx) catch this to surface a toast
+ *  prompting the admin to refresh / re-login. */
 export class AdminRequiredError extends Error {
   constructor() { super("admin_required"); this.name = "AdminRequiredError"; }
 }

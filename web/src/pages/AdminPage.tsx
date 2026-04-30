@@ -1,16 +1,15 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Bot, FileText, FolderGit2, Lock, Palette, Play, ShieldCheck, Users } from "lucide-react";
+import { ArrowLeft, Bot, FileText, FolderGit2, Mail, Palette, Play, UserPlus, Users } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import {
   AdminRequiredError,
-  clearAdminPassword,
   fetchAdminMarkdownSettings,
   fetchAISettings,
   fetchDailyReportConfig,
   fetchDailyReportLastRun,
+  fetchMe,
   fetchWorkspaceAdminConfig,
-  setAdminPassword,
   syncContacts,
   triggerDailyReport,
   updateAdminMarkdownSettings,
@@ -20,6 +19,7 @@ import {
   type DailyReportConfig,
   type DailyReportLastRun,
   type MarkdownStyleMeta,
+  type Me,
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -50,12 +50,18 @@ const MARKDOWN_STYLE_SWATCHES: Record<string, { bg: string; accent: string; code
 };
 
 export function AdminPage() {
-  const [unlocked, setUnlocked] = useState(false);
+  const [me, setMe] = useState<Me | null | undefined>(undefined);
 
   useEffect(() => {
-    clearAdminPassword();
-    setUnlocked(false);
+    fetchMe().then(setMe).catch(() => setMe(null));
   }, []);
+
+  // 角色丢失（被降级 / 暂停）— 提示并让上层路由处理；不再 setUnlocked。
+  const onAdminLost = () => {
+    toast.error("管理员权限已失效，请刷新或重新登录");
+  };
+
+  const isAdmin = me?.role === "admin" && me.status === "active";
 
   return (
     <div className="min-h-screen" style={{ background: "var(--bg)" }}>
@@ -92,31 +98,62 @@ export function AdminPage() {
               className="mt-0.5 text-[11.5px] font-meta"
               style={{ color: "var(--text-mute)" }}
             >
-              管理数据仓库 · AI 助手 · 联系人同步
+              用户 · 邀请 · 数据仓库 · AI 助手
             </p>
           </div>
-          <div className="ml-auto hidden items-center gap-2 lg:flex">
-            <InfoChip icon={<FolderGit2 className="h-3.5 w-3.5" />} label="Repo + Token" />
-            <InfoChip icon={<Bot className="h-3.5 w-3.5" />} label="AI Model + Key" />
-            <InfoChip icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Admin Session" />
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              asChild
+              variant="outline"
+              size="sm"
+              className="h-8 rounded-[var(--r-sm)] text-[12.5px]"
+            >
+              <Link to="/admin/applications">
+                <UserPlus className="h-3.5 w-3.5" /> 加入申请
+              </Link>
+            </Button>
+            <Button
+              asChild
+              variant="outline"
+              size="sm"
+              className="h-8 rounded-[var(--r-sm)] text-[12.5px]"
+            >
+              <Link to="/admin/users">
+                <Users className="h-3.5 w-3.5" /> 用户
+              </Link>
+            </Button>
+            <Button
+              asChild
+              variant="outline"
+              size="sm"
+              className="h-8 rounded-[var(--r-sm)] text-[12.5px]"
+            >
+              <Link to="/admin/invites">
+                <Mail className="h-3.5 w-3.5" /> 邀请
+              </Link>
+            </Button>
           </div>
         </div>
       </header>
 
-      {!unlocked ? (
-        <AdminGate onUnlock={() => setUnlocked(true)} />
+      {me === undefined ? (
+        <main className="mx-auto max-w-3xl px-6 py-12">
+          <p style={{ color: "var(--text-mute)" }}>加载中…</p>
+        </main>
+      ) : !isAdmin ? (
+        <RoleDeniedNotice me={me} />
       ) : (
         <main className="mx-auto max-w-7xl px-6 py-8">
           <AdminIntro />
           <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
             <div className="space-y-6">
-              <WorkspaceConfigSection onAdminLost={() => setUnlocked(false)} />
-              <DailyReportSection onAdminLost={() => setUnlocked(false)} />
-              <SyncContactsSection onAdminLost={() => setUnlocked(false)} />
+              <WorkspaceConfigSection onAdminLost={onAdminLost} />
+              <DailyReportSection onAdminLost={onAdminLost} />
+              <SyncContactsSection onAdminLost={onAdminLost} />
             </div>
             <div className="space-y-6">
-              <MarkdownSettingsSection onAdminLost={() => setUnlocked(false)} />
-              <AISettingsSection onAdminLost={() => setUnlocked(false)} />
+              <MarkdownSettingsSection onAdminLost={onAdminLost} />
+              <AISettingsSection onAdminLost={onAdminLost} />
             </div>
           </div>
         </main>
@@ -125,19 +162,37 @@ export function AdminPage() {
   );
 }
 
-function InfoChip({ icon, label }: { icon: React.ReactNode; label: string }) {
+function RoleDeniedNotice({ me }: { me: Me | null }) {
   return (
-    <div
-      className="flex items-center gap-2 rounded-full px-3 py-1 text-[11.5px] font-meta tracking-wide"
-      style={{
-        background: "var(--surface-alt)",
-        border: "1px solid var(--line)",
-        color: "var(--text-mute)",
-      }}
-    >
-      {icon}
-      <span>{label}</span>
-    </div>
+    <main className="mx-auto max-w-2xl px-6 py-16">
+      <Card
+        className="overflow-hidden border-[var(--line)] shadow-[var(--shadow-sm)]"
+      >
+        <CardHeader>
+          <CardTitle
+            className="text-[20px]"
+            style={{
+              fontFamily: "var(--font-serif)",
+              color: "var(--danger-500)",
+            }}
+          >
+            需要管理员权限
+          </CardTitle>
+          <CardDescription>
+            {me === null
+              ? "你尚未登录。请先登录后再访问管理面板。"
+              : me.status !== "active"
+                ? "账号当前不处于活跃状态，无法进入管理面板。"
+                : "这个页面仅管理员可访问。如需协助，请联系当前管理员把你升级为 admin。"}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button asChild>
+            <Link to="/">返回首页</Link>
+          </Button>
+        </CardContent>
+      </Card>
+    </main>
   );
 }
 
@@ -191,58 +246,6 @@ function QuickFact({ title, value }: { title: string; value: string }) {
       <div className="text-xs font-medium uppercase tracking-wide text-[var(--text-mute)]">{title}</div>
       <div className="mt-1 text-sm font-semibold text-[var(--text)]">{value}</div>
     </div>
-  );
-}
-
-// ── Admin password gate ──────────────────────────────────────────────────────
-
-function AdminGate({ onUnlock }: { onUnlock: () => void }) {
-  const [pw, setPw] = useState("");
-
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!pw) return;
-    setAdminPassword(pw);
-    onUnlock();
-  };
-
-  return (
-    <main className="mx-auto max-w-5xl px-6 py-12">
-      <Card className="overflow-hidden border-[var(--line)] shadow-[var(--shadow-sm)]">
-        <div className="grid lg:grid-cols-[minmax(0,1.1fr)_420px]">
-          <div className="border-b border-[var(--line)] bg-[var(--surface-alt)] p-8 lg:border-b-0 lg:border-r">
-            <div className="mb-3 flex items-center gap-2 text-sm font-medium text-[var(--text-soft)]">
-              <Lock className="h-4 w-4 text-[var(--warn-600)]" />
-              需要管理员密码
-            </div>
-            <h2 className="text-2xl font-semibold tracking-tight text-[var(--text)]">
-              解锁管理面板
-            </h2>
-            <p className="mt-3 max-w-xl text-sm leading-6 text-[var(--text-soft)]">
-              此页面包含数据仓库连接信息、AI 配置以及联系人同步动作。每次进入本页都需要重新输入管理员密码。
-            </p>
-          </div>
-          <div className="p-8">
-            <form onSubmit={submit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="admin-password">管理员密码</Label>
-                <Input
-                  id="admin-password"
-                  type="password"
-                  placeholder="输入管理员密码"
-                  value={pw}
-                  onChange={(e) => setPw(e.target.value)}
-                  autoFocus
-                />
-              </div>
-              <Button type="submit" className="w-full" disabled={!pw}>
-                进入管理员设置
-              </Button>
-            </form>
-          </div>
-        </div>
-      </Card>
-    </main>
   );
 }
 
@@ -1115,5 +1118,3 @@ function SyncContactsSection({ onAdminLost }: { onAdminLost: () => void }) {
     </section>
   );
 }
-
-export { clearAdminPassword };
