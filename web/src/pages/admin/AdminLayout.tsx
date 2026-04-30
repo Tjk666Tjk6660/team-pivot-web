@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronRight } from "lucide-react";
 import { Toaster } from "sonner";
 import { fetchMe, type Me } from "@/api";
 import { Button } from "@/components/ui/button";
@@ -138,19 +138,53 @@ function SidebarHeader({ me }: { me: Me }) {
 function NavGroup({
   title,
   children,
+  storageKey,
 }: {
   title: string;
   children: React.ReactNode;
+  /** localStorage key that remembers the open/closed state across reloads.
+   *  Defaults to title-derived key so each group has its own slot. */
+  storageKey?: string;
 }) {
+  const key = `admin.nav.${storageKey ?? title}`;
+  const [open, setOpen] = useState<boolean>(() => {
+    try {
+      const v = localStorage.getItem(key);
+      return v == null ? true : v === "1";
+    } catch {
+      return true;
+    }
+  });
+  const toggle = () => {
+    setOpen((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(key, next ? "1" : "0");
+      } catch {
+        /* ignore (private window etc.) */
+      }
+      return next;
+    });
+  };
   return (
     <div className="mb-4">
-      <div
-        className="px-2 py-1 text-[10.5px] font-bold uppercase tracking-[0.22em] font-meta"
+      <button
+        type="button"
+        onClick={toggle}
+        className="flex w-full items-center gap-1.5 rounded-[var(--r-sm)] px-2 py-1 text-left text-[10.5px] font-bold uppercase tracking-[0.22em] font-meta transition-colors hover:bg-[var(--surface)]"
         style={{ color: "var(--text-mute)" }}
+        aria-expanded={open}
       >
-        {title}
-      </div>
-      <ul className="mt-1 flex flex-col gap-0.5">{children}</ul>
+        {open ? (
+          <ChevronDown className="h-3 w-3 shrink-0" />
+        ) : (
+          <ChevronRight className="h-3 w-3 shrink-0" />
+        )}
+        <span className="flex-1">{title}</span>
+      </button>
+      {open && (
+        <ul className="mt-1 flex flex-col gap-0.5">{children}</ul>
+      )}
     </div>
   );
 }
