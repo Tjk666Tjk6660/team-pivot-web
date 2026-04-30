@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  ChevronDown,
   KeyRound,
-  MoreHorizontal,
   Pause,
   Play,
   Shield,
@@ -214,12 +214,13 @@ function UserRow({
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
-                size="icon"
+                size="sm"
                 disabled={busy}
-                className="h-8 w-8 rounded-[var(--r-sm)]"
+                className="h-8 gap-1 rounded-[var(--r-sm)] px-2.5 text-[12.5px]"
                 aria-label="用户操作"
               >
-                <MoreHorizontal className="h-4 w-4" />
+                操作
+                <ChevronDown className="h-3.5 w-3.5" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[160px]">
