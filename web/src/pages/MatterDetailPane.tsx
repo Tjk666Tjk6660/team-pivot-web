@@ -919,6 +919,7 @@ export function MatterDetailPane() {
                   <OwnerChip
                     name={matter.owner_display}
                     avatarUrl={matter.owner_avatar_url}
+                    view={matter.owner_view}
                     unassigned={!matter.owner}
                     size="md"
                     asButton

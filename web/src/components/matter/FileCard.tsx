@@ -23,6 +23,11 @@ import {
 } from "@/components/MentionField";
 import { cn } from "@/lib/utils";
 import {
+  userClassName,
+  userInlineStyle,
+  userTooltip,
+} from "@/lib/displayUser";
+import {
   getMarkdownStyleClass,
   type MarkdownStyleId,
 } from "@/components/markdown/markdownStyles";
@@ -640,14 +645,26 @@ function CommentsBlock({ item }: { item: TimelineFileItem }) {
               >
                 · {relativeTime(c.created_at)}
               </span>
-              <span className="ml-2 font-semibold text-[var(--text)]">
+              <span
+                className={`ml-2 font-semibold text-[var(--text)] ${userClassName(c.author_view?.status ?? "active")}`}
+                title={userTooltip(c.author_view?.status ?? "active") ?? undefined}
+                style={userInlineStyle(c.author_view?.status ?? "active")}
+              >
                 {author}
               </span>
-              {mentionNames.map((name, mi) => (
-                <span key={mi} className="ml-1 text-[var(--accent)]">
-                  @{name}
-                </span>
-              ))}
+              {mentionNames.map((name, mi) => {
+                const view = c.mentions_view?.[mi];
+                return (
+                  <span
+                    key={mi}
+                    className={`ml-1 text-[var(--accent)] ${userClassName(view?.status ?? "active")}`}
+                    title={userTooltip(view?.status ?? "active") ?? undefined}
+                    style={userInlineStyle(view?.status ?? "active")}
+                  >
+                    @{name}
+                  </span>
+                );
+              })}
               <span className="ml-1 text-[var(--text-mute)]">说:</span>
               {body ? (
                 <span className="ml-0.5">{body}</span>

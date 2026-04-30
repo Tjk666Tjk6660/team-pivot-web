@@ -10,6 +10,11 @@ import {
   UserRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  userClassName,
+  userInlineStyle,
+  userTooltip,
+} from "@/lib/displayUser";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -347,10 +352,12 @@ function MatterRow({ matter }: { matter: MatterSummary }) {
 
 function OwnerInline({ matter }: { matter: MatterSummary }) {
   const label = matter.owner_display || "未分配";
+  const status = matter.owner_view?.status ?? "active";
+  const tip = userTooltip(status);
   return (
     <span
       className="inline-flex min-w-0 max-w-[6.75rem] shrink-0 items-center gap-1 text-[var(--text-mute)]"
-      title={`负责人：${label}`}
+      title={tip ? `负责人：${label}（${tip}）` : `负责人：${label}`}
     >
       {matter.owner_avatar_url ? (
         <img
@@ -361,7 +368,12 @@ function OwnerInline({ matter }: { matter: MatterSummary }) {
       ) : (
         <UserRound className="h-3.5 w-3.5 shrink-0 text-[var(--text-fade)]" />
       )}
-      <span className="min-w-0 truncate">{label}</span>
+      <span
+        className={`min-w-0 truncate ${userClassName(status)}`}
+        style={userInlineStyle(status)}
+      >
+        {label}
+      </span>
     </span>
   );
 }

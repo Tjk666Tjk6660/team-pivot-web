@@ -92,13 +92,23 @@ export type Verification = {
   comment: string;
 };
 
+export type AuthorView = {
+  user_id: string;
+  open_id: string;
+  display_name: string;
+  avatar_url: string | null;
+  status: "active" | "suspended" | "deleted" | "unknown";
+};
+
 export type TimelineComment = {
   author: string;
   author_display?: string;
+  author_view?: AuthorView | null;
   created_at: string;
   body: string;
   mentions?: string[];
   mentions_display?: string[];
+  mentions_view?: (AuthorView | null)[];
   // True when the current user is mentioned in this comment AND has not
   // marked the host file as read (via POST /matters/{id}/files/{f}/read).
   // Detail interface populates this; missing for old backends or for users
@@ -120,6 +130,7 @@ export type Reader = {
   open_id: string;
   name: string;
   avatar_url: string | null;
+  view?: AuthorView | null;
   first_read_at: string;
 };
 
@@ -130,8 +141,10 @@ export type TimelineFileItem = {
   owner: string;
   owner_display?: string | null;
   owner_avatar_url?: string | null;
+  owner_view?: AuthorView | null;
   creator_display?: string | null;
   creator_avatar_url?: string | null;
+  creator_view?: AuthorView | null;
   type: DocType;
   summary: string;
   quote: string | null;
@@ -155,12 +168,15 @@ export type TimelineOwnerChangeItem = {
   actor: string;
   actor_display: string | null;
   actor_avatar_url: string | null;
+  actor_view?: AuthorView | null;
   from_owner: string | null;
   from_owner_display: string | null;
   from_owner_avatar_url: string | null;
+  from_owner_view?: AuthorView | null;
   to_owner: string;
   to_owner_display: string | null;
   to_owner_avatar_url: string | null;
+  to_owner_view?: AuthorView | null;
   reason: string;
   status_change: StatusChange | null;
   readers_count?: number;
@@ -191,9 +207,11 @@ export type MatterSummary = {
   owner: string | null;
   owner_display: string | null;
   owner_avatar_url: string | null;
+  owner_view?: AuthorView | null;
   creator?: string | null;
   creator_display?: string | null;
   creator_avatar_url?: string | null;
+  creator_view?: AuthorView | null;
   unread_count: number;
   // Red = unread items that are relevant to the current user; gray = the rest
   // of unread_count. Together they sum to unread_count (red + gray ===

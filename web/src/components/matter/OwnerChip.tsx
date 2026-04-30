@@ -1,9 +1,16 @@
 import { UserRound } from "lucide-react";
+import type { AuthorView } from "@/api";
 import { cn } from "@/lib/utils";
+import {
+  userClassName,
+  userInlineStyle,
+  userTooltip,
+} from "@/lib/displayUser";
 
 export function OwnerChip({
   name,
   avatarUrl,
+  view,
   unassigned = false,
   size = "sm",
   className,
@@ -12,6 +19,7 @@ export function OwnerChip({
 }: {
   name?: string | null;
   avatarUrl?: string | null;
+  view?: AuthorView | null;
   unassigned?: boolean;
   size?: "sm" | "md";
   className?: string;
@@ -19,6 +27,8 @@ export function OwnerChip({
   onClick?: () => void;
 }) {
   const label = name || "未分配";
+  const status = view?.status ?? "active";
+  const statusTooltip = userTooltip(status);
   const avatarSize = size === "md" ? "h-6 w-6" : "h-4 w-4";
   const textSize = size === "md" ? "text-xs" : "text-[11px]";
   const Comp = asButton ? "button" : "span";
@@ -26,7 +36,11 @@ export function OwnerChip({
   return (
     <Comp
       type={asButton ? "button" : undefined}
-      title={asButton ? `更改负责人：${label}` : label}
+      title={
+        asButton
+          ? `更改负责人：${label}${statusTooltip ? `（${statusTooltip}）` : ""}`
+          : statusTooltip ?? label
+      }
       onClick={onClick}
       className={cn(
         "inline-flex min-w-[5rem] max-w-[8rem] shrink-0 items-center gap-1.5 rounded-[var(--r-sm)] border border-[var(--line)] bg-[var(--surface-alt)] px-1.5 py-0.5",
@@ -57,7 +71,9 @@ export function OwnerChip({
           "min-w-0 truncate font-medium leading-none text-[var(--text-mute)]",
           textSize,
           unassigned && "text-[var(--text-fade)]",
+          userClassName(status),
         )}
+        style={userInlineStyle(status)}
       >
         {label}
       </span>
