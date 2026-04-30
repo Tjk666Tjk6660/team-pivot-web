@@ -3,16 +3,20 @@ import { Link } from "react-router-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Plus, ShieldCheck, User } from "lucide-react";
-import { fetchAppHome, type AppHomePayload } from "@/api";
+import { fetchAppHome, fetchMe, type AppHomePayload, type Me } from "@/api";
 
 export function HomeWelcomePane() {
   const [data, setData] = useState<AppHomePayload | null | undefined>(undefined);
+  const [me, setMe] = useState<Me | null>(null);
 
   useEffect(() => {
     fetchAppHome()
       .then(setData)
       .catch(() => setData(null));
+    fetchMe().then(setMe).catch(() => setMe(null));
   }, []);
+
+  const isAdmin = !!me?.roles?.includes("admin");
 
   if (data === undefined) {
     return (
@@ -189,11 +193,13 @@ export function HomeWelcomePane() {
           </div>
           <div className="flex flex-col gap-1.5">
             <QuickLink to="/new" label="发起新讨论" icon={<Plus className="h-3.5 w-3.5" />} />
-            <QuickLink
-              to="/admin"
-              label="管理员设置"
-              icon={<ShieldCheck className="h-3.5 w-3.5" />}
-            />
+            {isAdmin && (
+              <QuickLink
+                to="/admin"
+                label="管理员设置"
+                icon={<ShieldCheck className="h-3.5 w-3.5" />}
+              />
+            )}
             <QuickLink
               to="/settings"
               label="个人设置"

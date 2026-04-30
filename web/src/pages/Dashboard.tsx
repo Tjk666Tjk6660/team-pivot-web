@@ -1138,18 +1138,20 @@ function UserMenu({ me, onLogout }: { me: Me; onLogout: () => void }) {
             />
             个人设置
           </Link>
-          <Link
-            to="/admin"
-            onClick={() => setOpen(false)}
-            className="flex items-center gap-2.5 px-3 py-2.5 text-[13px] hover:bg-[var(--surface-alt)]"
-            style={{ color: "var(--text-soft)" }}
-          >
-            <ShieldCheck
-              className="h-3.5 w-3.5"
-              style={{ color: "var(--text-mute)" }}
-            />
-            管理员设置
-          </Link>
+          {me.roles?.includes("admin") && (
+            <Link
+              to="/admin"
+              onClick={() => setOpen(false)}
+              className="flex items-center gap-2.5 px-3 py-2.5 text-[13px] hover:bg-[var(--surface-alt)]"
+              style={{ color: "var(--text-soft)" }}
+            >
+              <ShieldCheck
+                className="h-3.5 w-3.5"
+                style={{ color: "var(--text-mute)" }}
+              />
+              管理员设置
+            </Link>
+          )}
           <button
             type="button"
             onClick={() => {
