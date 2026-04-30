@@ -195,11 +195,12 @@ function UserRow({
               )}
             </div>
             <div className="mt-0.5 truncate text-[12px] font-meta" style={mutedStyle}>
-              {user.email || "无邮箱"} · {user.providers.join(" / ") || "无身份绑定"}
+              {user.email || "无邮箱"}
               {user.last_login_at && (
                 <> · 上次登录 {new Date(user.last_login_at * 1000).toLocaleString()}</>
               )}
             </div>
+            <BindingChips bindings={user.bindings} />
             {user.status_note && (
               <div
                 className="mt-0.5 truncate text-[12px]"
@@ -502,6 +503,101 @@ function ResetPasswordDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function BindingChips({ bindings }: { bindings: AdminUser["bindings"] }) {
+  if (bindings.length === 0) {
+    return (
+      <div
+        className="mt-1 text-[11.5px] font-meta italic"
+        style={{ color: "var(--text-mute)" }}
+      >
+        无身份绑定
+      </div>
+    );
+  }
+  // Group same-provider bindings → 多于 1 条 = 合并过
+  const sameProviderCount: Record<string, number> = {};
+  for (const b of bindings) {
+    sameProviderCount[b.provider] = (sameProviderCount[b.provider] ?? 0) + 1;
+  }
+  const merged = Object.values(sameProviderCount).some((n) => n > 1);
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      {bindings.map((b) => (
+        <BindingChip key={b.id} binding={b} />
+      ))}
+      {merged && (
+        <span
+          className="rounded-full px-2 py-0.5 text-[10.5px] font-bold tracking-wider font-meta"
+          style={{
+            background: "var(--accent-bg)",
+            color: "var(--accent)",
+            border: "1px solid var(--accent)",
+          }}
+          title="此用户由多份外部身份合并而成"
+        >
+          合并身份
+        </span>
+      )}
+    </div>
+  );
+}
+
+function BindingChip({
+  binding,
+}: {
+  binding: AdminUser["bindings"][number];
+}) {
+  // raw_profile 形如 {"name":"张三","avatar_url":"...","union_id":"on_..."}（feishu）
+  // 或 null（invite，因为我们建邀请时不存 raw_profile）。
+  const rawName =
+    binding.raw_profile && typeof binding.raw_profile.name === "string"
+      ? (binding.raw_profile.name as string)
+      : null;
+  const provider = binding.provider;
+  const externalShort =
+    binding.external_id.length > 14
+      ? binding.external_id.slice(0, 12) + "…"
+      : binding.external_id;
+
+  // feishu chip：飞书 · 张三（hover 显示完整 ou_xxx）
+  // invite chip：邮箱 · alice@x.com
+  const label =
+    provider === "feishu"
+      ? rawName ?? externalShort
+      : provider === "invite"
+        ? binding.external_id
+        : externalShort;
+  const tag =
+    provider === "feishu" ? "飞书" : provider === "invite" ? "邮箱" : provider;
+  const tooltip = [
+    `provider=${provider}`,
+    `external_id=${binding.external_id}`,
+    binding.external_union_id ? `union_id=${binding.external_union_id}` : null,
+    `bound_at=${new Date(binding.bound_at * 1000).toLocaleString()}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-meta"
+      style={{
+        background: "var(--surface-alt)",
+        border: "1px solid var(--line)",
+        color: "var(--text-soft)",
+      }}
+      title={tooltip}
+    >
+      <span
+        className="font-bold tracking-wider"
+        style={{ color: "var(--text-mute)" }}
+      >
+        {tag}
+      </span>
+      <span style={{ color: "var(--text)" }}>{label}</span>
+    </span>
   );
 }
 

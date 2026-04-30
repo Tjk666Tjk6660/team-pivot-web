@@ -1331,6 +1331,15 @@ export async function unblockApplication(
 
 // ── Admin: users ──────────────────────────────────────────────────────────
 
+export type ExternalBindingView = {
+  id: string;
+  provider: string;            // 'feishu' | 'invite' | ...
+  external_id: string;         // feishu open_id / invite email / etc.
+  external_union_id: string | null;
+  bound_at: number;
+  raw_profile: Record<string, unknown> | null;
+};
+
 export type AdminUser = {
   id: string;
   display_name: string;
@@ -1343,7 +1352,10 @@ export type AdminUser = {
   created_at: number;
   last_login_at: number | null;
   status_changed_at: number | null;
+  /** Legacy 字段：仅 provider 名列表（保留一段过渡期，下游 UI 应迁到 bindings） */
   providers: string[];
+  /** 详细 binding 列表 — 多条同 provider 的条目代表合并过的多份身份 */
+  bindings: ExternalBindingView[];
 };
 
 export async function listAdminUsers(opts?: {

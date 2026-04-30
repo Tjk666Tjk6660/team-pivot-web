@@ -177,5 +177,36 @@ def _user_dict(u: PivotUser, bindings: ExternalBindingRepo) -> dict:
         "created_at": u.created_at,
         "last_login_at": u.last_login_at,
         "status_changed_at": u.status_changed_at,
+        # Backward-compat: list of provider names (frontend hadn't migrated yet).
         "providers": [b.provider for b in binding_list],
+        # Detailed binding view — multiple entries on the same provider mean
+        # the user has been merged with another join_application (e.g. same
+        # person's old + new feishu open_id, or feishu + invite-email both
+        # bound to one pivot_user). Each entry carries enough info for the
+        # admin UI to show "feishu · 张三 (ou_xxx…)" chips.
+        "bindings": [
+            {
+                "id": b.id,
+                "provider": b.provider,
+                "external_id": b.external_id,
+                "external_union_id": b.external_union_id,
+                "bound_at": b.bound_at,
+                "raw_profile": _safe_load_raw_profile(b.raw_profile_json),
+            }
+            for b in binding_list
+        ],
     }
+
+
+def _safe_load_raw_profile(raw: str | None) -> dict | None:
+    """raw_profile is stored as a JSON string (or NULL for invite bindings).
+    Return the parsed dict on success; None on absence or parse failure —
+    the admin UI degrades to showing just the provider + external_id."""
+    if not raw:
+        return None
+    import json
+    try:
+        loaded = json.loads(raw)
+        return loaded if isinstance(loaded, dict) else None
+    except (ValueError, TypeError):
+        return None
