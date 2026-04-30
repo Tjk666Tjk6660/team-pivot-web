@@ -384,7 +384,21 @@ function RunRow({
         </div>
       </td>
       <td className="px-3 py-2 text-right tabular-nums font-semibold">
-        {run.score ? run.score.overall.toFixed(1) : "—"}
+        {run.score ? (
+          run.score.override_overall !== null ? (
+            <span
+              title={`AI 原始 ${run.score.overall.toFixed(1)}`}
+              className="inline-flex items-center gap-0.5"
+            >
+              {run.score.override_overall.toFixed(1)}
+              <span className="text-[10px] text-[var(--accent)]">✏</span>
+            </span>
+          ) : (
+            run.score.overall.toFixed(1)
+          )
+        ) : (
+          "—"
+        )}
       </td>
       <td className="px-3 py-2">
         {run.score ? (

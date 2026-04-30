@@ -435,6 +435,11 @@ def _run_summary(
             score_brief = {
                 "overall": score.overall,
                 "confidence": score.confidence,
+                # When admin manually overrode, the list view should display
+                # the override as the effective score (with a ✏ marker) so
+                # admins don't have to drill into a drawer to learn the AI
+                # number was superseded.
+                "override_overall": score.human_override_overall,
             }
     return {
         "run_id": run.run_id,

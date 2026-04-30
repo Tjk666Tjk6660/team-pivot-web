@@ -1711,7 +1711,13 @@ export type ScoringRunSummary = {
   started_at: number;
   finished_at: number | null;
   timeline_hash: string;
-  score: { overall: number; confidence: string } | null;
+  score: {
+    overall: number;
+    confidence: string;
+    /** 人工修正后的总分。null = 未修正过；非 null = 列表视图应显示这个值
+     *  并加 ✏ 标记，hover 提示 AI 原始分。 */
+    override_overall: number | null;
+  } | null;
 };
 
 export type ScoringRunsList = {
