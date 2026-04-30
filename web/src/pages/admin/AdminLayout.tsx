@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronRight } from "lucide-react";
 import { Toaster } from "sonner";
 import { fetchMe, type Me } from "@/api";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
  *  - sub-routes render through <Outlet />
  *
  * The sidebar groups two clusters:
- *   1. 用户管理 — applications / users / invites (per /admin/applications, etc.)
+ *   1. 用户管理 — applications / users / roles / invites (per /admin/applications, etc.)
  *   2. 系统设置 — workspace / markdown / daily-report / ai / contacts / scoring
  *
  * Adding a new admin section means: drop a Route under <Outlet/> in App.tsx and
@@ -26,7 +26,7 @@ export function AdminLayout() {
     fetchMe().then(setMe).catch(() => setMe(null));
   }, []);
 
-  const isAdmin = me?.role === "admin" && me.status === "active";
+  const isAdmin = !!me?.roles?.includes("admin") && me.status === "active";
 
   if (me === undefined) {
     return (
@@ -39,7 +39,7 @@ export function AdminLayout() {
     );
   }
 
-  if (!isAdmin) {
+  if (me === null || !isAdmin) {
     return <RoleDeniedNotice me={me} />;
   }
 
@@ -50,7 +50,7 @@ export function AdminLayout() {
     >
       <Toaster position="top-center" richColors />
       <aside
-        className="flex w-[220px] shrink-0 flex-col"
+        className="flex w-[240px] shrink-0 flex-col"
         style={{
           background: "var(--surface-alt)",
           borderRight: "1px solid var(--line)",
@@ -58,9 +58,13 @@ export function AdminLayout() {
       >
         <SidebarHeader me={me} />
         <nav className="flex-1 overflow-y-auto px-3 py-4">
+          <ul className="mb-4 flex flex-col gap-0.5">
+            <NavItem to="/admin">首页</NavItem>
+          </ul>
           <NavGroup title="用户管理">
             <NavItem to="/admin/applications">加入申请</NavItem>
             <NavItem to="/admin/users">用户</NavItem>
+            <NavItem to="/admin/roles">角色</NavItem>
             <NavItem to="/admin/invites">邀请</NavItem>
           </NavGroup>
           <NavGroup title="系统设置">
@@ -135,19 +139,57 @@ function SidebarHeader({ me }: { me: Me }) {
 function NavGroup({
   title,
   children,
+  storageKey,
 }: {
   title: string;
   children: React.ReactNode;
+  /** localStorage key that remembers the open/closed state across reloads.
+   *  Defaults to title-derived key so each group has its own slot. */
+  storageKey?: string;
 }) {
+  const key = `admin.nav.${storageKey ?? title}`;
+  const [open, setOpen] = useState<boolean>(() => {
+    try {
+      const v = localStorage.getItem(key);
+      return v == null ? true : v === "1";
+    } catch {
+      return true;
+    }
+  });
+  const toggle = () => {
+    setOpen((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(key, next ? "1" : "0");
+      } catch {
+        /* ignore (private window etc.) */
+      }
+      return next;
+    });
+  };
   return (
     <div className="mb-4">
-      <div
-        className="px-2 py-1 text-[10.5px] font-bold uppercase tracking-[0.22em] font-meta"
-        style={{ color: "var(--text-mute)" }}
+      <button
+        type="button"
+        onClick={toggle}
+        className="flex w-full items-center gap-1.5 rounded-[var(--r-sm)] px-2 py-1.5 text-left text-[15px] font-semibold transition-colors hover:bg-[var(--surface)]"
+        style={{
+          fontFamily: "var(--font-serif)",
+          color: "var(--text-mute)",
+          letterSpacing: "var(--letter-tight)",
+        }}
+        aria-expanded={open}
       >
-        {title}
-      </div>
-      <ul className="mt-1 flex flex-col gap-0.5">{children}</ul>
+        {open ? (
+          <ChevronDown className="h-4 w-4 shrink-0" />
+        ) : (
+          <ChevronRight className="h-4 w-4 shrink-0" />
+        )}
+        <span className="flex-1">{title}</span>
+      </button>
+      {open && (
+        <ul className="mt-0.5 flex flex-col gap-0.5 pl-5">{children}</ul>
+      )}
     </div>
   );
 }
@@ -160,11 +202,13 @@ function NavItem({ to, children }: { to: string; children: React.ReactNode }) {
         end
         className={({ isActive }) =>
           [
-            "block rounded-[var(--r-sm)] px-3 py-1.5 text-[13px] transition-colors",
-            isActive ? "font-semibold" : "font-medium",
+            "block rounded-[var(--r-sm)] px-2.5 py-1.5 text-[13.5px] transition-colors",
+            isActive ? "font-semibold" : "font-normal",
+            isActive ? "" : "hover:bg-[var(--surface)]",
           ].join(" ")
         }
         style={({ isActive }) => ({
+          fontFamily: "var(--font-serif)",
           color: isActive ? "var(--accent-ink)" : "var(--text-soft)",
           background: isActive ? "var(--accent)" : "transparent",
         })}

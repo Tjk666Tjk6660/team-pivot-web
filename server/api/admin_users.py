@@ -1,6 +1,8 @@
 """Admin: user management endpoints."""
 from __future__ import annotations
 
+from difflib import get_close_matches
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -8,6 +10,7 @@ from pydantic import BaseModel, Field
 from server.external_bindings import ExternalBindingRepo
 from server.passwords import hash_password
 from server.pivot_users import PivotUser, PivotUserRepo
+from server.roles import PivotRole, PivotRoleRepo
 
 
 class StatusChangeBody(BaseModel):
@@ -19,7 +22,22 @@ class ConfirmedStatusChangeBody(StatusChangeBody):
 
 
 class RoleChangeBody(BaseModel):
-    role: str  # 'admin' | 'member'
+    role: str | None = None
+    roles: list[str] | None = None
+    confirm_create_role: bool = False
+
+
+class RoleCreateBody(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+    description: str | None = Field(default=None, max_length=500)
+
+
+class RoleActiveBody(BaseModel):
+    active: bool
+
+
+class RoleMembersBody(BaseModel):
+    user_ids: list[str]
 
 
 class ResetPasswordBody(BaseModel):
@@ -29,9 +47,10 @@ class ResetPasswordBody(BaseModel):
 def build_router(
     pivot_users: PivotUserRepo,
     bindings: ExternalBindingRepo,
+    roles: PivotRoleRepo,
     admin_user_dep,
 ) -> APIRouter:
-    router = APIRouter(prefix="/api/admin/users")
+    router = APIRouter(prefix="/api/admin")
 
     def _refuse_self(user_id: str, admin: PivotUser) -> None:
         if admin.id == user_id:
@@ -43,13 +62,63 @@ def build_router(
         target = pivot_users.get(target_id)
         if target is None:
             raise HTTPException(status_code=404)
-        if target.role == "admin" and target.status == "active":
+        if "admin" in target.roles and target.status == "active":
             if pivot_users.count_active_admins() <= 1:
                 raise HTTPException(
                     status_code=422, detail="last_active_admin_protected"
                 )
 
-    @router.get("")
+    @router.get("/roles")
+    def list_roles(_: PivotUser = Depends(admin_user_dep)):
+        return {"items": [_role_dict(role) for role in roles.list(include_inactive=True)]}
+
+    @router.post("/roles")
+    def create_role(
+        body: RoleCreateBody,
+        _: PivotUser = Depends(admin_user_dep),
+    ) -> JSONResponse:
+        try:
+            role = roles.create(name=body.name, description=body.description)
+        except ValueError as e:
+            detail = str(e)
+            status = 409 if detail == "role already exists" else 422
+            raise HTTPException(status_code=status, detail={"code": detail}) from e
+        return JSONResponse(_role_dict(role), status_code=201)
+
+    @router.patch("/roles/{role_name}")
+    def update_role_active(
+        role_name: str,
+        body: RoleActiveBody,
+        _: PivotUser = Depends(admin_user_dep),
+    ) -> JSONResponse:
+        try:
+            role = roles.set_active(role_name, body.active)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail={"code": "role_not_found"}) from e
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail={"code": str(e)}) from e
+        return JSONResponse(_role_dict(role))
+
+    @router.put("/roles/{role_name}/members")
+    def update_role_members(
+        role_name: str,
+        body: RoleMembersBody,
+        _: PivotUser = Depends(admin_user_dep),
+    ) -> JSONResponse:
+        try:
+            role = roles.set_members(role_name, body.user_ids)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail={"code": "role_not_found"}) from e
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail={"code": str(e)}) from e
+        members = [
+            _user_dict(user, bindings)
+            for user in pivot_users.list_for_admin(include_deleted=False)
+            if role.name in user.roles
+        ]
+        return JSONResponse({"role": _role_dict(role), "members": members})
+
+    @router.get("/users")
     def list_users(
         include_deleted: bool = False,
         search: str | None = None,
@@ -60,7 +129,7 @@ def build_router(
         )
         return JSONResponse({"items": [_user_dict(u, bindings) for u in users]})
 
-    @router.post("/{user_id}/suspend")
+    @router.post("/users/{user_id}/suspend")
     def suspend(
         user_id: str,
         body: StatusChangeBody,
@@ -74,7 +143,7 @@ def build_router(
         )
         return JSONResponse(_user_dict(u, bindings))
 
-    @router.post("/{user_id}/resume")
+    @router.post("/users/{user_id}/resume")
     def resume(
         user_id: str,
         body: StatusChangeBody,
@@ -89,7 +158,7 @@ def build_router(
         )
         return JSONResponse(_user_dict(u, bindings))
 
-    @router.post("/{user_id}/mark-deleted")
+    @router.post("/users/{user_id}/mark-deleted")
     def mark_deleted(
         user_id: str,
         body: ConfirmedStatusChangeBody,
@@ -108,7 +177,7 @@ def build_router(
         )
         return JSONResponse(_user_dict(u, bindings))
 
-    @router.post("/{user_id}/restore")
+    @router.post("/users/{user_id}/restore")
     def restore(
         user_id: str,
         body: ConfirmedStatusChangeBody,
@@ -125,24 +194,44 @@ def build_router(
         )
         return JSONResponse(_user_dict(u, bindings))
 
-    @router.post("/{user_id}/role")
+    @router.post("/users/{user_id}/role")
     def change_role(
         user_id: str,
         body: RoleChangeBody,
         admin: PivotUser = Depends(admin_user_dep),
     ) -> JSONResponse:
-        if body.role not in ("admin", "member"):
-            raise HTTPException(status_code=400, detail="invalid_role")
         target = pivot_users.get(user_id)
         if target is None:
             raise HTTPException(status_code=404)
-        if body.role == "member":
+
+        requested = _requested_roles(body)
+        known_roles = {item.name for item in roles.list(include_inactive=False)}
+        known_roles.update({"admin", "member"})
+        unknown = [role for role in requested if role not in known_roles]
+        if unknown and not body.confirm_create_role:
+            suggestions: list[str] = []
+            candidates = sorted(known_roles)
+            for role in unknown:
+                suggestions.extend(get_close_matches(role, candidates, n=3, cutoff=0.4))
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "unknown_role",
+                    "unknown_roles": unknown,
+                    "suggestions": sorted(set(suggestions)),
+                },
+            )
+        for role in unknown:
+            roles.create(name=role)
+
+        if "admin" in target.roles and "admin" not in requested:
             _refuse_self(user_id, admin)
             _refuse_last_admin(user_id)
-        u = pivot_users.update_role(user_id=user_id, role=body.role)
+
+        u = pivot_users.update_role(user_id=user_id, roles=requested)
         return JSONResponse(_user_dict(u, bindings))
 
-    @router.post("/{user_id}/reset-password")
+    @router.post("/users/{user_id}/reset-password")
     def reset_password(
         user_id: str,
         body: ResetPasswordBody,
@@ -163,6 +252,35 @@ def build_router(
     return router
 
 
+def _role_dict(role: PivotRole) -> dict:
+    return {
+        "role": role.name,
+        "name": role.name,
+        "kind": role.kind,
+        "description": role.description,
+        "is_active": role.is_active,
+        "user_count": role.user_count,
+        "created_at": role.created_at,
+        "updated_at": role.updated_at,
+    }
+
+
+def _requested_roles(body: RoleChangeBody) -> list[str]:
+    raw = body.roles if body.roles is not None else ([body.role] if body.role else [])
+    requested: list[str] = []
+    seen: set[str] = set()
+    for role in raw:
+        value = str(role).strip()
+        if not value:
+            continue
+        if value not in seen:
+            requested.append(value)
+            seen.add(value)
+    if not requested:
+        raise HTTPException(status_code=422, detail={"code": "role_required"})
+    return requested
+
+
 def _user_dict(u: PivotUser, bindings: ExternalBindingRepo) -> dict:
     binding_list = bindings.list_for_user(u.id)
     return {
@@ -171,7 +289,9 @@ def _user_dict(u: PivotUser, bindings: ExternalBindingRepo) -> dict:
         "pinyin": u.pinyin,
         "email": u.email,
         "avatar_url": u.avatar_url,
+        "github_username": u.github_username,
         "role": u.role,
+        "roles": u.roles,
         "status": u.status,
         "status_note": u.status_note,
         "created_at": u.created_at,

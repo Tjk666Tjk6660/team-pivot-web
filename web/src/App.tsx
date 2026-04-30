@@ -16,6 +16,7 @@ import { AdminHome } from "@/pages/admin/AdminHome";
 import { AdminInvites } from "@/pages/admin/AdminInvites";
 import { AdminLayout } from "@/pages/admin/AdminLayout";
 import { AdminMarkdown } from "@/pages/admin/AdminMarkdown";
+import { AdminRoles } from "@/pages/admin/AdminRoles";
 import { AdminScoringPage } from "@/pages/admin/AdminScoringPage";
 import { AdminUsers } from "@/pages/admin/AdminUsers";
 import { AdminWorkspace } from "@/pages/admin/AdminWorkspace";
@@ -85,6 +86,7 @@ export function App() {
             <Route index element={<AdminHome />} />
             <Route path="applications" element={<AdminApplications />} />
             <Route path="users" element={<AdminUsers />} />
+            <Route path="roles" element={<AdminRoles />} />
             <Route path="invites" element={<AdminInvites />} />
             <Route path="workspace" element={<AdminWorkspace />} />
             <Route path="markdown" element={<AdminMarkdown />} />

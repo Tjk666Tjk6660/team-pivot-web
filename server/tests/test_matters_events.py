@@ -15,6 +15,7 @@ from server.events import (
     TOPIC_MATTER_CREATED,
     TOPIC_RESULT_CREATED,
     TOPIC_STATUS_CHANGED,
+    TOPIC_MATTER_VISIBILITY_CHANGED,
 )
 
 
@@ -51,6 +52,13 @@ def test_make_sse_event_maps_comment_appended_to_updated():
     assert sse is not None
     assert sse["event"] == "matter.updated"
     assert sse["data"]["reason"] == "comment_appended"
+
+
+def test_make_sse_event_maps_visibility_changed_to_updated():
+    sse = _make_sse_event(_evt(TOPIC_MATTER_VISIBILITY_CHANGED))
+    assert sse is not None
+    assert sse["event"] == "matter.updated"
+    assert sse["data"]["reason"] == "visibility_changed"
 
 
 def test_make_sse_event_drops_status_changed_and_result():

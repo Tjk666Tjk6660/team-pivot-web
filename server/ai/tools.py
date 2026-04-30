@@ -44,10 +44,16 @@ class AITools:
     an index-derived whitelist.
     """
 
-    def __init__(self, discussions_dir: Path, index_dir: Path):
+    def __init__(
+        self,
+        discussions_dir: Path,
+        index_dir: Path,
+        visible_matter_ids: set[str] | None = None,
+    ):
         self._discussions_dir = Path(discussions_dir).resolve()
         self._index_dir = Path(index_dir).resolve()
         self._whitelist: _WhitelistCache | None = None
+        self._visible_matter_ids = visible_matter_ids
 
     # ── Tool specs (OpenAI-tools format for OpenRouter) ────────────────────────
 
@@ -264,6 +270,8 @@ class AITools:
             if not isinstance(m, dict):
                 continue
             matter_id = str(m.get("id") or p.name[: -len(".index.yaml")])
+            if not self._can_read_matter_id(matter_id):
+                continue
             title = str(m.get("title") or "(untitled)")
             status = str(m.get("current_status") or "")
             updated_at = str(m.get("updated_at") or "")
@@ -309,6 +317,8 @@ class AITools:
             else:
                 kind = "matter"
                 key = p.name[: -len(".index.yaml")]
+                if not self._can_read_matter_id(key):
+                    continue
             start = max(0, idx - MAX_SNIPPET_CHARS // 2)
             end = min(len(text), idx + MAX_SNIPPET_CHARS // 2)
             snippet = text[start:end].replace("\n", " ")
@@ -344,6 +354,8 @@ class AITools:
     def _read_matter_index(self, matter_id: str) -> str:
         if not matter_id:
             raise ToolError("read_matter_index 需要非空 matter_id")
+        if not self._can_read_matter_id(matter_id):
+            raise ToolError(f"matter not found: {matter_id}")
         path = self._index_dir / f"{matter_id}.index.yaml"
         resolved = path.resolve()
         if self._index_dir not in resolved.parents and resolved != self._index_dir:
@@ -361,6 +373,9 @@ class AITools:
     def _read_post(self, path: str) -> str:
         if not path:
             raise ToolError("read_post 需要非空 path")
+        matter_id = self._matter_id_from_post_path(path)
+        if matter_id and not self._can_read_matter_id(matter_id):
+            raise ToolError("post not found")
         # Accept either "discussions/cat/slug/file.md" or "cat/slug/file.md".
         rel = path
         if rel.startswith("discussions/"):
@@ -420,6 +435,17 @@ class AITools:
                 content = content[:MAX_BATCH_POST_CHARS]
             sections.append(f"===== {path} =====\n{content}{clipped}")
         return "\n\n".join(sections)
+
+    def _can_read_matter_id(self, matter_id: str) -> bool:
+        return self._visible_matter_ids is None or matter_id in self._visible_matter_ids
+
+    def _matter_id_from_post_path(self, path: str) -> str | None:
+        parts = path.replace("\\", "/").split("/")
+        if len(parts) >= 4 and parts[0] == "discussions":
+            return parts[2]
+        if len(parts) >= 3:
+            return parts[1]
+        return None
 
     # ── Whitelist ──────────────────────────────────────────────────────────────
 

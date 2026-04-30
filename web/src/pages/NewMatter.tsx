@@ -10,6 +10,8 @@ import {
   streamAIChat,
   type DocType,
   type Me,
+  type CategoryVisibilityScope,
+  type VisibilityScope,
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -35,6 +37,7 @@ import {
   type ClassicBridgeSnapshot,
 } from "@/pages/NewMatterGuidedFlow";
 import { publishDraftsRefresh } from "@/events/listRefresh";
+import { VisibilityScopePicker } from "@/components/visibility/VisibilityScopePicker";
 
 const NEW_CATEGORY_OPTION = "__new_category__";
 const CATEGORY_PATTERN = /^[^/\\:*?"<>|\t\n\r]{1,20}$/;
@@ -42,6 +45,28 @@ const CATEGORY_PATTERN = /^[^/\\:*?"<>|\t\n\r]{1,20}$/;
 // Backend ignores it because the chat handler now branches on `mode` rather
 // than looking up the matter; we keep a stable string for log readability.
 const NEW_MATTER_PSEUDO_ID = "_new_matter_";
+const PUBLIC_VISIBILITY: VisibilityScope = { mode: "public", roles: [], user_ids: [] };
+const PUBLIC_CATEGORY_VISIBILITY: CategoryVisibilityScope = {
+  mode: "public",
+  authorized_roles: [],
+};
+
+function categoryScopeToVisibility(scope: CategoryVisibilityScope): VisibilityScope {
+  return {
+    mode: scope.mode,
+    roles: scope.mode === "restricted" ? scope.authorized_roles : [],
+    user_ids: [],
+  };
+}
+
+function visibilityToCategoryScope(scope: VisibilityScope): CategoryVisibilityScope {
+  return {
+    mode: scope.mode === "restricted" && scope.roles.length > 0
+      ? "restricted"
+      : "public",
+    authorized_roles: scope.mode === "restricted" ? scope.roles : [],
+  };
+}
 
 export function NewMatter({ me }: { me: Me }) {
   // Two paths: guided AI conversation (default, mirrors AICraft demo) and the
@@ -98,6 +123,9 @@ function NewMatterClassicForm({
   const [category, setCategory] = useState("");
   const [newCategory, setNewCategory] = useState("");
   const [categoryMode, setCategoryMode] = useState<"select" | "create">("select");
+  const [createdCategory, setCreatedCategory] = useState<string | null>(null);
+  const [categoryVisibility, setCategoryVisibility] =
+    useState<CategoryVisibilityScope>(PUBLIC_CATEGORY_VISIBILITY);
   const [availableCategories, setAvailableCategories] = useState<string[]>([]);
   const [title, setTitle] = useState("");
   const [initialType, setInitialType] = useState<DocType>("think");
@@ -114,6 +142,7 @@ function NewMatterClassicForm({
   const [owner, setOwner] = useState<string>(me.open_id);
   const [ownerDisplayName, setOwnerDisplayName] = useState<string>(me.name);
   const [mentions, setMentions] = useState<MentionBlock>(() => emptyMention());
+  const [visibility, setVisibility] = useState<VisibilityScope>(PUBLIC_VISIBILITY);
   const [stage, setStage] = useState<"idle" | "generating" | "submitting">("idle");
   const submitting = stage !== "idle";
   const [draftId, setDraftId] = useState<string | null>(null);
@@ -298,9 +327,17 @@ function NewMatterClassicForm({
     }
     setAvailableCategories((current) => (current.includes(next) ? current : [...current, next]));
     setCategory(next);
+    setCreatedCategory(next);
+    setCategoryVisibility(PUBLIC_CATEGORY_VISIBILITY);
     setCategoryMode("select");
     setNewCategory("");
   };
+
+  const isNewCategory = !!createdCategory && category.trim() === createdCategory;
+  const categoryAllowedRoles =
+    isNewCategory && categoryVisibility.mode === "restricted"
+      ? categoryVisibility.authorized_roles
+      : undefined;
 
   const generateSummaryFromBody = async (): Promise<string> => {
     const userMsg = [
@@ -354,6 +391,11 @@ function NewMatterClassicForm({
           matterOwner.openId && matterOwner.openId !== me.open_id
             ? matterOwner.openId
             : undefined,
+        visibility,
+        new_category_visibility:
+          isNewCategory
+            ? categoryVisibility
+            : undefined,
         initial_file: {
           type: initialType,
           summary,
@@ -398,6 +440,18 @@ function NewMatterClassicForm({
       return toast.error("圈人后必须填一句话");
     }
 
+    if (isNewCategory && categoryVisibility.mode === "restricted") {
+      if (categoryVisibility.authorized_roles.length === 0) {
+        return toast.error("Category 指定角色可见时，至少选择一个角色");
+      }
+      if (
+        visibility.mode === "restricted" &&
+        visibility.roles.some((role) => !categoryVisibility.authorized_roles.includes(role))
+      ) {
+        return toast.error("Matter 可见范围不能超过 Category");
+      }
+    }
+
     const finalSource = computeAtPublish(bodyState, body);
     const gate = await confirmPublishQuality({
       bodySource: finalSource,
@@ -416,6 +470,9 @@ function NewMatterClassicForm({
         docType: initialType,
         matterOwner,
         mentions,
+        categoryVisibility,
+        matterVisibility: visibility,
+        createdCategory,
       });
       toast.success("已切换到 AI 引导，正在为你重新起草…");
       return;
@@ -494,6 +551,13 @@ function NewMatterClassicForm({
                     onChange={(e) => {
                       const next = e.target.value;
                       if (next === NEW_CATEGORY_OPTION) {
+                        if (createdCategory) {
+                          setAvailableCategories((current) =>
+                            current.filter((item) => item !== createdCategory),
+                          );
+                          setCreatedCategory(null);
+                          setCategoryVisibility(PUBLIC_CATEGORY_VISIBILITY);
+                        }
                         setCategoryMode("create");
                         setNewCategory("");
                         return;
@@ -501,6 +565,13 @@ function NewMatterClassicForm({
                       setCategoryMode("select");
                       setNewCategory("");
                       setCategory(next);
+                      if (createdCategory && next !== createdCategory) {
+                        setAvailableCategories((current) =>
+                          current.filter((item) => item !== createdCategory),
+                        );
+                        setCreatedCategory(null);
+                        setCategoryVisibility(PUBLIC_CATEGORY_VISIBILITY);
+                      }
                     }}
                     required
                     className="flex h-11 w-full rounded-[var(--r-md)] border border-input bg-[var(--surface-alt)] px-3 py-2 text-sm ring-offset-background"
@@ -538,6 +609,51 @@ function NewMatterClassicForm({
                     </div>
                   )}
                 </div>
+              </div>
+
+              {isNewCategory && (
+                <>
+                  <div className="editor-divider border-t" />
+
+                  <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+                    <div className="space-y-2">
+                      <div className="section-kicker">Category 可见范围</div>
+                      <p className="text-sm leading-6 text-[var(--text-mute)]">
+                        新 Category 的可见范围会成为下面 Matter 可见范围的上限。
+                      </p>
+                    </div>
+                    <VisibilityScopePicker
+                      value={categoryScopeToVisibility(categoryVisibility)}
+                      onChange={(next) => {
+                        setCategoryVisibility(visibilityToCategoryScope(next));
+                        setVisibility(PUBLIC_VISIBILITY);
+                      }}
+                      disabled={submitting}
+                      allowUsers={false}
+                      publicLabel="公开"
+                      restrictedLabel="指定角色"
+                      dialogTitle="设置 Category 可见范围"
+                    />
+                  </div>
+                </>
+              )}
+
+              <div className="editor-divider border-t" />
+
+              <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+                <div className="space-y-2">
+                  <div className="section-kicker">讨论可见范围</div>
+                  <p className="text-sm leading-6 text-[var(--text-mute)]">
+                    选择谁能看到这个讨论。
+                  </p>
+                </div>
+                <VisibilityScopePicker
+                  category={categoryMode === "select" ? category : undefined}
+                  value={visibility}
+                  onChange={setVisibility}
+                  disabled={submitting}
+                  allowedRoles={categoryAllowedRoles}
+                />
               </div>
 
               <div className="editor-divider border-t" />

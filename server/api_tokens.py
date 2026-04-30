@@ -46,11 +46,15 @@ class ApiTokenRepo:
     def create(
         self,
         *,
-        pivot_user_id: str,
+        pivot_user_id: str | None = None,
+        user_open_id: str | None = None,
         name: str,
         ttl_days: int = DEFAULT_TTL_DAYS,
     ) -> tuple[str, ApiToken]:
         """Returns (plaintext_token, ApiToken). Plaintext is only available here."""
+        user_id = pivot_user_id or user_open_id
+        if not user_id:
+            raise ValueError("pivot_user_id is required")
         ttl = max(MIN_TTL_DAYS, min(MAX_TTL_DAYS, ttl_days))
         token = generate_token()
         h = hash_token(token)
@@ -61,11 +65,11 @@ class ApiTokenRepo:
                 "INSERT INTO api_tokens"
                 " (token_hash, pivot_user_id, name, created_at, last_used_at, expires_at)"
                 " VALUES (?,?,?,?,?,?)",
-                (h, pivot_user_id, name, now, None, expires),
+                (h, user_id, name, now, None, expires),
             )
         return token, ApiToken(
             token_hash=h,
-            pivot_user_id=pivot_user_id,
+            pivot_user_id=user_id,
             name=name,
             created_at=now,
             last_used_at=None,

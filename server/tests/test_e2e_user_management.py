@@ -41,12 +41,14 @@ from server.invites import InviteRepo
 from server.join_applications import JoinApplicationRepo
 from server.notify import NoOpNotifier
 from server.pivot_users import PivotUserRepo
+from server.roles import PivotRoleRepo
 
 
 @pytest.fixture
 def client(tmp_path):
     db = Database(tmp_path / "e2e.db")
     pivot_users = PivotUserRepo(db)
+    roles = PivotRoleRepo(db)
     bindings = ExternalBindingRepo(db)
     sessions = SessionStore(db)
     invites = InviteRepo(db)
@@ -63,7 +65,7 @@ def client(tmp_path):
         )
     )
     app.include_router(
-        build_admin_users_router(pivot_users, bindings, admin_dep)
+        build_admin_users_router(pivot_users, bindings, roles, admin_dep)
     )
     app.include_router(build_admin_invites_router(invites, admin_dep))
     return TestClient(app)

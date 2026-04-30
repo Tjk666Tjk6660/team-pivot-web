@@ -31,6 +31,7 @@ def _admin_pivot_user() -> PivotUser:
         avatar_url="",
         github_username=None,
         role="admin",
+        roles=["admin"],
         status="active",
         status_note=None,
         created_at=1.0,

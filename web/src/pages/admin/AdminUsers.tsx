@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  changeUserRole,
+  changeUserRoles,
   fetchMe,
+  listAdminRoles,
   listAdminUsers,
   markUserDeleted,
   resetUserPassword,
   restoreUser,
   resumeUser,
   suspendUser,
+  type AdminRoleOption,
   type AdminUser,
   type Me,
 } from "@/api";
@@ -62,7 +64,7 @@ export function AdminUsers() {
         <h1 className="m-0 text-[22px]" style={titleStyle}>
           用户管理
         </h1>
-        <div className="flex flex-1 items-center gap-3 justify-end">
+        <div className="flex flex-1 items-center justify-end gap-3">
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -83,7 +85,7 @@ export function AdminUsers() {
         </div>
       </header>
 
-      {loading && <p style={mutedStyle}>加载中…</p>}
+      {loading && <p style={mutedStyle}>加载中...</p>}
       {error && (
         <p className="text-[13px]" style={{ color: "var(--danger-500)" }}>
           {error}
@@ -115,7 +117,7 @@ function UserRow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmKind, setConfirmKind] =
-    useState<"delete" | "restore" | "reset" | null>(null);
+    useState<"delete" | "restore" | "reset" | "roles" | null>(null);
 
   const guard = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -156,7 +158,7 @@ function UserRow({
             </div>
           )}
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span
                 className="truncate text-[14px] font-semibold"
                 style={{ color: "var(--text)" }}
@@ -164,24 +166,10 @@ function UserRow({
                 {user.display_name}
               </span>
               <UserStatusBadge status={user.status} />
-              {user.role === "admin" && (
-                <span
-                  className="rounded-full px-2 py-0.5 text-[10.5px] font-bold tracking-wider font-meta"
-                  style={{
-                    background: "var(--accent-bg)",
-                    color: "var(--accent)",
-                    border: "1px solid var(--accent)",
-                  }}
-                >
-                  ADMIN
-                </span>
-              )}
+              {user.roles?.includes("admin") && <RoleChip label="ADMIN" strong />}
               {isSelf && (
-                <span
-                  className="text-[10.5px] font-meta"
-                  style={{ color: "var(--text-mute)" }}
-                >
-                  （这是你）
+                <span className="text-[10.5px] font-meta" style={mutedStyle}>
+                  （你）
                 </span>
               )}
             </div>
@@ -191,12 +179,14 @@ function UserRow({
                 <> · 上次登录 {new Date(user.last_login_at * 1000).toLocaleString()}</>
               )}
             </div>
+            <div className="mt-1 flex flex-wrap gap-1">
+              {(user.roles ?? []).map((role) => (
+                <RoleChip key={role} label={role} />
+              ))}
+            </div>
             <BindingChips bindings={user.bindings} />
             {user.status_note && (
-              <div
-                className="mt-0.5 truncate text-[12px]"
-                style={{ color: "var(--text-soft)" }}
-              >
+              <div className="mt-0.5 truncate text-[12px]" style={{ color: "var(--text-soft)" }}>
                 备注：{user.status_note}
               </div>
             )}
@@ -212,7 +202,6 @@ function UserRow({
               onClick={() => guard(async () => {
                 await suspendUser(user.id);
               })}
-              title={isSelf ? "不能对自己执行该操作" : undefined}
             >
               暂停
             </Button>
@@ -236,7 +225,6 @@ function UserRow({
               disabled={busy || isSelf}
               onClick={() => setConfirmKind("delete")}
               style={{ color: "var(--danger-500)" }}
-              title={isSelf ? "不能对自己执行该操作" : undefined}
             >
               停用
             </Button>
@@ -255,19 +243,9 @@ function UserRow({
             variant="ghost"
             size="sm"
             disabled={busy || isSelf || user.status !== "active"}
-            onClick={() => guard(async () => {
-              const next = user.role === "admin" ? "member" : "admin";
-              await changeUserRole(user.id, next);
-            })}
-            title={
-              isSelf
-                ? "不能改自己的角色"
-                : user.status !== "active"
-                  ? "仅活跃用户可改角色"
-                  : undefined
-            }
+            onClick={() => setConfirmKind("roles")}
           >
-            {user.role === "admin" ? "降为 member" : "升为 admin"}
+            修改角色
           </Button>
           {user.providers.includes("invite") && (
             <Button
@@ -320,7 +298,111 @@ function UserRow({
           })
         }
       />
+      <EditRolesDialog
+        open={confirmKind === "roles"}
+        user={user}
+        onClose={() => setConfirmKind(null)}
+        onConfirm={(roles) =>
+          guard(async () => {
+            await changeUserRoles(user.id, roles);
+            setConfirmKind(null);
+          })
+        }
+      />
     </li>
+  );
+}
+
+function EditRolesDialog({
+  open,
+  user,
+  onClose,
+  onConfirm,
+}: {
+  open: boolean;
+  user: AdminUser;
+  onClose: () => void;
+  onConfirm: (roles: string[]) => void;
+}) {
+  const [roles, setRoles] = useState<AdminRoleOption[]>([]);
+  const [selected, setSelected] = useState<string[]>(user.roles ?? []);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setSelected(user.roles ?? []);
+    setError(null);
+    setLoading(true);
+    listAdminRoles()
+      .then((items) => setRoles(items.filter((item) => item.is_active)))
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setLoading(false));
+  }, [open, user.roles]);
+
+  const toggle = (role: string) => {
+    setSelected((current) =>
+      current.includes(role)
+        ? current.filter((item) => item !== role)
+        : [...current, role],
+    );
+  };
+
+  const canSave = selected.length > 0;
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>修改角色</DialogTitle>
+          <DialogDescription>
+            为 {user.display_name} 选择一个或多个角色。
+          </DialogDescription>
+        </DialogHeader>
+        {error && (
+          <p className="text-[12px]" style={{ color: "var(--danger-500)" }}>
+            {error}
+          </p>
+        )}
+        {loading ? (
+          <p className="text-sm" style={mutedStyle}>加载中...</p>
+        ) : (
+          <div className="max-h-[360px] space-y-2 overflow-auto pr-1">
+            {roles.map((role) => (
+              <label
+                key={role.role}
+                className="flex items-center justify-between gap-3 rounded-[var(--r-sm)] border border-[var(--line)] px-3 py-2"
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(role.role)}
+                    onChange={() => toggle(role.role)}
+                  />
+                  <span className="truncate text-sm font-medium text-[var(--text)]">
+                    {role.role}
+                  </span>
+                </span>
+                <span className="shrink-0 text-xs text-[var(--text-mute)]">
+                  {role.kind === "system" ? "系统" : "业务"} · {role.user_count}人
+                </span>
+              </label>
+            ))}
+          </div>
+        )}
+        {!canSave && (
+          <p className="text-[12px]" style={{ color: "var(--danger-500)" }}>
+            至少保留一个角色。
+          </p>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>取消</Button>
+          <Button onClick={() => onConfirm(selected)} disabled={!canSave || loading}>
+            保存
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -350,13 +432,12 @@ function ConfirmDeleteDialog({
         <DialogHeader>
           <DialogTitle>停用用户</DialogTitle>
           <DialogDescription>
-            停用后该用户不能再登录或被 @ 提及；历史 git 内容仍保留，
-            渲染时会显示为灰色。请输入用户的 display_name 确认操作。
+            停用后该用户不能再登录。请输入用户 display_name 确认操作。
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
           <div>
-            <Label className="text-[12.5px]">输入 "{user.display_name}" 以确认</Label>
+            <Label className="text-[12.5px]">输入 “{user.display_name}” 以确认</Label>
             <Input
               value={confirmText}
               onChange={(e) => setConfirmText(e.target.value)}
@@ -364,26 +445,16 @@ function ConfirmDeleteDialog({
             />
           </div>
           <div>
-            <Label className="text-[12.5px]">备注（可选）</Label>
-            <Input
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="例如：离职"
-            />
+            <Label className="text-[12.5px]">备注</Label>
+            <Input value={note} onChange={(e) => setNote(e.target.value)} />
           </div>
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>
-            取消
-          </Button>
+          <Button variant="outline" onClick={onClose}>取消</Button>
           <Button
             disabled={!enabled}
             onClick={() => onConfirm(note.trim() || undefined)}
-            style={{
-              background: "var(--danger-500)",
-              color: "white",
-              border: "1px solid var(--danger-500)",
-            }}
+            style={{ background: "var(--danger-500)", color: "white" }}
           >
             确认停用
           </Button>
@@ -405,39 +476,41 @@ function ConfirmRestoreDialog({
   onConfirm: (note: string | undefined) => void;
 }) {
   const [confirmText, setConfirmText] = useState("");
+  const [note, setNote] = useState("");
   useEffect(() => {
-    if (!open) setConfirmText("");
+    if (!open) {
+      setConfirmText("");
+      setNote("");
+    }
   }, [open]);
   const enabled = confirmText === user.display_name;
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>撤销停用</DialogTitle>
+          <DialogTitle>恢复用户</DialogTitle>
           <DialogDescription>
-            撤销后该用户可以再次登录。请输入用户的 display_name 确认。
+            请输入用户 display_name 确认恢复。
           </DialogDescription>
         </DialogHeader>
-        <Label className="text-[12.5px]">输入 "{user.display_name}" 以确认</Label>
-        <Input
-          value={confirmText}
-          onChange={(e) => setConfirmText(e.target.value)}
-          autoFocus
-        />
+        <div className="grid gap-3">
+          <div>
+            <Label className="text-[12.5px]">输入 “{user.display_name}” 以确认</Label>
+            <Input
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
+              autoFocus
+            />
+          </div>
+          <div>
+            <Label className="text-[12.5px]">备注</Label>
+            <Input value={note} onChange={(e) => setNote(e.target.value)} />
+          </div>
+        </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>
-            取消
-          </Button>
-          <Button
-            disabled={!enabled}
-            onClick={() => onConfirm(undefined)}
-            style={{
-              background: "var(--accent)",
-              color: "var(--accent-ink)",
-              border: "1px solid var(--accent)",
-            }}
-          >
-            撤销停用
+          <Button variant="outline" onClick={onClose}>取消</Button>
+          <Button disabled={!enabled} onClick={() => onConfirm(note.trim() || undefined)}>
+            确认恢复
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -454,11 +527,11 @@ function ResetPasswordDialog({
   open: boolean;
   user: AdminUser;
   onClose: () => void;
-  onConfirm: (newPassword: string) => void;
+  onConfirm: (password: string) => void;
 }) {
-  const [pw, setPw] = useState("");
+  const [password, setPassword] = useState("");
   useEffect(() => {
-    if (!open) setPw("");
+    if (!open) setPassword("");
   }, [open]);
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -466,30 +539,19 @@ function ResetPasswordDialog({
         <DialogHeader>
           <DialogTitle>重置密码</DialogTitle>
           <DialogDescription>
-            为 {user.display_name} 设置新密码（≥ 6 位）。重置后请告知用户新密码。
+            为 {user.display_name} 设置新的邀请登录密码。
           </DialogDescription>
         </DialogHeader>
         <Input
-          type="text"
-          value={pw}
-          onChange={(e) => setPw(e.target.value)}
-          placeholder="新密码"
-          autoFocus
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="至少 6 位"
         />
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>
-            取消
-          </Button>
-          <Button
-            disabled={pw.length < 6}
-            onClick={() => onConfirm(pw)}
-            style={{
-              background: "var(--accent)",
-              color: "var(--accent-ink)",
-              border: "1px solid var(--accent)",
-            }}
-          >
-            重置
+          <Button variant="outline" onClick={onClose}>取消</Button>
+          <Button disabled={password.length < 6} onClick={() => onConfirm(password)}>
+            确认重置
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -497,139 +559,45 @@ function ResetPasswordDialog({
   );
 }
 
-function BindingChips({ bindings }: { bindings: AdminUser["bindings"] }) {
-  if (bindings.length === 0) {
-    return (
-      <div
-        className="mt-1 text-[11.5px] font-meta italic"
-        style={{ color: "var(--text-mute)" }}
-      >
-        无身份绑定
-      </div>
-    );
-  }
-  // 第一条（按 bound_at 最早）算"主身份"，后面的是合并进来的。多于 1 条
-  // 时，在 chip 行下方加一条简短"合并用户：A、B"提示，让 admin 一眼看到
-  // 这个 pivot_user 由谁合并而成，但不展开整套详情（详情 hover chip 看 tooltip）。
-  const sorted = [...bindings].sort((a, b) => a.bound_at - b.bound_at);
-  const merged = sorted.slice(1);
-  return (
-    <>
-      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-        {sorted.map((b) => (
-          <BindingChip key={b.id} binding={b} />
-        ))}
-      </div>
-      {merged.length > 0 && (
-        <div
-          className="mt-1 text-[11.5px] font-meta"
-          style={{ color: "var(--text-mute)" }}
-        >
-          合并用户：
-          {merged.map((b, i) => (
-            <span key={b.id}>
-              {i > 0 && "、"}
-              <span
-                className="font-bold tracking-wider"
-                style={{ color: "var(--text-mute)" }}
-              >
-                {_bindingTag(b)}
-              </span>{" "}
-              <span style={{ color: "var(--text-soft)" }}>
-                {_bindingShortName(b)}
-              </span>
-            </span>
-          ))}
-        </div>
-      )}
-    </>
-  );
-}
-
-function _bindingTag(binding: AdminUser["bindings"][number]): string {
-  return binding.provider === "feishu"
-    ? "飞书"
-    : binding.provider === "invite"
-      ? "邮箱"
-      : binding.provider;
-}
-
-function _bindingShortName(
-  binding: AdminUser["bindings"][number],
-): string {
-  if (binding.raw_profile && typeof binding.raw_profile.name === "string") {
-    return binding.raw_profile.name as string;
-  }
-  if (binding.provider === "invite") return binding.external_id;
-  return binding.external_id.length > 14
-    ? binding.external_id.slice(0, 12) + "…"
-    : binding.external_id;
-}
-
-function BindingChip({
-  binding,
-}: {
-  binding: AdminUser["bindings"][number];
-}) {
-  // raw_profile 形如 {"name":"张三","avatar_url":"...","union_id":"on_..."}（feishu）
-  // 或 null（invite，因为我们建邀请时不存 raw_profile）。
-  const rawName =
-    binding.raw_profile && typeof binding.raw_profile.name === "string"
-      ? (binding.raw_profile.name as string)
-      : null;
-  const provider = binding.provider;
-  const externalShort =
-    binding.external_id.length > 14
-      ? binding.external_id.slice(0, 12) + "…"
-      : binding.external_id;
-
-  // feishu chip：飞书 · 张三（hover 显示完整 ou_xxx）
-  // invite chip：邮箱 · alice@x.com
-  const label =
-    provider === "feishu"
-      ? rawName ?? externalShort
-      : provider === "invite"
-        ? binding.external_id
-        : externalShort;
-  const tag =
-    provider === "feishu" ? "飞书" : provider === "invite" ? "邮箱" : provider;
-  const tooltip = [
-    `provider=${provider}`,
-    `external_id=${binding.external_id}`,
-    binding.external_union_id ? `union_id=${binding.external_union_id}` : null,
-    `bound_at=${new Date(binding.bound_at * 1000).toLocaleString()}`,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+function RoleChip({ label, strong = false }: { label: string; strong?: boolean }) {
   return (
     <span
-      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-meta"
+      className="rounded-full px-2 py-0.5 text-[10.5px] font-bold tracking-wider font-meta"
       style={{
-        background: "var(--surface-alt)",
-        border: "1px solid var(--line)",
-        color: "var(--text-soft)",
+        background: strong ? "var(--accent-bg)" : "var(--surface-alt)",
+        color: strong ? "var(--accent)" : "var(--text-soft)",
+        border: strong ? "1px solid var(--accent)" : "1px solid var(--line)",
       }}
-      title={tooltip}
     >
-      <span
-        className="font-bold tracking-wider"
-        style={{ color: "var(--text-mute)" }}
-      >
-        {tag}
-      </span>
-      <span style={{ color: "var(--text)" }}>{label}</span>
+      {label}
     </span>
   );
 }
 
+function BindingChips({
+  bindings,
+}: {
+  bindings: AdminUser["bindings"];
+}) {
+  if (!bindings?.length) return null;
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {bindings.map((b) => (
+        <span
+          key={b.id}
+          className="rounded-full border border-[var(--line)] px-2 py-0.5 text-[10.5px] font-meta"
+          style={{ color: "var(--text-mute)" }}
+        >
+          {b.provider}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 const titleStyle: React.CSSProperties = {
-  fontFamily: "var(--font-serif)",
-  fontWeight: 600,
-  letterSpacing: "var(--letter-tight)",
   color: "var(--text)",
+  fontFamily: "var(--font-serif)",
 };
 
-const mutedStyle: React.CSSProperties = {
-  color: "var(--text-mute)",
-  fontSize: "13px",
-};
+const mutedStyle: React.CSSProperties = { color: "var(--text-mute)" };

@@ -7,12 +7,14 @@ from server.api.admin_users import build_router as build_admin_users_router
 from server.external_bindings import ExternalBindingRepo
 from server.passwords import hash_password, verify_password
 from server.pivot_users import PivotUser, PivotUserRepo
+from server.roles import PivotRoleRepo
 
 
 def _build_app(db) -> tuple[
     TestClient, PivotUserRepo, ExternalBindingRepo, PivotUser,
 ]:
     pivot_users = PivotUserRepo(db)
+    roles = PivotRoleRepo(db)
     bindings = ExternalBindingRepo(db)
     admin = pivot_users.create(
         display_name="Admin",
@@ -27,7 +29,7 @@ def _build_app(db) -> tuple[
 
     app = FastAPI()
     app.include_router(
-        build_admin_users_router(pivot_users, bindings, admin_user_dep)
+        build_admin_users_router(pivot_users, bindings, roles, admin_user_dep)
     )
     return TestClient(app), pivot_users, bindings, admin
 
@@ -109,13 +111,11 @@ def test_suspend_self_refused(db):
 
 
 def test_suspend_last_active_admin_refused(db):
-    """Suspending the only remaining active admin (non-self) must be blocked."""
     client, pivot_users, _, admin = _build_app(db)
     peer = pivot_users.create(
         display_name="Peer", pinyin="peer", email=None, avatar_url="",
         role="admin",
     )
-    # Demote the dep admin so `peer` becomes the only active admin.
     pivot_users.update_role(user_id=admin.id, role="member")
     r = client.post(f"/api/admin/users/{peer.id}/suspend", json={})
     assert r.status_code == 422
@@ -166,6 +166,7 @@ def test_change_role_promote_to_admin(db):
     )
     assert r.status_code == 200, r.text
     assert r.json()["role"] == "admin"
+    assert r.json()["roles"] == ["admin"]
 
 
 def test_change_role_demote_self_refused(db):
@@ -177,13 +178,11 @@ def test_change_role_demote_self_refused(db):
 
 
 def test_change_role_demote_last_admin_refused(db):
-    """Demoting the only active admin to member must be blocked."""
     client, pivot_users, _, admin = _build_app(db)
     peer = pivot_users.create(
         display_name="Peer", pinyin="peer", email=None, avatar_url="",
         role="admin",
     )
-    # Demote dep so peer is the only active admin
     pivot_users.update_role(user_id=admin.id, role="member")
     r = client.post(
         f"/api/admin/users/{peer.id}/role", json={"role": "member"},
@@ -191,13 +190,84 @@ def test_change_role_demote_last_admin_refused(db):
     assert r.status_code == 422
 
 
-def test_change_role_invalid_role(db):
+def test_admin_can_assign_multiple_roles(db):
     client, pivot_users, _, _ = _build_app(db)
-    member = _make_member(pivot_users)
+    user = _make_member(pivot_users, name="A", pinyin="a")
+
     r = client.post(
-        f"/api/admin/users/{member.id}/role", json={"role": "guest"},
+        f"/api/admin/users/{user.id}/role",
+        json={"roles": ["member", "tech"], "confirm_create_role": True},
     )
-    assert r.status_code == 400
+
+    assert r.status_code == 200
+    assert r.json()["roles"] == ["member", "tech"]
+
+
+def test_unknown_role_requires_confirm_create_role(db):
+    client, pivot_users, _, _ = _build_app(db)
+    user = _make_member(pivot_users, name="A", pinyin="a")
+    pivot_users.create(display_name="B", pinyin="b", email=None, avatar_url="", role="tech")
+
+    r = client.post(
+        f"/api/admin/users/{user.id}/role",
+        json={"roles": ["member", "tehc"]},
+    )
+
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "unknown_role"
+    assert "tech" in r.json()["detail"]["suggestions"]
+
+
+def test_list_admin_roles(db):
+    client, pivot_users, _, _ = _build_app(db)
+    user = _make_member(pivot_users, name="B", pinyin="b")
+    pivot_users.update_role(user_id=user.id, roles=["member", "tech"])
+
+    r = client.get("/api/admin/roles")
+
+    assert r.status_code == 200
+    assert any(
+        item["role"] == "tech" and item["user_count"] == 1
+        for item in r.json()["items"]
+    )
+
+
+def test_admin_can_create_empty_role(db):
+    client, _pivot_users, _, _ = _build_app(db)
+
+    r = client.post("/api/admin/roles", json={"name": "客户A项目组"})
+
+    assert r.status_code == 201, r.text
+    assert r.json()["role"] == "客户A项目组"
+    assert r.json()["user_count"] == 0
+    listed = client.get("/api/admin/roles").json()["items"]
+    assert any(item["role"] == "客户A项目组" for item in listed)
+
+
+def test_admin_can_set_role_members(db):
+    client, pivot_users, _, _ = _build_app(db)
+    a = _make_member(pivot_users, name="A", pinyin="a")
+    b = _make_member(pivot_users, name="B", pinyin="b")
+    assert client.post("/api/admin/roles", json={"name": "技术部"}).status_code == 201
+
+    r = client.put(
+        "/api/admin/roles/技术部/members",
+        json={"user_ids": [a.id, b.id]},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["role"]["user_count"] == 2
+    assert "技术部" in pivot_users.get(a.id).roles
+    assert "技术部" in pivot_users.get(b.id).roles
+
+
+def test_admin_role_members_cannot_remove_last_active_admin(db):
+    client, _pivot_users, _, _ = _build_app(db)
+
+    r = client.put("/api/admin/roles/admin/members", json={"user_ids": []})
+
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "last_active_admin_protected"
 
 
 def test_reset_password_updates_invite_binding(db):
@@ -215,13 +285,14 @@ def test_reset_password_updates_invite_binding(db):
     )
     assert r.status_code == 200
     new_binding = bindings.lookup(provider="invite", external_id="alice@example.com")
+    assert new_binding is not None
     assert verify_password("newpass1", new_binding.password_hash)
     assert not verify_password("oldpass", new_binding.password_hash)
 
 
 def test_reset_password_user_without_invite_binding(db):
     client, pivot_users, _, _ = _build_app(db)
-    member = _make_member(pivot_users)  # no invite binding seeded
+    member = _make_member(pivot_users)
     r = client.post(
         f"/api/admin/users/{member.id}/reset-password",
         json={"new_password": "anything1"},
