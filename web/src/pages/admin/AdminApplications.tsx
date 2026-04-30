@@ -150,8 +150,7 @@ function ApplicationRow({
               {profile.name || "(未知)"}
             </div>
             <div className="mt-0.5 text-[12px] font-meta" style={mutedStyle}>
-              {app.provider} · {profile.email || "无邮箱"} ·{" "}
-              {new Date(app.applied_at * 1000).toLocaleString()}
+              {app.provider} · {new Date(app.applied_at * 1000).toLocaleString()}
             </div>
             {app.status === "rejected" && app.reject_reason && (
               <div
