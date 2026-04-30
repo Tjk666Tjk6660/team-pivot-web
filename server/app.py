@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from server.api.admin_applications import (
     build_router as build_admin_applications_router,
 )
+from server.api.admin_invites import build_router as build_admin_invites_router
 from server.api.admin_users import build_router as build_admin_users_router
 from server.api.ai import build_router as build_ai_router
 from server.api.app_home import build_router as build_app_home_router
@@ -284,6 +285,9 @@ def create_app() -> FastAPI:
     )
     app.include_router(
         build_admin_users_router(pivot_users, bindings, admin_user_cookie_dep)
+    )
+    app.include_router(
+        build_admin_invites_router(invites, admin_user_cookie_dep)
     )
 
     # MCP Streamable HTTP endpoint for external AI clients. PAT auth is
