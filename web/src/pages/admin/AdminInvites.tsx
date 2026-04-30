@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
 import {
   createInvite,
   listInvites,
@@ -46,9 +48,18 @@ export function AdminInvites() {
   return (
     <div className="mx-auto max-w-3xl p-6">
       <header className="mb-5 flex items-center justify-between gap-3">
-        <h1 className="m-0 text-[22px]" style={titleStyle}>
-          邀请管理
-        </h1>
+        <div className="flex items-center gap-3">
+          <Link
+            to="/admin"
+            className="inline-flex items-center gap-1 text-[12.5px] font-meta hover:text-[var(--text)]"
+            style={{ color: "var(--text-mute)" }}
+          >
+            <ArrowLeft className="h-3.5 w-3.5" /> 返回
+          </Link>
+          <h1 className="m-0 text-[22px]" style={titleStyle}>
+            邀请管理
+          </h1>
+        </div>
         <div className="flex items-center gap-3">
           <label
             className="flex items-center gap-1.5 text-[12.5px] font-meta"

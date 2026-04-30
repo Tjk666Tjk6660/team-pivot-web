@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
 import {
   changeUserRole,
   fetchMe,
@@ -59,6 +61,13 @@ export function AdminUsers() {
   return (
     <div className="mx-auto max-w-5xl p-6">
       <header className="mb-5 flex flex-wrap items-center gap-3">
+        <Link
+          to="/admin"
+          className="inline-flex items-center gap-1 text-[12.5px] font-meta hover:text-[var(--text)]"
+          style={{ color: "var(--text-mute)" }}
+        >
+          <ArrowLeft className="h-3.5 w-3.5" /> 返回
+        </Link>
         <h1 className="m-0 text-[22px]" style={titleStyle}>
           用户管理
         </h1>
