@@ -59,19 +59,57 @@ def _scan_one_matter(path: Path, window: TimeWindow) -> list[MatterEvent]:
     matter_id = str(matter.get("id") or path.stem.replace(".index", ""))
     matter_title = str(matter.get("title") or matter_id)
     matter_status = str(matter.get("current_status") or "")
+    timeline = data.get("timeline") or []
+    matter_intent = _derive_intent(timeline)
+    matter_prev_summary = _derive_prev_summary(timeline, window)
 
     out: list[MatterEvent] = []
-    for item in data.get("timeline") or []:
+    for item in timeline:
         ev = _convert_item(
             item,
             matter_id=matter_id,
             matter_title=matter_title,
             matter_status=matter_status,
+            matter_intent=matter_intent,
+            matter_prev_summary=matter_prev_summary,
             window=window,
         )
         if ev is not None:
             out.append(ev)
     return out
+
+
+def _derive_intent(timeline: list[dict]) -> str:
+    """第一条 think.summary —— 该 matter 当初为什么开。
+
+    timeline 按 created_at 升序;取第一个 type=='think' 且 summary 非空的。
+    无 think 时回落到第一个非空 summary 的 item;都没有则返回空串。"""
+    for item in timeline:
+        if str(item.get("type") or "") == "think":
+            s = str(item.get("summary") or "").strip()
+            if s:
+                return s
+    for item in timeline:
+        s = str(item.get("summary") or "").strip()
+        if s:
+            return s
+    return ""
+
+
+def _derive_prev_summary(timeline: list[dict], window: TimeWindow) -> str:
+    """窗口之前最后一条非空 summary —— 上一步推到哪了。
+
+    遍历 timeline 找 created_at < window.since 的 item,取最后一个非空 summary。
+    matter 在窗口内才出生 / 仅有 think_intent 自身 → 返回空串。"""
+    last = ""
+    for item in timeline:
+        dt = _parse_iso(item.get("created_at"))
+        if dt is None or dt >= window.since:
+            continue
+        s = str(item.get("summary") or "").strip()
+        if s:
+            last = s
+    return last
 
 
 def _convert_item(
@@ -80,6 +118,8 @@ def _convert_item(
     matter_id: str,
     matter_title: str,
     matter_status: str,
+    matter_intent: str,
+    matter_prev_summary: str,
     window: TimeWindow,
 ) -> MatterEvent | None:
     file_path = str(item.get("file") or "")
@@ -137,6 +177,8 @@ def _convert_item(
         matter_id=matter_id,
         matter_title=matter_title,
         matter_current_status=matter_status,
+        matter_intent=matter_intent,
+        matter_prev_summary=matter_prev_summary,
         file=file_path,
         file_type=file_type,
         created_at=ev_dt,

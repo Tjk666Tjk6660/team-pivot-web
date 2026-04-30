@@ -54,7 +54,14 @@ class MatterEventComment:
 
 @dataclass(frozen=True)
 class MatterEvent:
-    """A timeline file item (or its in-window comments) we care about."""
+    """A timeline file item (or its in-window comments) we care about.
+
+    `matter_intent` 与 `matter_prev_summary` 是 matter 级语境(同一 matter 的
+    所有 event 携带相同值,collect_matter 一次性计算 + 广播):
+    - matter_intent:第一条 think 的 summary —— 这件事是干啥的、解决什么问题
+    - matter_prev_summary:窗口之前最后一条 timeline 的 summary —— 上一步推到哪了
+    供日报 LLM 写出"X 是 Y、之前 Z、今天 W"的因果叙事;空字符串表示该信号
+    不存在(matter 是新开的 / 没 think / 等)。"""
     matter_id: str
     matter_title: str
     matter_current_status: str
@@ -68,6 +75,9 @@ class MatterEvent:
     status_change: dict | None         # {"from": "...", "to": "..."} or None
     verifications: tuple[dict, ...]    # verify file's [{target, judgement, comment}, ...]
     comments_in_window: tuple[MatterEventComment, ...]
+    # matter 级语境(同一 matter 各 event 携带相同值;空串 = 信号不存在)
+    matter_intent: str = ""            # 第一条 think.summary —— 这件事是干啥的、解决什么问题
+    matter_prev_summary: str = ""      # 窗口之前最后一条 timeline.summary —— 上一步推到哪了
 
 
 # --------------------------------------------------------------------------- #
