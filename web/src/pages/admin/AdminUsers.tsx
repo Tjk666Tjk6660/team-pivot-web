@@ -517,49 +517,30 @@ function BindingChips({ bindings }: { bindings: AdminUser["bindings"] }) {
       </div>
     );
   }
-  // Single binding → 紧凑一行 chip 即可（最常见情况，不占空间）。
-  if (bindings.length === 1) {
-    return (
-      <div className="mt-1.5">
-        <BindingChip binding={bindings[0]} />
-      </div>
-    );
+  // Group same-provider bindings → 多于 1 条 = 合并过
+  const sameProviderCount: Record<string, number> = {};
+  for (const b of bindings) {
+    sameProviderCount[b.provider] = (sameProviderCount[b.provider] ?? 0) + 1;
   }
-  // Multi binding → 此 pivot_user 合并过 / 双登录方式。展开详情列表，
-  // 每条一行带 名字 / 邮箱 / external_id / 绑定时间，admin 一眼能看清
-  // 这个账号是合并自哪些原始身份。第一条按时间最早，是"主身份"，后续是
-  // "合并自"。
-  const sorted = [...bindings].sort((a, b) => a.bound_at - b.bound_at);
+  const merged = Object.values(sameProviderCount).some((n) => n > 1);
   return (
-    <div
-      className="mt-2 rounded-[var(--r-sm)]"
-      style={{
-        background: "var(--surface-alt)",
-        border: "1px solid var(--line)",
-      }}
-    >
-      <div
-        className="flex items-center gap-2 px-2.5 py-1.5"
-        style={{ borderBottom: "1px solid var(--line)" }}
-      >
+    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      {bindings.map((b) => (
+        <BindingChip key={b.id} binding={b} />
+      ))}
+      {merged && (
         <span
-          className="text-[10.5px] font-bold uppercase tracking-[0.18em] font-meta"
-          style={{ color: "var(--accent)" }}
+          className="rounded-full px-2 py-0.5 text-[10.5px] font-bold tracking-wider font-meta"
+          style={{
+            background: "var(--accent-bg)",
+            color: "var(--accent)",
+            border: "1px solid var(--accent)",
+          }}
+          title="此用户由多份外部身份合并而成"
         >
           合并身份
         </span>
-        <span
-          className="text-[11px] font-meta"
-          style={{ color: "var(--text-mute)" }}
-        >
-          {bindings.length} 条外部身份合并到此账号
-        </span>
-      </div>
-      <ul className="divide-y" style={{ borderColor: "var(--line)" }}>
-        {sorted.map((b, i) => (
-          <BindingDetailRow key={b.id} binding={b} primary={i === 0} />
-        ))}
-      </ul>
+      )}
     </div>
   );
 }
@@ -569,12 +550,20 @@ function BindingChip({
 }: {
   binding: AdminUser["bindings"][number];
 }) {
-  const rawName = _readBindingName(binding);
+  // raw_profile 形如 {"name":"张三","avatar_url":"...","union_id":"on_..."}（feishu）
+  // 或 null（invite，因为我们建邀请时不存 raw_profile）。
+  const rawName =
+    binding.raw_profile && typeof binding.raw_profile.name === "string"
+      ? (binding.raw_profile.name as string)
+      : null;
   const provider = binding.provider;
   const externalShort =
     binding.external_id.length > 14
       ? binding.external_id.slice(0, 12) + "…"
       : binding.external_id;
+
+  // feishu chip：飞书 · 张三（hover 显示完整 ou_xxx）
+  // invite chip：邮箱 · alice@x.com
   const label =
     provider === "feishu"
       ? rawName ?? externalShort
@@ -587,7 +576,6 @@ function BindingChip({
     `provider=${provider}`,
     `external_id=${binding.external_id}`,
     binding.external_union_id ? `union_id=${binding.external_union_id}` : null,
-    rawName ? `name=${rawName}` : null,
     `bound_at=${new Date(binding.bound_at * 1000).toLocaleString()}`,
   ]
     .filter(Boolean)
@@ -611,103 +599,6 @@ function BindingChip({
       <span style={{ color: "var(--text)" }}>{label}</span>
     </span>
   );
-}
-
-function BindingDetailRow({
-  binding,
-  primary,
-}: {
-  binding: AdminUser["bindings"][number];
-  primary: boolean;
-}) {
-  const rawName = _readBindingName(binding);
-  const rawEmail = _readBindingEmail(binding);
-  const provider = binding.provider;
-  const tag =
-    provider === "feishu" ? "飞书" : provider === "invite" ? "邮箱" : provider;
-  return (
-    <li className="flex items-center gap-3 px-2.5 py-1.5">
-      <span
-        className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider font-meta"
-        style={{
-          background: "var(--surface)",
-          color: "var(--text-mute)",
-          border: "1px solid var(--line)",
-        }}
-      >
-        {tag}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div
-          className="truncate text-[13px] font-semibold"
-          style={{ color: "var(--text)" }}
-        >
-          {rawName ?? <span style={{ color: "var(--text-mute)" }}>未填名字</span>}
-          {rawEmail && (
-            <span
-              className="ml-2 text-[12px] font-meta font-normal"
-              style={{ color: "var(--text-soft)" }}
-            >
-              {rawEmail}
-            </span>
-          )}
-        </div>
-        <div
-          className="mt-0.5 truncate text-[11px] font-mono"
-          style={{ color: "var(--text-mute)" }}
-        >
-          {binding.external_id}
-          {binding.external_union_id && (
-            <span className="ml-1.5">· {binding.external_union_id}</span>
-          )}
-        </div>
-      </div>
-      <div className="shrink-0 text-right">
-        <span
-          className="text-[10.5px] font-bold uppercase tracking-wider font-meta"
-          style={{ color: primary ? "var(--text-mute)" : "var(--accent)" }}
-        >
-          {primary ? "原始身份" : "合并自"}
-        </span>
-        <div
-          className="mt-0.5 text-[11px] font-meta"
-          style={{ color: "var(--text-mute)" }}
-        >
-          {new Date(binding.bound_at * 1000).toLocaleDateString()}
-        </div>
-      </div>
-    </li>
-  );
-}
-
-function _readBindingName(
-  binding: AdminUser["bindings"][number],
-): string | null {
-  // feishu raw_profile 在迁移时落入了 {"name":"...","avatar_url":...,"union_id":...}
-  // invite binding raw_profile 是 null（建邀请时没存）—— 邀请用户的名字
-  // 我们用 pivot_user.display_name 兜底，但那不在 binding 视图里，所以这里返 null。
-  const raw = binding.raw_profile;
-  if (raw && typeof raw.name === "string") {
-    return raw.name;
-  }
-  return null;
-}
-
-function _readBindingEmail(
-  binding: AdminUser["bindings"][number],
-): string | null {
-  // invite provider 把邮箱直接当 external_id 存（参见 server/api/auth_invite.py
-  // 的 bindings.bind(provider='invite', external_id=email, ...)）。
-  // feishu raw_profile 不带 email（飞书 OAuth 默认 scope 不返回 email），
-  // 所以飞书 binding 这里返 null。
-  if (binding.provider === "invite") {
-    return binding.external_id;
-  }
-  const raw = binding.raw_profile;
-  if (raw && typeof raw.email === "string") {
-    return raw.email;
-  }
-  return null;
 }
 
 const titleStyle: React.CSSProperties = {
