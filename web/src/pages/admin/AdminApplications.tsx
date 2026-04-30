@@ -10,6 +10,7 @@ import {
   unblockApplication,
   type AdminUser,
   type Application,
+  type ApplicationMergedInto,
   type MatchCandidate,
 } from "@/api";
 import { Button } from "@/components/ui/button";
@@ -170,6 +171,9 @@ function ApplicationRow({
               >
                 拒绝原因：{app.reject_reason}
               </div>
+            )}
+            {app.status === "approved" && app.merged_into && (
+              <MergedIntoLine info={app.merged_into} />
             )}
           </div>
         </div>
@@ -558,6 +562,40 @@ function MergeDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function MergedIntoLine({ info }: { info: ApplicationMergedInto }) {
+  // info.merged === true → 合并到了已有用户（同人换工号场景）
+  // info.merged === false → 当时是"同意（新建账号）"，目标用户是新建的
+  const verb = info.merged ? "合并到" : "新建为";
+  return (
+    <div
+      className="mt-2 inline-flex items-center gap-2 rounded-[var(--r-sm)] px-2.5 py-1"
+      style={{
+        background: "var(--accent-bg)",
+        border: "1px solid var(--accent)",
+      }}
+    >
+      <span
+        className="text-[10.5px] font-bold uppercase tracking-[0.18em] font-meta"
+        style={{ color: "var(--accent)" }}
+      >
+        {info.merged ? "已合并" : "已通过"}
+      </span>
+      <span className="text-[12px]" style={{ color: "var(--text)" }}>
+        {verb}{" "}
+        <strong>{info.display_name}</strong>
+        {info.email && (
+          <span
+            className="ml-1.5 font-meta"
+            style={{ color: "var(--text-mute)" }}
+          >
+            ({info.email})
+          </span>
+        )}
+      </span>
+    </div>
   );
 }
 

@@ -1266,6 +1266,15 @@ export async function postInviteAccept(
 
 // ── Admin: applications ───────────────────────────────────────────────────
 
+export type ApplicationMergedInto = {
+  user_id: string;
+  display_name: string;
+  email: string | null;
+  avatar_url: string;
+  /** true 表示是合并到了已有 pivot_user；false 表示当时是新建账号 */
+  merged: boolean;
+};
+
 export type Application = {
   id: string;
   provider: string;
@@ -1278,6 +1287,8 @@ export type Application = {
   reviewed_at: number | null;
   reviewed_by: string | null;
   reject_reason: string | null;
+  /** approved 状态下展示"目标 pivot_user"信息；其它状态为 null */
+  merged_into: ApplicationMergedInto | null;
 };
 
 export type MatchCandidate = {

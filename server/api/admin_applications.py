@@ -43,7 +43,9 @@ def build_router(
             apps = applications.list_with_filter(status=status)
         else:
             apps = applications.list_pending()
-        return JSONResponse({"items": [_app_dict(a) for a in apps]})
+        return JSONResponse({
+            "items": [_app_dict(a, bindings, pivot_users) for a in apps],
+        })
 
     @router.get("/{application_id}/match-candidates")
     def candidates(
@@ -149,7 +151,11 @@ def build_router(
     return router
 
 
-def _app_dict(a: JoinApplication) -> dict:
+def _app_dict(
+    a: JoinApplication,
+    bindings: ExternalBindingRepo,
+    pivot_users: PivotUserRepo,
+) -> dict:
     return {
         "id": a.id,
         "provider": a.provider,
@@ -162,4 +168,43 @@ def _app_dict(a: JoinApplication) -> dict:
         "reviewed_at": a.reviewed_at,
         "reviewed_by": a.reviewed_by,
         "reject_reason": a.reject_reason,
+        # For an approved application we look up which pivot_user the
+        # (provider, external_id) is now bound to, and surface that user's
+        # display_name + email so the admin can see "this application got
+        # merged into 张三 (zhangsan@x.com)" without leaving the page.
+        # `merged_into` is None for pending / rejected rows.
+        "merged_into": _resolve_merged_into(a, bindings, pivot_users),
+    }
+
+
+def _resolve_merged_into(
+    a: JoinApplication,
+    bindings: ExternalBindingRepo,
+    pivot_users: PivotUserRepo,
+) -> dict | None:
+    if a.status != "approved":
+        return None
+    binding = bindings.lookup(provider=a.provider, external_id=a.external_id)
+    if binding is None:
+        # Defensive: every approved application should have a binding row,
+        # but a manual DELETE on external_binding could break the join.
+        # Return None so the UI just doesn't show the merged-into hint.
+        return None
+    user = pivot_users.get(binding.pivot_user_id)
+    if user is None:
+        return None
+    # `merged` flag distinguishes the two approval branches:
+    #   - new-user approve  → admin clicked "同意（新建账号）". The
+    #     binding's pivot_user_id was created on the fly so the user has
+    #     exactly one binding (the same external_id we matched on).
+    #   - merge approve     → admin clicked "合并到已有账号". The target
+    #     pivot_user already had at least one other binding before this
+    #     application landed, hence > 1 bindings now.
+    merged = len(bindings.list_for_user(user.id)) > 1
+    return {
+        "user_id": user.id,
+        "display_name": user.display_name,
+        "email": user.email,
+        "avatar_url": user.avatar_url,
+        "merged": merged,
     }
