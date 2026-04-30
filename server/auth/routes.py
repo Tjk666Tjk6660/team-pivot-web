@@ -33,7 +33,9 @@ def _user_dict(u: PivotUser) -> dict:
     return {
         "id": u.id,
         "open_id": u.id,  # backward-compat alias used by older frontend/tests
-        "name": u.display_name,
+        "name": u.display_name,  # backward-compat alias for "display_name"
+        "display_name": u.display_name,
+        "email": u.email,
         "avatar_url": u.avatar_url,
         "pinyin": u.pinyin,
         "github_username": u.github_username,

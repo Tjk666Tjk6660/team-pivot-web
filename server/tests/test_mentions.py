@@ -5,6 +5,7 @@ from server.external_bindings import ExternalBindingRepo
 from server.mentions import (
     DisplayInfo,
     DisplayResolver,
+    author_view,
     resolve_avatar_url,
     resolve_id,
     resolve_text,
@@ -202,3 +203,70 @@ def test_resolve_text_falls_back_to_contacts(db):
 def test_resolve_text_no_matches_unchanged(db):
     resolver, *_ = _make_resolver(db)
     assert resolve_text("plain text, no mentions", resolver) == "plain text, no mentions"
+
+
+def test_author_view_active_user(db):
+    resolver, pivot_users, _, _ = _make_resolver(db)
+    u = pivot_users.create(
+        display_name="Hank", pinyin="hank", email=None,
+        avatar_url="https://x/h.png", role="member",
+    )
+    view = author_view(u.id, resolver)
+    assert view == {
+        "user_id": u.id,
+        "open_id": u.id,
+        "display_name": "Hank",
+        "avatar_url": "https://x/h.png",
+        "status": "active",
+    }
+
+
+def test_author_view_legacy_open_id_resolves_to_active(db):
+    resolver, pivot_users, bindings, _ = _make_resolver(db)
+    u = pivot_users.create(
+        display_name="Ivy", pinyin="ivy", email=None, avatar_url="",
+        role="member",
+    )
+    bindings.bind(
+        pivot_user_id=u.id, provider="feishu",
+        external_id="ou_ivy00000000000000",
+        external_union_id=None, raw_profile_json=None,
+    )
+    view = author_view("ou_ivy00000000000000", resolver)
+    # ref preserved as-is so it stays consistent with what's on disk
+    assert view["user_id"] == "ou_ivy00000000000000"
+    assert view["open_id"] == "ou_ivy00000000000000"
+    assert view["display_name"] == "Ivy"
+    assert view["status"] == "active"
+
+
+def test_author_view_unknown_ref(db):
+    resolver, *_ = _make_resolver(db)
+    view = author_view("ou_ghost000000000000", resolver)
+    assert view == {
+        "user_id": "ou_ghost000000000000",
+        "open_id": "ou_ghost000000000000",
+        "display_name": "ou_ghost000000000000",
+        "avatar_url": None,
+        "status": "unknown",
+    }
+
+
+def test_author_view_empty_ref_returns_none(db):
+    resolver, *_ = _make_resolver(db)
+    assert author_view(None, resolver) is None
+    assert author_view("", resolver) is None
+
+
+def test_author_view_reflects_suspended_status(db):
+    resolver, pivot_users, _, _ = _make_resolver(db)
+    u = pivot_users.create(
+        display_name="J", pinyin="j", email=None, avatar_url="",
+        role="member",
+    )
+    pivot_users.update_status(
+        user_id=u.id, status="suspended", note=None, changed_by="admin",
+    )
+    resolver.invalidate()
+    view = author_view(u.id, resolver)
+    assert view["status"] == "suspended"

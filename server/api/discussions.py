@@ -14,6 +14,7 @@ from server.inbox import compute_unread_counts
 from server.index_files import change_thread_status, get_mentions_by_file
 from server.mentions import (
     DisplayResolver,
+    author_view,
     resolve_avatar_url,
     resolve_id,
     resolve_text,
@@ -188,6 +189,7 @@ def build_router(
                     "body": resolve_text(p.body, resolver),
                     "author_display": resolve_id(p.frontmatter.get("author"), resolver),
                     "author_avatar_url": resolve_avatar_url(p.frontmatter.get("author"), resolver),
+                    "author_view": author_view(p.frontmatter.get("author"), resolver),
                     "mentions": [
                         {**m, "author_display": resolve_id(m.get("author_id"), resolver)}
                         for m in mentions_map.get(p.filename, [])
@@ -333,6 +335,7 @@ def _meta(
         "title": m.title,
         "author": m.author,
         "author_display": resolve_id(m.author, resolver),
+        "author_view": author_view(m.author, resolver),
         "status": m.status,
         "last_updated": m.last_updated,
         "post_count": m.post_count,

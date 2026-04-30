@@ -25,6 +25,7 @@ from server.matter_index import (
 from server.matter_validator import validate_append
 from server.mentions import (
     DisplayResolver,
+    author_view,
     resolve_avatar_url,
     resolve_id,
     resolve_text,
@@ -629,6 +630,7 @@ def _summarize_matter(
         out["creator"] = creator
         out["creator_display"] = resolve_id(creator, resolver)
         out["creator_avatar_url"] = resolve_avatar_url(creator, resolver)
+        out["creator_view"] = author_view(creator, resolver)
         # matter-level owner: prefer matter.owner; for legacy indexes where
         # the key is missing, fall back to first timeline file owner/creator.
         # Explicit owner: null still means unassigned.
@@ -638,6 +640,7 @@ def _summarize_matter(
         out["owner_avatar_url"] = (
             resolve_avatar_url(owner, resolver) if owner else None
         )
+        out["owner_view"] = author_view(owner, resolver) if owner else None
     return out
 
 
@@ -707,6 +710,7 @@ def _render_matter_detail(
         "owner_avatar_url": (
             resolve_avatar_url(owner, resolver) if owner else None
         ),
+        "owner_view": author_view(owner, resolver) if owner else None,
     }
     return {"matter": matter_out, "timeline": timeline_out}
 
@@ -745,8 +749,10 @@ def _render_item(
     owner = out.get("owner")
     out["creator_display"] = resolve_id(creator, resolver)
     out["creator_avatar_url"] = resolve_avatar_url(creator, resolver)
+    out["creator_view"] = author_view(creator, resolver)
     out["owner_display"] = resolve_id(owner, resolver)
     out["owner_avatar_url"] = resolve_avatar_url(owner, resolver)
+    out["owner_view"] = author_view(owner, resolver)
     # Comments: resolve author_display + mentions_display.
     resolved_comments = []
     for c in out.get("comments") or []:
@@ -754,9 +760,13 @@ def _render_item(
         author = cc.get("author")
         if author:
             cc["author_display"] = resolve_id(author, resolver)
+            cc["author_view"] = author_view(author, resolver)
         if cc.get("mentions"):
             cc["mentions_display"] = [
                 resolve_id(m, resolver) for m in cc["mentions"]
+            ]
+            cc["mentions_view"] = [
+                author_view(m, resolver) for m in cc["mentions"]
             ]
         # Also resolve @ids inside the comment body text.
         if cc.get("body"):
@@ -782,6 +792,7 @@ def _render_owner_change_item(
     out["actor_avatar_url"] = (
         resolve_avatar_url(actor, resolver) if actor else None
     )
+    out["actor_view"] = author_view(actor, resolver) if actor else None
     from_owner = out.get("from_owner")
     out["from_owner_display"] = (
         resolve_id(from_owner, resolver) if from_owner else None
@@ -789,12 +800,18 @@ def _render_owner_change_item(
     out["from_owner_avatar_url"] = (
         resolve_avatar_url(from_owner, resolver) if from_owner else None
     )
+    out["from_owner_view"] = (
+        author_view(from_owner, resolver) if from_owner else None
+    )
     to_owner = out.get("to_owner")
     out["to_owner_display"] = (
         resolve_id(to_owner, resolver) if to_owner else None
     )
     out["to_owner_avatar_url"] = (
         resolve_avatar_url(to_owner, resolver) if to_owner else None
+    )
+    out["to_owner_view"] = (
+        author_view(to_owner, resolver) if to_owner else None
     )
     # Frontend timeline iterates over a heterogeneous list — keep readers_count
     # at 0 (consistent with FileCard's empty state) so consumers don't have to
@@ -860,6 +877,7 @@ def _reader_to_dict(
         "open_id": entry.open_id,
         "name": resolve_id(entry.open_id, resolver),
         "avatar_url": resolve_avatar_url(entry.open_id, resolver),
+        "view": author_view(entry.open_id, resolver),
         "first_read_at": _ts_to_iso(entry.first_read_at),
     }
 

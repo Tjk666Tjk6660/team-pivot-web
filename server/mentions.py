@@ -100,3 +100,27 @@ def resolve_text(text: str, resolver: DisplayResolver) -> str:
         return ref
 
     return _FEISHU_ID_RE.sub(repl, text)
+
+
+def author_view(
+    ref: str | None, resolver: DisplayResolver,
+) -> dict | None:
+    """Per design §7.1.1 + Task 20: serialize a user reference (ULID for
+    new content / feishu open_id for legacy frontmatter) plus the
+    resolver's view of who that ref points to.
+
+    ``user_id`` is the storage-contract field; ``open_id`` is a
+    transitional alias kept for one release while the frontend switches
+    over. Returns ``None`` when called with an empty ref so callers can
+    drop optional author fields cleanly.
+    """
+    if not ref:
+        return None
+    info = resolver.resolve(ref)
+    return {
+        "user_id": ref,
+        "open_id": ref,
+        "display_name": info.display_name,
+        "avatar_url": info.avatar_url or None,
+        "status": info.status,
+    }
