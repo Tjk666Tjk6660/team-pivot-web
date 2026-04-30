@@ -58,6 +58,9 @@ export function AdminLayout() {
       >
         <SidebarHeader me={me} />
         <nav className="flex-1 overflow-y-auto px-3 py-4">
+          <ul className="mb-4 flex flex-col gap-0.5">
+            <NavItem to="/admin">首页</NavItem>
+          </ul>
           <NavGroup title="用户管理">
             <NavItem to="/admin/applications">加入申请</NavItem>
             <NavItem to="/admin/users">用户</NavItem>
