@@ -23,7 +23,7 @@ MATTER_EVENT_FILENAME = ""
 
 @dataclass(frozen=True)
 class RelevanceRow:
-    user_open_id: str
+    pivot_user_id: str
     matter_id: str
     filename: str
     kind: str
@@ -57,7 +57,7 @@ class RelevanceEventsRepo:
 
     def insert_file(
         self,
-        user_open_id: str,
+        pivot_user_id: str,
         matter_id: str,
         filename: str,
         *,
@@ -73,13 +73,13 @@ class RelevanceEventsRepo:
         cold-start backfill so historical timeline activity doesn't surface
         as a tsunami of red unread badges). Default ``None`` = unread."""
         return self._insert_or_ignore(
-            user_open_id, matter_id, filename, KIND_FILE,
+            pivot_user_id, matter_id, filename, KIND_FILE,
             reason, event_at, actor_pinyin, read_at,
         )
 
     def insert_mention(
         self,
-        user_open_id: str,
+        pivot_user_id: str,
         matter_id: str,
         filename: str,
         *,
@@ -92,13 +92,13 @@ class RelevanceEventsRepo:
 
         ``read_at`` — see ``insert_file``. Default ``None`` = unread."""
         return self._insert_or_ignore(
-            user_open_id, matter_id, filename, KIND_MENTION,
+            pivot_user_id, matter_id, filename, KIND_MENTION,
             REASON_COMMENT_MENTION, comment_at, actor_pinyin, read_at,
         )
 
     def insert_matter_event(
         self,
-        user_open_id: str,
+        pivot_user_id: str,
         matter_id: str,
         *,
         reason: str,
@@ -110,13 +110,13 @@ class RelevanceEventsRepo:
         adds to the red badge, filename='' sentinel since no specific file).
         Used for matter owner transfers."""
         return self._insert_or_ignore(
-            user_open_id, matter_id, MATTER_EVENT_FILENAME, KIND_MENTION,
+            pivot_user_id, matter_id, MATTER_EVENT_FILENAME, KIND_MENTION,
             reason, event_at, actor_pinyin, read_at,
         )
 
     def _insert_or_ignore(
         self,
-        user_open_id: str,
+        pivot_user_id: str,
         matter_id: str,
         filename: str,
         kind: str,
@@ -129,10 +129,10 @@ class RelevanceEventsRepo:
         with self._db.connect() as conn:
             cur = conn.execute(
                 "INSERT OR IGNORE INTO relevance_events"
-                " (user_open_id, matter_id, filename, kind, reason,"
+                " (pivot_user_id, matter_id, filename, kind, reason,"
                 "  event_at, actor_pinyin, created_at, read_at)"
                 " VALUES (?,?,?,?,?,?,?,?,?)",
-                (user_open_id, matter_id, filename, kind, reason,
+                (pivot_user_id, matter_id, filename, kind, reason,
                  event_at, actor_pinyin, now, read_at),
             )
             return cur.rowcount > 0
@@ -153,7 +153,7 @@ class RelevanceEventsRepo:
     def exists(
         self,
         *,
-        user_open_id: str,
+        pivot_user_id: str,
         matter_id: str,
         filename: str,
         kind: str,
@@ -164,10 +164,10 @@ class RelevanceEventsRepo:
         with self._db.connect() as conn:
             row = conn.execute(
                 "SELECT 1 FROM relevance_events"
-                " WHERE user_open_id=? AND matter_id=? AND filename=?"
+                " WHERE pivot_user_id=? AND matter_id=? AND filename=?"
                 "   AND kind=? AND event_at=? AND actor_pinyin=?"
                 " LIMIT 1",
-                (user_open_id, matter_id, filename,
+                (pivot_user_id, matter_id, filename,
                  kind, event_at, actor_pinyin),
             ).fetchone()
         return row is not None
@@ -176,7 +176,7 @@ class RelevanceEventsRepo:
 
     def mark_all_read_for_file(
         self,
-        user_open_id: str,
+        pivot_user_id: str,
         matter_id: str,
         filename: str,
     ) -> int:
@@ -193,17 +193,17 @@ class RelevanceEventsRepo:
         with self._db.connect() as conn:
             cur = conn.execute(
                 "UPDATE relevance_events SET read_at = ?"
-                " WHERE user_open_id = ? AND matter_id = ?"
+                " WHERE pivot_user_id = ? AND matter_id = ?"
                 "   AND (filename = ? OR filename = ?)"
                 "   AND read_at IS NULL",
-                (now, user_open_id, matter_id, filename, MATTER_EVENT_FILENAME),
+                (now, pivot_user_id, matter_id, filename, MATTER_EVENT_FILENAME),
             )
             return cur.rowcount
 
     # ---------- aggregates ----------
 
     def unread_breakdown_per_matter(
-        self, user_open_id: str,
+        self, pivot_user_id: str,
     ) -> dict[str, tuple[int, int]]:
         """Returns {matter_id: (red_files_count, red_mentions_count)} for
         every matter with at least one unread row for the user."""
@@ -213,9 +213,9 @@ class RelevanceEventsRepo:
                 "       SUM(CASE WHEN kind='file'    THEN 1 ELSE 0 END) AS files,"
                 "       SUM(CASE WHEN kind='mention' THEN 1 ELSE 0 END) AS mentions"
                 "  FROM relevance_events"
-                " WHERE user_open_id = ? AND read_at IS NULL"
+                " WHERE pivot_user_id = ? AND read_at IS NULL"
                 " GROUP BY matter_id",
-                (user_open_id,),
+                (pivot_user_id,),
             ).fetchall()
         return {
             r["matter_id"]: (int(r["files"] or 0), int(r["mentions"] or 0))
@@ -223,7 +223,7 @@ class RelevanceEventsRepo:
         }
 
     def unread_mention_keys_for_matter(
-        self, user_open_id: str, matter_id: str,
+        self, pivot_user_id: str, matter_id: str,
     ) -> set[tuple[str, str, str]]:
         """Returns {(filename, event_at, actor_pinyin)} for unread
         kind='mention' rows on (user, matter). The detail interface uses this
@@ -231,16 +231,16 @@ class RelevanceEventsRepo:
         with self._db.connect() as conn:
             rows = conn.execute(
                 "SELECT filename, event_at, actor_pinyin FROM relevance_events"
-                " WHERE user_open_id = ? AND matter_id = ?"
+                " WHERE pivot_user_id = ? AND matter_id = ?"
                 "   AND kind = 'mention' AND read_at IS NULL",
-                (user_open_id, matter_id),
+                (pivot_user_id, matter_id),
             ).fetchall()
         return {
             (r["filename"], r["event_at"], r["actor_pinyin"]) for r in rows
         }
 
     def file_reasons_for_matter(
-        self, user_open_id: str, matter_id: str,
+        self, pivot_user_id: str, matter_id: str,
     ) -> dict[str, str]:
         """Returns {filename: reason} for kind='file' rows on (user, matter).
         The detail interface uses this to populate `relevance_reason` on each
@@ -249,8 +249,8 @@ class RelevanceEventsRepo:
         with self._db.connect() as conn:
             rows = conn.execute(
                 "SELECT filename, reason FROM relevance_events"
-                " WHERE user_open_id = ? AND matter_id = ?"
+                " WHERE pivot_user_id = ? AND matter_id = ?"
                 "   AND kind = 'file'",
-                (user_open_id, matter_id),
+                (pivot_user_id, matter_id),
             ).fetchall()
         return {r["filename"]: r["reason"] for r in rows}

@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE TABLE IF NOT EXISTS drafts (
     id TEXT PRIMARY KEY,
-    user_open_id TEXT NOT NULL,
+    pivot_user_id TEXT NOT NULL,
     type TEXT NOT NULL CHECK(type IN ('proposal', 'reply')),
     title TEXT,
     category TEXT,
@@ -26,22 +26,22 @@ CREATE TABLE IF NOT EXISTS drafts (
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_drafts_user ON drafts(user_open_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_drafts_user ON drafts(pivot_user_id, updated_at DESC);
 CREATE TABLE IF NOT EXISTS read_state (
-    user_open_id TEXT NOT NULL,
+    pivot_user_id TEXT NOT NULL,
     thread_key TEXT NOT NULL,
     last_read_post_filename TEXT NOT NULL,
     updated_at REAL NOT NULL,
-    PRIMARY KEY (user_open_id, thread_key)
+    PRIMARY KEY (pivot_user_id, thread_key)
 );
 CREATE TABLE IF NOT EXISTS favorites (
-    user_open_id TEXT NOT NULL,
+    pivot_user_id TEXT NOT NULL,
     thread_key TEXT NOT NULL,
     created_at REAL NOT NULL,
-    PRIMARY KEY (user_open_id, thread_key)
+    PRIMARY KEY (pivot_user_id, thread_key)
 );
 CREATE INDEX IF NOT EXISTS idx_favorites_user_created
-ON favorites(user_open_id, created_at DESC);
+ON favorites(pivot_user_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS contacts (
     open_id TEXT PRIMARY KEY,
     union_id TEXT,
@@ -68,11 +68,11 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS ai_conversations (
-    user_open_id TEXT NOT NULL,
+    pivot_user_id TEXT NOT NULL,
     thread_key TEXT NOT NULL,
     messages_json TEXT NOT NULL DEFAULT '[]',
     updated_at REAL NOT NULL,
-    PRIMARY KEY (user_open_id, thread_key)
+    PRIMARY KEY (pivot_user_id, thread_key)
 );
 CREATE TABLE IF NOT EXISTS api_tokens (
     token_hash TEXT PRIMARY KEY,
@@ -84,11 +84,11 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(pivot_user_id);
 CREATE TABLE IF NOT EXISTS file_reads (
-    user_open_id  TEXT NOT NULL,
+    pivot_user_id  TEXT NOT NULL,
     matter_id     TEXT NOT NULL,
     filename      TEXT NOT NULL,
     first_read_at REAL NOT NULL,
-    PRIMARY KEY (user_open_id, matter_id, filename)
+    PRIMARY KEY (pivot_user_id, matter_id, filename)
 );
 CREATE INDEX IF NOT EXISTS idx_file_reads_matter
     ON file_reads(matter_id, filename);
@@ -151,7 +151,7 @@ CREATE TABLE IF NOT EXISTS invite (
     used_by_user_id TEXT
 );
 CREATE TABLE IF NOT EXISTS relevance_events (
-    user_open_id  TEXT NOT NULL,
+    pivot_user_id  TEXT NOT NULL,
     matter_id     TEXT NOT NULL,
     filename      TEXT NOT NULL,
     kind          TEXT NOT NULL,
@@ -160,16 +160,16 @@ CREATE TABLE IF NOT EXISTS relevance_events (
     actor_pinyin  TEXT NOT NULL,
     created_at    REAL NOT NULL,
     read_at       REAL,
-    PRIMARY KEY (user_open_id, matter_id, filename, kind, event_at, actor_pinyin)
+    PRIMARY KEY (pivot_user_id, matter_id, filename, kind, event_at, actor_pinyin)
 );
 CREATE INDEX IF NOT EXISTS idx_re_user_unread
-    ON relevance_events(user_open_id, read_at, matter_id);
+    ON relevance_events(pivot_user_id, read_at, matter_id);
 CREATE TABLE IF NOT EXISTS user_preferences (
-    user_open_id TEXT NOT NULL,
+    pivot_user_id TEXT NOT NULL,
     key          TEXT NOT NULL,
     value        TEXT NOT NULL,
     updated_at   REAL NOT NULL,
-    PRIMARY KEY (user_open_id, key)
+    PRIMARY KEY (pivot_user_id, key)
 );
 """
 
@@ -208,7 +208,7 @@ def _migrate(conn) -> None:
         )
         # One-time backfill: split old context_files_json into (reply_target, reference_files)
         for row in conn.execute(
-            "SELECT user_open_id, thread_key, context_files_json FROM ai_conversations"
+            "SELECT pivot_user_id, thread_key, context_files_json FROM ai_conversations"
         ).fetchall():
             try:
                 import json as _j
@@ -221,8 +221,8 @@ def _migrate(conn) -> None:
             refs = files[1:]
             conn.execute(
                 "UPDATE ai_conversations SET reply_target=?, reference_files_json=?"
-                " WHERE user_open_id=? AND thread_key=?",
-                (target, __import__("json").dumps(refs), row["user_open_id"], row["thread_key"]),
+                " WHERE pivot_user_id=? AND thread_key=?",
+                (target, __import__("json").dumps(refs), row["pivot_user_id"], row["thread_key"]),
             )
     # Tool-use schema migration: clear all prior AI conversations on first
     # boot of the tool-use version. Threads/posts are untouched (Git is the

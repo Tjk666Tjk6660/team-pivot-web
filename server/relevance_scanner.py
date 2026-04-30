@@ -112,7 +112,7 @@ def scan_all(
                     if not ok or reason is None:
                         continue
                     if repo.exists(
-                        user_open_id=user.open_id,
+                        pivot_user_id=user.open_id,
                         matter_id=matter_id,
                         filename=filename,
                         kind=KIND_FILE,
@@ -150,7 +150,7 @@ def scan_all(
                     if target.pinyin and target.pinyin == comment_author:
                         continue  # self-exclusion
                     if repo.exists(
-                        user_open_id=target.open_id,
+                        pivot_user_id=target.open_id,
                         matter_id=matter_id,
                         filename=filename,
                         kind=KIND_MENTION,

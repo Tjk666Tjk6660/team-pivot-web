@@ -13,7 +13,7 @@ VALID_TYPES = ("proposal", "reply")
 @dataclass(frozen=True)
 class Draft:
     id: str
-    user_open_id: str
+    pivot_user_id: str
     type: str
     title: str | None
     category: str | None
@@ -35,7 +35,7 @@ class DraftRepo:
     def create(
         self,
         *,
-        user_open_id: str,
+        pivot_user_id: str,
         type_: str,
         title: str | None = None,
         category: str | None = None,
@@ -53,13 +53,13 @@ class DraftRepo:
         with self._db.connect() as conn:
             conn.execute(
                 "INSERT INTO drafts"
-                " (id, user_open_id, type, title, category, body_md, thread_key,"
+                " (id, pivot_user_id, type, title, category, body_md, thread_key,"
                 "  mentions_json, reply_to, references_json, matter_payload_json,"
                 "  created_at, updated_at)"
                 " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     draft_id,
-                    user_open_id,
+                    pivot_user_id,
                     type_,
                     title,
                     category,
@@ -84,11 +84,11 @@ class DraftRepo:
             ).fetchone()
         return _row(row) if row else None
 
-    def list_for_user(self, user_open_id: str) -> list[Draft]:
+    def list_for_user(self, pivot_user_id: str) -> list[Draft]:
         with self._db.connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM drafts WHERE user_open_id=? ORDER BY updated_at DESC",
-                (user_open_id,),
+                "SELECT * FROM drafts WHERE pivot_user_id=? ORDER BY updated_at DESC",
+                (pivot_user_id,),
             ).fetchall()
         return [_row(r) for r in rows]
 
@@ -141,7 +141,7 @@ def _row(row: sqlite3.Row) -> Draft:
     cols = row.keys()
     return Draft(
         id=row["id"],
-        user_open_id=row["user_open_id"],
+        pivot_user_id=row["pivot_user_id"],
         type=row["type"],
         title=row["title"],
         category=row["category"],

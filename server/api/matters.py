@@ -885,7 +885,7 @@ def _reader_to_dict(
 def _inject_relevance(
     timeline: list[dict],
     matter_id: str,
-    user_open_id: str,
+    pivot_user_id: str,
     relevance_repo: RelevanceEventsRepo,
 ) -> None:
     """Attach `relevance_reason` to each timeline item and
@@ -893,9 +893,9 @@ def _inject_relevance(
     relevance_events rows for this matter. Two SQL reads regardless of
     timeline length: one for file reasons, one for unread mention keys.
     """
-    file_reasons = relevance_repo.file_reasons_for_matter(user_open_id, matter_id)
+    file_reasons = relevance_repo.file_reasons_for_matter(pivot_user_id, matter_id)
     unread_mention_keys = relevance_repo.unread_mention_keys_for_matter(
-        user_open_id, matter_id,
+        pivot_user_id, matter_id,
     )
 
     for item in timeline:

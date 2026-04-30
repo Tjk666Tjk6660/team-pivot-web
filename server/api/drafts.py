@@ -78,7 +78,7 @@ def build_router(
     def _require_owner(draft: Draft | None, user: User) -> Draft:
         if draft is None:
             raise HTTPException(status_code=404, detail="draft not found")
-        if draft.user_open_id != user.open_id:
+        if draft.pivot_user_id != user.open_id:
             raise HTTPException(status_code=404, detail="draft not found")
         return draft
 
@@ -95,7 +95,7 @@ def build_router(
             user.open_id, body.type, body.matter_payload is not None,
         )
         d = drafts.create(
-            user_open_id=user.open_id,
+            pivot_user_id=user.open_id,
             type_=body.type,
             title=body.title,
             category=body.category,

@@ -25,10 +25,10 @@ class InboxItem:
 def compute_inbox(
     discussions_root: Path,
     index_dir: Path,
-    user_open_id: str,
+    pivot_user_id: str,
     read_states: ReadStateRepo,
 ) -> list[InboxItem]:
-    state = read_states.all_for_user(user_open_id)
+    state = read_states.all_for_user(pivot_user_id)
     items: list[InboxItem] = []
     for meta in list_threads(discussions_root, index_dir):
         tdir = discussions_root / meta.category / meta.slug
@@ -59,11 +59,11 @@ def compute_inbox(
 def compute_unread_counts(
     discussions_root: Path,
     index_dir: Path,
-    user_open_id: str,
+    pivot_user_id: str,
     read_states: ReadStateRepo,
 ) -> dict[str, int]:
     """Returns {category/slug: unread_count} for threads with unread proposal/reply posts."""
-    state = read_states.all_for_user(user_open_id)
+    state = read_states.all_for_user(pivot_user_id)
     result: dict[str, int] = {}
     for meta in list_threads(discussions_root, index_dir):
         tdir = discussions_root / meta.category / meta.slug
@@ -165,11 +165,11 @@ def _derive_matter_category(data: dict) -> str | None:
 def compute_matter_inbox(
     discussions_root: Path,
     index_dir: Path,
-    user_open_id: str,
+    pivot_user_id: str,
     read_states: ReadStateRepo,
 ) -> list[MatterInboxItem]:
     """Return matters with unread timeline items for the given user."""
-    state = read_states.all_for_user(user_open_id)
+    state = read_states.all_for_user(pivot_user_id)
     out: list[MatterInboxItem] = []
     for index_path in _list_matter_index_paths(index_dir):
         data = read_matter_index(index_path)
@@ -217,11 +217,11 @@ def compute_matter_inbox(
 def compute_matter_unread_counts(
     discussions_root: Path,
     index_dir: Path,
-    user_open_id: str,
+    pivot_user_id: str,
     read_states: ReadStateRepo,
 ) -> dict[str, int]:
     """Returns {category/matter_id: unread_count}."""
-    state = read_states.all_for_user(user_open_id)
+    state = read_states.all_for_user(pivot_user_id)
     result: dict[str, int] = {}
     for index_path in _list_matter_index_paths(index_dir):
         data = read_matter_index(index_path)
@@ -248,7 +248,7 @@ def compute_matter_unread_counts(
 def compute_matter_unread_breakdown(
     discussions_root: Path,
     index_dir: Path,
-    user_open_id: str,
+    pivot_user_id: str,
     read_states: ReadStateRepo,
     relevance_repo,
 ) -> dict[str, tuple[int, int]]:
@@ -270,8 +270,8 @@ def compute_matter_unread_breakdown(
         red  = red_files + red_mentions
         gray = max(total_unread - red_files, 0)
     """
-    state = read_states.all_for_user(user_open_id)
-    breakdown = relevance_repo.unread_breakdown_per_matter(user_open_id)
+    state = read_states.all_for_user(pivot_user_id)
+    breakdown = relevance_repo.unread_breakdown_per_matter(pivot_user_id)
 
     result: dict[str, tuple[int, int]] = {}
     for index_path in _list_matter_index_paths(index_dir):

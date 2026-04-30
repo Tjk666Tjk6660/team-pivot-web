@@ -490,7 +490,7 @@ def test_scan_with_mark_as_read_inserts_rows_as_already_read(
 
     with db.connect() as conn:
         rows = conn.execute(
-            "SELECT read_at FROM relevance_events WHERE user_open_id=?",
+            "SELECT read_at FROM relevance_events WHERE pivot_user_id=?",
             (alice_id,),
         ).fetchall()
     assert all(r["read_at"] is not None for r in rows)

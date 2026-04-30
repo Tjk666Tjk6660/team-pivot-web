@@ -37,6 +37,32 @@ class PivotUser:
     def is_admin_active(self) -> bool:
         return self.role == "admin" and self.status == "active"
 
+    # ── Backward-compat aliases ──────────────────────────────────────────
+    # Legacy routes / repos written before the migration read `user.open_id`
+    # and `user.name`. Post-migration the canonical reference is the ULID
+    # `id` (carried in PK of every downstream table) and the display field
+    # is `display_name`. Aliasing here keeps drafts / read_state / inbox /
+    # matters / publish working without rewriting every call site —
+    # individual files can be migrated to the new names incrementally.
+
+    @property
+    def open_id(self) -> str:
+        return self.id
+
+    @property
+    def name(self) -> str:
+        return self.display_name
+
+    @property
+    def markdown_style(self) -> str | None:
+        """Legacy ``User.markdown_style`` column is gone (DROP TABLE users).
+        Per-user markdown style is not (yet) carried on pivot_user; return
+        None so GET /api/markdown/styles falls back to the system default.
+        TODO: thread the per-user override through ``settings`` (key
+        scheme like ``markdown_style:<pivot_user_id>``) so PUT
+        /api/me/markdown-style works again."""
+        return None
+
 
 def _new_id() -> str:
     return uuid.uuid4().hex

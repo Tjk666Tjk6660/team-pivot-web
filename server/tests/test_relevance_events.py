@@ -118,7 +118,7 @@ def test_exists_returns_true_after_insert(repo):
         event_at="2026-04-28T10:00:00+08:00", actor_pinyin="lingdao",
     )
     assert repo.exists(
-        user_open_id="ou_a", matter_id="m-x", filename="01.md",
+        pivot_user_id="ou_a", matter_id="m-x", filename="01.md",
         kind=KIND_FILE,
         event_at="2026-04-28T10:00:00+08:00", actor_pinyin="lingdao",
     ) is True
@@ -126,7 +126,7 @@ def test_exists_returns_true_after_insert(repo):
 
 def test_exists_returns_false_for_missing_pk(repo):
     assert repo.exists(
-        user_open_id="ou_a", matter_id="m-x", filename="01.md",
+        pivot_user_id="ou_a", matter_id="m-x", filename="01.md",
         kind=KIND_FILE,
         event_at="2026-04-28T10:00:00+08:00", actor_pinyin="lingdao",
     ) is False
@@ -141,7 +141,7 @@ def test_exists_distinguishes_kinds(repo):
     )
     # 同一 (user, matter, file, event_at, actor) 但 kind=mention 不存在
     assert repo.exists(
-        user_open_id="ou_a", matter_id="m-x", filename="01.md",
+        pivot_user_id="ou_a", matter_id="m-x", filename="01.md",
         kind=KIND_MENTION,
         event_at="2026-04-28T10:00:00+08:00", actor_pinyin="lingdao",
     ) is False
@@ -404,7 +404,7 @@ def test_concurrent_insert_same_pk_yields_one_row(repo):
     # 表里只有一行
     with repo._db.connect() as conn:
         count = conn.execute(
-            "SELECT COUNT(*) FROM relevance_events WHERE user_open_id='ou_a'"
+            "SELECT COUNT(*) FROM relevance_events WHERE pivot_user_id='ou_a'"
         ).fetchone()[0]
     assert count == 1
 

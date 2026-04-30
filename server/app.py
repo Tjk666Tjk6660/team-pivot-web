@@ -116,8 +116,8 @@ def create_app() -> FastAPI:
     if expired_tokens > 0:
         log.info("expired api tokens purged=%d", expired_tokens)
 
-    current_user_dep = make_current_user(sessions, users, api_tokens)
-    current_user_cookie_dep = make_current_user_cookie_only(sessions, users)
+    current_user_dep = make_current_user(sessions, pivot_users, api_tokens)
+    current_user_cookie_dep = make_current_user_cookie_only(sessions, pivot_users)
     admin_user_cookie_dep = make_require_admin_user_cookie(sessions, pivot_users)
 
     workspace = WorkspaceRuntime(base_dir=cfg.data_dir / "git", settings=settings)
