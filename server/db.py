@@ -252,7 +252,43 @@ CREATE TABLE IF NOT EXISTS scoring_commenter_weights (
 """
 
 
+_USER_KEYED_TABLES = (
+    "drafts", "read_state", "favorites", "sessions",
+    "ai_conversations", "api_tokens", "file_reads",
+    "relevance_events", "user_preferences",
+)
+
+
+def _assert_no_legacy_user_open_id(conn) -> None:
+    """Refuse to start when downstream tables still carry the legacy
+    ``user_open_id`` column. Application code is fully on ``pivot_user_id``
+    now (see commit 4b7035f); a database with the old column means the
+    user-management migration hasn't been run yet, and silently ALTERing
+    the schema here would mask data-quality issues. Tell the operator to
+    run scripts/migrate_user_management_v2.py instead.
+    """
+    legacy_tables: list[str] = []
+    for t in _USER_KEYED_TABLES:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (t,),
+        ).fetchone()
+        if row is None:
+            continue
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({t})")}
+        if "user_open_id" in cols:
+            legacy_tables.append(t)
+    if legacy_tables:
+        raise RuntimeError(
+            "Database still has legacy user_open_id column on: "
+            f"{legacy_tables}. Run "
+            "`uv run python scripts/migrate_user_management_v2.py "
+            "--db <path> --initial-admin <pinyin>` before starting the "
+            "server."
+        )
+
+
 def _migrate(conn) -> None:
+    _assert_no_legacy_user_open_id(conn)
     cols = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
     if "markdown_style" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN markdown_style TEXT")
