@@ -28,7 +28,13 @@ class FeishuContactSyncer:
         self._contacts = contacts
         self._get_tenant_token = tenant_token_getter
 
-    def sync(self, user_token: str) -> int:
+    def sync(self) -> int:
+        """Pull the company directory using the tenant_access_token (the
+        Feishu app's own credentials, server-level), no per-user OAuth
+        token required. This means an invite-only admin (no Feishu
+        binding) can run /api/contacts/sync as long as the app has
+        ``contact:user.base:readonly`` permissions wired in the Feishu
+        admin console."""
         tenant_token = self._get_tenant_token()
         dept_ids, user_ids_from_scope = self._fetch_scopes(tenant_token)
         log.info(
@@ -60,7 +66,7 @@ class FeishuContactSyncer:
 
         users_by_oid: dict[str, dict] = {}
         for uid in all_user_ids:
-            u = self._get_user(user_token, uid)
+            u = self._get_user(tenant_token, uid)
             if u and u.get("open_id"):
                 users_by_oid[u["open_id"]] = u
 

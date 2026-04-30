@@ -29,7 +29,12 @@ class ProfileUpdate(BaseModel):
     github_username: str | None = Field(default=None, max_length=39)
 
 
-def _user_dict(u: PivotUser) -> dict:
+def _user_dict(
+    u: PivotUser, bindings: ExternalBindingRepo | None = None,
+) -> dict:
+    providers: list[str] = []
+    if bindings is not None:
+        providers = [b.provider for b in bindings.list_for_user(u.id)]
     return {
         "id": u.id,
         "open_id": u.id,  # backward-compat alias used by older frontend/tests
@@ -43,6 +48,11 @@ def _user_dict(u: PivotUser) -> dict:
         "needs_setup": u.needs_setup,
         "role": u.role,
         "status": u.status,
+        # Frontend uses this to gate provider-specific admin actions, e.g.
+        # "Sync Feishu contacts" should only show if the current admin has
+        # a feishu binding (otherwise they have no way to OAuth-attach to
+        # the company directory).
+        "providers": providers,
     }
 
 
@@ -248,7 +258,7 @@ def build_router(
 
     @router.get("/me")
     def me(sid: str | None = Cookie(default=None)) -> JSONResponse:
-        return JSONResponse(_user_dict(_current_user(sid)))
+        return JSONResponse(_user_dict(_current_user(sid), bindings))
 
     @router.post("/me/profile")
     def update_profile(
@@ -264,7 +274,7 @@ def build_router(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         assert updated is not None
-        return JSONResponse(_user_dict(updated))
+        return JSONResponse(_user_dict(updated, bindings))
 
     @router.post("/logout")
     def logout(sid: str | None = Cookie(default=None)) -> JSONResponse:

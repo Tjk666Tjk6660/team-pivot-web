@@ -11,6 +11,10 @@ export type Me = {
   needs_setup: boolean;
   role: "admin" | "member";
   status: "active" | "suspended" | "deleted";
+  /** 当前用户绑定的外部身份 provider 列表（'feishu' / 'invite' / ...）。
+   *  前端用它决定是否显示 provider-specific 的 admin 动作，例如
+   *  "联系人同步"只对绑了飞书的 admin 可见。 */
+  providers: string[];
 };
 
 export class SessionExpiredError extends Error {

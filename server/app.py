@@ -292,8 +292,8 @@ def create_app() -> FastAPI:
         workspace, users, contacts, read_states, resolver, current_user_dep,
     ))
     app.include_router(build_contacts_router(
-        sessions, contacts, syncer, current_user_dep, current_user_cookie_dep,
-        admin_user_cookie_dep,
+        sessions, contacts, bindings, syncer,
+        current_user_dep, current_user_cookie_dep, admin_user_cookie_dep,
     ))
     app.include_router(build_ai_router(
         workspace, settings, ai_conversations, current_user_dep, current_user_cookie_dep,

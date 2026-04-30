@@ -68,7 +68,12 @@ export function AdminLayout() {
             <NavItem to="/admin/markdown">正文主题</NavItem>
             <NavItem to="/admin/daily-report">日报</NavItem>
             <NavItem to="/admin/ai">AI 助手</NavItem>
-            <NavItem to="/admin/contacts">联系人同步</NavItem>
+            {/* 联系人同步只对绑了飞书的 admin 显示 —— 没飞书 binding
+                的邀请 admin 没法 OAuth 触发个人级 token，且这个能力本身
+                跟"飞书企业通讯录"绑定，邮箱用户无意义。 */}
+            {me.providers.includes("feishu") && (
+              <NavItem to="/admin/contacts">联系人同步</NavItem>
+            )}
             <NavItem to="/admin/scoring">Matter 评分</NavItem>
           </NavGroup>
         </nav>
