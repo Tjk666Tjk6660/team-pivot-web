@@ -1,6 +1,21 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet } from "react-router-dom";
-import { ArrowLeft, ChevronDown, ChevronRight } from "lucide-react";
+import {
+  ArrowLeft,
+  Bot,
+  ChevronDown,
+  ChevronRight,
+  ClipboardCheck,
+  FileText,
+  FolderGit2,
+  Home,
+  Mail,
+  Palette,
+  Settings,
+  Shield,
+  Star,
+  Users,
+} from "lucide-react";
 import { Toaster } from "sonner";
 import { fetchMe, type Me } from "@/api";
 import { Button } from "@/components/ui/button";
@@ -59,20 +74,64 @@ export function AdminLayout() {
         <SidebarHeader me={me} />
         <nav className="flex-1 overflow-y-auto px-3 py-4">
           <ul className="mb-4 flex flex-col gap-0.5">
-            <NavItem to="/admin">首页</NavItem>
+            <NavItem to="/admin" icon={<Home className="h-3.5 w-3.5" />}>
+              首页
+            </NavItem>
           </ul>
-          <NavGroup title="用户管理">
-            <NavItem to="/admin/applications">申请审批</NavItem>
-            <NavItem to="/admin/users">用户列表</NavItem>
-            <NavItem to="/admin/roles">角色管理</NavItem>
-            <NavItem to="/admin/invites">邀请管理</NavItem>
+          <NavGroup title="用户管理" icon={<Users className="h-3.5 w-3.5" />}>
+            <NavItem
+              to="/admin/applications"
+              icon={<ClipboardCheck className="h-3.5 w-3.5" />}
+            >
+              申请审批
+            </NavItem>
+            <NavItem
+              to="/admin/users"
+              icon={<Users className="h-3.5 w-3.5" />}
+            >
+              用户列表
+            </NavItem>
+            <NavItem
+              to="/admin/roles"
+              icon={<Shield className="h-3.5 w-3.5" />}
+            >
+              角色管理
+            </NavItem>
+            <NavItem
+              to="/admin/invites"
+              icon={<Mail className="h-3.5 w-3.5" />}
+            >
+              邀请管理
+            </NavItem>
           </NavGroup>
-          <NavGroup title="系统设置">
-            <NavItem to="/admin/workspace">数据仓库</NavItem>
-            <NavItem to="/admin/markdown">正文主题</NavItem>
-            <NavItem to="/admin/daily-report">日报</NavItem>
-            <NavItem to="/admin/ai">AI 助手</NavItem>
-            <NavItem to="/admin/scoring">Matter 评分</NavItem>
+          <NavGroup title="系统设置" icon={<Settings className="h-3.5 w-3.5" />}>
+            <NavItem
+              to="/admin/workspace"
+              icon={<FolderGit2 className="h-3.5 w-3.5" />}
+            >
+              数据仓库
+            </NavItem>
+            <NavItem
+              to="/admin/markdown"
+              icon={<Palette className="h-3.5 w-3.5" />}
+            >
+              正文主题
+            </NavItem>
+            <NavItem
+              to="/admin/daily-report"
+              icon={<FileText className="h-3.5 w-3.5" />}
+            >
+              日报
+            </NavItem>
+            <NavItem to="/admin/ai" icon={<Bot className="h-3.5 w-3.5" />}>
+              AI 助手
+            </NavItem>
+            <NavItem
+              to="/admin/scoring"
+              icon={<Star className="h-3.5 w-3.5" />}
+            >
+              Matter 评分
+            </NavItem>
           </NavGroup>
         </nav>
       </aside>
@@ -130,10 +189,12 @@ function SidebarHeader({ me }: { me: Me }) {
 
 function NavGroup({
   title,
+  icon,
   children,
   storageKey,
 }: {
   title: string;
+  icon?: React.ReactNode;
   children: React.ReactNode;
   /** localStorage key that remembers the open/closed state across reloads.
    *  Defaults to title-derived key so each group has its own slot. */
@@ -177,6 +238,7 @@ function NavGroup({
         ) : (
           <ChevronRight className="h-4 w-4 shrink-0" />
         )}
+        {icon && <span className="shrink-0">{icon}</span>}
         <span className="flex-1">{title}</span>
       </button>
       {open && (
@@ -186,7 +248,15 @@ function NavGroup({
   );
 }
 
-function NavItem({ to, children }: { to: string; children: React.ReactNode }) {
+function NavItem({
+  to,
+  icon,
+  children,
+}: {
+  to: string;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <li>
       <NavLink
@@ -194,7 +264,7 @@ function NavItem({ to, children }: { to: string; children: React.ReactNode }) {
         end
         className={({ isActive }) =>
           [
-            "block rounded-[var(--r-sm)] px-2.5 py-1.5 text-[13.5px] transition-colors",
+            "flex items-center gap-2 rounded-[var(--r-sm)] px-2.5 py-1.5 text-[13.5px] transition-colors",
             isActive ? "font-semibold" : "font-medium",
             isActive ? "" : "hover:bg-[var(--surface)] hover:text-[var(--text)]",
           ].join(" ")
@@ -206,7 +276,8 @@ function NavItem({ to, children }: { to: string; children: React.ReactNode }) {
           background: isActive ? "var(--accent)" : "transparent",
         })}
       >
-        {children}
+        {icon && <span className="shrink-0">{icon}</span>}
+        <span className="flex-1">{children}</span>
       </NavLink>
     </li>
   );
