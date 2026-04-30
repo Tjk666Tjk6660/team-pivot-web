@@ -13,7 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
  *  - sub-routes render through <Outlet />
  *
  * The sidebar groups two clusters:
- *   1. 用户管理 — applications / users / invites (per /admin/applications, etc.)
+ *   1. 用户管理 — applications / users / roles / invites (per /admin/applications, etc.)
  *   2. 系统设置 — workspace / markdown / daily-report / ai / contacts / scoring
  *
  * Adding a new admin section means: drop a Route under <Outlet/> in App.tsx and
@@ -26,7 +26,7 @@ export function AdminLayout() {
     fetchMe().then(setMe).catch(() => setMe(null));
   }, []);
 
-  const isAdmin = me?.role === "admin" && me.status === "active";
+  const isAdmin = !!me?.roles?.includes("admin") && me.status === "active";
 
   if (me === undefined) {
     return (
@@ -39,7 +39,7 @@ export function AdminLayout() {
     );
   }
 
-  if (!isAdmin) {
+  if (me === null || !isAdmin) {
     return <RoleDeniedNotice me={me} />;
   }
 
@@ -64,6 +64,7 @@ export function AdminLayout() {
           <NavGroup title="用户管理">
             <NavItem to="/admin/applications">加入申请</NavItem>
             <NavItem to="/admin/users">用户</NavItem>
+            <NavItem to="/admin/roles">角色</NavItem>
             <NavItem to="/admin/invites">邀请</NavItem>
           </NavGroup>
           <NavGroup title="系统设置">

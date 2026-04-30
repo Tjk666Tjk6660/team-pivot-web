@@ -25,6 +25,7 @@ def test_create_user_returns_pivot_user(repo):
     assert u.display_name == "Alice"
     assert u.pinyin == "alice"
     assert u.role == "admin"
+    assert u.roles == ["admin"]
     assert u.status == "active"
 
 
@@ -69,6 +70,30 @@ def test_update_role(repo):
     u = repo.create(display_name="X", pinyin="x", email=None, avatar_url="", role="member")
     promoted = repo.update_role(user_id=u.id, role="admin")
     assert promoted.role == "admin"
+    assert promoted.roles == ["admin"]
+
+
+def test_update_role_accepts_multiple_roles(repo):
+    u = repo.create(display_name="X", pinyin="x", email=None, avatar_url="", role="member")
+    updated = repo.update_role(user_id=u.id, roles=["member", "技术部门"])
+    assert updated.role == "member"
+    assert updated.roles == ["member", "技术部门"]
+
+
+def test_list_roles_returns_distinct_roles_from_arrays(repo):
+    a = repo.create(display_name="A", pinyin="a", email=None, avatar_url="", role="admin")
+    b = repo.create(display_name="B", pinyin="b", email=None, avatar_url="", role="member")
+    c = repo.create(display_name="C", pinyin="c", email=None, avatar_url="", role="member")
+    repo.update_role(user_id=a.id, roles=["admin", "member"])
+    repo.update_role(user_id=b.id, roles=["member", "技术部门"])
+    repo.update_role(user_id=c.id, roles=["行政部门", "技术部门"])
+
+    roles = repo.list_roles()
+
+    assert {"role": "admin", "user_count": 1} in roles
+    assert {"role": "member", "user_count": 2} in roles
+    assert {"role": "技术部门", "user_count": 2} in roles
+    assert {"role": "行政部门", "user_count": 1} in roles
 
 
 def test_touch_last_login(repo):

@@ -24,15 +24,21 @@ from typing import Any, Callable, Deque
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
+from server.db import Database
 from server.events import (
     Event,
     TOPIC_COMMENT_APPENDED,
     TOPIC_FILE_APPENDED,
     TOPIC_MATTER_CREATED,
     TOPIC_MATTER_OWNER_CHANGED,
+    TOPIC_MATTER_VISIBILITY_CHANGED,
     subscribe,
 )
+from server.matter_index import matter_index_path, read_matter_index
 from server.users import User
+from server.visibility_scopes import VisibilityScope
+from server.visibility_store import read_category_visibility
+from server.workspace import Workspace
 
 
 log = logging.getLogger("server.api.matters_events")
@@ -45,6 +51,7 @@ _TOPIC_MAP: dict[str, tuple[str, str]] = {
     TOPIC_FILE_APPENDED: ("matter.updated", "file_appended"),
     TOPIC_COMMENT_APPENDED: ("matter.updated", "comment_appended"),
     TOPIC_MATTER_OWNER_CHANGED: ("matter.updated", "owner_changed"),
+    TOPIC_MATTER_VISIBILITY_CHANGED: ("matter.updated", "visibility_changed"),
 }
 
 # Process-level ring buffer for Last-Event-ID replay. New connections that
@@ -107,7 +114,11 @@ def _replay_after(last_id: str | None) -> list[dict[str, Any]]:
     return out
 
 
-def build_router(current_user: Callable) -> APIRouter:
+def build_router(
+    current_user: Callable,
+    workspace: Workspace | None = None,
+    db: Database | None = None,
+) -> APIRouter:
     router = APIRouter(prefix="/api")
 
     @router.get("/matters/events")
@@ -125,6 +136,8 @@ def build_router(current_user: Callable) -> APIRouter:
             # Append to the global ring (single-writer per emit, deque is
             # thread-safe for append). Subsequent connections can replay it.
             _ring.append(sse)
+            if not _can_read_event(sse, user, workspace, db):
+                return
             # Hand off to the connection's own queue. put_nowait is safe to
             # call from any thread because Queue uses an internal lock; but to
             # play well with the asyncio loop we route through call_soon_threadsafe.
@@ -142,6 +155,8 @@ def build_router(current_user: Callable) -> APIRouter:
                 yield ":connected\n\n"
                 # Replay any events newer than the resume id, before live tail.
                 for item in _replay_after(last_id):
+                    if not _can_read_event(item, user, workspace, db):
+                        continue
                     yield _format_frame(item)
                 while True:
                     if await request.is_disconnected():
@@ -178,3 +193,102 @@ def _offer_nowait(queue: asyncio.Queue[dict[str, Any]], item: dict[str, Any]) ->
         queue.put_nowait(item)
     except asyncio.QueueFull:
         log.warning("matter events queue full, dropping event id=%s", item.get("id"))
+
+
+def _can_read_event(
+    item: dict[str, Any],
+    user: User,
+    workspace: Workspace | None,
+    db: Database | None,
+) -> bool:
+    if workspace is None:
+        return True
+    matter_id = str((item.get("data") or {}).get("matter_id") or "")
+    if not matter_id:
+        return True
+    data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
+    if data is None:
+        return False
+    return _can_read_matter(data, user, workspace, db)
+
+
+def _can_read_matter(
+    data: dict,
+    user: User,
+    workspace: Workspace,
+    db: Database | None,
+) -> bool:
+    roles = _roles_for_user(user, db)
+    category = _matter_category(data)
+    if category:
+        category_visibility = read_category_visibility(
+            workspace.path / "categories",
+            category,
+        )
+        if category_visibility.mode == "restricted" and not (
+            set(roles) & set(category_visibility.authorized_roles)
+        ):
+            return False
+    visibility = VisibilityScope.from_dict((data.get("matter") or {}).get("visibility"))
+    if visibility.mode == "public":
+        return True
+    if set(roles) & set(visibility.roles):
+        return True
+    return bool(set(_identifiers_for_user(user)) & set(visibility.user_ids))
+
+
+def _matter_category(data: dict) -> str | None:
+    timeline = data.get("timeline") or []
+    if not timeline:
+        return None
+    parts = str(timeline[0].get("file") or "").split("/")
+    if len(parts) >= 4 and parts[0] == "discussions":
+        return parts[1]
+    return None
+
+
+def _identifiers_for_user(user: User) -> list[str]:
+    values = [
+        getattr(user, "id", None),
+        getattr(user, "open_id", None),
+        getattr(user, "pinyin", None),
+        getattr(user, "email", None),
+    ]
+    return [str(v) for v in values if v]
+
+
+def _roles_for_user(user: User, db: Database | None) -> list[str]:
+    roles = getattr(user, "roles", None)
+    if isinstance(roles, list):
+        return [str(role) for role in roles]
+    if db is None:
+        return []
+    identifiers = _identifiers_for_user(user)
+    if not identifiers:
+        return []
+    placeholders = ",".join("?" for _ in identifiers)
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT role FROM pivot_user"
+            f" WHERE status='active' AND (id IN ({placeholders})"
+            f" OR pinyin IN ({placeholders}) OR email IN ({placeholders}))"
+            " LIMIT 1",
+            (*identifiers, *identifiers, *identifiers),
+        ).fetchone()
+    if row is None:
+        return []
+    return _decode_role_list(row["role"])
+
+
+def _decode_role_list(raw: str) -> list[str]:
+    value = (raw or "").strip()
+    if not value:
+        return []
+    if value.startswith("["):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return [value]
+        if isinstance(decoded, list):
+            return [str(item).strip() for item in decoded if str(item).strip()]
+    return [value]

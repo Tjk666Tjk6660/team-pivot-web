@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import sqlite3
 import time
 
 import pytest
 
+from server.db import Database
 from server.auth.session import SessionStore
 
 
@@ -47,6 +49,42 @@ def test_session_persists_across_store_instances(db):
     sid = s1.create("ou_1")
     s2 = SessionStore(db)
     assert s2.get(sid) is not None
+
+
+def test_database_refuses_legacy_sessions_user_open_id(tmp_path):
+    db_path = tmp_path / "legacy.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                user_open_id TEXT NOT NULL,
+                pivot_user_id TEXT,
+                expires_at REAL NOT NULL,
+                created_at REAL NOT NULL
+            )
+            """
+        )
+    with pytest.raises(RuntimeError, match="legacy user_open_id"):
+        Database(db_path)
+
+
+def test_database_refuses_legacy_sessions_user_open_id_with_feishu_binding(tmp_path):
+    db_path = tmp_path / "legacy.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                user_open_id TEXT NOT NULL,
+                pivot_user_id TEXT,
+                expires_at REAL NOT NULL,
+                created_at REAL NOT NULL
+            )
+            """
+        )
+    with pytest.raises(RuntimeError, match="legacy user_open_id"):
+        Database(db_path)
 
 
 def test_sweep_expired_removes_old(db):

@@ -18,9 +18,11 @@ import {
   searchContacts,
   streamAIChat,
   type ChatMessage,
+  type CategoryVisibilityScope,
   type DocType,
   type Me,
   type MentionBlock,
+  type VisibilityScope,
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -29,6 +31,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { MentionField, emptyMention } from "@/components/MentionField";
 import { OwnerPicker } from "@/components/matter/OwnerPicker";
+import { VisibilityScopePicker } from "@/components/visibility/VisibilityScopePicker";
 import { useDraftAutosave } from "@/hooks/useDraftAutosave";
 import { publishDraftsRefresh } from "@/events/listRefresh";
 
@@ -42,6 +45,9 @@ export type ClassicBridgeSnapshot = {
   docType: DocType;
   matterOwner: { openId: string; name: string };
   mentions: MentionBlock;
+  categoryVisibility: CategoryVisibilityScope;
+  matterVisibility: VisibilityScope;
+  createdCategory?: string | null;
 };
 
 const PREVIEW_MIN_WIDTH = 320;
@@ -51,6 +57,28 @@ const PREVIEW_DEFAULT_WIDTH = 460;
 const NEW_CATEGORY_OPTION = "__new_category__";
 const CATEGORY_PATTERN = /^[^/\\:*?"<>|\t\n\r]{1,20}$/;
 const NEW_MATTER_PSEUDO_ID = "_new_matter_";
+const PUBLIC_VISIBILITY: VisibilityScope = { mode: "public", roles: [], user_ids: [] };
+const PUBLIC_CATEGORY_VISIBILITY: CategoryVisibilityScope = {
+  mode: "public",
+  authorized_roles: [],
+};
+
+function categoryScopeToVisibility(scope: CategoryVisibilityScope): VisibilityScope {
+  return {
+    mode: scope.mode,
+    roles: scope.mode === "restricted" ? scope.authorized_roles : [],
+    user_ids: [],
+  };
+}
+
+function visibilityToCategoryScope(scope: VisibilityScope): CategoryVisibilityScope {
+  return {
+    mode: scope.mode === "restricted" && scope.roles.length > 0
+      ? "restricted"
+      : "public",
+    authorized_roles: scope.mode === "restricted" ? scope.roles : [],
+  };
+}
 
 type Phase =
   | "topic"
@@ -91,6 +119,8 @@ type StepData = {
   title: string;
   matterOwner: { openId: string; name: string };
   mentions: MentionBlock;
+  categoryVisibility: CategoryVisibilityScope;
+  matterVisibility: VisibilityScope;
   body: string;
   summary: string;
 };
@@ -102,6 +132,8 @@ const initialData = (me: Me): StepData => ({
   title: "",
   matterOwner: { openId: me.open_id, name: me.name },
   mentions: emptyMention(),
+  categoryVisibility: PUBLIC_CATEGORY_VISIBILITY,
+  matterVisibility: PUBLIC_VISIBILITY,
   body: "",
   summary: "",
 });
@@ -140,6 +172,8 @@ export function NewMatterGuidedFlow({
           title: initialBridge!.title,
           matterOwner: initialBridge!.matterOwner,
           mentions: initialBridge!.mentions,
+          categoryVisibility: initialBridge!.categoryVisibility,
+          matterVisibility: initialBridge!.matterVisibility,
           body: "",
           summary: "",
         }
@@ -152,6 +186,9 @@ export function NewMatterGuidedFlow({
     hasBridge && initialBridge!.category
       ? [initialBridge!.category]
       : [],
+  );
+  const [createdCategory, setCreatedCategory] = useState<string | null>(
+    () => initialBridge?.createdCategory ?? null,
   );
   const [draftId, setDraftId] = useState<string | null>(null);
   const [resolvedNames, setResolvedNames] = useState<Record<string, string>>({});
@@ -219,6 +256,11 @@ export function NewMatterGuidedFlow({
 
   const phaseIndex = PHASE_ORDER.indexOf(phase);
   const phaseDisplayIndex = phase === "review" ? 7 : phaseIndex + 1;
+  const isNewCategory = !!createdCategory && data.category.trim() === createdCategory;
+  const categoryAllowedRoles =
+    isNewCategory && data.categoryVisibility.mode === "restricted"
+      ? data.categoryVisibility.authorized_roles
+      : undefined;
   const draftBody = data.body || streamingBody;
   const hasDraftContent =
     data.topic.trim().length > 0 ||
@@ -318,7 +360,22 @@ export function NewMatterGuidedFlow({
     if (!CATEGORY_PATTERN.test(trimmed)) {
       return toast.error('种类需 1-20 字，且不能包含 / \\\\ : * ? " < > | 或换行');
     }
-    setData((d) => ({ ...d, category: trimmed }));
+    const wasNewCategory = !availableCategories.includes(trimmed);
+    if (wasNewCategory) {
+      setCreatedCategory(trimmed);
+    } else if (createdCategory && trimmed !== createdCategory) {
+      setCreatedCategory(null);
+      setAvailableCategories((cats) =>
+        cats.filter((item) => item !== createdCategory),
+      );
+    }
+    setData((d) => ({
+      ...d,
+      category: trimmed,
+      categoryVisibility:
+        wasNewCategory ? PUBLIC_CATEGORY_VISIBILITY : d.categoryVisibility,
+      matterVisibility: PUBLIC_VISIBILITY,
+    }));
     setAvailableCategories((cats) =>
       cats.includes(trimmed) ? cats : [...cats, trimmed],
     );
@@ -551,6 +608,19 @@ export function NewMatterGuidedFlow({
     if (!data.title.trim()) return toast.error("标题必填");
     if (!data.body.trim()) return toast.error("正文必填");
     if (!data.summary.trim()) return toast.error("摘要必填");
+    if (isNewCategory && data.categoryVisibility.mode === "restricted") {
+      if (data.categoryVisibility.authorized_roles.length === 0) {
+        return toast.error("Category 指定角色可见时，至少选择一个角色");
+      }
+      if (
+        data.matterVisibility.mode === "restricted" &&
+        data.matterVisibility.roles.some(
+          (role) => !data.categoryVisibility.authorized_roles.includes(role),
+        )
+      ) {
+        return toast.error("Matter 可见范围不能超过 Category");
+      }
+    }
     setSubmitting(true);
     try {
       const r = await createMatter({
@@ -560,6 +630,10 @@ export function NewMatterGuidedFlow({
           data.matterOwner.openId && data.matterOwner.openId !== me.open_id
             ? data.matterOwner.openId
             : undefined,
+        visibility: data.matterVisibility,
+        new_category_visibility: isNewCategory
+          ? data.categoryVisibility
+          : undefined,
         initial_file: {
           type: data.docType,
           summary: data.summary.trim(),
@@ -697,6 +771,42 @@ export function NewMatterGuidedFlow({
             {phase === "review" && (
               <div className="space-y-3">
                 <ReviseStep onSend={runRevision} busy={revising} />
+                <div className="space-y-3 rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface-alt)] p-3">
+                  {isNewCategory && (
+                    <div className="space-y-2">
+                      <Label className="text-xs font-semibold text-[var(--text-soft)]">
+                        Category 可见范围
+                      </Label>
+                      <VisibilityScopePicker
+                        value={categoryScopeToVisibility(data.categoryVisibility)}
+                        onChange={(next) => {
+                          setData((d) => ({
+                            ...d,
+                            categoryVisibility: visibilityToCategoryScope(next),
+                            matterVisibility: PUBLIC_VISIBILITY,
+                          }));
+                        }}
+                        disabled={submitting || revising}
+                        allowUsers={false}
+                        publicLabel="公开"
+                        restrictedLabel="指定角色"
+                        dialogTitle="设置 Category 可见范围"
+                      />
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <Label className="text-xs font-semibold text-[var(--text-soft)]">
+                      讨论可见范围
+                    </Label>
+                    <VisibilityScopePicker
+                      category={isNewCategory ? undefined : data.category}
+                      value={data.matterVisibility}
+                      onChange={(next) => setData((d) => ({ ...d, matterVisibility: next }))}
+                      disabled={submitting || revising}
+                      allowedRoles={categoryAllowedRoles}
+                    />
+                  </div>
+                </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   <span className="mr-auto text-xs text-[var(--text-mute)]">
                     跟 AI 继续讨论会覆盖右侧草稿；也可直接微调后发布。

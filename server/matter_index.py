@@ -50,6 +50,7 @@ _MATTER_KEY_ORDER = (
     "title",
     "current_status",
     "owner",
+    "visibility",
     "created_at",
     "updated_at",
 )
@@ -148,6 +149,7 @@ def create_matter_index(
     initial_item: dict[str, Any],
     now_iso: str,
     matter_owner: str | None = None,
+    visibility: dict[str, Any] | None = None,
 ) -> None:
     """Create a new matter index file with a first timeline item.
 
@@ -169,6 +171,8 @@ def create_matter_index(
     }
     if matter_owner:
         matter_block["owner"] = matter_owner
+    if visibility is not None:
+        matter_block["visibility"] = visibility
     matter_block["created_at"] = now_iso
     matter_block["updated_at"] = now_iso
     index: dict[str, Any] = {

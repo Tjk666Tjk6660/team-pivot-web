@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+import sqlite3
 from dataclasses import dataclass
 from time import time
 
@@ -36,11 +37,23 @@ class SessionStore:
         sid = secrets.token_urlsafe(32)
         now = time()
         with self._db.connect() as conn:
+            session_cols = self._session_columns(conn)
+            values: dict[str, str | float | None] = {
+                "id": sid,
+                "expires_at": now + self._ttl,
+                "created_at": now,
+            }
+            if "pivot_user_id" in session_cols:
+                values["pivot_user_id"] = pivot_user_id
+            if "user_open_id" in session_cols:
+                values["user_open_id"] = self._legacy_user_open_id(conn, pivot_user_id)
+            if "user_access_token" in session_cols:
+                values["user_access_token"] = user_access_token
+            columns = list(values)
             conn.execute(
-                "INSERT INTO sessions"
-                " (id, pivot_user_id, expires_at, created_at, user_access_token)"
-                " VALUES (?,?,?,?,?)",
-                (sid, pivot_user_id, now + self._ttl, now, user_access_token),
+                f"INSERT INTO sessions ({', '.join(columns)})"
+                f" VALUES ({', '.join('?' for _ in columns)})",
+                tuple(values[col] for col in columns),
             )
         log.debug("session created sid=%s... user=%s", sid[:8], pivot_user_id)
         return sid
@@ -49,8 +62,16 @@ class SessionStore:
         if not sid:
             return None
         with self._db.connect() as conn:
+            session_cols = self._session_columns(conn)
+            user_expr = "pivot_user_id"
+            if "pivot_user_id" in session_cols and "user_open_id" in session_cols:
+                user_expr = "COALESCE(pivot_user_id, user_open_id)"
+            elif "user_open_id" in session_cols:
+                user_expr = "user_open_id"
+            token_expr = "user_access_token" if "user_access_token" in session_cols else "NULL"
             row = conn.execute(
-                "SELECT pivot_user_id, expires_at, user_access_token"
+                f"SELECT {user_expr} AS pivot_user_id, expires_at,"
+                f" {token_expr} AS user_access_token"
                 " FROM sessions WHERE id=?",
                 (sid,),
             ).fetchone()
@@ -64,6 +85,23 @@ class SessionStore:
             expires_at=row["expires_at"],
             user_access_token=row["user_access_token"],
         )
+
+    @staticmethod
+    def _session_columns(conn: sqlite3.Connection) -> set[str]:
+        return {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+
+    @staticmethod
+    def _legacy_user_open_id(conn: sqlite3.Connection, pivot_user_id: str) -> str:
+        try:
+            row = conn.execute(
+                "SELECT external_id FROM external_binding"
+                " WHERE pivot_user_id=? AND provider='feishu'"
+                " ORDER BY bound_at DESC LIMIT 1",
+                (pivot_user_id,),
+            ).fetchone()
+        except sqlite3.Error:
+            row = None
+        return row["external_id"] if row is not None else pivot_user_id
 
     def delete(self, sid: str | None) -> None:
         if not sid:

@@ -500,7 +500,7 @@ function MergeDialog({
                       >
                         {u.email || "无邮箱"}
                         {u.pinyin && ` · ${u.pinyin}`}
-                        {u.role === "admin" && " · ADMIN"}
+                        {u.roles?.includes("admin") && " · ADMIN"}
                       </div>
                     </div>
                     {isPicked && (

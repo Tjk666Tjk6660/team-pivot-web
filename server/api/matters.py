@@ -7,8 +7,11 @@ from typing import Any, Callable, Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from server.acl_cache import rebuild_acl_cache
 from server.auth.deps import require_profile
 from server.contacts import ContactRepo
+from server.db import Database
+from server.events import TOPIC_MATTER_VISIBILITY_CHANGED, emit
 from server.favorites import FavoriteRepo
 from server.file_reads import FileReadRepo, ReaderEntry
 from server.inbox import (
@@ -45,6 +48,8 @@ from server.publish import (
 from server.read_state import ReadStateRepo
 from server.users import User, UserRepo
 from server.workspace import Workspace
+from server.visibility_scopes import CategoryVisibilityScope, VisibilityScope
+from server.visibility_store import read_category_visibility, write_matter_visibility
 
 
 # ---------- Request bodies ----------
@@ -77,6 +82,8 @@ class NewMatterBody(BaseModel):
     # the file-level owner of the first think/act). Defaults to the creator
     # when absent / equal to the creator's open_id.
     owner_open_id: str | None = Field(default=None, max_length=50)
+    visibility: dict | None = None
+    new_category_visibility: dict | None = None
     initial_file: InitialFileIn
 
 
@@ -128,6 +135,12 @@ class OwnerChangeBody(BaseModel):
     status_change: StatusChangeIn | None = None
 
 
+class MatterVisibilityBody(BaseModel):
+    mode: str = "public"
+    roles: list[str] | None = None
+    user_ids: list[str] | None = None
+
+
 # ---------- Router ----------
 
 
@@ -142,6 +155,7 @@ def build_router(
     relevance_repo: RelevanceEventsRepo,
     resolver: DisplayResolver,
     current_user: Callable,
+    db: Database | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
 
@@ -165,6 +179,8 @@ def build_router(
         for path in _list_index_files(workspace.index_dir):
             data = read_matter_index(path)
             if data is None:
+                continue
+            if not _can_read_matter(data, user, db, workspace):
                 continue
             summary = _summarize_matter(data, resolver)
             if status and summary.get("current_status") != status:
@@ -196,7 +212,7 @@ def build_router(
     @router.get("/matters/{matter_id}")
     def get_matter(matter_id: str, user: User = Depends(current_user)):
         data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
-        if data is None:
+        if data is None or not _can_read_matter(data, user, db, workspace):
             raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
         rendered = _render_matter_detail(workspace, data, resolver)
         category = _matter_category(data)
@@ -237,7 +253,7 @@ def build_router(
     @router.post("/matters/{matter_id}/read")
     def mark_read(matter_id: str, user: User = Depends(current_user)):
         data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
-        if data is None:
+        if data is None or not _can_read_matter(data, user, db, workspace):
             raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
         category = _matter_category(data)
         if not category:
@@ -262,7 +278,7 @@ def build_router(
         user: User = Depends(current_user),
     ):
         data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
-        if data is None:
+        if data is None or not _can_read_matter(data, user, db, workspace):
             raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
         category = _matter_category(data)
         if not category:
@@ -276,6 +292,83 @@ def build_router(
         else:
             favorites.delete(user.open_id, key)
         return {"ok": True, "thread_key": key, "favorite": body.favorite}
+
+    @router.get("/matters/{matter_id}/visibility")
+    def get_matter_visibility(
+        matter_id: str,
+        user: User = Depends(current_user),
+    ):
+        data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
+        if data is None or not _can_read_matter(data, user, db, workspace):
+            raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
+        matter = data.get("matter") or {}
+        visibility = VisibilityScope.from_dict(matter.get("visibility"))
+        return {"visibility": visibility.to_dict()}
+
+    @router.put("/matters/{matter_id}/visibility")
+    def update_matter_visibility(
+        matter_id: str,
+        body: MatterVisibilityBody,
+        user: User = Depends(current_user),
+    ):
+        require_profile(user)
+        data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
+        if data is None or not _can_read_matter(data, user, db, workspace):
+            raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
+        if not _can_write_matter(data, user, db, workspace):
+            raise HTTPException(status_code=403, detail={"code": "matter_write_forbidden"})
+        if not _can_edit_matter_visibility(data, user):
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "matter_visibility_forbidden"},
+            )
+
+        try:
+            visibility = VisibilityScope.from_dict(body.model_dump())
+        except ValueError as e:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "invalid_visibility", "message": str(e)},
+            ) from e
+        category = _matter_category(data)
+        if category:
+            category_visibility = read_category_visibility(
+                workspace.path / "categories",
+                category,
+            )
+            if (
+                category_visibility.mode == "restricted"
+                and visibility.mode == "restricted"
+            ):
+                extra = set(visibility.roles) - set(category_visibility.authorized_roles)
+                if extra:
+                    raise HTTPException(
+                        status_code=422,
+                        detail={"code": "visibility_scope_exceeds_category"},
+                    )
+        required = [_matter_creator(data), _effective_matter_owner(data)]
+        for principal in {value for value in required if value}:
+            if not _scope_allows_principal(principal, visibility, db):
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": "visibility_excludes_required_user"},
+                )
+
+        with workspace.write_session(
+            message=f"chore: update matter visibility {matter_id}",
+            author_name=user.name,
+            author_email=f"{user.pinyin}@pivot.local",
+        ):
+            write_matter_visibility(workspace.index_dir, matter_id, visibility)
+
+        _refresh_acl_cache(db, workspace)
+        emit(
+            TOPIC_MATTER_VISIBILITY_CHANGED,
+            matter_id=matter_id,
+            actor=user.pinyin or user.open_id,
+            payload={"visibility": visibility.to_dict()},
+        )
+        return {"visibility": visibility.to_dict()}
 
     @router.post("/matters")
     def create_matter(body: NewMatterBody, user: User = Depends(current_user)):
@@ -291,6 +384,33 @@ def build_router(
             initial["body_source"] = body.initial_file.body_source
         _preflight_initial(initial)
         try:
+            visibility = VisibilityScope.from_dict(body.visibility)
+            new_category_visibility = (
+                CategoryVisibilityScope.from_dict(body.new_category_visibility)
+                if body.new_category_visibility is not None
+                else None
+            )
+            category_visibility_path = workspace.path / "categories" / f"{body.category}.yaml"
+            if (
+                not category_visibility_path.is_file()
+                and visibility.mode == "restricted"
+                and new_category_visibility is None
+            ):
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": "missing_category_visibility"},
+                )
+            if (
+                new_category_visibility is not None
+                and new_category_visibility.mode == "restricted"
+                and visibility.mode == "restricted"
+            ):
+                extra = set(visibility.roles) - set(new_category_visibility.authorized_roles)
+                if extra:
+                    raise HTTPException(
+                        status_code=422,
+                        detail={"code": "visibility_scope_exceeds_category"},
+                    )
             result = publish_matter_create(
                 workspace, user,
                 category=body.category,
@@ -301,6 +421,8 @@ def build_router(
                 notifier=notifier,
                 users=users,
                 file_reads=file_reads,
+                visibility=visibility,
+                new_category_visibility=new_category_visibility,
             )
         except MatterAlreadyExistsError as e:
             raise HTTPException(
@@ -330,6 +452,7 @@ def build_router(
                     },
                 ) from e
             raise HTTPException(status_code=400, detail=msg) from e
+        _refresh_acl_cache(db, workspace)
         return {
             "matter": result["matter"],
             "initial_timeline_item": result["item"],
@@ -344,6 +467,11 @@ def build_router(
         user: User = Depends(current_user),
     ):
         require_profile(user)
+        data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
+        if data is None or not _can_read_matter(data, user, db, workspace):
+            raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
+        if not _can_write_matter(data, user, db, workspace):
+            raise HTTPException(status_code=403, detail={"code": "matter_write_forbidden"})
         sc_dict = (
             {"from": body.status_change.from_, "to": body.status_change.to}
             if body.status_change
@@ -395,8 +523,7 @@ def build_router(
                 "matter": result["matter"],
                 "timeline": [result["item"]],
             },
-            users,
-            contacts,
+            resolver,
         )
         return {
             "matter": rendered_detail["matter"],
@@ -412,8 +539,10 @@ def build_router(
         require_profile(user)
         index_path = matter_index_path(workspace.index_dir, matter_id)
         data = read_matter_index(index_path)
-        if data is None:
+        if data is None or not _can_read_matter(data, user, db, workspace):
             raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
+        if not _can_write_matter(data, user, db, workspace):
+            raise HTTPException(status_code=403, detail={"code": "matter_write_forbidden"})
 
         item_preview = _body_to_item_preview(body, user=user)
         _preflight(data, item_preview)
@@ -451,8 +580,10 @@ def build_router(
         require_profile(user)
         index_path = matter_index_path(workspace.index_dir, matter_id)
         data = read_matter_index(index_path)
-        if data is None:
+        if data is None or not _can_read_matter(data, user, db, workspace):
             raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
+        if not _can_write_matter(data, user, db, workspace):
+            raise HTTPException(status_code=403, detail={"code": "matter_write_forbidden"})
 
         current_status = (data.get("matter") or {}).get("current_status")
         # result always implies a status_change to the selected outcome
@@ -498,6 +629,11 @@ def build_router(
         user: User = Depends(current_user),
     ):
         require_profile(user)
+        data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
+        if data is None or not _can_read_matter(data, user, db, workspace):
+            raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
+        if not _can_write_matter(data, user, db, workspace):
+            raise HTTPException(status_code=403, detail={"code": "matter_write_forbidden"})
         try:
             result = publish_matter_comment(
                 workspace, user,
@@ -652,6 +788,142 @@ def _matter_has_owner(data: dict, owner: str) -> bool:
         if item.get("owner") == owner:
             return True
     return False
+
+
+def _matter_creator(data: dict) -> str | None:
+    for item in data.get("timeline") or []:
+        if item.get("type") == "owner_change":
+            continue
+        return item.get("creator")
+    return None
+
+
+def _can_edit_matter_visibility(data: dict, user: User) -> bool:
+    user_id = user.pinyin or user.open_id
+    return user_id in {_matter_creator(data), _effective_matter_owner(data)}
+
+
+def _can_read_matter(
+    data: dict,
+    user: User,
+    db: Database | None,
+    workspace: Workspace,
+) -> bool:
+    category = _matter_category(data)
+    roles = _roles_for_user(user, db)
+    identifiers = _identifiers_for_user(user)
+    if category:
+        category_visibility = read_category_visibility(
+            workspace.path / "categories",
+            category,
+        )
+        if category_visibility.mode == "restricted" and not (
+            set(roles) & set(category_visibility.authorized_roles)
+        ):
+            return False
+
+    visibility = VisibilityScope.from_dict((data.get("matter") or {}).get("visibility"))
+    if visibility.mode == "public":
+        return True
+    if set(roles) & set(visibility.roles):
+        return True
+    return bool(set(identifiers) & set(visibility.user_ids))
+
+
+def _can_write_matter(
+    data: dict,
+    user: User,
+    db: Database | None,
+    workspace: Workspace,
+) -> bool:
+    return _can_read_matter(data, user, db, workspace)
+
+
+def _identifiers_for_user(user: User) -> list[str]:
+    values = [
+        getattr(user, "id", None),
+        getattr(user, "open_id", None),
+        getattr(user, "pinyin", None),
+        getattr(user, "email", None),
+    ]
+    return [str(v) for v in values if v]
+
+
+def _roles_for_user(user: User, db: Database | None) -> list[str]:
+    roles = getattr(user, "roles", None)
+    if isinstance(roles, list):
+        return [str(role) for role in roles]
+    if db is None:
+        return []
+    identifiers = _identifiers_for_user(user)
+    if not identifiers:
+        return []
+    placeholders = ",".join("?" for _ in identifiers)
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT role FROM pivot_user"
+            f" WHERE status='active' AND (id IN ({placeholders})"
+            f" OR pinyin IN ({placeholders}) OR email IN ({placeholders}))"
+            " LIMIT 1",
+            (*identifiers, *identifiers, *identifiers),
+        ).fetchone()
+    if row is None:
+        return []
+    return _decode_role_list(row["role"])
+
+
+def _roles_for_principal(principal_id: str | None, db: Database | None) -> list[str]:
+    if not principal_id or db is None:
+        return []
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT role FROM pivot_user"
+            " WHERE status='active' AND (id=? OR pinyin=? OR email=?)"
+            " LIMIT 1",
+            (principal_id, principal_id, principal_id),
+        ).fetchone()
+    if row is None:
+        return []
+    return _decode_role_list(row["role"])
+
+
+def _scope_allows_principal(
+    principal_id: str,
+    visibility: VisibilityScope,
+    db: Database | None,
+) -> bool:
+    if visibility.mode == "public":
+        return True
+    if principal_id in visibility.user_ids:
+        return True
+    roles = _roles_for_principal(principal_id, db)
+    return bool(set(roles) & set(visibility.roles))
+
+
+def _decode_role_list(raw: str) -> list[str]:
+    import json
+
+    value = (raw or "").strip()
+    if not value:
+        return []
+    if value.startswith("["):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return [value]
+        if isinstance(decoded, list):
+            return [str(item).strip() for item in decoded if str(item).strip()]
+    return [value]
+
+
+def _refresh_acl_cache(db: Database | None, workspace: Workspace) -> None:
+    if db is None:
+        return
+    rebuild_acl_cache(
+        db,
+        index_dir=workspace.index_dir,
+        categories_dir=workspace.path / "categories",
+    )
 
 
 def _matter_category(data: dict) -> str | None:

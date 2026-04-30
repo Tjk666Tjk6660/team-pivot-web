@@ -18,18 +18,21 @@ import {
   appendMatterFile,
   appendMatterResult,
   fetchMatter,
+  fetchMatterVisibility,
   fetchMe,
   createDraft,
   deleteDraft,
   fetchDrafts,
   markMatterRead,
   streamAIChat,
+  updateMatterVisibility,
   updateDraft,
   isTimelineFileItem,
   type Draft,
   type DocType,
   type MatterDetail as MatterDetailData,
   type NewFileIn,
+  type VisibilityScope,
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import { AIPane } from "@/components/AIPane";
@@ -69,6 +72,7 @@ import {
 } from "@/lib/aiPanelState";
 import { useMatterEvents } from "@/events/MatterEventsProvider";
 import { scheduleRefresh } from "@/events/scheduleRefresh";
+import { VisibilityScopePicker } from "@/components/visibility/VisibilityScopePicker";
 
 export function MatterDetailEmpty() {
   return <HomeWelcomePane />;
@@ -90,6 +94,7 @@ const AI_TOAST_ACTION_STYLE = {
   color: "var(--accent-ink)",
   fontWeight: 700,
 };
+const PUBLIC_VISIBILITY: VisibilityScope = { mode: "public", roles: [], user_ids: [] };
 
 // Stable compare for MatterDetail — returns true when nothing the view reads
 // has changed, so the silent refresh path can no-op and avoid re-rendering
@@ -152,6 +157,7 @@ export function MatterDetailPane() {
     undefined,
   );
   const [sessionOpenId, setSessionOpenId] = useState<string>("");
+  const [sessionPinyin, setSessionPinyin] = useState<string>("");
   const [sessionName, setSessionName] = useState<string>("");
   const [sessionAvatarUrl, setSessionAvatarUrl] = useState<string>("");
   const [pendingCreate, setPendingCreate] = useState<{
@@ -166,6 +172,10 @@ export function MatterDetailPane() {
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [resultConfirmOpen, setResultConfirmOpen] = useState(false);
   const [reviewedConfirmOpen, setReviewedConfirmOpen] = useState(false);
+  const [visibilityOpen, setVisibilityOpen] = useState(false);
+  const [visibilityDraft, setVisibilityDraft] =
+    useState<VisibilityScope>(PUBLIC_VISIBILITY);
+  const [visibilitySaving, setVisibilitySaving] = useState(false);
   // 草稿卡片出现时滚到它,让用户知道新卡片落在哪。
   const pendingArticleRef = useRef<HTMLElement | null>(null);
 
@@ -418,11 +428,13 @@ export function MatterDetailPane() {
     fetchMe()
       .then((me) => {
         setSessionOpenId(me?.open_id ?? "");
+        setSessionPinyin(me?.pinyin ?? "");
         setSessionName(me?.name ?? "");
         setSessionAvatarUrl(me?.avatar_url ?? "");
       })
       .catch(() => {
         setSessionOpenId("");
+        setSessionPinyin("");
         setSessionName("");
         setSessionAvatarUrl("");
       });
@@ -575,11 +587,38 @@ export function MatterDetailPane() {
   const canGenerateInsight =
     matter.current_status === "finished" ||
     matter.current_status === "cancelled";
+  const canEditVisibility = !!sessionPinyin &&
+    (sessionPinyin === matter.creator || sessionPinyin === matter.owner);
 
   const afterWrite = async () => {
     await Promise.resolve();
     load();
     await reloadLists();
+  };
+
+  const openVisibilityEditor = async () => {
+    if (!matter_id) return;
+    try {
+      setVisibilityDraft(await fetchMatterVisibility(matter_id));
+      setVisibilityOpen(true);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "读取可见范围失败");
+    }
+  };
+
+  const saveVisibility = async () => {
+    if (!matter_id) return;
+    setVisibilitySaving(true);
+    try {
+      await updateMatterVisibility(matter_id, visibilityDraft);
+      setVisibilityOpen(false);
+      toast.success("可见范围已更新");
+      await afterWrite();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "保存可见范围失败");
+    } finally {
+      setVisibilitySaving(false);
+    }
   };
 
   const generateSummaryViaChat = async (draft: {
@@ -956,6 +995,16 @@ export function MatterDetailPane() {
                   status={matter.current_status}
                   className="h-7 px-3"
                 />
+                {canEditVisibility && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 rounded-[var(--r-sm)] px-2 text-xs"
+                    onClick={openVisibilityEditor}
+                  >
+                    可见范围
+                  </Button>
+                )}
                 <CopyForAIButton matterId={matter.id} />
                 {matter_id && (
                   <Button
@@ -1394,6 +1443,35 @@ export function MatterDetailPane() {
               }}
             >
               继续生成
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={visibilityOpen} onOpenChange={setVisibilityOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>修改可见范围</DialogTitle>
+            <DialogDescription className="text-xs">
+              保存后，被移出范围的人将不能再访问这个讨论。
+            </DialogDescription>
+          </DialogHeader>
+          <VisibilityScopePicker
+            category={matter.category ?? undefined}
+            value={visibilityDraft}
+            onChange={setVisibilityDraft}
+            disabled={visibilitySaving}
+          />
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setVisibilityOpen(false)}
+              disabled={visibilitySaving}
+            >
+              取消
+            </Button>
+            <Button onClick={saveVisibility} disabled={visibilitySaving}>
+              保存
             </Button>
           </DialogFooter>
         </DialogContent>
