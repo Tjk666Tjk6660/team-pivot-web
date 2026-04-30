@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
-import { fetchMe, logout, type Me } from "@/api";
+import { fetchMe, getInitStatus, logout, type Me } from "@/api";
 import { Login } from "@/pages/Login";
+import { Init } from "@/pages/Init";
 import { Dashboard } from "@/pages/Dashboard";
 import { ProfileSetup } from "@/pages/ProfileSetup";
 import { SettingsPage } from "@/pages/SettingsPage";
@@ -14,9 +15,13 @@ import { MarkdownStyleProvider } from "@/components/markdown/MarkdownStyleProvid
 
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
+  const [needsInit, setNeedsInit] = useState<boolean | null>(null);
 
   useEffect(() => {
     fetchMe().then(setMe).catch(() => setMe(null));
+    getInitStatus()
+      .then((r) => setNeedsInit(r.needs_init))
+      .catch(() => setNeedsInit(false));
   }, []);
 
   const doLogout = async () => {
@@ -24,8 +29,22 @@ export function App() {
     setMe(null);
   };
 
-  if (me === undefined)
+  if (me === undefined || needsInit === null)
     return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+
+  // 系统未初始化 → 强制 /init；不允许走登录或任何业务页。
+  if (needsInit) {
+    if (window.location.pathname !== "/init") {
+      return <Navigate to="/init" replace />;
+    }
+    return <Init />;
+  }
+
+  // 已初始化但不小心进了 /init → 拍回首页。
+  if (window.location.pathname === "/init") {
+    return <Navigate to="/" replace />;
+  }
+
   if (me === null) return <Login />;
   if (me.needs_setup) return <ProfileSetup me={me} onDone={setMe} />;
 
