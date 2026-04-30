@@ -201,12 +201,13 @@ function NavItem({ to, children }: { to: string; children: React.ReactNode }) {
         className={({ isActive }) =>
           [
             "block rounded-[var(--r-sm)] px-2.5 py-1.5 text-[13.5px] transition-colors",
-            isActive ? "font-semibold" : "font-normal",
-            isActive ? "" : "hover:bg-[var(--surface)]",
+            isActive ? "font-semibold" : "font-medium",
+            isActive ? "" : "hover:bg-[var(--surface)] hover:text-[var(--text)]",
           ].join(" ")
         }
         style={({ isActive }) => ({
-          fontFamily: "var(--font-serif)",
+          // 不指定 fontFamily —— 跟随系统/Tailwind 默认 sans。导航类
+          // 元素用衬线体看着太"庄重"，sans 更轻盈，符合菜单交互预期。
           color: isActive ? "var(--accent-ink)" : "var(--text-soft)",
           background: isActive ? "var(--accent)" : "transparent",
         })}
