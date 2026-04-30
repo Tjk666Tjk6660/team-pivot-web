@@ -866,13 +866,6 @@ export async function searchContacts(q: string): Promise<Contact[]> {
   return body.items;
 }
 
-export async function syncContacts(): Promise<{ ok: true; synced: number; total: number }> {
-  const r = await adminFetch("/api/contacts/sync", { method: "POST" });
-  const body = await r.json().catch(() => ({ detail: r.statusText }));
-  if (!r.ok) throw new Error(body.detail || `sync failed: ${r.status}`);
-  return body;
-}
-
 export async function fetchDrafts(): Promise<Draft[]> {
   const r = await fetch("/api/drafts", { credentials: "include" });
   await throwIfSessionExpired(r);

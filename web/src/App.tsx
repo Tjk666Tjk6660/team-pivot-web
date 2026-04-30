@@ -10,7 +10,6 @@ import { SettingsPage } from "@/pages/SettingsPage";
 import { SettingsExternalAI } from "@/pages/SettingsExternalAI";
 import { AdminAI } from "@/pages/admin/AdminAI";
 import { AdminApplications } from "@/pages/admin/AdminApplications";
-import { AdminContacts } from "@/pages/admin/AdminContacts";
 import { AdminDailyReport } from "@/pages/admin/AdminDailyReport";
 import { AdminHome } from "@/pages/admin/AdminHome";
 import { AdminInvites } from "@/pages/admin/AdminInvites";
@@ -92,7 +91,6 @@ export function App() {
             <Route path="markdown" element={<AdminMarkdown />} />
             <Route path="daily-report" element={<AdminDailyReport />} />
             <Route path="ai" element={<AdminAI />} />
-            <Route path="contacts" element={<AdminContacts />} />
             <Route path="scoring" element={<AdminScoringPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

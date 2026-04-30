@@ -8,7 +8,7 @@
  * AdminIntro / QuickFact were deleted — AdminLayout + AdminHome cover them.
  */
 import { useEffect, useState } from "react";
-import { Bot, FileText, FolderGit2, Palette, Play, Users } from "lucide-react";
+import { Bot, FileText, FolderGit2, Palette, Play } from "lucide-react";
 import { toast } from "sonner";
 import {
   AdminRequiredError,
@@ -17,7 +17,6 @@ import {
   fetchDailyReportConfig,
   fetchDailyReportLastRun,
   fetchWorkspaceAdminConfig,
-  syncContacts,
   triggerDailyReport,
   updateAdminMarkdownSettings,
   updateAISettings,
@@ -878,49 +877,8 @@ export function ToggleRow({
   );
 }
 
-// ── Sync Contacts ─────────────────────────────────────────────────────────────
-
-export function SyncContactsSection({ onAdminLost }: { onAdminLost: () => void }) {
-  const [syncing, setSyncing] = useState(false);
-
-  const onSync = async () => {
-    setSyncing(true);
-    try {
-      const r = await syncContacts();
-      toast.success(`同步完成：共 ${r.total} 位联系人（刷新 ${r.synced}）`);
-    } catch (e) {
-      if (e instanceof AdminRequiredError) {
-        onAdminLost();
-      } else {
-        toast.error(e instanceof Error ? e.message : String(e));
-      }
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  return (
-    <section>
-      <Card className="shadow-[var(--shadow-sm)]">
-        <CardHeader className="pb-4">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Users className="h-4 w-4" />
-            联系人同步
-          </CardTitle>
-          <CardDescription>
-            从飞书通讯录拉取联系人，供 @ 提及功能使用。该操作只需要偶尔执行。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-            同步会访问飞书 API，并刷新本地联系人缓存。推荐在新增成员、改名或组织架构调整后执行。
-          </p>
-          <Button size="sm" onClick={onSync} disabled={syncing} className="shrink-0">
-            <Users className={`mr-1.5 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-            {syncing ? "同步中…" : "立即同步联系人"}
-          </Button>
-        </CardContent>
-      </Card>
-    </section>
-  );
-}
+// SyncContactsSection 已下线（圈人候选不再查 contacts 表，admin 主动同步
+// 失去意义；contacts 表的填充改由 /auth/callback 飞书登录时
+// `contacts.upsert_from_login` 单条更新负责）。删除 import + 函数本体；
+// AdminContacts 页面 + /admin/contacts 路由 + /api/contacts/sync 端点
+// 一并下线（同 commit）。
