@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  KeyRound,
+  MoreHorizontal,
+  Pause,
+  Play,
+  Shield,
+  Trash2,
+  Undo2,
+} from "lucide-react";
+import {
   changeUserRoles,
   fetchMe,
   listAdminRoles,
@@ -23,6 +32,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -193,70 +209,75 @@ function UserRow({
           </div>
         </div>
 
-        <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
-          {user.status === "active" && (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={busy || isSelf}
-              onClick={() => guard(async () => {
-                await suspendUser(user.id);
-              })}
-            >
-              暂停
-            </Button>
-          )}
-          {user.status === "suspended" && (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={busy}
-              onClick={() => guard(async () => {
-                await resumeUser(user.id);
-              })}
-            >
-              恢复
-            </Button>
-          )}
-          {user.status !== "deleted" && (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={busy || isSelf}
-              onClick={() => setConfirmKind("delete")}
-              style={{ color: "var(--danger-500)" }}
-            >
-              停用
-            </Button>
-          )}
-          {user.status === "deleted" && (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={busy}
-              onClick={() => setConfirmKind("restore")}
-            >
-              撤销停用
-            </Button>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={busy || isSelf || user.status !== "active"}
-            onClick={() => setConfirmKind("roles")}
-          >
-            修改角色
-          </Button>
-          {user.providers.includes("invite") && (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={busy}
-              onClick={() => setConfirmKind("reset")}
-            >
-              重置密码
-            </Button>
-          )}
+        <div className="flex shrink-0 items-center">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled={busy}
+                className="h-8 w-8 rounded-[var(--r-sm)]"
+                aria-label="用户操作"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[160px]">
+              {user.status === "active" && (
+                <DropdownMenuItem
+                  disabled={isSelf}
+                  onSelect={() => guard(async () => {
+                    await suspendUser(user.id);
+                  })}
+                >
+                  <Pause className="h-3.5 w-3.5" />
+                  暂停
+                </DropdownMenuItem>
+              )}
+              {user.status === "suspended" && (
+                <DropdownMenuItem
+                  onSelect={() => guard(async () => {
+                    await resumeUser(user.id);
+                  })}
+                >
+                  <Play className="h-3.5 w-3.5" />
+                  恢复
+                </DropdownMenuItem>
+              )}
+              {user.status === "deleted" && (
+                <DropdownMenuItem onSelect={() => setConfirmKind("restore")}>
+                  <Undo2 className="h-3.5 w-3.5" />
+                  撤销停用
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem
+                disabled={isSelf || user.status !== "active"}
+                onSelect={() => setConfirmKind("roles")}
+              >
+                <Shield className="h-3.5 w-3.5" />
+                修改角色
+              </DropdownMenuItem>
+              {user.providers.includes("invite") && (
+                <DropdownMenuItem onSelect={() => setConfirmKind("reset")}>
+                  <KeyRound className="h-3.5 w-3.5" />
+                  重置密码
+                </DropdownMenuItem>
+              )}
+              {user.status !== "deleted" && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    disabled={isSelf}
+                    onSelect={() => setConfirmKind("delete")}
+                    style={{ color: "var(--danger-500)" }}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    停用
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
       {error && (
