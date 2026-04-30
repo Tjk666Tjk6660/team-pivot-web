@@ -1,11 +1,16 @@
 export type Me = {
+  id: string;
   open_id: string;
   name: string;
+  display_name: string;
+  email: string | null;
   avatar_url: string;
   pinyin: string | null;
   github_username: string | null;
   markdown_style: string | null;
   needs_setup: boolean;
+  role: "admin" | "member";
+  status: "active" | "suspended" | "deleted";
 };
 
 export class SessionExpiredError extends Error {
@@ -695,25 +700,23 @@ export type AISettings = {
   max_rounds: number;
 };
 
-// Admin password is held in sessionStorage (cleared on browser close)
-const ADMIN_PW_KEY = "admin_password";
+// Legacy admin-password machinery — kept as no-ops for one release while
+// AdminPage.tsx still calls these helpers. The server-side X-Admin-Password
+// gate was removed in Task 15 (admin endpoints now check pivot_user.role
+// over the cookie session); the header is no longer sent on the wire.
+// Task 31 strips the call sites and these helpers can then be deleted.
 export const ADMIN_PW_HEADER = "X-Admin-Password";
 
 export function getAdminPassword(): string | null {
-  return sessionStorage.getItem(ADMIN_PW_KEY);
+  return null;
 }
 
-export function setAdminPassword(pw: string): void {
-  sessionStorage.setItem(ADMIN_PW_KEY, pw);
+export function setAdminPassword(_pw: string): void {
+  /* no-op: server no longer accepts X-Admin-Password */
 }
 
 export function clearAdminPassword(): void {
-  sessionStorage.removeItem(ADMIN_PW_KEY);
-}
-
-function adminHeaders(): Record<string, string> {
-  const pw = getAdminPassword();
-  return pw ? { [ADMIN_PW_HEADER]: pw } : {};
+  /* no-op */
 }
 
 export class AdminRequiredError extends Error {
@@ -724,12 +727,11 @@ async function adminFetch(url: string, init?: RequestInit): Promise<Response> {
   const r = await fetch(url, {
     ...init,
     credentials: "include",
-    headers: { ...(init?.headers || {}), ...adminHeaders() },
+    headers: { ...(init?.headers || {}) },
   });
-  if (r.status === 401) {
+  if (r.status === 401 || r.status === 403) {
     const body = await r.clone().json().catch(() => ({}));
     if (body.detail === "admin_required") {
-      clearAdminPassword();
       throw new AdminRequiredError();
     }
   }
@@ -1159,4 +1161,250 @@ export async function deleteApiToken(id: string): Promise<void> {
   const r = await fetch(`/api/tokens/${id}`, { method: "DELETE", credentials: "include" });
   await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`delete token failed: ${r.status}`);
+}
+
+// ── User management (Tasks 12-18) ─────────────────────────────────────────
+
+async function jsonGet<T>(path: string): Promise<T> {
+  const r = await fetch(path, { credentials: "include" });
+  await throwIfSessionExpired(r);
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `${path} failed: ${r.status}`);
+  }
+  return (await r.json()) as T;
+}
+
+async function jsonPost<T = unknown>(path: string, body: unknown): Promise<T> {
+  const r = await fetch(path, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  await throwIfSessionExpired(r);
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `${path} failed: ${r.status}`);
+  }
+  return (await r.json()) as T;
+}
+
+async function jsonDelete<T = unknown>(path: string): Promise<T> {
+  const r = await fetch(path, { method: "DELETE", credentials: "include" });
+  await throwIfSessionExpired(r);
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `${path} failed: ${r.status}`);
+  }
+  return (await r.json()) as T;
+}
+
+export type InitStatus = { needs_init: boolean };
+
+export async function getInitStatus(): Promise<InitStatus> {
+  return jsonGet<InitStatus>("/init/status");
+}
+
+export type InitCompleteBody = {
+  method: "email_password";
+  email: string;
+  password: string;
+  display_name: string;
+  pinyin: string;
+};
+
+export async function postInitComplete(body: InitCompleteBody) {
+  return jsonPost("/init/complete", body);
+}
+
+export async function postEmailPasswordLogin(body: { email: string; password: string }) {
+  return jsonPost("/auth/login_email_password", body);
+}
+
+export type InvitePreview = {
+  email: string;
+  display_name: string | null;
+  expires_at: number;
+};
+
+export async function getInvite(token: string): Promise<InvitePreview> {
+  return jsonGet<InvitePreview>(`/invite/${encodeURIComponent(token)}`);
+}
+
+export async function postInviteAccept(
+  token: string,
+  body: { password: string; display_name: string; pinyin: string },
+) {
+  return jsonPost(`/invite/${encodeURIComponent(token)}/accept`, body);
+}
+
+// ── Admin: applications ───────────────────────────────────────────────────
+
+export type Application = {
+  id: string;
+  provider: string;
+  external_id: string;
+  external_union_id: string | null;
+  raw_profile: Record<string, unknown>;
+  suggested_match_user_id: string | null;
+  status: "pending" | "approved" | "rejected";
+  applied_at: number;
+  reviewed_at: number | null;
+  reviewed_by: string | null;
+  reject_reason: string | null;
+};
+
+export type MatchCandidate = {
+  user_id: string;
+  display_name: string;
+  email: string | null;
+  avatar_url: string;
+  reason: "email_exact" | "name_exact" | "pinyin_full" | "pinyin_initials";
+};
+
+export async function listApplications(
+  status?: "pending" | "approved" | "rejected",
+): Promise<{ items: Application[] }> {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+  return jsonGet(`/api/admin/applications${qs}`);
+}
+
+export async function getMatchCandidates(
+  applicationId: string,
+): Promise<{ candidates: MatchCandidate[] }> {
+  return jsonGet(
+    `/api/admin/applications/${encodeURIComponent(applicationId)}/match-candidates`,
+  );
+}
+
+export async function approveApplication(
+  id: string, target_pivot_user_id?: string,
+): Promise<{ approved: true; user_id: string; merged: boolean }> {
+  return jsonPost(
+    `/api/admin/applications/${encodeURIComponent(id)}/approve`,
+    { target_pivot_user_id },
+  );
+}
+
+export async function rejectApplication(
+  id: string, reason?: string,
+): Promise<{ rejected: true }> {
+  return jsonPost(
+    `/api/admin/applications/${encodeURIComponent(id)}/reject`,
+    { reason },
+  );
+}
+
+export async function unblockApplication(
+  id: string,
+): Promise<{ unblocked: true }> {
+  return jsonPost(
+    `/api/admin/applications/${encodeURIComponent(id)}/unblock`, {},
+  );
+}
+
+// ── Admin: users ──────────────────────────────────────────────────────────
+
+export type AdminUser = {
+  id: string;
+  display_name: string;
+  pinyin: string | null;
+  email: string | null;
+  avatar_url: string;
+  role: "admin" | "member";
+  status: "active" | "suspended" | "deleted";
+  status_note: string | null;
+  created_at: number;
+  last_login_at: number | null;
+  status_changed_at: number | null;
+  providers: string[];
+};
+
+export async function listAdminUsers(opts?: {
+  include_deleted?: boolean;
+  search?: string;
+}): Promise<{ items: AdminUser[] }> {
+  const q = new URLSearchParams();
+  if (opts?.include_deleted) q.set("include_deleted", "true");
+  if (opts?.search) q.set("search", opts.search);
+  const qs = q.toString();
+  return jsonGet(`/api/admin/users${qs ? `?${qs}` : ""}`);
+}
+
+export async function suspendUser(id: string, note?: string): Promise<AdminUser> {
+  return jsonPost(`/api/admin/users/${encodeURIComponent(id)}/suspend`, { note });
+}
+
+export async function resumeUser(id: string, note?: string): Promise<AdminUser> {
+  return jsonPost(`/api/admin/users/${encodeURIComponent(id)}/resume`, { note });
+}
+
+export async function markUserDeleted(
+  id: string, confirm_display_name: string, note?: string,
+): Promise<AdminUser> {
+  return jsonPost(
+    `/api/admin/users/${encodeURIComponent(id)}/mark-deleted`,
+    { note, confirm_display_name },
+  );
+}
+
+export async function restoreUser(
+  id: string, confirm_display_name: string, note?: string,
+): Promise<AdminUser> {
+  return jsonPost(
+    `/api/admin/users/${encodeURIComponent(id)}/restore`,
+    { note, confirm_display_name },
+  );
+}
+
+export async function changeUserRole(
+  id: string, role: "admin" | "member",
+): Promise<AdminUser> {
+  return jsonPost(
+    `/api/admin/users/${encodeURIComponent(id)}/role`, { role },
+  );
+}
+
+export async function resetUserPassword(
+  id: string, new_password: string,
+): Promise<{ reset: true }> {
+  return jsonPost(
+    `/api/admin/users/${encodeURIComponent(id)}/reset-password`,
+    { new_password },
+  );
+}
+
+// ── Admin: invites ────────────────────────────────────────────────────────
+
+export type AdminInvite = {
+  id: string;
+  email: string;
+  display_name: string | null;
+  created_by: string;
+  created_at: number;
+  expires_at: number;
+  used_at: number | null;
+};
+
+export type CreatedInvite = AdminInvite & {
+  token: string; // plaintext, returned exactly once
+  link_path: string; // /invite/<token>
+};
+
+export async function listInvites(
+  include_used = false,
+): Promise<{ items: AdminInvite[] }> {
+  const qs = include_used ? "?include_used=true" : "";
+  return jsonGet(`/api/admin/invites${qs}`);
+}
+
+export async function createInvite(
+  email: string, display_name?: string, ttl_days = 7,
+): Promise<CreatedInvite> {
+  return jsonPost(`/api/admin/invites`, { email, display_name, ttl_days });
+}
+
+export async function revokeInvite(id: string): Promise<{ revoked: true }> {
+  return jsonDelete(`/api/admin/invites/${encodeURIComponent(id)}`);
 }
