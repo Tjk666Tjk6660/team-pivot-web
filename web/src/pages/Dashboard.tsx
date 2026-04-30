@@ -38,7 +38,7 @@ import { ThreadListPane } from "@/components/ThreadListPane";
 import { cn } from "@/lib/utils";
 import { useMatterEvents } from "@/events/MatterEventsProvider";
 import { scheduleRefresh } from "@/events/scheduleRefresh";
-import { subscribeListRefresh } from "@/events/listRefresh";
+import { subscribeDraftsRefresh, subscribeListRefresh } from "@/events/listRefresh";
 import {
   mergeLoadedAIConversation,
   setAIReplyTarget,
@@ -806,6 +806,14 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
         scheduleRefresh("matters-list", refreshMattersSilently);
       }),
     [refreshMattersSilently],
+  );
+
+  useEffect(
+    () =>
+      subscribeDraftsRefresh(() => {
+        scheduleRefresh("drafts-list", load);
+      }),
+    [load],
   );
 
   const onRefresh = async () => {

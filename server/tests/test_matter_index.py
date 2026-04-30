@@ -749,15 +749,19 @@ def test_apply_owner_change_with_status_change_updates_both(tmp_path):
     assert last["status_change"] == {"from": "planning", "to": "executing"}
 
 
-def test_apply_owner_change_when_unassigned(tmp_path):
-    """Transferring an unassigned matter (matter.owner missing) must succeed."""
+def test_apply_owner_change_when_matter_owner_missing(tmp_path):
+    """Legacy matters without an explicit matter.owner field can still be
+    transferred. The validator (per `eb8c60f`) treats missing matter.owner
+    as "effective owner = first non-event timeline item's owner/creator",
+    so callers transfer them by passing that fallback as from_owner."""
     path = _bootstrap(tmp_path)  # no matter_owner → owner field absent
+    # _bootstrap's first item is creator='dengke' (owner defaults from creator).
     apply_owner_change(
         path,
         item={
             "type": "owner_change",
             "actor": "dengke",
-            "from_owner": None,
+            "from_owner": "dengke",
             "to_owner": "bob",
             "reason": "claim ownership",
         },
@@ -766,7 +770,7 @@ def test_apply_owner_change_when_unassigned(tmp_path):
     data = read_matter_index(path)
     assert data["matter"]["owner"] == "bob"
     last = data["timeline"][-1]
-    assert last["from_owner"] is None
+    assert last["from_owner"] == "dengke"
     assert last["to_owner"] == "bob"
 
 

@@ -915,6 +915,7 @@ def test_notifier_is_called_on_append_and_status_change(db, users, tmp_path):
         def notify_standalone_mention(
             self, *, category, slug, thread_title, target_filename,
             author_name, mention_open_ids, mention_comments,
+            dm_extra_open_ids=None,
         ):
             calls.append(("standalone_mention", {
                 "category": category, "slug": slug,
@@ -923,6 +924,7 @@ def test_notifier_is_called_on_append_and_status_change(db, users, tmp_path):
                 "author_name": author_name,
                 "mention_open_ids": mention_open_ids,
                 "mention_comments": mention_comments,
+                "dm_extra_open_ids": dm_extra_open_ids,
             }))
 
     workspace = _WorkspaceStub(tmp_path)
@@ -1275,6 +1277,7 @@ def test_comment_route_does_not_pass_unknown_kwargs_to_notifier(db, users, tmp_p
         def notify_standalone_mention(
             self, *, category, slug, thread_title, target_filename,
             author_name, mention_open_ids, mention_comments,
+            dm_extra_open_ids=None,
         ):
             self.calls.append("standalone_mention")
 
