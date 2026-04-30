@@ -80,23 +80,6 @@ export function AdminLayout() {
             <NavItem to="/admin/scoring">Matter 评分</NavItem>
           </NavGroup>
         </nav>
-        <div
-          className="px-3 py-3"
-          style={{ borderTop: "1px solid var(--line)" }}
-        >
-          <Link
-            to="/"
-            className="flex items-center justify-center gap-2 rounded-[var(--r-sm)] px-3 py-2 text-[14px] font-semibold transition-colors hover:opacity-90"
-            style={{
-              background: "var(--surface)",
-              color: "var(--text)",
-              border: "1px solid var(--line-strong, var(--line))",
-              fontFamily: "var(--font-serif)",
-            }}
-          >
-            <ArrowLeft className="h-4 w-4" /> 返回 Pivot 主页
-          </Link>
-        </div>
       </aside>
 
       <main className="min-w-0 flex-1">
@@ -121,12 +104,22 @@ function SidebarHeader({ me }: { me: Me }) {
           border: "1px solid var(--line)",
         }}
       />
-      <div className="min-w-0">
-        <div
-          className="text-[10.5px] font-bold uppercase tracking-[0.18em] font-meta"
-          style={{ color: "var(--text-mute)" }}
-        >
-          管理员后台
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-2">
+          <div
+            className="text-[10.5px] font-bold uppercase tracking-[0.18em] font-meta"
+            style={{ color: "var(--text-mute)" }}
+          >
+            管理员后台
+          </div>
+          <Link
+            to="/"
+            className="inline-flex items-center gap-1 rounded-[var(--r-sm)] px-1.5 py-0.5 text-[11px] font-meta transition-colors hover:bg-[var(--surface)]"
+            style={{ color: "var(--text-mute)" }}
+            title="返回 Pivot 主页"
+          >
+            <ArrowLeft className="h-3 w-3" /> 返回
+          </Link>
         </div>
         <div
           className="mt-0.5 truncate text-[13px] font-semibold"
