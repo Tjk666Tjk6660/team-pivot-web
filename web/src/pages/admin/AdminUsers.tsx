@@ -517,32 +517,43 @@ function BindingChips({ bindings }: { bindings: AdminUser["bindings"] }) {
       </div>
     );
   }
-  // Group same-provider bindings → 多于 1 条 = 合并过
-  const sameProviderCount: Record<string, number> = {};
-  for (const b of bindings) {
-    sameProviderCount[b.provider] = (sameProviderCount[b.provider] ?? 0) + 1;
-  }
-  const merged = Object.values(sameProviderCount).some((n) => n > 1);
+  // 第一条（按 bound_at 最早）算"主身份"，后面的是合并进来的。多于 1 条
+  // 时，在 chip 行下方加一条简短"合并用户：A、B"提示，让 admin 一眼看到
+  // 这个 pivot_user 由谁合并而成，但不展开整套详情（详情 hover chip 看 tooltip）。
+  const sorted = [...bindings].sort((a, b) => a.bound_at - b.bound_at);
+  const merged = sorted.slice(1);
   return (
-    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-      {bindings.map((b) => (
-        <BindingChip key={b.id} binding={b} />
-      ))}
-      {merged && (
-        <span
-          className="rounded-full px-2 py-0.5 text-[10.5px] font-bold tracking-wider font-meta"
-          style={{
-            background: "var(--accent-bg)",
-            color: "var(--accent)",
-            border: "1px solid var(--accent)",
-          }}
-          title="此用户由多份外部身份合并而成"
+    <>
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+        {sorted.map((b) => (
+          <BindingChip key={b.id} binding={b} />
+        ))}
+      </div>
+      {merged.length > 0 && (
+        <div
+          className="mt-1 text-[11.5px] font-meta"
+          style={{ color: "var(--text-mute)" }}
         >
-          合并身份
-        </span>
+          合并用户：
+          <span style={{ color: "var(--text-soft)" }}>
+            {merged.map((b) => _bindingShortName(b)).join("、")}
+          </span>
+        </div>
       )}
-    </div>
+    </>
   );
+}
+
+function _bindingShortName(
+  binding: AdminUser["bindings"][number],
+): string {
+  if (binding.raw_profile && typeof binding.raw_profile.name === "string") {
+    return binding.raw_profile.name as string;
+  }
+  if (binding.provider === "invite") return binding.external_id;
+  return binding.external_id.length > 14
+    ? binding.external_id.slice(0, 12) + "…"
+    : binding.external_id;
 }
 
 function BindingChip({
