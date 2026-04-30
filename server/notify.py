@@ -252,8 +252,19 @@ class FeishuNotifier:
         provider: str,
         admin_open_ids: list[str],
     ) -> None:
-        # TODO(Task 21): real card builder — send DM to each admin open_id
-        pass
+        if not admin_open_ids:
+            return
+        card = build_application_card(
+            title=f"📥 新加入申请：{applicant_name}",
+            body=f"**来源**：{provider}",
+            button_text="去后台审批",
+            url=f"{self._web_base_url}/admin/applications",
+            template="orange",
+        )
+        self._dm_many(
+            admin_open_ids, card,
+            event=f"application_created applicant={applicant_name}",
+        )
 
     def notify_application_approved(
         self,
@@ -261,16 +272,43 @@ class FeishuNotifier:
         applicant_open_id: str,
         merged: bool,
     ) -> None:
-        # TODO(Task 21): DM the applicant via feishu open_id with approval card
-        pass
+        if not applicant_open_id:
+            return
+        body = (
+            "你的身份已并入现有账号，可以照常登录使用 Pivot"
+            if merged
+            else "你的加入申请已通过，欢迎使用 Pivot"
+        )
+        card = build_application_card(
+            title="✅ 加入申请通过",
+            body=body,
+            button_text="进入 Pivot",
+            url=f"{self._web_base_url}/",
+            template="green",
+        )
+        self._dm_many(
+            [applicant_open_id], card,
+            event=f"application_approved merged={merged}",
+        )
 
     def notify_application_rejected(
         self,
         *,
         applicant_open_id: str,
     ) -> None:
-        # TODO(Task 21): DM the applicant via feishu open_id with rejection card
-        pass
+        if not applicant_open_id:
+            return
+        card = build_application_card(
+            title="🚫 加入申请未通过",
+            body="如有疑问请联系管理员",
+            button_text="",
+            url="",
+            template="red",
+        )
+        self._dm_many(
+            [applicant_open_id], card,
+            event="application_rejected",
+        )
 
     def notify_standalone_mention(
         self, *, category, slug, thread_title, target_filename,
@@ -648,6 +686,27 @@ def build_standalone_mention_card(
         markdown="\n\n".join([comment_line, info_block]),
         button_text="查看该帖子",
         thread_url=post_url,
+    )
+
+
+def build_application_card(
+    *,
+    title: str,
+    body: str,
+    button_text: str,
+    url: str,
+    template: str,
+) -> dict:
+    """Compact card for join-application lifecycle DMs (created /
+    approved / rejected). Caller decides whether a CTA button is
+    useful — pass empty button_text/url to render a button-less card,
+    typical for the rejection notice."""
+    return _card_shell(
+        header=title,
+        template=template,
+        markdown=body,
+        button_text=button_text or None,
+        thread_url=url or None,
     )
 
 

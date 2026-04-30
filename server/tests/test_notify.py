@@ -6,6 +6,7 @@ from pathlib import Path
 from server.notify import (
     FeishuNotifier,
     NoOpNotifier,
+    build_application_card,
     build_mention_dm_card,
     build_owner_change_card,
     build_reply_card,
@@ -685,3 +686,168 @@ def test_feishu_notifier_standalone_mention_does_not_dm(monkeypatch):
 
     assert calls["broadcast"] == 1
     assert calls["dm"] == 0
+
+
+# ─── application 卡片（Task 21） ───────────────────────────────────────────
+
+
+def test_build_application_card_with_button():
+    card = build_application_card(
+        title="📥 新加入申请：Alice",
+        body="**来源**：feishu",
+        button_text="去后台审批",
+        url="https://pivot.x/admin/applications",
+        template="orange",
+    )
+    assert card["schema"] == "2.0"
+    assert card["header"]["template"] == "orange"
+    assert card["header"]["title"]["content"] == "📥 新加入申请：Alice"
+    md = card["body"]["elements"][0]["content"]
+    assert "**来源**：feishu" in md
+    button = card["body"]["elements"][-1]
+    assert button["tag"] == "button"
+    assert button["text"]["content"] == "去后台审批"
+
+
+def test_build_application_card_button_optional():
+    """Reject card has no CTA — caller passes empty button_text/url."""
+    card = build_application_card(
+        title="🚫 加入申请未通过",
+        body="如有疑问请联系管理员",
+        button_text="",
+        url="",
+        template="red",
+    )
+    assert card["header"]["template"] == "red"
+    elements = card["body"]["elements"]
+    assert len(elements) == 1
+    assert elements[0]["tag"] == "markdown"
+
+
+def test_feishu_notifier_application_created_dms_admins(monkeypatch):
+    class _StubTokens:
+        def get(self) -> str:
+            return "tok"
+
+    n = FeishuNotifier(tokens=_StubTokens(), web_base_url="https://pivot.x")
+    captured: list[dict] = []
+
+    def fake_dm_many(self, open_ids, card, *, event):
+        captured.append({"open_ids": list(open_ids), "card": card, "event": event})
+
+    monkeypatch.setattr(FeishuNotifier, "_dm_many", fake_dm_many)
+
+    n.notify_application_created(
+        applicant_name="Alice", provider="feishu",
+        admin_open_ids=["ou_admin1", "ou_admin2"],
+    )
+    assert len(captured) == 1
+    assert captured[0]["open_ids"] == ["ou_admin1", "ou_admin2"]
+    assert "Alice" in captured[0]["card"]["header"]["title"]["content"]
+    assert captured[0]["event"].startswith("application_created")
+
+
+def test_feishu_notifier_application_created_skips_when_no_admins(monkeypatch):
+    class _StubTokens:
+        def get(self) -> str:
+            return "tok"
+
+    n = FeishuNotifier(tokens=_StubTokens(), web_base_url="https://pivot.x")
+    calls = {"n": 0}
+
+    def fake_dm_many(self, *_a, **_kw):
+        calls["n"] += 1
+
+    monkeypatch.setattr(FeishuNotifier, "_dm_many", fake_dm_many)
+
+    n.notify_application_created(
+        applicant_name="Alice", provider="feishu", admin_open_ids=[],
+    )
+    assert calls["n"] == 0
+
+
+def test_feishu_notifier_application_approved_merge_path(monkeypatch):
+    class _StubTokens:
+        def get(self) -> str:
+            return "tok"
+
+    n = FeishuNotifier(tokens=_StubTokens(), web_base_url="https://pivot.x")
+    captured: list[dict] = []
+
+    def fake_dm_many(self, open_ids, card, *, event):
+        captured.append({"open_ids": list(open_ids), "card": card})
+
+    monkeypatch.setattr(FeishuNotifier, "_dm_many", fake_dm_many)
+
+    n.notify_application_approved(applicant_open_id="ou_eve", merged=True)
+    assert len(captured) == 1
+    assert captured[0]["open_ids"] == ["ou_eve"]
+    md = captured[0]["card"]["body"]["elements"][0]["content"]
+    assert "并入现有账号" in md
+    assert captured[0]["card"]["header"]["template"] == "green"
+
+
+def test_feishu_notifier_application_approved_new_user_path(monkeypatch):
+    class _StubTokens:
+        def get(self) -> str:
+            return "tok"
+
+    n = FeishuNotifier(tokens=_StubTokens(), web_base_url="https://pivot.x")
+    captured: list[dict] = []
+
+    def fake_dm_many(self, open_ids, card, *, event):
+        captured.append({"card": card})
+
+    monkeypatch.setattr(FeishuNotifier, "_dm_many", fake_dm_many)
+
+    n.notify_application_approved(applicant_open_id="ou_new", merged=False)
+    md = captured[0]["card"]["body"]["elements"][0]["content"]
+    assert "欢迎使用" in md
+
+
+def test_feishu_notifier_application_approved_skips_empty_open_id(monkeypatch):
+    class _StubTokens:
+        def get(self) -> str:
+            return "tok"
+
+    n = FeishuNotifier(tokens=_StubTokens(), web_base_url="https://pivot.x")
+    calls = {"n": 0}
+
+    def fake_dm_many(self, *_a, **_kw):
+        calls["n"] += 1
+
+    monkeypatch.setattr(FeishuNotifier, "_dm_many", fake_dm_many)
+
+    n.notify_application_approved(applicant_open_id="", merged=False)
+    assert calls["n"] == 0
+
+
+def test_feishu_notifier_application_rejected_uses_red_template(monkeypatch):
+    class _StubTokens:
+        def get(self) -> str:
+            return "tok"
+
+    n = FeishuNotifier(tokens=_StubTokens(), web_base_url="https://pivot.x")
+    captured: list[dict] = []
+
+    def fake_dm_many(self, open_ids, card, *, event):
+        captured.append({"card": card, "event": event})
+
+    monkeypatch.setattr(FeishuNotifier, "_dm_many", fake_dm_many)
+
+    n.notify_application_rejected(applicant_open_id="ou_reject")
+    assert len(captured) == 1
+    assert captured[0]["card"]["header"]["template"] == "red"
+    assert captured[0]["event"] == "application_rejected"
+    elements = captured[0]["card"]["body"]["elements"]
+    # No CTA button on rejection — only the markdown body element.
+    assert all(e.get("tag") != "button" for e in elements)
+
+
+def test_noop_notifier_application_methods_silent():
+    n = NoOpNotifier()
+    n.notify_application_created(
+        applicant_name="x", provider="feishu", admin_open_ids=["ou"],
+    )
+    n.notify_application_approved(applicant_open_id="ou", merged=False)
+    n.notify_application_rejected(applicant_open_id="ou")
