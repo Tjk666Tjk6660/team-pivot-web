@@ -53,7 +53,7 @@ export function AdminApplications() {
     <div className="mx-auto max-w-4xl p-6">
       <header className="mb-5 flex items-baseline justify-between gap-4">
         <h1 className="m-0 text-[22px]" style={titleStyle}>
-          加入申请
+          申请审批
         </h1>
         <div className="flex gap-1 rounded-[var(--r-sm)] p-1" style={tabBarStyle}>
           {(["pending", "rejected", "approved"] as Filter[]).map((f) => (

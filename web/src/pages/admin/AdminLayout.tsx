@@ -62,10 +62,10 @@ export function AdminLayout() {
             <NavItem to="/admin">首页</NavItem>
           </ul>
           <NavGroup title="用户管理">
-            <NavItem to="/admin/applications">加入申请</NavItem>
+            <NavItem to="/admin/applications">申请审批</NavItem>
             <NavItem to="/admin/users">用户列表</NavItem>
-            <NavItem to="/admin/roles">角色</NavItem>
-            <NavItem to="/admin/invites">邀请</NavItem>
+            <NavItem to="/admin/roles">角色管理</NavItem>
+            <NavItem to="/admin/invites">邀请管理</NavItem>
           </NavGroup>
           <NavGroup title="系统设置">
             <NavItem to="/admin/workspace">数据仓库</NavItem>
