@@ -140,6 +140,7 @@ def build_router(
     def list_runs(
         status: str | None = None,
         matter_id: str | None = None,
+        matter_query: str | None = None,
         limit: int = 50,
         offset: int = 0,
         _: PivotUser = Depends(admin_user_dep),
@@ -149,9 +150,12 @@ def build_router(
         if offset < 0:
             raise HTTPException(400, "offset must be ≥ 0")
         runs = store.list_runs(
-            status=status, matter_id=matter_id, limit=limit, offset=offset,
+            status=status, matter_id=matter_id, matter_query=matter_query,
+            limit=limit, offset=offset,
         )
-        total = store.count_runs(status=status, matter_id=matter_id)
+        total = store.count_runs(
+            status=status, matter_id=matter_id, matter_query=matter_query,
+        )
         items = [_run_summary(r, store, workspace, pivot_users) for r in runs]
         return {
             "items": items,

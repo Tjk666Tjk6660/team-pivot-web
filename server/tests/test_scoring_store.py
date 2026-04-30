@@ -193,6 +193,67 @@ def test_count_runs(store, owner):
     assert store.count_runs(matter_id="m1") == 1
 
 
+def test_list_runs_matter_query_substring(store, owner):
+    """matter_query is a LIKE substring filter — useful when the admin
+    knows part of a matter_id but not the exact slug."""
+    a = store.start_run(
+        _job(owner.id, matter_id="客户验收流程优化"),
+        timeline_hash="h1", model="m",
+    )
+    b = store.start_run(
+        _job(owner.id, matter_id="测试评分体系"),
+        timeline_hash="h2", model="m",
+    )
+    store.start_run(
+        _job(owner.id, matter_id="某个无关项"),
+        timeline_hash="h3", model="m",
+    )
+
+    found = store.list_runs(matter_query="验收")
+    assert [r.run_id for r in found] == [a]
+
+    found = store.list_runs(matter_query="评分")
+    assert [r.run_id for r in found] == [b]
+
+    # Substring match in the middle of the slug
+    found = store.list_runs(matter_query="流程")
+    assert [r.run_id for r in found] == [a]
+
+    assert store.count_runs(matter_query="评分") == 1
+    assert store.count_runs(matter_query="不存在") == 0
+
+
+def test_list_runs_matter_query_escapes_wildcards(store, owner):
+    """LIKE wildcards (% and _) in user input must be treated literally,
+    otherwise pasting "10%" would match every matter."""
+    a = store.start_run(
+        _job(owner.id, matter_id="ops/100-percent-done"),
+        timeline_hash="h1", model="m",
+    )
+    store.start_run(
+        _job(owner.id, matter_id="ops/100ABCdone"),
+        timeline_hash="h2", model="m",
+    )
+
+    # Literal percent sign should match only entries that actually contain "%"
+    # — neither matter_id has a literal '%', so this returns nothing.
+    found = store.list_runs(matter_query="100%")
+    assert found == []
+
+    # The actual percent-containing slug
+    a2 = store.start_run(
+        _job(owner.id, matter_id="loaded-100%-bar"),
+        timeline_hash="h3", model="m",
+    )
+    found = store.list_runs(matter_query="100%")
+    assert [r.run_id for r in found] == [a2]
+    # And the literal-substring search still hits everything with "100"
+    found = store.list_runs(matter_query="100")
+    assert {r.run_id for r in found} == {a, a2,
+        store.list_runs(matter_query="100ABC")[0].run_id,
+    }
+
+
 def test_latest_success_for_matter(store, owner):
     a = store.start_run(_job(owner.id), timeline_hash="h-a", model="m")
     store.finish_run(a, "success")

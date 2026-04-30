@@ -349,6 +349,39 @@ def test_list_runs_filters_by_status(client, store, pivot_users, workspace):
     assert body["items"][0]["matter_id"] == "m1"
 
 
+def test_list_runs_matter_query_substring(client, store, pivot_users, workspace):
+    """matter_query passes through to store as a LIKE substring filter."""
+    owner = pivot_users.create(
+        display_name="zs", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    _write_matter(workspace, "客户验收流程优化")
+    _write_matter(workspace, "测试评分体系")
+    store.start_run(
+        _job(owner.id, matter_id="客户验收流程优化"),
+        timeline_hash="h1", model="m",
+    )
+    store.start_run(
+        _job(owner.id, matter_id="测试评分体系"),
+        timeline_hash="h2", model="m",
+    )
+
+    r = client.get(
+        "/api/admin/scoring/runs?matter_query=验收",
+        headers=_admin_headers(),
+    )
+    body = r.json()
+    assert body["total"] == 1
+    assert body["items"][0]["matter_id"] == "客户验收流程优化"
+
+    r = client.get(
+        "/api/admin/scoring/runs?matter_query=评分",
+        headers=_admin_headers(),
+    )
+    body = r.json()
+    assert body["total"] == 1
+    assert body["items"][0]["matter_id"] == "测试评分体系"
+
+
 def test_list_runs_pagination(client, store, pivot_users, workspace):
     owner = pivot_users.create(
         display_name="zs", pinyin="zhangsan", email=None, avatar_url="",

@@ -307,17 +307,14 @@ class ScoringStore:
         *,
         status: str | None = None,
         matter_id: str | None = None,
+        matter_query: str | None = None,
         limit: int = 20,
         offset: int = 0,
     ) -> list[ScoringRun]:
-        sql = "SELECT * FROM matter_scoring_runs WHERE 1=1"
-        params: list[object] = []
-        if status:
-            sql += " AND status=?"
-            params.append(status)
-        if matter_id:
-            sql += " AND matter_id=?"
-            params.append(matter_id)
+        sql, params = self._runs_filter_sql(
+            status=status, matter_id=matter_id, matter_query=matter_query,
+        )
+        sql = f"SELECT * FROM matter_scoring_runs WHERE 1=1{sql}"
         sql += " ORDER BY started_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         with self._db.connect() as conn:
@@ -325,9 +322,36 @@ class ScoringStore:
         return [_row_to_run(r) for r in rows]
 
     def count_runs(
-        self, *, status: str | None = None, matter_id: str | None = None,
+        self,
+        *,
+        status: str | None = None,
+        matter_id: str | None = None,
+        matter_query: str | None = None,
     ) -> int:
-        sql = "SELECT COUNT(*) AS n FROM matter_scoring_runs WHERE 1=1"
+        sql, params = self._runs_filter_sql(
+            status=status, matter_id=matter_id, matter_query=matter_query,
+        )
+        sql = f"SELECT COUNT(*) AS n FROM matter_scoring_runs WHERE 1=1{sql}"
+        with self._db.connect() as conn:
+            row = conn.execute(sql, params).fetchone()
+        return int(row["n"])
+
+    @staticmethod
+    def _runs_filter_sql(
+        *,
+        status: str | None,
+        matter_id: str | None,
+        matter_query: str | None,
+    ) -> tuple[str, list[object]]:
+        """Build the WHERE-fragment shared by list_runs / count_runs.
+
+        - status: exact match
+        - matter_id: exact match (kept for precise back-end lookups)
+        - matter_query: case-insensitive LIKE match on matter_id, with %
+          and _ in user input escaped so a paste like "10%" doesn't
+          accidentally turn into a wildcard.
+        """
+        sql = ""
         params: list[object] = []
         if status:
             sql += " AND status=?"
@@ -335,9 +359,15 @@ class ScoringStore:
         if matter_id:
             sql += " AND matter_id=?"
             params.append(matter_id)
-        with self._db.connect() as conn:
-            row = conn.execute(sql, params).fetchone()
-        return int(row["n"])
+        if matter_query:
+            escaped = (
+                matter_query.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+            )
+            sql += " AND matter_id LIKE ? ESCAPE '\\'"
+            params.append(f"%{escaped}%")
+        return sql, params
 
     def sweep_orphans(
         self, *, timeout_seconds: float = _DEFAULT_ORPHAN_TIMEOUT_SECONDS,

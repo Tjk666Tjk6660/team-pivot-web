@@ -148,7 +148,7 @@ function RunsTable({ onAdminLost }: { onAdminLost: () => void }) {
     try {
       const r = await fetchScoringRuns({
         status: statusFilter || undefined,
-        matter_id: matterFilter || undefined,
+        matter_query: matterFilter || undefined,
         limit: PAGE_SIZE,
         offset,
       });
@@ -225,12 +225,12 @@ function RunsTable({ onAdminLost }: { onAdminLost: () => void }) {
           </div>
           <div className="space-y-1 flex-1 min-w-[200px]">
             <Label className="text-xs" htmlFor="matter-filter">
-              matter_id 包含
+              搜索 matter
             </Label>
             <div className="flex gap-1">
               <Input
                 id="matter-filter"
-                placeholder="精确 matter_id ..."
+                placeholder="输入 matter_id 任意片段，回车搜索"
                 value={matterFilterDraft}
                 onChange={(e) => setMatterFilterDraft(e.target.value)}
                 onKeyDown={(e) => {

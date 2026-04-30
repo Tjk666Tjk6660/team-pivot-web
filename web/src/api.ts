@@ -1809,13 +1809,17 @@ export async function updateScoringConfig(body: ScoringConfig): Promise<void> {
 
 export async function fetchScoringRuns(params: {
   status?: string;
+  /** Exact matter_id match — use matter_query for substring search instead. */
   matter_id?: string;
+  /** Substring match against matter_id (LIKE). */
+  matter_query?: string;
   limit?: number;
   offset?: number;
 } = {}): Promise<ScoringRunsList> {
   const qs = new URLSearchParams();
   if (params.status) qs.set("status", params.status);
   if (params.matter_id) qs.set("matter_id", params.matter_id);
+  if (params.matter_query) qs.set("matter_query", params.matter_query);
   if (params.limit !== undefined) qs.set("limit", String(params.limit));
   if (params.offset !== undefined) qs.set("offset", String(params.offset));
   const url = `/api/admin/scoring/runs${qs.toString() ? `?${qs}` : ""}`;
