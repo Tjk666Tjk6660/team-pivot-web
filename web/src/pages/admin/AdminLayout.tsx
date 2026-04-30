@@ -50,7 +50,7 @@ export function AdminLayout() {
     >
       <Toaster position="top-center" richColors />
       <aside
-        className="flex w-[220px] shrink-0 flex-col"
+        className="flex w-[240px] shrink-0 flex-col"
         style={{
           background: "var(--surface-alt)",
           borderRight: "1px solid var(--line)",
@@ -171,19 +171,23 @@ function NavGroup({
       <button
         type="button"
         onClick={toggle}
-        className="flex w-full items-center gap-1.5 rounded-[var(--r-sm)] px-2 py-1 text-left text-[10.5px] font-bold uppercase tracking-[0.22em] font-meta transition-colors hover:bg-[var(--surface)]"
-        style={{ color: "var(--text-mute)" }}
+        className="flex w-full items-center gap-1.5 rounded-[var(--r-sm)] px-2 py-1.5 text-left text-[15px] font-semibold transition-colors hover:bg-[var(--surface)]"
+        style={{
+          fontFamily: "var(--font-serif)",
+          color: "var(--text-mute)",
+          letterSpacing: "var(--letter-tight)",
+        }}
         aria-expanded={open}
       >
         {open ? (
-          <ChevronDown className="h-3 w-3 shrink-0" />
+          <ChevronDown className="h-4 w-4 shrink-0" />
         ) : (
-          <ChevronRight className="h-3 w-3 shrink-0" />
+          <ChevronRight className="h-4 w-4 shrink-0" />
         )}
         <span className="flex-1">{title}</span>
       </button>
       {open && (
-        <ul className="mt-1 flex flex-col gap-0.5">{children}</ul>
+        <ul className="mt-0.5 flex flex-col gap-0.5 pl-5">{children}</ul>
       )}
     </div>
   );
@@ -197,11 +201,13 @@ function NavItem({ to, children }: { to: string; children: React.ReactNode }) {
         end
         className={({ isActive }) =>
           [
-            "block rounded-[var(--r-sm)] px-3 py-1.5 text-[13px] transition-colors",
-            isActive ? "font-semibold" : "font-medium",
+            "block rounded-[var(--r-sm)] px-2.5 py-1.5 text-[13.5px] transition-colors",
+            isActive ? "font-semibold" : "font-normal",
+            isActive ? "" : "hover:bg-[var(--surface)]",
           ].join(" ")
         }
         style={({ isActive }) => ({
+          fontFamily: "var(--font-serif)",
           color: isActive ? "var(--accent-ink)" : "var(--text-soft)",
           background: isActive ? "var(--accent)" : "transparent",
         })}
