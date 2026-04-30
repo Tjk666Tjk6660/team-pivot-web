@@ -39,6 +39,8 @@ from server.threads import (
     next_post_number,
     sanitize_slug,
 )
+from server.external_bindings import ExternalBindingRepo
+from server.pivot_users import PivotUserRepo
 from server.users import User, UserRepo
 from server.workspace import Workspace
 
@@ -253,6 +255,13 @@ def _resolve_mentions_for_index(
     Registered Pivot users (have pinyin) → pinyin, matching creator/owner.
     Un-registered contacts (only known via Feishu open_id) → keep open_id.
     Returns None if input is None/empty so callers can drop the field cleanly.
+
+    Note: Per design §7.1.1 the storage contract for new content is
+    pivot_user.id (ULID), and ``_normalize_mentions_to_pivot_user_ids``
+    below is the forward-looking equivalent. This pinyin-keyed helper is
+    kept while publish.py is still threaded through the legacy
+    ``UserRepo``; once auth + publish.py settle on PivotUser, the
+    pinyin-conversion branch is deleted.
     """
     if not open_ids:
         return None
@@ -263,6 +272,87 @@ def _resolve_mentions_for_index(
             out.append(u.pinyin)
         else:
             out.append(oid)
+    return out
+
+
+def _normalize_mentions_to_pivot_user_ids(
+    refs: list[str] | None,
+    pivot_users: PivotUserRepo,
+    bindings: ExternalBindingRepo,
+    contacts: ContactRepo | None = None,
+) -> list[str] | None:
+    """Per design §7.1.1: resolve any inbound mention reference (ULID,
+    feishu open_id, or contact name/pinyin) to ``pivot_user.id`` for
+    persistence in matter index / frontmatter.
+
+    Resolution order matches the read-side ``DisplayResolver``:
+      1. direct ULID hit on ``pivot_user`` — frontend new-version controls
+         already submit ULIDs
+      2. feishu open_id → external_binding → pivot_user.id
+      3. contact name/pinyin → ContactRepo lookup → open_id → binding
+      4. unresolved (external feishu user with no binding yet) → preserve
+         the original open_id string; the read-side resolver will fall
+         back to ``contacts`` and render a name + status='unknown'
+
+    Returns ``None`` for empty input so callers can drop the field cleanly.
+    """
+    if not refs:
+        return None
+    out: list[str] = []
+    for ref in refs:
+        if not ref:
+            continue
+        u = pivot_users.get(ref)
+        if u is not None:
+            out.append(u.id)
+            continue
+        b = bindings.lookup_any_provider(ref)
+        if b is not None:
+            out.append(b.pivot_user_id)
+            continue
+        if contacts is not None and not ref.startswith(("ou_", "on_")):
+            cands = contacts.lookup_candidates(ref)
+            if len(cands) == 1:
+                resolved = bindings.lookup_any_provider(cands[0].open_id)
+                if resolved is not None:
+                    out.append(resolved.pivot_user_id)
+                    continue
+                out.append(cands[0].open_id)
+                continue
+        out.append(ref)
+    return out
+
+
+def _ulids_to_feishu_open_ids(
+    refs: list[str] | None,
+    pivot_users: PivotUserRepo,
+    bindings: ExternalBindingRepo,
+) -> list[str]:
+    """Reverse of ``_normalize_mentions_to_pivot_user_ids`` for the notify
+    side: a Feishu DM card needs concrete open_ids to fill ``<at id="…">``
+    tags. Refs that are already open_ids pass through; ULIDs are looked up
+    via the user's feishu binding (if any). Refs without a feishu binding
+    are dropped from the notify list — they correspond to invite-only
+    users who simply don't have a Feishu account to DM.
+    """
+    if not refs:
+        return []
+    out: list[str] = []
+    for ref in refs:
+        if not ref:
+            continue
+        if ref.startswith(("ou_", "on_")):
+            out.append(ref)
+            continue
+        u = pivot_users.get(ref)
+        if u is None:
+            continue
+        feishu_binding = next(
+            (b for b in bindings.list_for_user(u.id) if b.provider == "feishu"),
+            None,
+        )
+        if feishu_binding is not None:
+            out.append(feishu_binding.external_id)
     return out
 
 
