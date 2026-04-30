@@ -21,7 +21,7 @@ import re
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 # Re-export commonly used dimension list for prompt + tests
 DIMENSIONS = ("delivery", "accountability", "collaboration", "judgment", "process")
@@ -58,6 +58,31 @@ class EvidenceItem(BaseModel):
     weight_applied: float = Field(default=1.0, ge=0.1, le=5.0)
     quote: str = Field(min_length=1, max_length=400)
     explanation: str = Field(min_length=1, max_length=400)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _infer_source_kind(cls, data: object) -> object:
+        """Defensive: infer source_kind when AI omits it.
+
+        Models occasionally drop required fields on later evidence items even
+        though the prompt schema lists source_kind as mandatory. Rather than
+        rejecting an otherwise valid response, we infer from the presence of
+        comment-only metadata: if either source_comment_created_at or
+        source_comment_author is set, this is a comment-evidence; otherwise
+        it's a file-evidence. Explicit source_kind from AI always wins.
+        """
+        if not isinstance(data, dict):
+            return data
+        if data.get("source_kind"):
+            return data
+        has_comment_meta = bool(
+            str(data.get("source_comment_created_at") or "").strip()
+            or str(data.get("source_comment_author") or "").strip()
+        )
+        return {
+            **data,
+            "source_kind": "comment" if has_comment_meta else "file",
+        }
 
 
 class SubjectScore(BaseModel):
