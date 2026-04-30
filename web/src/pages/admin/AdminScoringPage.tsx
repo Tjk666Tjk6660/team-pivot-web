@@ -223,14 +223,11 @@ function RunsTable({ onAdminLost }: { onAdminLost: () => void }) {
               ))}
             </select>
           </div>
-          <div className="space-y-1 flex-1 min-w-[200px]">
-            <Label className="text-xs" htmlFor="matter-filter">
-              搜索 matter
-            </Label>
+          <div className="flex-1 min-w-[200px]">
             <div className="flex gap-1">
               <Input
                 id="matter-filter"
-                placeholder="输入 matter_id 任意片段，回车搜索"
+                placeholder="输入想搜索的 matter"
                 value={matterFilterDraft}
                 onChange={(e) => setMatterFilterDraft(e.target.value)}
                 onKeyDown={(e) => {
