@@ -71,12 +71,12 @@ def client(tmp_path):
 
 def test_e2e_full_user_management_flow(client: TestClient):
     # 1. Fresh DB → needs_init
-    r = client.get("/init/status")
+    r = client.get("/api/init/status")
     assert r.status_code == 200
     assert r.json() == {"needs_init": True}
 
     # 2. /init/complete → creates first admin + session cookie
-    r = client.post("/init/complete", json={
+    r = client.post("/api/init/complete", json={
         "method": "email_password",
         "email": "admin@example.com",
         "password": "admin123",
@@ -89,7 +89,7 @@ def test_e2e_full_user_management_flow(client: TestClient):
     assert admin_user["role"] == "admin"
     assert "sid" in r.cookies
     # Subsequent /init/status now reports already-initialized.
-    assert client.get("/init/status").json() == {"needs_init": False}
+    assert client.get("/api/init/status").json() == {"needs_init": False}
 
     # 3. admin creates an invite
     r = client.post(
@@ -104,7 +104,7 @@ def test_e2e_full_user_management_flow(client: TestClient):
     # 4. Alice accepts the invite from a fresh client (no admin cookie)
     alice_client = TestClient(client.app)
     r = alice_client.post(
-        f"/invite/{token}/accept",
+        f"/api/invite/{token}/accept",
         json={"password": "alice123", "display_name": "Alice", "pinyin": "alice"},
     )
     assert r.status_code == 200, r.text

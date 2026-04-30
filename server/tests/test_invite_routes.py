@@ -44,7 +44,7 @@ def test_invite_load_valid_returns_metadata(db):
         created_by=admin_id,
     )
 
-    r = client.get(f"/invite/{token}")
+    r = client.get(f"/api/invite/{token}")
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["email"] == "newbie@example.com"
@@ -62,13 +62,13 @@ def test_invite_load_expired_returns_404(db):
     )
     invites.revoke(invite_id=invite.id)  # sets expires_at to the past
 
-    r = client.get(f"/invite/{token}")
+    r = client.get(f"/api/invite/{token}")
     assert r.status_code == 404
 
 
 def test_invite_load_unknown_token_returns_404(db):
     client, _, _, _ = _make_client(db)
-    r = client.get("/invite/totally-bogus-token")
+    r = client.get("/api/invite/totally-bogus-token")
     assert r.status_code == 404
 
 
@@ -82,7 +82,7 @@ def test_invite_accept_creates_member_and_session(db):
     )
 
     r = client.post(
-        f"/invite/{token}/accept",
+        f"/api/invite/{token}/accept",
         json={
             "password": "hunter2",
             "display_name": "Newbie Choi",
@@ -121,13 +121,13 @@ def test_invite_accept_reuse_rejected(db):
         "display_name": "Newbie",
         "pinyin": "newbie",
     }
-    first = client.post(f"/invite/{token}/accept", json=body)
+    first = client.post(f"/api/invite/{token}/accept", json=body)
     assert first.status_code == 200
 
     # Second accept on the same token must fail (resolve_token returns None
     # for already-used invites)
     second = client.post(
-        f"/invite/{token}/accept",
+        f"/api/invite/{token}/accept",
         json={
             "password": "hunter2",
             "display_name": "Imposter",
@@ -140,7 +140,7 @@ def test_invite_accept_reuse_rejected(db):
 def test_invite_accept_unknown_token_returns_404(db):
     client, _, _, _ = _make_client(db)
     r = client.post(
-        "/invite/no-such-token/accept",
+        "/api/invite/no-such-token/accept",
         json={
             "password": "hunter2",
             "display_name": "Ghost",
@@ -158,7 +158,7 @@ def test_invite_accept_rejects_short_password(db):
     )
 
     r = client.post(
-        f"/invite/{token}/accept",
+        f"/api/invite/{token}/accept",
         json={"password": "abc", "display_name": "x", "pinyin": "xname"},
     )
     assert r.status_code == 422
@@ -172,7 +172,7 @@ def test_invite_accept_rejects_bad_pinyin(db):
     )
 
     r = client.post(
-        f"/invite/{token}/accept",
+        f"/api/invite/{token}/accept",
         json={"password": "hunter2", "display_name": "x", "pinyin": "X-Bad"},
     )
     assert r.status_code == 422

@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
 import {
   approveApplication,
   getMatchCandidates,
+  listAdminUsers,
   listApplications,
   rejectApplication,
   unblockApplication,
+  type AdminUser,
   type Application,
   type MatchCandidate,
 } from "@/api";
@@ -49,9 +53,18 @@ export function AdminApplications() {
   return (
     <div className="mx-auto max-w-4xl p-6">
       <header className="mb-5 flex items-baseline justify-between gap-4">
-        <h1 className="m-0 text-[22px]" style={titleStyle}>
-          加入申请
-        </h1>
+        <div className="flex items-baseline gap-3">
+          <Link
+            to="/admin"
+            className="inline-flex items-center gap-1 text-[12.5px] font-meta hover:text-[var(--text)]"
+            style={{ color: "var(--text-mute)" }}
+          >
+            <ArrowLeft className="h-3.5 w-3.5" /> 返回
+          </Link>
+          <h1 className="m-0 text-[22px]" style={titleStyle}>
+            加入申请
+          </h1>
+        </div>
         <div className="flex gap-1 rounded-[var(--r-sm)] p-1" style={tabBarStyle}>
           {(["pending", "rejected", "approved"] as Filter[]).map((f) => (
             <button
@@ -320,27 +333,56 @@ function MergeDialog({
   onConfirm: (targetId: string) => void;
 }) {
   const [candidates, setCandidates] = useState<MatchCandidate[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [picked, setPicked] = useState<string | null>(null);
-  const [manualId, setManualId] = useState("");
+  const [candidatesLoading, setCandidatesLoading] = useState(false);
+  const [picked, setPicked] = useState<{ id: string; label: string } | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<AdminUser[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Reset every time the dialog opens
   useEffect(() => {
     if (!open) {
       setPicked(null);
-      setManualId("");
+      setSearchQuery("");
+      setSearchResults([]);
       setError(null);
       return;
     }
-    setLoading(true);
+    setCandidatesLoading(true);
     setError(null);
     getMatchCandidates(application.id)
       .then((r) => setCandidates(r.candidates))
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setLoading(false));
+      .finally(() => setCandidatesLoading(false));
   }, [open, application.id]);
 
-  const target = picked || manualId.trim() || null;
+  // Debounced search via /api/admin/users?search=<q>
+  useEffect(() => {
+    if (!open) return;
+    const q = searchQuery.trim();
+    if (!q) {
+      setSearchResults([]);
+      return;
+    }
+    setSearchLoading(true);
+    const handle = setTimeout(async () => {
+      try {
+        const r = await listAdminUsers({ search: q, include_deleted: false });
+        // Hide users already shown as auto-candidate (avoid double-listing)
+        const candIds = new Set(candidates.map((c) => c.user_id));
+        const items = r.items.filter(
+          (u) => !candIds.has(u.id) && u.status === "active",
+        );
+        setSearchResults(items);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 250);
+    return () => clearTimeout(handle);
+  }, [open, searchQuery, candidates]);
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -353,62 +395,144 @@ function MergeDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {loading && <p style={mutedStyle}>正在搜同人候选…</p>}
+        {candidatesLoading && <p style={mutedStyle}>正在搜同人候选…</p>}
 
-        {!loading && candidates.length > 0 && (
+        {!candidatesLoading && candidates.length > 0 && (
           <div>
             <Label className="text-[12.5px]" style={{ color: "var(--text-mute)" }}>
               建议候选（按相似度）
             </Label>
             <div className="mt-2 flex flex-wrap gap-2">
-              {candidates.map((c) => (
-                <button
-                  key={c.user_id}
-                  type="button"
-                  onClick={() => {
-                    setPicked(c.user_id);
-                    setManualId("");
-                  }}
-                  className="rounded-full px-3 py-1.5 text-[12.5px] font-semibold transition-colors"
-                  style={{
-                    background:
-                      picked === c.user_id ? "var(--accent)" : "var(--surface-alt)",
-                    color: picked === c.user_id ? "var(--accent-ink)" : "var(--text)",
-                    border: "1px solid var(--line)",
-                  }}
-                >
-                  {c.display_name}
-                  <span
-                    className="ml-1.5 text-[10.5px]"
-                    style={{ color: picked === c.user_id ? "var(--accent-ink)" : "var(--text-mute)" }}
+              {candidates.map((c) => {
+                const isPicked = picked?.id === c.user_id;
+                return (
+                  <button
+                    key={c.user_id}
+                    type="button"
+                    onClick={() =>
+                      setPicked({ id: c.user_id, label: c.display_name })
+                    }
+                    className="rounded-full px-3 py-1.5 text-[12.5px] font-semibold transition-colors"
+                    style={{
+                      background: isPicked ? "var(--accent)" : "var(--surface-alt)",
+                      color: isPicked ? "var(--accent-ink)" : "var(--text)",
+                      border: "1px solid var(--line)",
+                    }}
                   >
-                    {reasonLabel(c.reason)}
-                  </span>
-                </button>
-              ))}
+                    {c.display_name}
+                    <span
+                      className="ml-1.5 text-[10.5px]"
+                      style={{
+                        color: isPicked ? "var(--accent-ink)" : "var(--text-mute)",
+                      }}
+                    >
+                      {reasonLabel(c.reason)}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
 
-        {!loading && candidates.length === 0 && (
-          <p style={mutedStyle}>没有自动同人候选，下面手填 user_id。</p>
-        )}
-
         <div className="grid gap-1.5 pt-2">
-          <Label htmlFor="manualId" className="text-[12.5px]">
-            或手填目标 user_id (ULID)
+          <Label htmlFor="userSearch" className="text-[12.5px]">
+            {candidates.length > 0 ? "或搜索其它已有用户" : "搜索已有用户"}
           </Label>
           <Input
-            id="manualId"
-            value={manualId}
-            onChange={(e) => {
-              setManualId(e.target.value);
-              setPicked(null);
-            }}
-            placeholder="32 位 hex"
-            className="font-mono text-[13px]"
+            id="userSearch"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="按 display_name / email / pinyin"
+            autoComplete="off"
           />
+          {searchQuery.trim() && (
+            <div
+              className="mt-1 max-h-48 overflow-y-auto rounded-[var(--r-sm)]"
+              style={{ border: "1px solid var(--line)" }}
+            >
+              {searchLoading && (
+                <p className="px-3 py-2 text-[12.5px]" style={mutedStyle}>
+                  搜索中…
+                </p>
+              )}
+              {!searchLoading && searchResults.length === 0 && (
+                <p className="px-3 py-2 text-[12.5px]" style={mutedStyle}>
+                  没有匹配的用户。
+                </p>
+              )}
+              {searchResults.map((u) => {
+                const isPicked = picked?.id === u.id;
+                return (
+                  <button
+                    key={u.id}
+                    type="button"
+                    onClick={() =>
+                      setPicked({ id: u.id, label: u.display_name })
+                    }
+                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors"
+                    style={{
+                      background: isPicked
+                        ? "var(--accent-bg)"
+                        : "var(--surface)",
+                    }}
+                  >
+                    {u.avatar_url ? (
+                      <img
+                        src={u.avatar_url}
+                        alt=""
+                        className="h-7 w-7 shrink-0 rounded-full object-cover"
+                      />
+                    ) : (
+                      <div
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold uppercase"
+                        style={{
+                          background: "var(--surface-alt)",
+                          color: "var(--accent)",
+                        }}
+                      >
+                        {(u.display_name || "?").slice(0, 1)}
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div
+                        className="truncate text-[13px] font-semibold"
+                        style={{ color: "var(--text)" }}
+                      >
+                        {u.display_name}
+                      </div>
+                      <div
+                        className="truncate text-[11.5px] font-meta"
+                        style={mutedStyle}
+                      >
+                        {u.email || "无邮箱"}
+                        {u.pinyin && ` · ${u.pinyin}`}
+                        {u.role === "admin" && " · ADMIN"}
+                      </div>
+                    </div>
+                    {isPicked && (
+                      <span
+                        className="text-[11px] font-bold"
+                        style={{ color: "var(--accent)" }}
+                      >
+                        ✓ 已选
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
+
+        {picked && (
+          <p
+            className="text-[12px]"
+            style={{ color: "var(--text-soft)" }}
+          >
+            已选目标：<strong>{picked.label}</strong>
+          </p>
+        )}
 
         {error && (
           <p className="text-[12px]" style={{ color: "var(--danger-500)" }}>
@@ -421,8 +545,8 @@ function MergeDialog({
             取消
           </Button>
           <Button
-            disabled={!target}
-            onClick={() => target && onConfirm(target)}
+            disabled={!picked}
+            onClick={() => picked && onConfirm(picked.id)}
             style={{
               background: "var(--accent)",
               color: "var(--accent-ink)",

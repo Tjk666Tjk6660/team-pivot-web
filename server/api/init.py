@@ -1,11 +1,16 @@
 """Initial-admin bootstrap endpoints.
 
-GET /init/status     → {needs_init: bool}  (true when no active admin exists)
-POST /init/complete  → create the very first admin user, persist credential,
-                       open a session, set sid cookie
+GET  /api/init/status     → {needs_init: bool}  (true when no active admin)
+POST /api/init/complete   → create the very first admin user, persist
+                            credential, open a session, set sid cookie
 
 Feishu-flavored bootstrap goes through /auth/callback's count_active_admins
 short-circuit path; this endpoint only covers the email/password method.
+
+Path prefix /api/* keeps reverse-proxy rules simple (one ``handle /api/*``
+covers everything). The SPA route /init lives in the frontend and serves
+the Init.tsx page; that page fetches /api/init/status to decide whether
+to show the form.
 """
 from __future__ import annotations
 
@@ -38,13 +43,13 @@ def build_router(
     router = APIRouter()
     samesite = "none" if secure_cookie else "lax"
 
-    @router.get("/init/status")
+    @router.get("/api/init/status")
     def status() -> JSONResponse:
         return JSONResponse(
             {"needs_init": pivot_users.count_active_admins() == 0}
         )
 
-    @router.post("/init/complete")
+    @router.post("/api/init/complete")
     def complete(body: InitCompleteEmailPassword) -> JSONResponse:
         if pivot_users.count_active_admins() > 0:
             raise HTTPException(status_code=409, detail="admin_already_exists")

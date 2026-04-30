@@ -38,14 +38,14 @@ def _make_client(db, *, seed_admin: bool = False) -> TestClient:
 
 def test_init_status_when_no_admin(db):
     client = _make_client(db)
-    r = client.get("/init/status")
+    r = client.get("/api/init/status")
     assert r.status_code == 200
     assert r.json() == {"needs_init": True}
 
 
 def test_init_status_when_admin_exists(db):
     client = _make_client(db, seed_admin=True)
-    r = client.get("/init/status")
+    r = client.get("/api/init/status")
     assert r.status_code == 200
     assert r.json() == {"needs_init": False}
 
@@ -59,7 +59,7 @@ def test_init_complete_email_password_creates_admin_and_session(db):
         "display_name": "First Admin",
         "pinyin": "first",
     }
-    r = client.post("/init/complete", json=payload)
+    r = client.post("/api/init/complete", json=payload)
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["user"]["role"] == "admin"
@@ -69,7 +69,7 @@ def test_init_complete_email_password_creates_admin_and_session(db):
     assert "sid" in r.cookies
 
     # Subsequent /init/status now reports already-initialized
-    r2 = client.get("/init/status")
+    r2 = client.get("/api/init/status")
     assert r2.json() == {"needs_init": False}
 
     # Binding was persisted with hashed password (not plaintext)
@@ -90,7 +90,7 @@ def test_init_complete_blocked_when_admin_exists(db):
         "display_name": "Late",
         "pinyin": "late",
     }
-    r = client.post("/init/complete", json=payload)
+    r = client.post("/api/init/complete", json=payload)
     assert r.status_code == 409
 
 
@@ -103,7 +103,7 @@ def test_init_complete_rejects_unsupported_method(db):
         "display_name": "x",
         "pinyin": "xname",
     }
-    r = client.post("/init/complete", json=payload)
+    r = client.post("/api/init/complete", json=payload)
     assert r.status_code == 400
 
 
@@ -116,7 +116,7 @@ def test_init_complete_rejects_short_password(db):
         "display_name": "x",
         "pinyin": "xname",
     }
-    r = client.post("/init/complete", json=payload)
+    r = client.post("/api/init/complete", json=payload)
     assert r.status_code == 422  # pydantic min_length
 
 
@@ -129,5 +129,5 @@ def test_init_complete_rejects_bad_pinyin(db):
         "display_name": "x",
         "pinyin": "X-Bad",  # uppercase not allowed
     }
-    r = client.post("/init/complete", json=payload)
+    r = client.post("/api/init/complete", json=payload)
     assert r.status_code == 422

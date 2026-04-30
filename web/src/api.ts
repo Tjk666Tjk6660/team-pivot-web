@@ -1228,7 +1228,7 @@ async function jsonDelete<T = unknown>(path: string): Promise<T> {
 export type InitStatus = { needs_init: boolean };
 
 export async function getInitStatus(): Promise<InitStatus> {
-  return jsonGet<InitStatus>("/init/status");
+  return jsonGet<InitStatus>("/api/init/status");
 }
 
 export type InitCompleteBody = {
@@ -1240,7 +1240,7 @@ export type InitCompleteBody = {
 };
 
 export async function postInitComplete(body: InitCompleteBody) {
-  return jsonPost("/init/complete", body);
+  return jsonPost("/api/init/complete", body);
 }
 
 export async function postEmailPasswordLogin(body: { email: string; password: string }) {
@@ -1254,14 +1254,14 @@ export type InvitePreview = {
 };
 
 export async function getInvite(token: string): Promise<InvitePreview> {
-  return jsonGet<InvitePreview>(`/invite/${encodeURIComponent(token)}`);
+  return jsonGet<InvitePreview>(`/api/invite/${encodeURIComponent(token)}`);
 }
 
 export async function postInviteAccept(
   token: string,
   body: { password: string; display_name: string; pinyin: string },
 ) {
-  return jsonPost(`/invite/${encodeURIComponent(token)}/accept`, body);
+  return jsonPost(`/api/invite/${encodeURIComponent(token)}/accept`, body);
 }
 
 // ── Admin: applications ───────────────────────────────────────────────────
