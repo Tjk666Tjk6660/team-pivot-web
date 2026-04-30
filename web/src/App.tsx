@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { fetchMe, getInitStatus, logout, type Me } from "@/api";
 import { Login } from "@/pages/Login";
 import { Init } from "@/pages/Init";
+import { InviteAccept } from "@/pages/InviteAccept";
 import { Dashboard } from "@/pages/Dashboard";
 import { ProfileSetup } from "@/pages/ProfileSetup";
 import { SettingsPage } from "@/pages/SettingsPage";
@@ -43,6 +44,17 @@ export function App() {
   // 已初始化但不小心进了 /init → 拍回首页。
   if (window.location.pathname === "/init") {
     return <Navigate to="/" replace />;
+  }
+
+  // /invite/:token 走独立公共页（无需登录），让被邀请人在创建账号前
+  // 也能打开链接。需要在 me/Login 守卫之前判，否则会被弹回 Login。
+  const inviteMatch = window.location.pathname.match(/^\/invite\/([^/]+)$/);
+  if (inviteMatch) {
+    return (
+      <Routes>
+        <Route path="/invite/:token" element={<InviteAccept />} />
+      </Routes>
+    );
   }
 
   if (me === null) return <Login />;
