@@ -535,13 +535,32 @@ function BindingChips({ bindings }: { bindings: AdminUser["bindings"] }) {
           style={{ color: "var(--text-mute)" }}
         >
           合并用户：
-          <span style={{ color: "var(--text-soft)" }}>
-            {merged.map((b) => _bindingShortName(b)).join("、")}
-          </span>
+          {merged.map((b, i) => (
+            <span key={b.id}>
+              {i > 0 && "、"}
+              <span
+                className="font-bold tracking-wider"
+                style={{ color: "var(--text-mute)" }}
+              >
+                {_bindingTag(b)}
+              </span>{" "}
+              <span style={{ color: "var(--text-soft)" }}>
+                {_bindingShortName(b)}
+              </span>
+            </span>
+          ))}
         </div>
       )}
     </>
   );
+}
+
+function _bindingTag(binding: AdminUser["bindings"][number]): string {
+  return binding.provider === "feishu"
+    ? "飞书"
+    : binding.provider === "invite"
+      ? "邮箱"
+      : binding.provider;
 }
 
 function _bindingShortName(
