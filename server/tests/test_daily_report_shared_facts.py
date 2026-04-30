@@ -342,3 +342,81 @@ def test_top_active_matters_title_falls_back_to_matter_id_when_missing():
     sf = build_shared_facts([e], [], _summary(), _w())
     m = sf.top_active_matters[0]
     assert m.title == "m1"
+
+
+# --------------------------------------------------------------------------- #
+# lifecycle 派生:closed > just_started > decided > discussing > paused/planning
+# --------------------------------------------------------------------------- #
+
+
+def test_lifecycle_closed_when_status_finished():
+    """current_status=finished → closed,不论文件类型。"""
+    e = _ev(matter_id="m1", matter_status="finished",
+            file="discussions/Pivot/m1/001.md", file_type="think")
+    sf = build_shared_facts([e], [], _summary(), _w())
+    assert sf.top_active_matters[0].lifecycle == "closed"
+
+
+def test_lifecycle_closed_when_result_file_present():
+    """有 result 文件即视为 closed,即便 current_status 未变 finished。"""
+    e = _ev(matter_id="m1", matter_status="executing",
+            file="discussions/Pivot/m1/001.md", file_type="result")
+    sf = build_shared_facts([e], [], _summary(), _w())
+    assert sf.top_active_matters[0].lifecycle == "closed"
+
+
+def test_lifecycle_just_started_on_status_change_to_executing():
+    """窗口内 status_change.to=executing → just_started。"""
+    e = _ev(matter_id="m1", matter_status="executing",
+            file="discussions/Pivot/m1/001.md", file_type="act",
+            has_status_change=True)
+    sf = build_shared_facts([e], [], _summary(), _w())
+    # has_status_change 默认 from=planning, to=executing → just_started
+    assert sf.top_active_matters[0].lifecycle == "just_started"
+
+
+def test_lifecycle_decided_when_executing_with_act():
+    """executing + 有 act 文件 → decided(有共识进入执行)。"""
+    e = _ev(matter_id="m1", matter_status="executing",
+            file="discussions/Pivot/m1/001.md", file_type="act")
+    sf = build_shared_facts([e], [], _summary(), _w())
+    assert sf.top_active_matters[0].lifecycle == "decided"
+
+
+def test_lifecycle_decided_when_executing_with_verify():
+    """executing + 有 verify 文件 → decided(在验证中)。"""
+    e = _ev(matter_id="m1", matter_status="executing",
+            file="discussions/Pivot/m1/001.md", file_type="verify")
+    sf = build_shared_facts([e], [], _summary(), _w())
+    assert sf.top_active_matters[0].lifecycle == "decided"
+
+
+def test_lifecycle_discussing_when_executing_with_only_think():
+    """executing 且只有 think 文件 → discussing。"""
+    e = _ev(matter_id="m1", matter_status="executing",
+            file="discussions/Pivot/m1/001.md", file_type="think")
+    sf = build_shared_facts([e], [], _summary(), _w())
+    assert sf.top_active_matters[0].lifecycle == "discussing"
+
+
+def test_lifecycle_paused():
+    e = _ev(matter_id="m1", matter_status="paused",
+            file="discussions/Pivot/m1/001.md", file_type="think")
+    sf = build_shared_facts([e], [], _summary(), _w())
+    assert sf.top_active_matters[0].lifecycle == "paused"
+
+
+def test_lifecycle_planning():
+    e = _ev(matter_id="m1", matter_status="planning",
+            file="discussions/Pivot/m1/001.md", file_type="think")
+    sf = build_shared_facts([e], [], _summary(), _w())
+    assert sf.top_active_matters[0].lifecycle == "planning"
+
+
+def test_lifecycle_closed_outranks_just_started():
+    """同时有 result 文件 + status_change → closed 优先(收口比启动重要)。"""
+    e = _ev(matter_id="m1", matter_status="executing",
+            file="discussions/Pivot/m1/001.md", file_type="result",
+            has_status_change=True)
+    sf = build_shared_facts([e], [], _summary(), _w())
+    assert sf.top_active_matters[0].lifecycle == "closed"

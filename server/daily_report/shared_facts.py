@@ -12,6 +12,7 @@ dengke #013 原话:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from server.daily_report.types import (
     MatterEvent,
@@ -21,17 +22,26 @@ from server.daily_report.types import (
 )
 
 
+# 业务阶段提示 — 给 LLM 当"用什么动词"的内部线索,不直接出现在叙事里。
+# 优先级(高→低):closed > just_started > decided > discussing > paused > planning
+Lifecycle = Literal[
+    "closed", "just_started", "decided", "discussing", "paused", "planning",
+]
+
+
 @dataclass(frozen=True)
 class MatterActivityMetrics:
-    """单个 matter 在窗口内的活动强度指标 + 业务摘要。
+    """单个 matter 在窗口内的活动强度指标 + 业务摘要 + 生命周期阶段。
 
-    `title` + `today_summaries` 是业务信号 —— company narrate 据此说
-    "公司昨天干了什么",而不是只能数文件类型。剩下的计数(file_count /
+    `title` + `today_summaries` + `lifecycle` 是业务信号 —— company narrate
+    据此说"公司昨天干了什么":lifecycle 提示用什么动词("完成 / 推进 / 启动 /
+    讨论"),title 是事项名,today_summaries 是业务事实。剩下的计数(file_count /
     file_types / status_change / verify_judgements)留作活跃度排序依据,
     prompt 不再喂给 LLM。"""
     path: str                              # "category/slug",e.g. "Pivot/数据迁移方案"
     title: str                             # matter 真实标题(从 matter index 读取)
     today_summaries: tuple[str, ...]       # 窗口内新增 file 的 summary 列表(非空,去重)
+    lifecycle: Lifecycle                   # 业务阶段提示(closed/just_started/decided/discussing/paused/planning)
     current_status: str
     file_count: int                        # 窗口内该 matter 新增文件数
     file_types: dict[str, int]             # think/act/verify/result/insight 各几个
@@ -229,6 +239,7 @@ def _compute_top_active_matters(
             path=slot["path"],
             title=slot["title"] or mid,         # 标题缺失时回落到 matter_id
             today_summaries=tuple(slot["today_summaries"]),
+            lifecycle=_derive_lifecycle(slot),
             current_status=slot["current_status"],
             file_count=slot["file_count"],
             file_types=dict(slot["file_types"]),
@@ -240,6 +251,40 @@ def _compute_top_active_matters(
 
     metrics.sort(key=lambda m: (-m.activity_score, m.path))
     return tuple(metrics[:top_n])
+
+
+_CLOSED_STATES = {"finished", "reviewed", "cancelled"}
+
+
+def _derive_lifecycle(slot: dict) -> Lifecycle:
+    """按优先级 closed > just_started > decided > discussing > paused > planning
+    给 matter 派生业务阶段。
+
+    - closed: current_status 已收口,或窗口内有 result 文件(收尾文件)
+    - just_started: 窗口内 status_change.to == 'executing'(刚被推进开始执行)
+    - decided: executing 且窗口内有 act/verify 文件(达成共识/在执行/在验证)
+    - discussing: executing 且窗口内只有 think
+    - paused: 当前已暂停
+    - planning: 当前还在评审/规划阶段
+    """
+    status = (slot.get("current_status") or "").strip()
+    file_types = slot.get("file_types") or {}
+    sc = slot.get("status_change")
+
+    if status in _CLOSED_STATES or file_types.get("result", 0) > 0:
+        return "closed"
+    if sc and (sc.get("to") == "executing"):
+        return "just_started"
+    if status == "executing":
+        if file_types.get("act", 0) > 0 or file_types.get("verify", 0) > 0:
+            return "decided"
+        return "discussing"
+    if status == "paused":
+        return "paused"
+    if status == "planning":
+        return "planning"
+    # 未知状态兜底为 discussing(仍在动,但不归入更明确的桶)
+    return "discussing"
 
 
 def _new_metric_slot(e: MatterEvent) -> dict:

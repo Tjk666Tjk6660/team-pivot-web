@@ -281,7 +281,7 @@ def test_excessively_long_summary_is_truncated():
     ):
         result = narrate_company(facts, ai_settings=_ai())
     assert result.status == "ai"
-    assert len(result.summary) <= 401   # 400 + ellipsis
+    assert len(result.summary) <= 451   # 450 + ellipsis
     assert result.summary.endswith("…")
 
 

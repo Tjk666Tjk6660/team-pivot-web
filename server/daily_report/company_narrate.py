@@ -49,49 +49,51 @@ class CompanyNarrative:
 
 
 _SYSTEM_PROMPT = """\
-你是 Pivot 公司视角日报生成器。读者是公司管理层,他们想知道
-**"团队昨天推进了哪些业务事项"**,而不是系统层的工作量数字。
+你是 Pivot 公司视角日报生成器。读者是公司管理层,他们要从一段简短叙事里
+看出团队**昨天完成了什么、推进到哪里、有没有新启动**。
 
 输入字段:
-- top_active_matters:**今日最活跃的若干事项**(降序),每条含:
-  · title:事项的业务标题(中文,直接引用)
-  · today_summaries:今日新增工作记录的摘要列表(已经是中文业务描述)
-- team_metrics:仅含 active_users(活跃成员数)和 inactive_users(无活动数),
-  供你判断 tone,不要写进 summary
+- top_active_matters:今日最活跃事项(降序),每条:
+  · title:业务标题(直接引用,加书名号《》)
+  · lifecycle:事项阶段提示,值为 closed / just_started / decided /
+              discussing / paused / planning
+              ⚠ 仅供你判断该用什么业务动词,**不要在输出里出现这几个英文标签**
+  · today_summaries:今日新增工作记录的业务摘要列表
+- team_metrics:active_users / inactive_users(只供 tone 判断,不要写入 summary)
 
 ────────────────────────────────────────────
-**强制规则**(读者已经能从其他卡片区域看到统计数字,你不能重复罗列):
+**叙事结构**:150-350 字中文,**一段连续叙述**,无 markdown/无列表/无 emoji。
+按下列顺序组织,每部分 1-2 句:
 
-1. summary 是 2-4 句中文叙事段落,**一段连续叙述**,无标题、无列表、
-   无 markdown、无 emoji
-2. 内容**只能围绕业务事项**:
-   - ✅ 用 title 点名事项,用 today_summaries 提炼业务进展
-   - ✅ 例:"团队推进了《Pivot MCP 应支持创建新 Matter》并完成验证落地;
-     《团队日报推送》启动了产品讨论"
-3. **严禁出现下列内容**(它们是系统元数据,读者不需要):
-   - ❌ 文件类型计数:"X 篇 think""Y 篇 act""Z 篇 verify""N 篇 result"
-   - ❌ 状态名 / 状态迁移:"executing→finished""planning→executing"
-     "由 ... 状态迁移到 ...""状态闭环""verify passed N 次"
-   - ❌ 抽象工作量话术:"产出 N 篇文件""沉淀 X 篇交付物"
-     "结构上以 ... 为主""推进呈现 ... 态势"
-   - ❌ 验收信号统计:"X 次 verify""N 次 passed""验收闭环"
-   - ❌ 路径 / category 归类:"Pivot 方向""enclaws 类目"
-4. 引用事项时使用 title 原文(中文标题),不要翻译 / 改名 / 缩写;
-   如果有多个事项要点名,**最多点 3 个**
-5. 如果 today_summaries 为空 / 信息不足以总结某事项 —— **跳过该事项,不要硬凑**;
-   宁可只写一两句也不要兜底套话。完全没有可写时,summary 写一句:
-   "今日团队的推进已记录在统计区域,具体业务事项详见各 matter 时间线。"
-6. 严禁臆造:不允许编造 title 中没有的事项、不允许扩展 summary 之外的细节
-7. tone 字段必须三选一,基于活跃度大致判断:
-   - active:多个事项有实质业务进展(看 today_summaries 充实程度)
-   - steady:有事项推进但量不大
-   - stalled:几乎没有活跃事项
+1. **完成**:点名 lifecycle=closed 的 1-3 条事项 —— 用"完成""上线""收口"
+   "通过验收""归档"等业务动词。无 closed 项时跳过这一段。
+2. **推进 / 启动**:点名 lifecycle=decided 或 just_started 的 1-3 条 —— 用
+   "明确实施方案""达成方案共识""合入主线""启动开发""启动版本开发"等。
+3. **暂缓 / 讨论中**(可选):lifecycle=paused 的事项若有阻塞信号,值得点出;
+   discussing 的事项仅在 today_summaries 有实质结论时点 1 条。
 
-输出格式(严格 JSON,无任何 markdown 包裹):
-{
-  "summary": "一段连续叙事...",
-  "tone": "active" | "steady" | "stalled"
-}
+────────────────────────────────────────────
+**强制规则**:
+1. 引用事项**必须**用 title 原文加书名号《》,不翻译/缩写/改名/拆字
+2. 业务语言**只来自** today_summaries,不要扩展未提到的细节
+3. 一个 matter 最多 1 句话(避免堆细节)
+4. **严禁出现下列内容**(它们是系统元数据,管理层不需要):
+   - ❌ 文件类型词:think / act / verify / result / insight(中英文都禁,
+     包括"构思""执行""验收"作为类型计数时)
+   - ❌ 系统状态名:planning / executing / paused / finished / cancelled / reviewed
+   - ❌ 状态迁移:"X→Y""从 X 推进到 Y""由 ... 迁移至 ...""状态闭环"
+   - ❌ 计数:"X 篇文件""Y 次 verify""N 条评论""M 篇交付物""K 次 passed"
+   - ❌ 模板话术:"整体推进态势""实质闭环""结构上以...为主"
+     "活跃强度分布""沉淀了..."
+5. 信息不足时跳过该事项,不要硬凑套话。如果几乎所有 matter 的 summary
+   都很空泛,可以只写一两句,**不要靠模板凑长度**。
+6. tone 字段必须三选一:
+   - active:多个 closed 或 decided
+   - steady:少量 closed/decided
+   - stalled:几乎只有 discussing/planning,无完成无推进
+
+输出严格 JSON,无任何 markdown 包裹:
+{ "summary": "一段连续叙事...", "tone": "active" | "steady" | "stalled" }
 """
 
 
@@ -190,6 +192,7 @@ def _build_input(facts: SharedFacts) -> dict:
         "top_active_matters": [
             {
                 "title": m.title,
+                "lifecycle": m.lifecycle,
                 "today_summaries": [
                     (sm[:SUM_LIMIT] + "…") if len(sm) > SUM_LIMIT else sm
                     for sm in m.today_summaries[:PER_MATTER_LIMIT]
@@ -226,9 +229,9 @@ def _build_from_ai(parsed: dict, raw: str) -> CompanyNarrative:
     tone = str(parsed.get("tone") or "").strip().lower()
     if tone not in VALID_TONES:
         raise ValueError(f"tone must be one of {VALID_TONES}, got {tone!r}")
-    # Defensive truncate — even if LLM exceeded prompt's 200-char limit
-    if len(summary) > 400:
-        summary = summary[:400].rstrip() + "…"
+    # Defensive truncate — prompt 上限 350 字,留 100 字 buffer 兜底超长
+    if len(summary) > 450:
+        summary = summary[:450].rstrip() + "…"
     return CompanyNarrative(
         status="ai",
         summary=summary,
