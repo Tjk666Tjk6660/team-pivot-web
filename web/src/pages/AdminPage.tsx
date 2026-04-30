@@ -1,14 +1,21 @@
+/** Admin sections library.
+ *
+ * Originally this file owned the whole /admin shell + every sub-section.
+ * After the sidebar refactor (commit X), the shell moved to
+ * pages/admin/AdminLayout.tsx; the per-section pages live as their own
+ * routes (pages/admin/AdminWorkspace.tsx, AdminAI.tsx, etc.) and import
+ * the section component from this file. The dispatcher / RoleDeniedNotice /
+ * AdminIntro / QuickFact were deleted — AdminLayout + AdminHome cover them.
+ */
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { ArrowLeft, Bot, FileText, FolderGit2, Mail, Palette, Play, UserPlus, Users } from "lucide-react";
-import { toast, Toaster } from "sonner";
+import { Bot, FileText, FolderGit2, Palette, Play, Users } from "lucide-react";
+import { toast } from "sonner";
 import {
   AdminRequiredError,
   fetchAdminMarkdownSettings,
   fetchAISettings,
   fetchDailyReportConfig,
   fetchDailyReportLastRun,
-  fetchMe,
   fetchWorkspaceAdminConfig,
   syncContacts,
   triggerDailyReport,
@@ -19,7 +26,6 @@ import {
   type DailyReportConfig,
   type DailyReportLastRun,
   type MarkdownStyleMeta,
-  type Me,
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,7 +37,6 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ScoringConfigSection } from "@/components/admin/scoring/ScoringConfigSection";
 
 const SUGGESTED_MODELS = [
   "anthropic/claude-sonnet-4-5",
@@ -50,208 +55,7 @@ const MARKDOWN_STYLE_SWATCHES: Record<string, { bg: string; accent: string; code
   "nord-dark": { bg: "#2e3440", accent: "#88c0d0", code: "#242933" },
 };
 
-export function AdminPage() {
-  const [me, setMe] = useState<Me | null | undefined>(undefined);
-
-  useEffect(() => {
-    fetchMe().then(setMe).catch(() => setMe(null));
-  }, []);
-
-  // 角色丢失（被降级 / 暂停）— 提示并让上层路由处理；不再 setUnlocked。
-  const onAdminLost = () => {
-    toast.error("管理员权限已失效，请刷新或重新登录");
-  };
-
-  const isAdmin = me?.role === "admin" && me.status === "active";
-
-  return (
-    <div className="min-h-screen" style={{ background: "var(--bg)" }}>
-      <Toaster position="top-center" richColors />
-      <header
-        className="px-6 py-4 backdrop-blur"
-        style={{
-          borderBottom: "1px solid var(--line)",
-          background: "rgba(255, 253, 248, 0.94)",
-        }}
-      >
-        <div className="mx-auto flex max-w-7xl items-center gap-4">
-          <Button
-            asChild
-            variant="ghost"
-            size="sm"
-            className="h-8 rounded-md hover:bg-[var(--surface-alt)]"
-            style={{ color: "var(--text-soft)" }}
-          >
-            <Link to="/"><ArrowLeft className="h-4 w-4" /> 返回</Link>
-          </Button>
-          <div className="min-w-0">
-            <h1
-              className="text-[16px] font-semibold"
-              style={{
-                fontFamily: "var(--font-serif)",
-                letterSpacing: "var(--letter-tight)",
-                color: "var(--text)",
-              }}
-            >
-              管理员设置
-            </h1>
-            <p
-              className="mt-0.5 text-[11.5px] font-meta"
-              style={{ color: "var(--text-mute)" }}
-            >
-              用户 · 邀请 · 数据仓库 · AI 助手
-            </p>
-          </div>
-          <div className="ml-auto flex items-center gap-2">
-            <Button
-              asChild
-              variant="outline"
-              size="sm"
-              className="h-8 rounded-[var(--r-sm)] text-[12.5px]"
-            >
-              <Link to="/admin/applications">
-                <UserPlus className="h-3.5 w-3.5" /> 加入申请
-              </Link>
-            </Button>
-            <Button
-              asChild
-              variant="outline"
-              size="sm"
-              className="h-8 rounded-[var(--r-sm)] text-[12.5px]"
-            >
-              <Link to="/admin/users">
-                <Users className="h-3.5 w-3.5" /> 用户
-              </Link>
-            </Button>
-            <Button
-              asChild
-              variant="outline"
-              size="sm"
-              className="h-8 rounded-[var(--r-sm)] text-[12.5px]"
-            >
-              <Link to="/admin/invites">
-                <Mail className="h-3.5 w-3.5" /> 邀请
-              </Link>
-            </Button>
-          </div>
-        </div>
-      </header>
-
-      {me === undefined ? (
-        <main className="mx-auto max-w-3xl px-6 py-12">
-          <p style={{ color: "var(--text-mute)" }}>加载中…</p>
-        </main>
-      ) : !isAdmin ? (
-        <RoleDeniedNotice me={me} />
-      ) : (
-        <main className="mx-auto max-w-7xl px-6 py-8">
-          <AdminIntro />
-          <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
-            <div className="space-y-6">
-              <WorkspaceConfigSection onAdminLost={onAdminLost} />
-              <DailyReportSection onAdminLost={onAdminLost} />
-              <SyncContactsSection onAdminLost={onAdminLost} />
-            </div>
-            <div className="space-y-6">
-              <MarkdownSettingsSection onAdminLost={onAdminLost} />
-              <AISettingsSection onAdminLost={onAdminLost} />
-              <ScoringConfigSection onAdminLost={onAdminLost} />
-            </div>
-          </div>
-        </main>
-      )}
-    </div>
-  );
-}
-
-function RoleDeniedNotice({ me }: { me: Me | null }) {
-  return (
-    <main className="mx-auto max-w-2xl px-6 py-16">
-      <Card
-        className="overflow-hidden border-[var(--line)] shadow-[var(--shadow-sm)]"
-      >
-        <CardHeader>
-          <CardTitle
-            className="text-[20px]"
-            style={{
-              fontFamily: "var(--font-serif)",
-              color: "var(--danger-500)",
-            }}
-          >
-            需要管理员权限
-          </CardTitle>
-          <CardDescription>
-            {me === null
-              ? "你尚未登录。请先登录后再访问管理面板。"
-              : me.status !== "active"
-                ? "账号当前不处于活跃状态，无法进入管理面板。"
-                : "这个页面仅管理员可访问。如需协助，请联系当前管理员把你升级为 admin。"}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button asChild>
-            <Link to="/">返回首页</Link>
-          </Button>
-        </CardContent>
-      </Card>
-    </main>
-  );
-}
-
-function AdminIntro() {
-  return (
-    <Card
-      className="shadow-none"
-      style={{
-        background: "linear-gradient(135deg, var(--bg-alt) 0%, var(--surface) 100%)",
-        border: "1px solid var(--line)",
-      }}
-    >
-      <CardContent className="grid gap-4 p-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(280px,0.6fr)] lg:items-start">
-        <div>
-          <div
-            className="mb-2 text-[11px] font-bold uppercase tracking-[0.18em] font-meta"
-            style={{ color: "var(--accent)" }}
-          >
-            管理面板
-          </div>
-          <h2
-            className="text-[22px] font-semibold"
-            style={{
-              fontFamily: "var(--font-serif)",
-              letterSpacing: "var(--letter-tight)",
-              color: "var(--text)",
-            }}
-          >
-            这里控制"写进哪个仓库"和"AI 用什么模型"。
-          </h2>
-          <p
-            className="mt-3 max-w-3xl text-[14px] leading-[1.65]"
-            style={{ fontFamily: "var(--font-serif)", color: "var(--text-soft)" }}
-          >
-            左侧处理数据仓库与同步动作，右侧集中管理 AI 助手参数。数据仓库配置保存后会同时影响服务器工作区与 VS Code 客户端 mirror。
-          </p>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
-          <QuickFact title="主分支固定" value="main" />
-          <QuickFact title="客户端镜像" value="readonly token" />
-          <QuickFact title="管理员权限" value="进入本页需重新输入" />
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function QuickFact({ title, value }: { title: string; value: string }) {
-  return (
-    <div className="rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)]/80 p-4">
-      <div className="text-xs font-medium uppercase tracking-wide text-[var(--text-mute)]">{title}</div>
-      <div className="mt-1 text-sm font-semibold text-[var(--text)]">{value}</div>
-    </div>
-  );
-}
-
-function WorkspaceConfigSection({ onAdminLost }: { onAdminLost: () => void }) {
+export function WorkspaceConfigSection({ onAdminLost }: { onAdminLost: () => void }) {
   const [repoUrl, setRepoUrl] = useState("");
   const [visibility, setVisibility] = useState<"public" | "private">("private");
   const [writeToken, setWriteToken] = useState("");
@@ -400,7 +204,7 @@ function WorkspaceConfigSection({ onAdminLost }: { onAdminLost: () => void }) {
 
 // ── AI settings ──────────────────────────────────────────────────────────────
 
-function MarkdownSettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
+export function MarkdownSettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
   const [styles, setStyles] = useState<MarkdownStyleMeta[]>([]);
   const [systemDefaultStyle, setSystemDefaultStyle] = useState("");
   const [effectiveStyle, setEffectiveStyle] = useState("");
@@ -554,7 +358,7 @@ function MarkdownSettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
   );
 }
 
-function MarkdownAdminSwatch({ style }: { style: MarkdownStyleMeta }) {
+export function MarkdownAdminSwatch({ style }: { style: MarkdownStyleMeta }) {
   const swatch = MARKDOWN_STYLE_SWATCHES[style.id] ?? {
     bg: "#ffffff",
     accent: "var(--accent)",
@@ -582,7 +386,7 @@ function MarkdownAdminSwatch({ style }: { style: MarkdownStyleMeta }) {
   );
 }
 
-function AISettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
+export function AISettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -774,7 +578,7 @@ function AISettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
 
 // ── Daily Report (Phase 5) ────────────────────────────────────────────────────
 
-function DailyReportSection({ onAdminLost }: { onAdminLost: () => void }) {
+export function DailyReportSection({ onAdminLost }: { onAdminLost: () => void }) {
   const [cfg, setCfg] = useState<DailyReportConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1041,7 +845,7 @@ function DailyReportSection({ onAdminLost }: { onAdminLost: () => void }) {
   );
 }
 
-function ToggleRow({
+export function ToggleRow({
   label,
   checked,
   onChange,
@@ -1076,7 +880,7 @@ function ToggleRow({
 
 // ── Sync Contacts ─────────────────────────────────────────────────────────────
 
-function SyncContactsSection({ onAdminLost }: { onAdminLost: () => void }) {
+export function SyncContactsSection({ onAdminLost }: { onAdminLost: () => void }) {
   const [syncing, setSyncing] = useState(false);
 
   const onSync = async () => {

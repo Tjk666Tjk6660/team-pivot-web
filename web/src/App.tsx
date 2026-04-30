@@ -8,11 +8,17 @@ import { Dashboard } from "@/pages/Dashboard";
 import { ProfileSetup } from "@/pages/ProfileSetup";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SettingsExternalAI } from "@/pages/SettingsExternalAI";
-import { AdminPage } from "@/pages/AdminPage";
+import { AdminAI } from "@/pages/admin/AdminAI";
 import { AdminApplications } from "@/pages/admin/AdminApplications";
+import { AdminContacts } from "@/pages/admin/AdminContacts";
+import { AdminDailyReport } from "@/pages/admin/AdminDailyReport";
+import { AdminHome } from "@/pages/admin/AdminHome";
 import { AdminInvites } from "@/pages/admin/AdminInvites";
+import { AdminLayout } from "@/pages/admin/AdminLayout";
+import { AdminMarkdown } from "@/pages/admin/AdminMarkdown";
 import { AdminScoringPage } from "@/pages/admin/AdminScoringPage";
 import { AdminUsers } from "@/pages/admin/AdminUsers";
+import { AdminWorkspace } from "@/pages/admin/AdminWorkspace";
 import { MatterDetailEmpty, MatterDetailPane } from "@/pages/MatterDetailPane";
 import { NewMatter } from "@/pages/NewMatter";
 import { MatterEventsProvider } from "@/events/MatterEventsProvider";
@@ -75,11 +81,18 @@ export function App() {
           </Route>
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/settings/external-ai" element={<SettingsExternalAI />} />
-          <Route path="/admin" element={<AdminPage />} />
-          <Route path="/admin/applications" element={<AdminApplications />} />
-          <Route path="/admin/users" element={<AdminUsers />} />
-          <Route path="/admin/invites" element={<AdminInvites />} />
-          <Route path="/admin/scoring" element={<AdminScoringPage />} />
+          <Route path="/admin" element={<AdminLayout />}>
+            <Route index element={<AdminHome />} />
+            <Route path="applications" element={<AdminApplications />} />
+            <Route path="users" element={<AdminUsers />} />
+            <Route path="invites" element={<AdminInvites />} />
+            <Route path="workspace" element={<AdminWorkspace />} />
+            <Route path="markdown" element={<AdminMarkdown />} />
+            <Route path="daily-report" element={<AdminDailyReport />} />
+            <Route path="ai" element={<AdminAI />} />
+            <Route path="contacts" element={<AdminContacts />} />
+            <Route path="scoring" element={<AdminScoringPage />} />
+          </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </MatterEventsProvider>

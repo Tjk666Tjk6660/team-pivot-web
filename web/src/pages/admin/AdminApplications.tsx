@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
 import {
   approveApplication,
   getMatchCandidates,
@@ -54,18 +52,9 @@ export function AdminApplications() {
   return (
     <div className="mx-auto max-w-4xl p-6">
       <header className="mb-5 flex items-baseline justify-between gap-4">
-        <div className="flex items-baseline gap-3">
-          <Link
-            to="/admin"
-            className="inline-flex items-center gap-1 text-[12.5px] font-meta hover:text-[var(--text)]"
-            style={{ color: "var(--text-mute)" }}
-          >
-            <ArrowLeft className="h-3.5 w-3.5" /> 返回
-          </Link>
-          <h1 className="m-0 text-[22px]" style={titleStyle}>
-            加入申请
-          </h1>
-        </div>
+        <h1 className="m-0 text-[22px]" style={titleStyle}>
+          加入申请
+        </h1>
         <div className="flex gap-1 rounded-[var(--r-sm)] p-1" style={tabBarStyle}>
           {(["pending", "rejected", "approved"] as Filter[]).map((f) => (
             <button
