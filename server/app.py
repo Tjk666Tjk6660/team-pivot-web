@@ -30,6 +30,7 @@ from server.api.matters_events import build_router as build_matters_events_route
 from server.api.markdown_styles import build_router as build_markdown_styles_router
 from server.api.preferences import build_router as build_preferences_router
 from server.api.tokens import build_router as build_tokens_router
+from server.api.users import build_router as build_users_router
 from server.api.visibility_options import build_router as build_visibility_options_router
 from server.api.workspace import build_router as build_workspace_router
 from server.api_tokens import ApiTokenRepo
@@ -287,7 +288,7 @@ def create_app() -> FastAPI:
     app.include_router(build_matters_router(
         workspace, users, contacts, notifier,
         read_states, favorites, file_reads, relevance_events,
-        resolver, current_user_dep, db,
+        resolver, current_user_dep, db, pivot_users, bindings,
     ))
     app.include_router(build_visibility_options_router(
         pivot_users,
@@ -315,6 +316,7 @@ def create_app() -> FastAPI:
         sessions, contacts, bindings, syncer,
         current_user_dep, current_user_cookie_dep, admin_user_cookie_dep,
     ))
+    app.include_router(build_users_router(pivot_users, current_user_dep))
     app.include_router(build_ai_router(
         workspace, settings, ai_conversations, current_user_dep, current_user_cookie_dep,
         admin_user_cookie_dep, db,

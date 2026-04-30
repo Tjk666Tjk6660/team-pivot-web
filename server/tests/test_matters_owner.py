@@ -68,27 +68,45 @@ def event_bucket():
 
 
 @pytest.fixture
-def client(db, users, tmp_path):
-    """Two-user workspace: ou_1=dengke, ou_2=lisi. Acting user is dengke."""
+def client(db, tmp_path):
+    """Two-user workspace backed by pivot_user. Acting user is dengke."""
     workspace = _WorkspaceStub(tmp_path)
-    users.upsert_from_feishu(open_id="ou_1", union_id=None, name="邓柯", avatar_url="https://x/1.png")
-    users.update_profile("ou_1", pinyin="dengke")
-    users.upsert_from_feishu(open_id="ou_2", union_id=None, name="李四", avatar_url="https://x/2.png")
-    users.update_profile("ou_2", pinyin="lisi")
-    users.upsert_from_feishu(open_id="ou_3", union_id=None, name="王五", avatar_url="")
-    users.update_profile("ou_3", pinyin="wangwu")
+    pivot_users = PivotUserRepo(db)
+    bindings = ExternalBindingRepo(db)
+    pivot_users.create(
+        id="ou_1", display_name="邓柯", pinyin="dengke",
+        email=None, avatar_url="https://x/1.png",
+    )
+    pivot_users.create(
+        id="ou_2", display_name="李四", pinyin="lisi",
+        email=None, avatar_url="https://x/2.png",
+    )
+    pivot_users.create(
+        id="ou_3", display_name="王五", pinyin="wangwu",
+        email=None, avatar_url="",
+    )
+    for user_id in ("ou_1", "ou_2", "ou_3"):
+        bindings.bind(
+            pivot_user_id=user_id,
+            provider="feishu",
+            external_id=user_id,
+            external_union_id=None,
+            raw_profile_json=None,
+        )
 
     sessions = SessionStore(db)
     sid = sessions.create("ou_1")
-    current_user = make_current_user(sessions, users, ApiTokenRepo(db))
+    current_user = make_current_user(sessions, pivot_users, ApiTokenRepo(db))
 
     notifier = _RecordingNotifier()
+    contacts = ContactRepo(db)
     app = FastAPI()
     app.include_router(
         build_router(
-            workspace, users, ContactRepo(db), notifier,
+            workspace, None, contacts, notifier,
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
-            RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), ContactRepo(db)), current_user,
+            RelevanceEventsRepo(db), DisplayResolver(pivot_users, bindings, contacts),
+            current_user, db, pivot_users, bindings,
         )
     )
     c = TestClient(app)

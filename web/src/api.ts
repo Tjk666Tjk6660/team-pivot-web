@@ -839,6 +839,23 @@ export type Contact = {
   avatar_url: string;
 };
 
+export type PivotUserOption = {
+  id: string;
+  display_name: string;
+  pinyin: string | null;
+  avatar_url: string;
+};
+
+export async function searchPivotUsers(q: string): Promise<PivotUserOption[]> {
+  const r = await fetch(`/api/users/search?q=${encodeURIComponent(q)}&limit=20`, {
+    credentials: "include",
+  });
+  await throwIfSessionExpired(r);
+  if (!r.ok) throw new Error(`/api/users/search failed: ${r.status}`);
+  const body = (await r.json()) as { items: PivotUserOption[] };
+  return body.items;
+}
+
 export async function searchContacts(q: string): Promise<Contact[]> {
   const r = await fetch(`/api/contacts?q=${encodeURIComponent(q)}&limit=20`, {
     credentials: "include",

@@ -541,6 +541,43 @@ def _resolve_owner_name(owner: str | None, users: UserRepo | None) -> str | None
     return owner
 
 
+def _resolve_pivot_owner_for_index(
+    value: str | None,
+    pivot_users: PivotUserRepo | None,
+) -> str | None:
+    """Resolve a submitted pivot_user id or pinyin to index pinyin."""
+    if not value:
+        return None
+    if pivot_users is None:
+        return None
+    user = pivot_users.get(value) or pivot_users.get_by_pinyin(value)
+    if user is None or user.status != "active" or not user.pinyin:
+        return None
+    return user.pinyin
+
+
+def _resolve_pivot_owner_display_name(
+    owner: str | None,
+    pivot_users: PivotUserRepo | None,
+) -> str | None:
+    if not owner or pivot_users is None:
+        return owner
+    user = pivot_users.get(owner) or pivot_users.get_by_pinyin(owner)
+    return user.display_name if user is not None else owner
+
+
+def _get_feishu_open_id_for_user(
+    pivot_user_id: str | None,
+    bindings: ExternalBindingRepo | None,
+) -> str | None:
+    if not pivot_user_id or bindings is None:
+        return None
+    for binding in bindings.list_for_user(pivot_user_id):
+        if binding.provider == "feishu":
+            return binding.external_id
+    return None
+
+
 def _lookup_thread_title(workspace: Workspace, category: str, slug: str) -> str:
     detail = get_thread(workspace.discussions_dir, workspace.index_dir, category, slug)
     if detail is not None and detail.meta.title:
@@ -587,6 +624,8 @@ def publish_matter_create(
     contacts: ContactRepo | None = None,
     notifier: Notifier | None = None,
     users: UserRepo | None = None,
+    pivot_users: PivotUserRepo | None = None,
+    bindings: ExternalBindingRepo | None = None,
     file_reads: FileReadRepo | None = None,
     visibility: VisibilityScope | None = None,
     new_category_visibility: CategoryVisibilityScope | None = None,
@@ -619,10 +658,11 @@ def publish_matter_create(
     # identifier space tight to known users avoids dangling references.
     matter_owner_pinyin = user.pinyin
     if matter_owner_open_id and matter_owner_open_id != user.open_id:
-        target_user = users.get_by_any_id(matter_owner_open_id) if users else None
-        if target_user is None or not target_user.pinyin:
+        matter_owner_pinyin = _resolve_pivot_owner_for_index(
+            matter_owner_open_id, pivot_users,
+        )
+        if matter_owner_pinyin is None:
             raise PublishError(f"matter owner not found: {matter_owner_open_id}")
-        matter_owner_pinyin = target_user.pinyin
 
     slug = _make_unique_matter_slug(workspace, title)
     matter_id = slug
@@ -659,7 +699,10 @@ def publish_matter_create(
     notify_mention_open_ids, notify_mention_comments = _extract_notify_mentions(
         initial_item.get("comments")
     )
-    owner_notify_open_id = matter_owner_open_id or user.open_id
+    owner_notify_open_id = (
+        _get_feishu_open_id_for_user(matter_owner_open_id, bindings)
+        if matter_owner_open_id else None
+    ) or _get_feishu_open_id_for_user(user.open_id, bindings)
     # Resolve before write (see publish_matter_comment for rationale): an
     # ambiguous @ aborts the create with a 422 + candidate list rather than
     # leaving a half-written matter on disk.
@@ -672,7 +715,7 @@ def publish_matter_create(
         file_rel=file_rel,
         creator=user.pinyin,
         now_iso=now,
-        users=users,
+        pivot_users=pivot_users,
     )
 
     log.info(
@@ -751,6 +794,8 @@ def publish_matter_append(
     contacts: ContactRepo | None = None,
     notifier: Notifier | None = None,
     users: UserRepo | None = None,
+    pivot_users: PivotUserRepo | None = None,
+    bindings: ExternalBindingRepo | None = None,
     file_reads: FileReadRepo | None = None,
 ) -> dict:
     """Append a new timeline item (think/act/verify/result/insight) to a matter.
@@ -807,7 +852,7 @@ def publish_matter_append(
         file_rel=file_rel,
         creator=user.pinyin,
         now_iso=now,
-        users=users,
+        pivot_users=pivot_users,
     )
 
     md_body = item_body.get("body") or ""
@@ -988,6 +1033,8 @@ def publish_matter_owner_change(
     contacts: ContactRepo | None = None,
     notifier: Notifier | None = None,
     users: UserRepo | None = None,
+    pivot_users: PivotUserRepo | None = None,
+    bindings: ExternalBindingRepo | None = None,
 ) -> dict:
     """Transfer matter-level ownership.
 
@@ -1011,8 +1058,12 @@ def publish_matter_owner_change(
     # Same strictness as create-time matter owner: require a registered user
     # (with pinyin), otherwise reject. Permissive contact fallback isn't
     # appropriate for matter-level owner — see publish_matter_create for why.
-    target_user = users.get_by_any_id(to_owner_open_id) if users else None
-    if target_user is None or not target_user.pinyin:
+    target_user = (
+        pivot_users.get(to_owner_open_id) or pivot_users.get_by_pinyin(to_owner_open_id)
+        if pivot_users is not None
+        else None
+    )
+    if target_user is None or target_user.status != "active" or not target_user.pinyin:
         raise PublishError(f"owner_unknown:{to_owner_open_id}")
     to_owner = target_user.pinyin
 
@@ -1056,18 +1107,22 @@ def publish_matter_owner_change(
         },
     )
     if notifier is not None:
-        from_owner_name = _resolve_owner_name(from_owner, users)
-        notifier.notify_owner_change(
-            category=category,
-            slug=matter_id,
-            thread_title=matter_meta.get("title") or matter_id,
-            actor_name=user.name,
-            from_owner_name=from_owner_name,
-            to_owner_name=target_user.name,
-            to_owner_open_id=target_user.open_id,
-            reason=reason,
-            status_change=dict(status_change) if status_change else None,
-        )
+        to_owner_open_id = _get_feishu_open_id_for_user(target_user.id, bindings)
+        if to_owner_open_id:
+            from_owner_name = _resolve_pivot_owner_display_name(
+                from_owner, pivot_users,
+            )
+            notifier.notify_owner_change(
+                category=category,
+                slug=matter_id,
+                thread_title=matter_meta.get("title") or matter_id,
+                actor_name=user.name,
+                from_owner_name=from_owner_name,
+                to_owner_name=target_user.display_name,
+                to_owner_open_id=to_owner_open_id,
+                reason=reason,
+                status_change=dict(status_change) if status_change else None,
+            )
     return {
         "matter_id": matter_id,
         "matter": matter_snapshot.get("matter", {}),
@@ -1080,7 +1135,7 @@ def publish_matter_owner_change(
 
 
 def _resolve_owner_for_index(
-    value: str | None, users: UserRepo | None
+    value: str | None, pivot_users: PivotUserRepo | None
 ) -> str | None:
     """Resolve a frontend-submitted owner identifier into the on-disk index
     form. Frontend (`OwnerPicker`) submits the chosen contact's `open_id`
@@ -1094,13 +1149,7 @@ def _resolve_owner_for_index(
     the bare `ou_xxxxxxxxxxxxxxxx` open_id into the matter index, which
     propagates further into `verifications_received.verified_by` (derived
     from the verify file's owner in `matter_index._reverse_write_verifications`)."""
-    if not value:
-        return None
-    if users:
-        u = users.get_by_any_id(value)
-        if u and u.pinyin:
-            return u.pinyin
-    return value
+    return _resolve_pivot_owner_for_index(value, pivot_users)
 
 
 def _effective_matter_owner(matter_data: dict) -> str | None:
@@ -1132,10 +1181,12 @@ def _build_timeline_item(
     file_rel: str,
     creator: str,
     now_iso: str,
-    users: UserRepo | None = None,
+    pivot_users: PivotUserRepo | None = None,
 ) -> dict:
     raw_owner = body.get("owner")
-    resolved_owner = _resolve_owner_for_index(raw_owner, users) if raw_owner else None
+    resolved_owner = (
+        _resolve_owner_for_index(raw_owner, pivot_users) if raw_owner else None
+    )
     item: dict = {
         "file": file_rel,
         "created_at": now_iso,
