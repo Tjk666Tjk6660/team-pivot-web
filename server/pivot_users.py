@@ -325,3 +325,41 @@ class PivotUserRepo:
         with self._db.connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [_row_to_user(r) for r in rows]
+
+    def search_mentionable(
+        self,
+        *,
+        query: str | None,
+        limit: int,
+    ) -> list[tuple[PivotUser, str, str | None]]:
+        """active 状态、且绑了飞书的 pivot_user 列表 —— 圈人候选数据源。
+
+        返回 (PivotUser, feishu_open_id, feishu_union_id) 三元组。圈人本质
+        是触发飞书 IM @-提醒，没飞书 binding 的邀请码用户没有 open_id 可发，
+        不能进候选。每条记录唯一来自 external_binding(provider='feishu')。
+        """
+        like = f"%{query}%" if query else None
+        sql = (
+            "SELECT pu.*, eb.external_id AS feishu_open_id,"
+            "       eb.external_union_id AS feishu_union_id"
+            " FROM pivot_user pu"
+            " JOIN external_binding eb"
+            "   ON eb.pivot_user_id = pu.id AND eb.provider = 'feishu'"
+            " WHERE pu.status = 'active'"
+        )
+        params: list[object] = []
+        if like is not None:
+            sql += (
+                " AND (pu.display_name LIKE ?"
+                " OR pu.email LIKE ?"
+                " OR pu.pinyin LIKE ?)"
+            )
+            params.extend([like, like, like])
+        sql += " ORDER BY pu.display_name ASC LIMIT ?"
+        params.append(limit)
+        with self._db.connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [
+            (_row_to_user(r), r["feishu_open_id"], r["feishu_union_id"])
+            for r in rows
+        ]

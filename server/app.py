@@ -313,7 +313,7 @@ def create_app() -> FastAPI:
         workspace, users, contacts, read_states, resolver, current_user_dep,
     ))
     app.include_router(build_contacts_router(
-        sessions, contacts, bindings, syncer,
+        sessions, contacts, pivot_users, bindings, syncer,
         current_user_dep, current_user_cookie_dep, admin_user_cookie_dep,
     ))
     app.include_router(build_users_router(pivot_users, current_user_dep))
