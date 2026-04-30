@@ -49,41 +49,43 @@ class CompanyNarrative:
 
 
 _SYSTEM_PROMPT = """\
-你是 Pivot 公司视角日报生成器。基于今天 24 小时的整体推进事实,
-生成一段简短的公司视角总结。
+你是 Pivot 公司视角日报生成器。读者是公司管理层,他们想知道
+**"团队昨天推进了哪些业务事项"**,而不是系统层的工作量数字。
 
-输入字段说明(只能基于这些事实写,严禁臆造):
-- team_stats:整体计数 + file_type_breakdown(think / act / verify / result / insight)
-              + verify_judgements(passed / failed / partial)
-- matter_status_breakdown:被触动 matter 的 current_status 分布
-- top_active_matters:**今日最活跃的若干 matter**,每条含:
-  · path:形如 "Pivot/数据迁移方案" 的引用 token,**直接整段引用,不要拆字**
-  · file_count / file_types:文件数 + 类型分布
-  · status_change:状态迁移 from→to(可能 null)
-  · verify_judgements:该 matter 的验收结论
-  · activity_score:综合活跃分(降序排列)
+输入字段:
+- top_active_matters:**今日最活跃的若干事项**(降序),每条含:
+  · title:事项的业务标题(中文,直接引用)
+  · today_summaries:今日新增工作记录的摘要列表(已经是中文业务描述)
+- team_metrics:仅含 active_users(活跃成员数)和 inactive_users(无活动数),
+  供你判断 tone,不要写进 summary
 
-规则(严格):
-1. summary 字段是 2-4 句中文叙事段落,**一段连续叙述**,不切分子区块,不使用 markdown 标记
-2. 必须**明确给出整体推进状态**:三选一 active / steady / stalled
-   - active(积极推进):有实质闭环动作(verify passed / result 创建)、多 matter 状态推进
-   - steady(平稳推进):有动作但偏维持、无明显闭环也无明显卡点
-   - stalled(偏停滞):整体动作少、verify 少、推进信号弱
-3. **整体推进了什么**:基于 file_type_breakdown 描述工作类型分布。例如:
-   "30 篇 think + 12 篇 verify + 4 篇 result" 比 "55 篇文件" 信息量大得多。
-   重点点出 verify_judgements:多少 passed / failed —— 这是"实质推进"最强信号
-4. **今日最活跃事项**:从 top_active_matters 选出 1-3 条,**用强度话术**点名:
-   - 允许写:"今日讨论最激烈的是 Pivot/数据迁移方案(N 篇文件 + 状态闭环到 finished)"
-   - 允许写:"落地最快的是 enclaws/某 matter,verify passed 2 次"
-   - 允许写:"评论密度最高的是 ..."
-   - **禁止写**:"该 matter 今天讨论了 X 方案 / 解决了 Y 问题 / 提出了 Z 建议" —— 你看不到
-     summary 内容,这种描述都是虚构。**只描述强度 / 节奏 / 类型,不描述内容**。
-   - matter 引用必须用 path 原文(如 "Pivot/数据迁移方案"),不要改名 / 翻译 / 缩写
-5. **不要把 path 中的 category 当方向归类** —— Pivot / enclaws 等是文件夹,不是产品方向。
-   不要写"Pivot 方向有进展"这类基于路径的方向归纳;只用 path 当 matter 引用 token。
-6. 严禁臆造:任何陈述必须基于输入字段;不允许编造未发生的动作 / 状态 / 人 / 事项内容
-7. **明确这是 AI 分析,不是最终结论** —— 末尾不需要加免责声明,但叙事
-   要克制不绝对(用"整体""主要""可能"等措辞)
+────────────────────────────────────────────
+**强制规则**(读者已经能从其他卡片区域看到统计数字,你不能重复罗列):
+
+1. summary 是 2-4 句中文叙事段落,**一段连续叙述**,无标题、无列表、
+   无 markdown、无 emoji
+2. 内容**只能围绕业务事项**:
+   - ✅ 用 title 点名事项,用 today_summaries 提炼业务进展
+   - ✅ 例:"团队推进了《Pivot MCP 应支持创建新 Matter》并完成验证落地;
+     《团队日报推送》启动了产品讨论"
+3. **严禁出现下列内容**(它们是系统元数据,读者不需要):
+   - ❌ 文件类型计数:"X 篇 think""Y 篇 act""Z 篇 verify""N 篇 result"
+   - ❌ 状态名 / 状态迁移:"executing→finished""planning→executing"
+     "由 ... 状态迁移到 ...""状态闭环""verify passed N 次"
+   - ❌ 抽象工作量话术:"产出 N 篇文件""沉淀 X 篇交付物"
+     "结构上以 ... 为主""推进呈现 ... 态势"
+   - ❌ 验收信号统计:"X 次 verify""N 次 passed""验收闭环"
+   - ❌ 路径 / category 归类:"Pivot 方向""enclaws 类目"
+4. 引用事项时使用 title 原文(中文标题),不要翻译 / 改名 / 缩写;
+   如果有多个事项要点名,**最多点 3 个**
+5. 如果 today_summaries 为空 / 信息不足以总结某事项 —— **跳过该事项,不要硬凑**;
+   宁可只写一两句也不要兜底套话。完全没有可写时,summary 写一句:
+   "今日团队的推进已记录在统计区域,具体业务事项详见各 matter 时间线。"
+6. 严禁臆造:不允许编造 title 中没有的事项、不允许扩展 summary 之外的细节
+7. tone 字段必须三选一,基于活跃度大致判断:
+   - active:多个事项有实质业务进展(看 today_summaries 充实程度)
+   - steady:有事项推进但量不大
+   - stalled:几乎没有活跃事项
 
 输出格式(严格 JSON,无任何 markdown 包裹):
 {
@@ -162,43 +164,36 @@ def _call_ai(facts: SharedFacts, ai_settings: AISettings) -> str:
 
 
 def _build_input(facts: SharedFacts) -> dict:
-    """Compact AI-friendly JSON.
+    """喂给 LLM 的 JSON。
 
-    设计取舍:
-    - **不喂 matter title 的自然语言列表** —— 防 LLM 把 title 自由聚类成"方向"
-    - **不喂 matters_by_category 字典** —— 同上,类目结构会让 LLM 误以为这是
-      产品方向
-    - 改喂 top_active_matters 路径式引用 + 强度指标,LLM 写"讨论最激烈"
-      "落地最快"等强度话术,写不出虚构内容
-    - file_type_breakdown / verify_judgements 是"实质推进"的强信号
+    设计原则:**只喂业务信号,不喂系统元数据**。
+    - title + today_summaries 是 LLM 写"做了什么业务"的唯一来源
+    - file_type_breakdown / verify_judgements / status_change /
+      file_count / matter_status_breakdown 等 **统统不喂** —— 即便
+      喂了,LLM 也容易写出"X 篇 think、Y 次 verify passed"这种
+      读者不需要的元数据,prompt 已禁止
+    - team_metrics 仅给 active_users / inactive_users 让 LLM 判断 tone
     """
     s = facts.summary
+    # today_summaries 单条限制长度,避免 prompt 爆;每条 matter 取前 6 条
+    SUM_LIMIT = 200
+    PER_MATTER_LIMIT = 6
     return {
         "window": {
             "since": s.window.since.isoformat(),
             "until": s.window.until.isoformat(),
         },
-        "team_stats": {
-            "total_files": s.total_files,
-            "total_status_changes": s.total_status_changes,
-            "total_comments": s.total_comments,
-            "matters_touched": s.matters_touched,
+        "team_metrics": {
             "active_users": facts.n_active,
             "inactive_users": len(s.inactive_users),
-            "file_type_breakdown": facts.file_type_breakdown,
-            "verify_judgements": facts.verify_judgements,
         },
-        "matter_status_breakdown": facts.matter_status_breakdown,
         "top_active_matters": [
             {
-                "path": m.path,
-                "current_status": m.current_status,
-                "file_count": m.file_count,
-                "file_types": m.file_types,
-                "status_change": m.status_change,
-                "verify_judgements": m.verify_judgements,
-                "comments_count": m.comments_count,
-                "activity_score": m.activity_score,
+                "title": m.title,
+                "today_summaries": [
+                    (sm[:SUM_LIMIT] + "…") if len(sm) > SUM_LIMIT else sm
+                    for sm in m.today_summaries[:PER_MATTER_LIMIT]
+                ],
             }
             for m in facts.top_active_matters
         ],

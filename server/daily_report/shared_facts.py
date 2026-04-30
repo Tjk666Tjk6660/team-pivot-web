@@ -23,10 +23,15 @@ from server.daily_report.types import (
 
 @dataclass(frozen=True)
 class MatterActivityMetrics:
-    """单个 matter 在窗口内的活动强度指标。给 company narrate 写"今日最
-    活跃事项"用 —— 数据是计数 / 类型分布,**不含 summary 内容**,所以 LLM
-    只能写强度话术(讨论激烈 / 执行最快 / 落地效果好等),写不出"做了什么"。"""
+    """单个 matter 在窗口内的活动强度指标 + 业务摘要。
+
+    `title` + `today_summaries` 是业务信号 —— company narrate 据此说
+    "公司昨天干了什么",而不是只能数文件类型。剩下的计数(file_count /
+    file_types / status_change / verify_judgements)留作活跃度排序依据,
+    prompt 不再喂给 LLM。"""
     path: str                              # "category/slug",e.g. "Pivot/数据迁移方案"
+    title: str                             # matter 真实标题(从 matter index 读取)
+    today_summaries: tuple[str, ...]       # 窗口内新增 file 的 summary 列表(非空,去重)
     current_status: str
     file_count: int                        # 窗口内该 matter 新增文件数
     file_types: dict[str, int]             # think/act/verify/result/insight 各几个
@@ -179,11 +184,19 @@ def _compute_top_active_matters(
         slot = by_matter.setdefault(mid, _new_metric_slot(e))
         # 用最后出现的 current_status 作为 matter 当前状态
         slot["current_status"] = e.matter_current_status or slot["current_status"]
+        # 标题以非空 + 最后出现为准(同一 matter 各事件应当一致;空字符串忽略)
+        if e.matter_title:
+            slot["title"] = e.matter_title
         slot["file_count"] += 1
         if e.file_type:
             slot["file_types"][e.file_type] = (
                 slot["file_types"].get(e.file_type, 0) + 1
             )
+        # 收集业务摘要 — 同一 summary 只留一份
+        s = (e.summary or "").strip()
+        if s and s not in slot["today_summaries_set"]:
+            slot["today_summaries_set"].add(s)
+            slot["today_summaries"].append(s)
         if e.status_change and slot["status_change"] is None:
             slot["status_change"] = {
                 "from": e.status_change.get("from"),
@@ -214,6 +227,8 @@ def _compute_top_active_matters(
             continue
         metrics.append(MatterActivityMetrics(
             path=slot["path"],
+            title=slot["title"] or mid,         # 标题缺失时回落到 matter_id
+            today_summaries=tuple(slot["today_summaries"]),
             current_status=slot["current_status"],
             file_count=slot["file_count"],
             file_types=dict(slot["file_types"]),
@@ -231,6 +246,9 @@ def _new_metric_slot(e: MatterEvent) -> dict:
     """初始化一个 matter 的活动指标累加 slot。path = category/matter_id。"""
     return {
         "path": f"{category_of(e.file)}/{e.matter_id}",
+        "title": e.matter_title or "",
+        "today_summaries": [],            # 顺序保留:按事件遍历顺序追加
+        "today_summaries_set": set(),     # 去重用,生成 metrics 时丢弃
         "current_status": e.matter_current_status or "",
         "file_count": 0,
         "file_types": {},

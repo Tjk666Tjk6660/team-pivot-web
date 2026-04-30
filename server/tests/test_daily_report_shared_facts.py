@@ -290,3 +290,55 @@ def test_top_active_matters_records_status_change():
     sf = build_shared_facts(events, [], _summary(), _w())
     m = sf.top_active_matters[0]
     assert m.status_change == {"from": "planning", "to": "executing"}
+
+
+def test_top_active_matters_carries_title_and_today_summaries():
+    """company narrate 用 title + today_summaries 写"昨天干了什么业务"。"""
+    e1 = _ev(matter_id="m1", file="discussions/Pivot/m1/001.md", file_type="think")
+    e2 = _ev(matter_id="m1", file="discussions/Pivot/m1/002.md", file_type="act")
+    sf = build_shared_facts([e1, e2], [], _summary(), _w())
+    m = sf.top_active_matters[0]
+    # _ev 给的 matter_title=matter_id;summary=f"{matter_id} {file_type}"
+    assert m.title == "m1"
+    assert m.today_summaries == ("m1 think", "m1 act")
+
+
+def test_top_active_matters_dedups_summaries():
+    """同 matter 多个 file 共享同一个 summary 字符串时只保留一份。"""
+    e1 = _ev(matter_id="m1", file="discussions/Pivot/m1/001.md", file_type="think")
+    e2 = _ev(matter_id="m1", file="discussions/Pivot/m1/002.md", file_type="think")
+    sf = build_shared_facts([e1, e2], [], _summary(), _w())
+    m = sf.top_active_matters[0]
+    # 两个 think 的 summary 都是 "m1 think",去重后只剩一条
+    assert m.today_summaries == ("m1 think",)
+
+
+def test_top_active_matters_skips_empty_summaries():
+    """空 summary 不进 today_summaries(避免污染 LLM 输入)。"""
+    e = _ev(matter_id="m1", file="discussions/Pivot/m1/001.md", file_type="think")
+    e_empty = MatterEvent(
+        matter_id="m1", matter_title="m1", matter_current_status="executing",
+        file="discussions/Pivot/m1/002.md", file_type="act",
+        created_at=_w().since + timedelta(hours=3),
+        file_in_window=True, creator="alice", owner="alice",
+        summary="",
+        status_change=None, verifications=(), comments_in_window=(),
+    )
+    sf = build_shared_facts([e, e_empty], [], _summary(), _w())
+    m = sf.top_active_matters[0]
+    assert m.today_summaries == ("m1 think",)
+
+
+def test_top_active_matters_title_falls_back_to_matter_id_when_missing():
+    """matter_title 为空时,标题回落到 matter_id。"""
+    e = MatterEvent(
+        matter_id="m1", matter_title="", matter_current_status="executing",
+        file="discussions/Pivot/m1/001.md", file_type="think",
+        created_at=_w().since + timedelta(hours=2),
+        file_in_window=True, creator="alice", owner="alice",
+        summary="some business note",
+        status_change=None, verifications=(), comments_in_window=(),
+    )
+    sf = build_shared_facts([e], [], _summary(), _w())
+    m = sf.top_active_matters[0]
+    assert m.title == "m1"
