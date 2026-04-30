@@ -55,6 +55,13 @@ def client(db, users, tmp_path):
     workspace = _WorkspaceStub(tmp_path)
     users.upsert_from_feishu(open_id="ou_1", union_id=None, name="邓柯", avatar_url="")
     users.update_profile("ou_1", pinyin="dengke")
+    contacts = ContactRepo(db)
+    contacts.upsert_from_login(
+        open_id="ou_1", union_id=None, name="閭撴煰", avatar_url="",
+    )
+    contacts.upsert_from_login(
+        open_id="ou_1", union_id=None, name="邓柯", avatar_url="",
+    )
     sessions = SessionStore(db)
     sid = sessions.create("ou_1")
     current_user = make_current_user(sessions, users, ApiTokenRepo(db))
@@ -62,9 +69,9 @@ def client(db, users, tmp_path):
     app = FastAPI()
     app.include_router(
         build_router(
-            workspace, users, ContactRepo(db), NoOpNotifier(),
+            workspace, users, contacts, NoOpNotifier(),
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
-            RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), ContactRepo(db)), current_user,
+            RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), contacts), current_user,
         )
     )
     c = TestClient(app)

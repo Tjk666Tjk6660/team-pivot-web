@@ -220,9 +220,12 @@ def test_full_migration_succeeds_and_drops_user_open_id(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM external_binding").fetchone()[0] == 2
     # Initial admin set
     admin_count = conn.execute(
-        "SELECT COUNT(*) FROM pivot_user WHERE role=?", ("admin",)
+        "SELECT COUNT(*) FROM pivot_user WHERE role=?", ('["admin"]',)
     ).fetchone()[0]
     assert admin_count == 1
+    assert conn.execute(
+        "SELECT COUNT(*) FROM pivot_role WHERE name IN ('admin','member')"
+    ).fetchone()[0] == 2
     # Legacy users table dropped
     assert conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type=? AND name=?", ("table", "users"),

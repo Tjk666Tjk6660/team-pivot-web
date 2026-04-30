@@ -18,10 +18,13 @@ from server.ai.context import (
 from server.ai.prompts import build_new_matter_system_prompt, build_system_prompt
 from server.ai.tools import AITools
 from server.ai_conversations import AIConversationRepo
+from server.db import Database
 from server.matter_index import matter_index_path, read_matter_index
 from server.pivot_users import PivotUser
 from server.settings import SettingsRepo
 from server.users import User
+from server.visibility_scopes import VisibilityScope
+from server.visibility_store import read_category_visibility
 from server.workspace import Workspace
 
 log = logging.getLogger("server.api.ai")
@@ -84,6 +87,7 @@ def build_router(
     current_user: Callable,
     current_user_cookie_only: Callable,
     admin_user_cookie_only: Callable,
+    db: Database | None = None,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -128,9 +132,9 @@ def build_router(
     # silently downgrades to an empty starting block on a missing path, so callers
     # like NewMatter can use a placeholder matter_id to generate ad-hoc summaries.
 
-    def _matter_thread_key(matter_id: str) -> str:
+    def _matter_thread_key(matter_id: str, user: User) -> str:
         data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
-        if data is None:
+        if data is None or not _can_read_matter(data, user, db, workspace):
             raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
         timeline = data.get("timeline") or []
         if timeline:
@@ -144,7 +148,7 @@ def build_router(
         matter_id: str,
         user: User = Depends(current_user),
     ):
-        key = _matter_thread_key(matter_id)
+        key = _matter_thread_key(matter_id, user)
         messages, reply_target = conversations.get(user.open_id, key)
         return {
             "messages": messages,
@@ -157,7 +161,7 @@ def build_router(
         body: ConversationSave,
         user: User = Depends(current_user),
     ):
-        key = _matter_thread_key(matter_id)
+        key = _matter_thread_key(matter_id, user)
         conversations.save(
             user.open_id, key,
             [m.model_dump() for m in body.messages],
@@ -170,7 +174,7 @@ def build_router(
         matter_id: str,
         user: User = Depends(current_user),
     ):
-        key = _matter_thread_key(matter_id)
+        key = _matter_thread_key(matter_id, user)
         conversations.delete(user.open_id, key)
         return {"ok": True}
 
@@ -178,7 +182,7 @@ def build_router(
     async def chat_matter(
         matter_id: str,
         body: ChatRequest,
-        _: User = Depends(current_user),
+        user: User = Depends(current_user),
     ):
         # No existence check: build_starting_post_block silently downgrades to
         # an empty starting block on missing/invalid paths, so callers like
@@ -200,6 +204,9 @@ def build_router(
             # document. reply_target is irrelevant and ignored if present.
             system_prompt = build_new_matter_system_prompt()
         else:
+            data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
+            if data is None or not _can_read_matter(data, user, db, workspace):
+                raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
             if not body.reply_target:
                 raise HTTPException(400, "缺少起点帖子（reply_target）")
             try:
@@ -211,7 +218,11 @@ def build_router(
             system_prompt = build_system_prompt(starting_block)
         user_history = [{"role": m.role, "content": m.content} for m in body.messages]
 
-        tools_handler = AITools(workspace.discussions_dir, workspace.index_dir)
+        tools_handler = AITools(
+            workspace.discussions_dir,
+            workspace.index_dir,
+            visible_matter_ids=_visible_matter_ids(workspace, user, db),
+        )
         tool_specs = tools_handler.specs()
 
         async def generate():
@@ -324,6 +335,106 @@ def build_router(
         return StreamingResponse(generate(), media_type="text/event-stream")
 
     return router
+
+
+def _visible_matter_ids(
+    workspace: Workspace,
+    user: User,
+    db: Database | None,
+) -> set[str]:
+    out: set[str] = set()
+    if not workspace.index_dir.is_dir():
+        return out
+    for path in workspace.index_dir.glob("*.index.yaml"):
+        data = read_matter_index(path)
+        if data is None:
+            continue
+        matter_id = str((data.get("matter") or {}).get("id") or path.name.removesuffix(".index.yaml"))
+        if _can_read_matter(data, user, db, workspace):
+            out.add(matter_id)
+    return out
+
+
+def _can_read_matter(
+    data: dict,
+    user: User,
+    db: Database | None,
+    workspace: Workspace,
+) -> bool:
+    roles = _roles_for_user(user, db)
+    category = _matter_category(data)
+    if category:
+        category_visibility = read_category_visibility(
+            workspace.path / "categories",
+            category,
+        )
+        if category_visibility.mode == "restricted" and not (
+            set(roles) & set(category_visibility.authorized_roles)
+        ):
+            return False
+    visibility = VisibilityScope.from_dict((data.get("matter") or {}).get("visibility"))
+    if visibility.mode == "public":
+        return True
+    if set(roles) & set(visibility.roles):
+        return True
+    return bool(set(_identifiers_for_user(user)) & set(visibility.user_ids))
+
+
+def _matter_category(data: dict) -> str | None:
+    timeline = data.get("timeline") or []
+    if not timeline:
+        return None
+    parts = str(timeline[0].get("file") or "").split("/")
+    if len(parts) >= 4 and parts[0] == "discussions":
+        return parts[1]
+    return None
+
+
+def _identifiers_for_user(user: User) -> list[str]:
+    values = [
+        getattr(user, "id", None),
+        getattr(user, "open_id", None),
+        getattr(user, "pinyin", None),
+        getattr(user, "email", None),
+    ]
+    return [str(v) for v in values if v]
+
+
+def _roles_for_user(user: User, db: Database | None) -> list[str]:
+    roles = getattr(user, "roles", None)
+    if isinstance(roles, list):
+        return [str(role) for role in roles]
+    if db is None:
+        return []
+    identifiers = _identifiers_for_user(user)
+    if not identifiers:
+        return []
+    placeholders = ",".join("?" for _ in identifiers)
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT role FROM pivot_user"
+            f" WHERE status='active' AND (id IN ({placeholders})"
+            f" OR pinyin IN ({placeholders}) OR email IN ({placeholders}))"
+            " LIMIT 1",
+            (*identifiers, *identifiers, *identifiers),
+        ).fetchone()
+    if row is None:
+        return []
+    return _decode_role_list(row["role"])
+
+
+def _decode_role_list(raw: str) -> list[str]:
+    value = (raw or "").strip()
+    if not value:
+        return []
+    if value.startswith("["):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return [value]
+        if isinstance(decoded, list):
+            return [str(item).strip() for item in decoded if str(item).strip()]
+    return [value]
 
 
 def _summarize(tool_result: str) -> dict:

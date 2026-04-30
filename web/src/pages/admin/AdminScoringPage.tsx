@@ -46,7 +46,7 @@ export function AdminScoringPage() {
     toast.error("管理员权限已失效，请刷新或重新登录");
   };
 
-  const isAdmin = me?.role === "admin" && me.status === "active";
+  const isAdmin = !!me?.roles?.includes("admin") && me.status === "active";
 
   return (
     <div className="min-h-screen" style={{ background: "var(--bg)" }}>

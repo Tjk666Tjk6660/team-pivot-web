@@ -28,7 +28,7 @@ def _resolve_user(user_id: str, users: PivotUserRepo,
     if u is None:
         on_block_cleanup()
         return None
-    if u.status != "active":
+    if getattr(u, "status", "active") != "active":
         on_block_cleanup()
         raise _BlockedUser(u.status)
     return u
@@ -103,10 +103,10 @@ def make_current_user_cookie_only(
 
 def make_require_admin_user() -> Callable:
     """Returns a dependency that, given an already-resolved PivotUser
-    (typically via Depends(current_user)), enforces role='admin'.
+    (typically via Depends(current_user)), enforces the admin role.
     Status is already guaranteed active by current_user resolution."""
     def require(user: PivotUser) -> PivotUser:
-        if user.role != "admin":
+        if "admin" not in user.roles:
             raise HTTPException(status_code=403, detail="admin_required")
         return user
     return require
@@ -131,7 +131,7 @@ def make_require_admin_user_cookie(
             ) from None
         if u is None:
             raise HTTPException(status_code=401, detail="not logged in")
-        if u.role != "admin":
+        if "admin" not in u.roles:
             raise HTTPException(status_code=403, detail="admin_required")
         return u
     return admin

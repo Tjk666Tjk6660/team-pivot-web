@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
+from time import time
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -99,7 +101,7 @@ CREATE TABLE IF NOT EXISTS pivot_user (
     email TEXT UNIQUE,
     avatar_url TEXT NOT NULL DEFAULT '',
     github_username TEXT,
-    role TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('admin','member')),
+    role TEXT NOT NULL DEFAULT '["member"]',
     status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','suspended','deleted')),
     status_note TEXT,
     created_at REAL NOT NULL,
@@ -109,6 +111,47 @@ CREATE TABLE IF NOT EXISTS pivot_user (
     status_changed_by TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_pivot_user_role_status ON pivot_user(role, status);
+
+CREATE TABLE IF NOT EXISTS pivot_role (
+    name TEXT PRIMARY KEY,
+    kind TEXT NOT NULL DEFAULT 'business' CHECK(kind IN ('system','business')),
+    description TEXT,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pivot_role_active ON pivot_role(is_active, kind, name);
+
+CREATE TABLE IF NOT EXISTS category_visibility_cache (
+    category_id TEXT PRIMARY KEY,
+    mode TEXT NOT NULL DEFAULT 'public' CHECK(mode IN ('public','restricted')),
+    updated_at REAL NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS category_visibility_role_cache (
+    category_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    PRIMARY KEY (category_id, role)
+);
+CREATE TABLE IF NOT EXISTS matter_visibility_cache (
+    matter_id TEXT PRIMARY KEY,
+    category_id TEXT NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'public' CHECK(mode IN ('public','restricted')),
+    creator_id TEXT,
+    owner_id TEXT,
+    updated_at REAL NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_matter_visibility_cache_category
+    ON matter_visibility_cache(category_id);
+CREATE TABLE IF NOT EXISTS matter_visibility_role_cache (
+    matter_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    PRIMARY KEY (matter_id, role)
+);
+CREATE TABLE IF NOT EXISTS matter_visibility_user_cache (
+    matter_id TEXT NOT NULL,
+    pivot_user_id TEXT NOT NULL,
+    PRIMARY KEY (matter_id, pivot_user_id)
+);
 
 CREATE TABLE IF NOT EXISTS external_binding (
     id TEXT PRIMARY KEY,
@@ -363,7 +406,7 @@ def _migrate(conn) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_contacts_pinyin ON contacts(pinyin)"
     )
-    # Scoring v0.3 → v0.3.1: relax idempotency idx (drop 'success' from the
+    # Scoring v0.3 -> v0.3.1: relax idempotency idx (drop 'success' from the
     # active-statuses set) so admin reruns can record a new run alongside
     # prior successes. CREATE UNIQUE INDEX IF NOT EXISTS in SCHEMA wouldn't
     # change a pre-existing index definition; explicit DROP+CREATE forces
@@ -374,6 +417,88 @@ def _migrate(conn) -> None:
         " ON matter_scoring_runs(matter_id, timeline_hash)"
         " WHERE status IN ('queued','running')"
     )
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(pivot_user)")}
+    if "role" in cols:
+        # Legacy databases may still have CHECK(role IN ('admin','member')).
+        # SQLite cannot drop that CHECK in place, so rebuild the table once.
+        sql_row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='pivot_user'"
+        ).fetchone()
+        create_sql = str(sql_row["sql"] if sql_row else "")
+        if "CHECK(role IN ('admin','member'))" in create_sql:
+            conn.executescript(
+                """
+                ALTER TABLE pivot_user RENAME TO pivot_user_legacy_role_check;
+                CREATE TABLE pivot_user (
+                    id TEXT PRIMARY KEY,
+                    display_name TEXT NOT NULL,
+                    pinyin TEXT,
+                    email TEXT UNIQUE,
+                    avatar_url TEXT NOT NULL DEFAULT '',
+                    github_username TEXT,
+                    role TEXT NOT NULL DEFAULT '["member"]',
+                    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','suspended','deleted')),
+                    status_note TEXT,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    last_login_at REAL,
+                    status_changed_at REAL,
+                    status_changed_by TEXT
+                );
+                INSERT INTO pivot_user
+                    (id, display_name, pinyin, email, avatar_url, github_username,
+                     role, status, status_note, created_at, updated_at, last_login_at,
+                     status_changed_at, status_changed_by)
+                SELECT id, display_name, pinyin, email, avatar_url, github_username,
+                       role, status, status_note, created_at, updated_at, last_login_at,
+                       status_changed_at, status_changed_by
+                FROM pivot_user_legacy_role_check;
+                DROP TABLE pivot_user_legacy_role_check;
+                CREATE INDEX IF NOT EXISTS idx_pivot_user_role_status ON pivot_user(role, status);
+                """
+            )
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(matter_visibility_cache)")}
+    if cols:
+        if "creator_id" not in cols:
+            conn.execute("ALTER TABLE matter_visibility_cache ADD COLUMN creator_id TEXT")
+        if "owner_id" not in cols:
+            conn.execute("ALTER TABLE matter_visibility_cache ADD COLUMN owner_id TEXT")
+    _ensure_pivot_roles(conn)
+
+
+def _decode_role_cell(value: str | None) -> list[str]:
+    raw = (value or "").strip()
+    if not raw:
+        return []
+    if raw.startswith("["):
+        try:
+            decoded = json.loads(raw)
+        except json.JSONDecodeError:
+            return [raw]
+        if isinstance(decoded, list):
+            return [str(item).strip() for item in decoded if str(item).strip()]
+    return [raw]
+
+
+def _ensure_pivot_roles(conn) -> None:
+    now = time()
+    for name in ("admin", "member"):
+        conn.execute(
+            "INSERT OR IGNORE INTO pivot_role"
+            " (name, kind, description, is_active, created_at, updated_at)"
+            " VALUES (?, 'system', NULL, 1, ?, ?)",
+            (name, now, now),
+        )
+    rows = conn.execute("SELECT role FROM pivot_user").fetchall()
+    for row in rows:
+        for role in _decode_role_cell(row["role"]):
+            kind = "system" if role in {"admin", "member"} else "business"
+            conn.execute(
+                "INSERT OR IGNORE INTO pivot_role"
+                " (name, kind, description, is_active, created_at, updated_at)"
+                " VALUES (?, ?, NULL, 1, ?, ?)",
+                (role, kind, now, now),
+            )
 
 
 class Database:

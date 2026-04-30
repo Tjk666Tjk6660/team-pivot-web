@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS pivot_user (
     email TEXT UNIQUE,
     avatar_url TEXT NOT NULL DEFAULT '',
     github_username TEXT,
-    role TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('admin','member')),
+    role TEXT NOT NULL DEFAULT '["member"]',
     status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','suspended','deleted')),
     status_note TEXT,
     created_at REAL NOT NULL,
@@ -68,6 +68,16 @@ CREATE TABLE IF NOT EXISTS pivot_user (
     status_changed_by TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_pivot_user_role_status ON pivot_user(role, status);
+
+CREATE TABLE IF NOT EXISTS pivot_role (
+    name TEXT PRIMARY KEY,
+    kind TEXT NOT NULL DEFAULT 'business' CHECK(kind IN ('system','business')),
+    description TEXT,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pivot_role_active ON pivot_role(is_active, kind, name);
 
 CREATE TABLE IF NOT EXISTS external_binding (
     id TEXT PRIMARY KEY,
@@ -483,7 +493,7 @@ def _backfill_pivot_user(conn: sqlite3.Connection) -> tuple[int, int]:
             "  role, status, created_at, updated_at)"
             " VALUES (?,?,?,?,?,?,?,?,?,?)",
             (new_id, u["name"], u["pinyin"], None, u["avatar_url"] or "",
-             u["github_username"], "member", "active",
+             u["github_username"], json.dumps(["member"], ensure_ascii=False), "active",
              u["created_at"], now),
         )
         created_users += 1
@@ -521,9 +531,39 @@ def _set_initial_admin(
         )
     admin_id = matches[0]["id"]
     conn.execute(
-        "UPDATE pivot_user SET role='admin' WHERE id=?", (admin_id,)
+        "UPDATE pivot_user SET role=? WHERE id=?",
+        (json.dumps(["admin"], ensure_ascii=False), admin_id),
     )
+    _ensure_pivot_roles(conn)
     return admin_id
+
+
+def _ensure_pivot_roles(conn: sqlite3.Connection) -> None:
+    now = time()
+    for name in ("admin", "member"):
+        conn.execute(
+            "INSERT OR IGNORE INTO pivot_role"
+            " (name, kind, description, is_active, created_at, updated_at)"
+            " VALUES (?, 'system', NULL, 1, ?, ?)",
+            (name, now, now),
+        )
+    for row in conn.execute("SELECT role FROM pivot_user").fetchall():
+        raw = row["role"] or ""
+        try:
+            decoded = json.loads(raw) if str(raw).strip().startswith("[") else [raw]
+        except json.JSONDecodeError:
+            decoded = [raw]
+        for role in decoded:
+            name = str(role).strip()
+            if not name:
+                continue
+            kind = "system" if name in {"admin", "member"} else "business"
+            conn.execute(
+                "INSERT OR IGNORE INTO pivot_role"
+                " (name, kind, description, is_active, created_at, updated_at)"
+                " VALUES (?, ?, NULL, 1, ?, ?)",
+                (name, kind, now, now),
+            )
 
 
 # ─── Phase 5: per-table backfill + rebuild + reindex ──────────────────────

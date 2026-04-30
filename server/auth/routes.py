@@ -47,6 +47,7 @@ def _user_dict(
         "markdown_style": None,  # deprecated field; always None post-migration
         "needs_setup": u.needs_setup,
         "role": u.role,
+        "roles": u.roles,
         "status": u.status,
         # Frontend uses this to gate provider-specific admin actions, e.g.
         # "Sync Feishu contacts" should only show if the current admin has
@@ -294,7 +295,7 @@ def _admin_feishu_open_ids(
 ) -> list[str]:
     """Resolve all active admins' feishu open_ids for DM notification."""
     admins = [u for u in pivot_users.list_for_admin(include_deleted=False)
-              if u.role == "admin" and u.status == "active"]
+              if "admin" in u.roles and u.status == "active"]
     open_ids: list[str] = []
     for a in admins:
         for b in bindings.list_for_user(a.id):

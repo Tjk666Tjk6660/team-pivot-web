@@ -35,7 +35,8 @@ class DraftRepo:
     def create(
         self,
         *,
-        pivot_user_id: str,
+        pivot_user_id: str | None = None,
+        user_open_id: str | None = None,
         type_: str,
         title: str | None = None,
         category: str | None = None,
@@ -46,6 +47,9 @@ class DraftRepo:
         references_json: str = "[]",
         matter_payload_json: str | None = None,
     ) -> Draft:
+        pivot_user_id = pivot_user_id or user_open_id
+        if not pivot_user_id:
+            raise ValueError("pivot_user_id is required")
         if type_ not in VALID_TYPES:
             raise ValueError(f"invalid draft type: {type_}")
         draft_id = uuid.uuid4().hex

@@ -9,7 +9,8 @@ export type Me = {
   github_username: string | null;
   markdown_style: string | null;
   needs_setup: boolean;
-  role: "admin" | "member";
+  role: string;
+  roles: string[];
   status: "active" | "suspended" | "deleted";
   /** 当前用户绑定的外部身份 provider 列表（'feishu' / 'invite' / ...）。
    *  前端用它决定是否显示 provider-specific 的 admin 动作，例如
@@ -250,6 +251,35 @@ export type MatterDetail = {
   timeline: TimelineItem[];
 };
 
+export type VisibilityScope = {
+  mode: "public" | "restricted";
+  roles: string[];
+  user_ids: string[];
+};
+
+export type CategoryVisibilityScope = {
+  mode: "public" | "restricted";
+  authorized_roles: string[];
+};
+
+export type VisibilityUserOption = {
+  id: string;
+  display_name: string;
+  pinyin: string | null;
+  avatar_url: string | null;
+};
+
+export type VisibilityRoleOption = {
+  role: string;
+  users: VisibilityUserOption[];
+};
+
+export type VisibilityOptions = {
+  all: { label: string; value: "public" };
+  roles: VisibilityRoleOption[];
+  users: VisibilityUserOption[];
+};
+
 export async function fetchMatters(query?: {
   status?: MatterStatus;
   owner?: string;
@@ -277,6 +307,63 @@ export async function fetchMatter(matterId: string): Promise<MatterDetail> {
   return (await r.json()) as MatterDetail;
 }
 
+export async function fetchVisibilityOptions(
+  category?: string,
+): Promise<VisibilityOptions> {
+  const params = new URLSearchParams();
+  if (category) params.set("category", category);
+  const qs = params.toString() ? `?${params}` : "";
+  const r = await fetch(`/api/visibility-options${qs}`, { credentials: "include" });
+  await throwIfSessionExpired(r);
+  if (!r.ok) throw new Error(`fetch visibility options failed: ${r.status}`);
+  return (await r.json()) as VisibilityOptions;
+}
+
+export async function fetchMatterVisibility(
+  matterId: string,
+): Promise<VisibilityScope> {
+  const r = await fetch(
+    `/api/matters/${encodeURIComponent(matterId)}/visibility`,
+    { credentials: "include" },
+  );
+  await throwIfSessionExpired(r);
+  if (r.status === 404) throw new Error("matter not found");
+  if (!r.ok) throw new Error(`fetch matter visibility failed: ${r.status}`);
+  const body = (await r.json()) as { visibility: VisibilityScope };
+  return body.visibility;
+}
+
+export async function updateMatterVisibility(
+  matterId: string,
+  visibility: VisibilityScope,
+): Promise<VisibilityScope> {
+  const r = await fetch(
+    `/api/matters/${encodeURIComponent(matterId)}/visibility`,
+    {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(visibility),
+    },
+  );
+  await throwIfSessionExpired(r);
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    const code = typeof d.detail === "object" ? d.detail?.code : undefined;
+    if (code === "visibility_scope_exceeds_category") {
+      throw new Error("可见范围不能超过所属分类");
+    }
+    if (r.status === 403) throw new Error("你没有权限修改这个讨论的可见范围");
+    if (r.status === 404) throw new Error("matter not found");
+    const detail = typeof d.detail === "string"
+      ? d.detail
+      : d.detail?.message || d.detail?.code || `update visibility failed: ${r.status}`;
+    throw new Error(detail);
+  }
+  const body = (await r.json()) as { visibility: VisibilityScope };
+  return body.visibility;
+}
+
 export type InitialFileIn = {
   type: DocType;
   summary: string;
@@ -297,6 +384,8 @@ export async function createMatter(body: {
   category: string;
   title: string;
   owner_open_id?: string;
+  visibility?: VisibilityScope;
+  new_category_visibility?: CategoryVisibilityScope;
   initial_file: InitialFileIn;
 }): Promise<NewMatterResponse> {
   const r = await fetch("/api/matters", {
@@ -314,6 +403,134 @@ export async function createMatter(body: {
     throw new Error(detail);
   }
   return (await r.json()) as NewMatterResponse;
+}
+
+export type AdminRoleOption = {
+  role: string;
+  name: string;
+  kind: "system" | "business";
+  description: string | null;
+  is_active: boolean;
+  user_count: number;
+  created_at: number;
+  updated_at: number;
+};
+
+type AdminRoleErrorDetail =
+  | string
+  | {
+    code?: string;
+    message?: string;
+    unknown_roles?: string[];
+    suggestions?: string[];
+  };
+
+function adminRoleErrorMessage(detail: AdminRoleErrorDetail | undefined, status: number): string {
+  const code = typeof detail === "object" ? detail?.code : detail;
+  const message = typeof detail === "object" ? detail?.message : undefined;
+  switch (code) {
+    case "role already exists":
+      return "这个角色已经存在";
+    case "role cannot be empty":
+    case "role_required":
+      return "请输入角色名称";
+    case "role is too long":
+      return "角色名称不能超过 40 个字符";
+    case "role contains control characters":
+      return "角色名称不能包含换行、制表符等控制字符";
+    case "invalid role kind":
+      return "角色类型不正确";
+    case "role_not_found":
+      return "角色不存在或已被删除，请刷新后重试";
+    case "system_role_protected":
+      return "系统角色不能停用";
+    case "last_active_admin_protected":
+      return "至少需要保留一个可用的 admin";
+    case "unknown_role": {
+      const unknown = typeof detail === "object" ? detail.unknown_roles ?? [] : [];
+      const suggestions = typeof detail === "object" ? detail.suggestions ?? [] : [];
+      const suffix = suggestions.length ? `，可选：${suggestions.join("、")}` : "";
+      return unknown.length
+        ? `角色 ${unknown.join("、")} 还不存在${suffix}`
+        : `角色还不存在${suffix}`;
+    }
+    default:
+      break;
+  }
+  if (status === 403) return "你没有权限操作角色";
+  if (status === 404) return "角色不存在或已被删除，请刷新后重试";
+  if (status === 409) return "这个角色已经存在";
+  if (status === 422) return message || "角色信息不符合要求，请检查后重试";
+  return message || code || `角色操作失败：${status}`;
+}
+
+export async function listAdminRoles(): Promise<AdminRoleOption[]> {
+  const r = await fetch("/api/admin/roles", { credentials: "include" });
+  await throwIfSessionExpired(r);
+  if (!r.ok) throw new Error(`fetch roles failed: ${r.status}`);
+  const body = (await r.json()) as { items: AdminRoleOption[] };
+  return body.items;
+}
+
+export async function changeUserRoles(
+  userId: string,
+  roles: string[],
+  confirmCreateRole = false,
+): Promise<void> {
+  const r = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/role`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ roles, confirm_create_role: confirmCreateRole }),
+  });
+  await throwIfSessionExpired(r);
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    const code = typeof d.detail === "object" ? d.detail?.code : undefined;
+    if (code === "unknown_role") {
+      throw new Error(adminRoleErrorMessage(d.detail, r.status));
+    }
+    const detail = typeof d.detail === "string"
+      ? d.detail
+      : d.detail?.message || d.detail?.code || `change user roles failed: ${r.status}`;
+    throw new Error(detail);
+  }
+}
+
+export async function createAdminRole(
+  name: string,
+  description?: string,
+): Promise<AdminRoleOption> {
+  const r = await fetch("/api/admin/roles", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, description }),
+  });
+  await throwIfSessionExpired(r);
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(adminRoleErrorMessage(d.detail, r.status));
+  }
+  return r.json();
+}
+
+export async function setAdminRoleMembers(
+  role: string,
+  userIds: string[],
+): Promise<{ role: AdminRoleOption; members: AdminUser[] }> {
+  const r = await fetch(`/api/admin/roles/${encodeURIComponent(role)}/members`, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_ids: userIds }),
+  });
+  await throwIfSessionExpired(r);
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(adminRoleErrorMessage(d.detail, r.status));
+  }
+  return r.json();
 }
 
 export type NewFileIn = {
@@ -1361,7 +1578,8 @@ export type AdminUser = {
   pinyin: string | null;
   email: string | null;
   avatar_url: string;
-  role: "admin" | "member";
+  role: string;
+  roles: string[];
   status: "active" | "suspended" | "deleted";
   status_note: string | null;
   created_at: number;
@@ -1407,14 +1625,6 @@ export async function restoreUser(
   return jsonPost(
     `/api/admin/users/${encodeURIComponent(id)}/restore`,
     { note, confirm_display_name },
-  );
-}
-
-export async function changeUserRole(
-  id: string, role: "admin" | "member",
-): Promise<AdminUser> {
-  return jsonPost(
-    `/api/admin/users/${encodeURIComponent(id)}/role`, { role },
   );
 }
 

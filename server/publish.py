@@ -31,6 +31,8 @@ from server.matter_index import (
     matter_index_path,
     read_matter_index,
 )
+from server.visibility_scopes import CategoryVisibilityScope, VisibilityScope
+from server.visibility_store import write_category_visibility
 from server.notify import Notifier
 from server.posts import mark_indexed, write_post_pending
 from server.threads import (
@@ -586,6 +588,8 @@ def publish_matter_create(
     notifier: Notifier | None = None,
     users: UserRepo | None = None,
     file_reads: FileReadRepo | None = None,
+    visibility: VisibilityScope | None = None,
+    new_category_visibility: CategoryVisibilityScope | None = None,
 ) -> dict:
     """Create a new matter and write its first timeline item.
 
@@ -692,7 +696,14 @@ def publish_matter_create(
             initial_item=item,
             now_iso=now,
             matter_owner=matter_owner_pinyin,
+            visibility=(visibility or VisibilityScope()).to_dict(),
         )
+        if new_category_visibility is not None:
+            write_category_visibility(
+                workspace.path / "categories",
+                category,
+                new_category_visibility,
+            )
         mark_indexed(md_path)
 
     matter_snapshot = read_matter_index(index_path) or {}

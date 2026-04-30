@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from server.acl_cache import rebuild_acl_cache
 from server.api.admin_applications import (
     build_router as build_admin_applications_router,
 )
@@ -29,6 +30,7 @@ from server.api.matters_events import build_router as build_matters_events_route
 from server.api.markdown_styles import build_router as build_markdown_styles_router
 from server.api.preferences import build_router as build_preferences_router
 from server.api.tokens import build_router as build_tokens_router
+from server.api.visibility_options import build_router as build_visibility_options_router
 from server.api.workspace import build_router as build_workspace_router
 from server.api_tokens import ApiTokenRepo
 from server.auth.deps import (
@@ -69,6 +71,7 @@ from server.scoring.store import ScoringStore
 from server.scoring.trigger import install as install_scoring_trigger
 from server.scoring.worker import ScoringQueue, ScoringWorker
 from server.settings import SettingsRepo
+from server.roles import PivotRoleRepo
 from server.user_preferences import UserPreferenceRepo
 from server.users import UserRepo
 from server.workspace_config import load_workspace_config, save_workspace_config
@@ -84,6 +87,7 @@ def create_app() -> FastAPI:
     db = Database(cfg.data_dir / "data.db")
     users = UserRepo(db)
     pivot_users = PivotUserRepo(db)
+    roles = PivotRoleRepo(db)
     bindings = ExternalBindingRepo(db)
     applications = JoinApplicationRepo(db)
     invites = InviteRepo(db)
@@ -169,7 +173,7 @@ def create_app() -> FastAPI:
     # api_base_url: where MCP tool handlers loopback to call /api/matters.
     # Stays on 127.0.0.1 even in prod (same uvicorn worker).
     api_base_url = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
-    mcp_app = build_mcp_app(api_tokens, users, api_base_url, cfg.web_dev_origin)
+    mcp_app = build_mcp_app(api_tokens, pivot_users, api_base_url, cfg.web_dev_origin)
 
     daily_report_scheduler = DailyReportScheduler(
         db_path=cfg.data_dir / "data.db",
@@ -182,6 +186,16 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI):
         await daily_report_scheduler.start()
         await scoring_worker.start()
+
+        if workspace.configured():
+            try:
+                rebuild_acl_cache(
+                    db,
+                    index_dir=workspace.index_dir,
+                    categories_dir=workspace.path / "categories",
+                )
+            except Exception:
+                log.exception("startup acl cache rebuild failed")
 
         # Cold-start vs warm-start is decided by table state, not config:
         # an empty relevance_events table means we've never run before —
@@ -269,11 +283,17 @@ def create_app() -> FastAPI:
     # The events stream MUST be registered before the matters router,
     # otherwise GET /api/matters/{matter_id} matches first and treats
     # "events" as a matter_id (returning 404 matter_not_found).
-    app.include_router(build_matters_events_router(current_user_dep))
+    app.include_router(build_matters_events_router(current_user_dep, workspace, db))
     app.include_router(build_matters_router(
         workspace, users, contacts, notifier,
         read_states, favorites, file_reads, relevance_events,
-        resolver, current_user_dep,
+        resolver, current_user_dep, db,
+    ))
+    app.include_router(build_visibility_options_router(
+        pivot_users,
+        roles,
+        categories_dir=workspace.path / "categories",
+        current_user=current_user_dep,
     ))
     app.include_router(build_preferences_router(user_prefs, current_user_dep))
     app.include_router(build_workspace_router(
@@ -297,7 +317,7 @@ def create_app() -> FastAPI:
     ))
     app.include_router(build_ai_router(
         workspace, settings, ai_conversations, current_user_dep, current_user_cookie_dep,
-        admin_user_cookie_dep,
+        admin_user_cookie_dep, db,
     ))
     app.include_router(build_app_home_router(workspace, current_user_dep))
     app.include_router(build_markdown_styles_router(
@@ -311,7 +331,7 @@ def create_app() -> FastAPI:
         )
     )
     app.include_router(
-        build_admin_users_router(pivot_users, bindings, admin_user_cookie_dep)
+        build_admin_users_router(pivot_users, bindings, roles, admin_user_cookie_dep)
     )
     app.include_router(
         build_admin_invites_router(invites, admin_user_cookie_dep)
