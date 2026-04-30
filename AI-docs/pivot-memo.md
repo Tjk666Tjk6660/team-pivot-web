@@ -135,44 +135,78 @@ var/
 
 | 功能 | 状态 |
 |---|---|
-| 外部浏览器 OAuth 流程（`/login` → 飞书 → `/auth/callback`） | ✅ |
-| 首登 pinyin + github_username 收集 | ✅ |
+| 飞书 OAuth2 登录（`/login` → 飞书 → `/auth/callback`） | ✅ |
+| 邮箱 + 密码登录（邀请码用户） | ✅ |
+| 首部署初始化 `/init/status` + `/init/complete` 创建首个 admin | ✅ |
+| 加入申请审批：扫码未绑用户 → `join_application` → admin 审批 / 合并 / 拒绝 | ✅ |
+| 邀请码：admin 生成一次性 token → 被邀请人 `/invite/<token>/accept` 落账号 | ✅ |
+| 用户治理：暂停 / 恢复 / 标停用 / 撤销停用 / 角色升降级 / 重置密码 | ✅ |
+| 最后一名 active admin 不能被暂停 / 标停用 / 降级（self-refuse + last-admin guard） | ✅ |
+| 状态变更强制登出：suspended / deleted 用户下次请求 401 + `detail=<status>` | ✅ |
 | SQLite 持久化 session（重启不丢登录） | ✅ |
 | **PAT（Personal Access Token）—— `Authorization: Bearer pvt_…`** | ✅（供 VS Code 插件 / MCP 客户端等） |
-| **管理员密码门（X-Admin-Password，MVP 硬编码 `000123`）** | ✅（保护 `/api/ai/settings`、`/api/admin/workspace-config`、`/api/contacts/sync`） |
-| **飞书客户端内统一登录入口（`/auth/entry`，端内走登录预授权码）** | ✅ |
+| **基于 `pivot_user.role` 的管理员守卫**（替代 X-Admin-Password 旧硬编码门） | ✅（保护 `/api/admin/*`、`/api/ai/settings`、workspace 配置、`/api/contacts/sync`） |
+| 飞书客户端内统一登录入口（`/auth/entry`，端内走登录预授权码） | ✅ |
 | 飞书真实 email 收集（commit author 现在用 `<pinyin>@pivot.local`） | ❌ 未做 |
 
 **鉴权层级**（统一在 `auth/deps.py`）：
-- `current_user` — 普通业务接口，cookie 或 Bearer 都行
-- `current_user_cookie_only` — 仅 cookie（`/api/tokens`、`/api/contacts/sync`、AI 设置、workspace 管理设置）
-- `+ require_admin` — 加管理员密码（**AI 设置、`/api/contacts/sync`、`/api/admin/workspace-config`**）
-- 失败统一返回 `401 {"detail":"invalid_token"}`（PAT 失效）或 `401 {"detail":"admin_required"}`
+- `current_user` — 普通业务接口，cookie 或 Bearer 都行；返回 `PivotUser`
+- `current_user_cookie_only` — 仅 cookie（`/api/tokens`、AI 设置、workspace 管理设置）
+- `require_admin_user` — 在已解析的 `PivotUser` 上加 `role=='admin'` 检查
+- `require_admin_user_cookie` — cookie + role='admin' 一站式（PATs 显式不被接受，admin 端点强制 browser-only）
+- 失败统一返回 `401 {"detail":"invalid_token"|"not logged in"|"suspended"|"deleted"}`
+  或 `403 {"detail":"admin_required"}`
+
+身份模型（design §7）：
+- `pivot_user` 表是身份主表（ULID），与外部 IdP 通过 `external_binding` 解耦（feishu open_id / invite email）
+- 一个 `pivot_user` 可同时绑多个 provider（飞书 + 邀请码各一条 binding）
+- session.pivot_user_id 不再是 open_id；status≠'active' 的 session 在解析时自动删除并 401
 
 所有 `api/*.py` 路由统一用 `Depends(current_user)`，不再每个文件手写 `_current_user(sid)`。
 
 补充：
 - 飞书 IM / 工作台里的站内跳转链接，发 `/auth/entry?next=/m/<matter_id>`（**不是**老的 `/t/<cat>/<slug>`，前端已经没有那个路由）
 - `/auth/entry` 会先判断现有 `sid`；未登录时，飞书客户端内走登录预授权码入口，外部浏览器回退到普通 `/login`
-- `/auth/callback` 现在会从签名 `state` 中恢复 `next`，登录完成后回跳原 matter，而不是固定回首页
+- `/auth/callback` 会从签名 `state` 中恢复 `next`，登录完成后回跳原 matter，而不是固定回首页
+- 飞书扫码用户若没有 `external_binding`，`/auth/callback` 创建 `join_application` 并通知所有 admin（`notify_application_created`），跳 `/login?reason=submitted` 让申请人等待审批
 
 飞书后台须配置：App ID/Secret、回调白名单、`contact:user.base:readonly` 权限、机器人能力 + IM 权限。
 
 ## 5. 数据模型
 
+身份层（design §7，user-management 期落地）：
+
 ```sql
-users(open_id PK, union_id, name, avatar_url, pinyin, github_username, created_at)
-drafts(id PK, user_open_id, type, title, category, body_md, thread_key,
+pivot_user(id PK, display_name, pinyin, email UNIQUE, avatar_url, github_username,
+           role CHECK admin|member, status CHECK active|suspended|deleted,
+           status_note, created_at, updated_at, last_login_at,
+           status_changed_at, status_changed_by)
+external_binding(id PK, pivot_user_id FK, provider, external_id, external_union_id,
+                 raw_profile, password_hash, bound_at,
+                 UNIQUE(provider, external_id))
+join_application(id PK, provider, external_id, external_union_id,
+                 raw_profile, suggested_match_user_id,
+                 status pending|approved|rejected, applied_at, reviewed_at,
+                 reviewed_by, reject_reason,
+                 UNIQUE pending(provider, external_id))
+invite(id PK, token_hash UNIQUE, email, display_name, created_by,
+       created_at, expires_at, used_at, used_by_user_id)
+```
+
+业务层（其它表保持不变，但 `user_open_id` 字段已改为 `pivot_user_id`）：
+
+```sql
+drafts(id PK, pivot_user_id, type, title, category, body_md, thread_key,
        mentions_json, reply_to, references_json, matter_payload_json, created_at, updated_at)
-read_state(user_open_id, thread_key, last_read_post_filename, updated_at, PK(user, thread_key))
-favorites(user_open_id, thread_key, created_at, PK(user, thread_key))
-sessions(id PK, user_open_id, expires_at, created_at, user_access_token)
+read_state(pivot_user_id, thread_key, last_read_post_filename, updated_at, PK(user, thread_key))
+favorites(pivot_user_id, thread_key, created_at, PK(user, thread_key))
+sessions(id PK, pivot_user_id, expires_at, created_at, user_access_token)
 contacts(open_id PK, union_id, name, en_name, avatar_url, synced_at)
 settings(key PK, value, updated_at)                                      -- AI 配置 + workspace 配置
-ai_conversations(user_open_id, thread_key, messages_json,
+ai_conversations(pivot_user_id, thread_key, messages_json,
                  reply_target, reference_files_json, context_files_json,
                  schema_ver, updated_at, PK(user, thread_key))
-api_tokens(token_hash PK, user_open_id, name, created_at, last_used_at, expires_at)
+api_tokens(token_hash PK, pivot_user_id, name, created_at, last_used_at, expires_at)
 ```
 
 补充说明：
@@ -183,8 +217,13 @@ api_tokens(token_hash PK, user_open_id, name, created_at, last_used_at, expires_
 - `drafts.matter_payload_json`(P4.6)保存的是另一条轴 —— **文档类型 + matter 专属结构化字段**(`doc_type / summary / owner / quote / refer / verifications / outcome / status_change`)。`doc_type ∈ {think, act, verify, result, insight}` 才是 pivot-product.md §四 定义的"文档类型"。
 - `read_state.thread_key` / `favorites.thread_key` / `ai_conversations.thread_key` —— **列名保留为 `thread_key` 仅出于兼容**，存的值现在是 `matter_id`。改名是破坏性迁移，单独评审。
 - `ai_conversations.schema_ver` 是 tool-use 重构的迁移标记，首次升级时 `_migrate(conn)` 会清空老对话（已在生产触发过，不会再触发）。
-- `contacts` 是飞书通讯录镜像，`users` 是真正登录过 Pivot 的平台用户，两者都以飞书 `open_id` 为主键语义。
-- 名称解析回退链：`users → contacts → 原始值`，避免未激活联系人在界面上退化成裸 `open_id`。
+- `contacts` 是飞书通讯录镜像（per-source-of-truth：飞书后台），`pivot_user` 是真正登录过 Pivot 的身份记录。两者解耦：被邀请的同事 `pivot_user` 存在但 `contacts` 没他；飞书新员工 `contacts` 有但 `pivot_user` 还没创建。
+- 名称解析回退链（design §7.1，实现见 `server/mentions.py:DisplayResolver`）：
+  1. 直查 `pivot_user.id`（新内容存 ULID 的稳态路径，不经 binding）
+  2. `external_binding` 反查（历史 frontmatter 存 feishu open_id 的兼容路径）
+  3. `contacts` 兜底（外部联系人未登录过、无 `pivot_user`）
+  4. 原值 + status='unknown'（老 frontmatter 的 pinyin 等）
+- 新内容的 frontmatter / matter index 字段（`creator` / `owner` / `mentions` / `readers`）按 design §7.1.1 应持久化为 `pivot_user.id` 的 ULID；historic 内容不回填，由解析器兼容。`scripts/audit_new_content_uses_ulid.py` 用来在迁移上线后扫 leak。
 - `favorites` / `read_state` 是 per-user 私有状态，不会进 Git 内容仓库。
 
 ## 6. Git 写流程
