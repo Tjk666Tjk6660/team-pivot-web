@@ -1,14 +1,22 @@
 """Invite link load + accept endpoints (public).
 
-GET  /invite/{token}         → returns invite metadata (email, display_name,
-                                expires_at) so the frontend can show the
-                                accept form. 404 when the token is invalid,
-                                expired, or already used.
-POST /invite/{token}/accept  → consumes the invite, creates the pivot user
-                                + invite-provider binding (bcrypt password),
-                                opens a session, and sets the sid cookie.
+GET  /api/invite/{token}         → returns invite metadata (email,
+                                    display_name, expires_at) so the
+                                    frontend can show the accept form.
+                                    404 when the token is invalid,
+                                    expired, or already used.
+POST /api/invite/{token}/accept  → consumes the invite, creates the pivot
+                                    user + invite-provider binding (bcrypt
+                                    password), opens a session, and sets
+                                    the sid cookie.
 
 Both endpoints are public — auth is the invite token itself.
+
+Note on path prefix: the API lives under /api/* so a single reverse-proxy
+rule (``handle /api/* { reverse_proxy backend }``) covers it. The
+public-facing URL we put in invite emails is still ``/invite/<token>``
+— that path is served by the SPA, which then fetches ``/api/invite/...``
+for the JSON.
 """
 from __future__ import annotations
 
@@ -41,7 +49,7 @@ def build_router(
     router = APIRouter()
     samesite = "none" if secure_cookie else "lax"
 
-    @router.get("/invite/{token}")
+    @router.get("/api/invite/{token}")
     def load(token: str) -> JSONResponse:
         invite = invites.resolve_token(token)
         if invite is None:
@@ -54,7 +62,7 @@ def build_router(
             }
         )
 
-    @router.post("/invite/{token}/accept")
+    @router.post("/api/invite/{token}/accept")
     def accept(token: str, body: InviteAcceptBody) -> JSONResponse:
         invite = invites.resolve_token(token)
         if invite is None:
