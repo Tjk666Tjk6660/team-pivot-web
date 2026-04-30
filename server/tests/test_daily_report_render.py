@@ -10,7 +10,11 @@ from datetime import datetime
 
 from server.daily_report.company_narrate import CompanyNarrative
 from server.daily_report.personal_narrate import PersonalEntry, PersonalNarrative
-from server.daily_report.render import build_company_card, build_personal_card
+from server.daily_report.render import (
+    build_admin_alert_card,
+    build_company_card,
+    build_personal_card,
+)
 from server.daily_report.shared_facts import build_shared_facts
 from server.daily_report.types import (
     MatterEvent,
@@ -236,3 +240,59 @@ def test_personal_card_disclaimer_mentions_no_perf_eval():
     nar = PersonalNarrative(status="ai", entries=_personal_entries())
     md = _markdown_from(build_personal_card(_facts(), nar))
     assert "不用于绩效评价" in md
+
+
+# --------------------------------------------------------------------------- #
+# admin alert card                                                            #
+# --------------------------------------------------------------------------- #
+
+
+def test_admin_alert_failed_renders_per_target_failures_with_names():
+    card = build_admin_alert_card(
+        alert_type="failed",
+        job_name="个人早报",
+        job_view="personal",
+        error="2 failed: …a966fa55(http_400 …)",
+        retry_count=3,
+        failures=[
+            {"to": "ou_1234", "name": "邓柯", "error": "http_400: invalid receive_id"},
+            {"to": "ou_5678", "name": None, "error": "feishu_230015: receive_id invalid"},
+        ],
+    )
+    md = _markdown_from(card)
+    # 含汇总 error
+    assert "2 failed" in md or "http_400" in md
+    # 单条明细行
+    assert "邓柯" in md and "ou_1234" in md
+    assert "ou_5678" in md
+    # 没有 name 时不会出现 None 字面
+    assert "None" not in md
+
+
+def test_admin_alert_failed_truncates_when_many_failures():
+    failures = [
+        {"to": f"ou_{i:04d}", "name": None, "error": "http_400"}
+        for i in range(12)
+    ]
+    card = build_admin_alert_card(
+        alert_type="failed",
+        job_name="x", job_view="personal",
+        error="12 failed", retry_count=3, failures=failures,
+    )
+    md = _markdown_from(card)
+    # 只列前 8 条 + "…另 4 条未列出"
+    assert "ou_0000" in md
+    assert "ou_0007" in md  # 第 8 条 (0-indexed 7) 仍在
+    assert "ou_0008" not in md
+    assert "另 4 条未列出" in md
+
+
+def test_admin_alert_missed_unchanged_no_failures_section():
+    card = build_admin_alert_card(
+        alert_type="missed",
+        job_name="个人早报", job_view="personal",
+        expected_at=datetime(2026, 4, 30, 9, 30, tzinfo=CHINA_TZ),
+    )
+    md = _markdown_from(card)
+    assert "未自动补跑" in md
+    assert "未送达明细" not in md  # missed 类型不展示这块

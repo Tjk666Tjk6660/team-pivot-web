@@ -43,6 +43,33 @@ def build_router(
             "total": contacts.count(),
         }
 
+    @router.get("/contacts/by-ids")
+    def lookup_contacts_by_ids(
+        ids: str = "",
+        _: User = Depends(current_user),
+    ):
+        """批量按 open_id 解析联系人。`ids` 是逗号分隔的 open_id 列表。
+        返回 items: list[Contact]。未匹配的 id 不出现在结果里(调用方按需兜底)。
+        给前端 OpenIdMultiPick 等组件用 — 编辑已有 receiver_ids 时把 open_id
+        转成可读姓名。"""
+        raw = [x.strip() for x in ids.split(",") if x.strip()]
+        # 上限保护:一次最多 200 条避免 SQL 参数过载
+        ids_list = raw[:200]
+        if not ids_list:
+            return {"items": []}
+        result = contacts.get_many(ids_list)
+        return {
+            "items": [
+                {
+                    "open_id": c.open_id,
+                    "name": c.name,
+                    "en_name": c.en_name,
+                    "avatar_url": c.avatar_url,
+                }
+                for c in result.values()
+            ],
+        }
+
     @router.post("/contacts/sync", dependencies=[Depends(require_admin)])
     def sync_contacts(
         sid: str | None = Cookie(default=None),

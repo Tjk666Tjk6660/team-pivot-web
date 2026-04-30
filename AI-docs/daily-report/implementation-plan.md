@@ -1,218 +1,188 @@
-# Pivot 日报 · 实施计划 (v0.2)
+# Pivot 日报 · 实施现状(v2)
 
 > 配套产品文档:[`product-design.md`](./product-design.md)
-> 部署 + 调试速查:[`scripts/daily-report/README.md`](../../scripts/daily-report/README.md)
+> 详细技术设计:[`v2-multi-job-design.md`](./v2-multi-job-design.md)
 >
-> 本文档专注**工程视角**:模块结构 / 数据流 / 测试矩阵 / 关键设计决策。
-> 产品决策见 product-design.md;部署细节见 README.md;不重复。
+> 本文档专注**工程视角**:模块结构 / 数据流 / 测试矩阵。已落地、可参照代码。
 
----
-
-## 一、模块结构
+## 模块布局
 
 ```
 server/daily_report/
-├── __init__.py
-├── types.py              事实层 dataclass(TimeWindow / MatterEvent / UserActivity / TeamSummary)
-├── window.py             [since, until) 时间窗口推算 + parse_iso_window
-├── collect_matter.py     扫 index 提取 timeline 事件
-├── aggregate.py          events → UserActivity[] + TeamSummary
-├── shared_facts.py       SharedFacts 派生层(file_type_breakdown / verify_judgements
-│                         / top_active_matters / matter_status_breakdown)
-├── company_narrate.py    公司视角 LLM 调用(call C),输出 { summary, tone }
-├── personal_narrate.py   个人视角 LLM 调用(call P),输出 { entries[] }
-├── render.py             build_company_card / build_personal_card
-├── runner.py             串起来:collect → aggregate → shared_facts → 两次 LLM → 渲染 → broadcast
-├── scheduler.py          asyncio 后台调度,挂 FastAPI lifespan
-└── config_keys.py        SQLite settings 配置键
+├── jobs_repo.py              # daily_report_jobs 表 CRUD + 状态机
+├── runs_repo.py              # daily_report_runs 表 CRUD + 365 天清理
+├── job_scheduler.py          # asyncio scheduler:每 60s poll 一次
+├── runner.py                 # run_daily_report_for_job(job, ...) 唯一入口
+├── window.py                 # compute_window(now, push_hour, push_minute, window_hours)
+├── types.py                  # TimeWindow / MatterEvent / UserActivity / TeamSummary
+├── collect_matter.py         # 扫 index/*.index.yaml 收 matter 事件
+├── aggregate.py              # 按用户聚合 + TeamSummary
+├── shared_facts.py           # 公司/个人视角共用的事实层
+├── company_narrate.py        # 公司视角 AI 叙事(tone + summary)
+├── personal_narrate.py       # 个人视角 AI 叙事(逐人简评)
+├── render.py                 # build_company_card / build_personal_card / build_admin_alert_card
+└── tests/                    # 单元测试(见下方测试矩阵)
 
 server/api/
-└── daily_report.py       admin 端点:GET/PUT /config / POST /trigger / GET /last-run
+└── daily_report_v2.py        # 13 个 admin 端点(jobs CRUD / runs / admin-notify / feishu-chats)
 
-server/ai/oneshot.py      generate_text 同步包装(asyncio.run + stream_chat 收集 text deltas)
-server/notify.py          _http_get/post_with_retry SSL 抖动一次性重试
-server/users.py           UserRepo.list_all 全员加载
-server/git_ops.py         (无新增,v0.1 的 log_commits 已删除)
+server/notify.py              # 加 send_card_to_chats / send_card_to_users / send_admin_alert / list_bot_chats
 
-scripts/daily-report/
-├── README.md             部署 + 调试速查(给运维)
-└── run.py                CLI 入口(运维 / 回放 / 调试,非 production 主路径)
+server/app.py                 # lifespan 启动 JobScheduler;mount build_daily_report_v2_router
 
-web/src/
-├── api.ts                fetchDailyReportConfig / updateDailyReportConfig /
-│                         triggerDailyReport / fetchDailyReportLastRun
-└── pages/AdminPage.tsx   DailyReportSection 卡片
+web/src/pages/admin/
+└── DailyReportSection.tsx    # 日报 section 全套 UI(任务列表 / 编辑抽屉 / 历史抽屉 / 手动触发卡)
 ```
 
-**v0.1 已删除模块**(从 git 历史看):
-- `score.py` / `attribution.py` / `collect_git.py` —— 评分 + git 数据源整套
-- `git_ops.py::log_commits` 函数
-- 对应所有测试
+## 数据库 schema
 
----
+新增两张表(见 `server/db.py` SCHEMA):
 
-## 二、数据流
+```sql
+CREATE TABLE daily_report_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  view TEXT NOT NULL CHECK(view IN ('company', 'personal')),
+  status TEXT NOT NULL DEFAULT 'active'
+    CHECK(status IN ('active', 'paused', 'archived')),
+  push_time TEXT NOT NULL,                       -- "HH:MM"
+  push_freq TEXT NOT NULL DEFAULT 'weekdays',  -- 校验在代码层(jobs_repo.PushFreq)
+  window_hours INTEGER NOT NULL DEFAULT 24
+    CHECK(window_hours BETWEEN 1 AND 168),
+  channel TEXT NOT NULL DEFAULT 'feishu' CHECK(channel IN ('feishu')),
+  receiver_type TEXT NOT NULL CHECK(receiver_type IN ('groups', 'users')),
+  receiver_ids TEXT,                             -- JSON array; NULL = 全部 bot 群
+  next_run_at REAL,
+  last_run_id INTEGER,
+  last_status TEXT,
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  last_notified_at REAL,
+  created_by TEXT,
+  created_at REAL NOT NULL,
+  updated_at REAL NOT NULL
+);
 
+CREATE TABLE daily_report_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id INTEGER,                                -- NULL = 手动一次性触发
+  trigger_type TEXT NOT NULL
+    CHECK(trigger_type IN ('scheduled', 'manual', 'retry', 'makeup')),
+  view TEXT NOT NULL,
+  started_at REAL NOT NULL,
+  finished_at REAL,
+  status TEXT NOT NULL DEFAULT 'running'
+    CHECK(status IN ('running', 'succeeded', 'failed', 'partial', 'skipped')),
+  rc INTEGER,
+  cards_sent INTEGER, cards_total INTEGER,
+  ai_tokens_in INTEGER, ai_tokens_out INTEGER,
+  error TEXT,
+  debug_json TEXT
+);
 ```
-[内置 scheduler 在 push_time 唤醒]   或   [admin POST /trigger]
-                    │
-                    ▼
-            run_daily_report
-                    │
-                    ▼
-   collect_matter_events(index_dir, window)
-                    │
-                    ▼
-       aggregate(events, all_users, window)
-        → (UserActivity[], TeamSummary)
-                    │
-                    ▼
-   build_shared_facts(events, activities, summary, window)
-        派生:matter_status_breakdown / file_type_breakdown
-              / verify_judgements / top_active_matters
-                    │
-                    ▼
-       ┌───────────┴───────────┐
-       ▼                       ▼
-  call C(公司视角)        call P(个人视角)
-  → CompanyNarrative      → PersonalNarrative
-       │                       │
-       ▼                       ▼
-  build_company_card      build_personal_card
-       │                       │
-       └───────────┬───────────┘
-                   ▼
-        notifier.broadcast_card
-            (两张独立卡)
-```
 
-两次 LLM 调用**互不依赖**(共享 SharedFacts,但 prompt / 输出独立)。任一失败仅影响该报告,另一份照常输出。
+时间戳列统一存 Unix epoch REAL(`time.time()`);Python 层 ↔ tz-aware datetime(Asia/Shanghai)的换算在 repo 里统一处理。
 
----
+外键关系**不走 DB cascade**:每天 365 天清理时,代码层先 `UPDATE jobs SET last_run_id=NULL WHERE last_run_id IN (...)`,再 `DELETE FROM runs WHERE id IN (...)`。
 
-## 三、关键设计决策
+`push_freq` 的合法值集合(`daily / weekdays / mon-sun / month_start / month_end`)在代码层维护(`jobs_repo.PushFreq` Literal + Pydantic 校验),**不**进 SQLite CHECK 约束 — 后续扩枚举(weekly / quarterly / cron 等)直接改 Literal,不用走表重建迁移。
 
-### 3.1 SharedFacts 集中派生指标
+> **老库迁移**:v2 上线初期 push_freq 上挂了 `CHECK IN ('daily','weekdays')`。`db.py::_drop_daily_report_jobs_push_freq_check()` 会检测并重建表去掉 CHECK,幂等。新部署直接由 SCHEMA 建无 CHECK 表,跳过迁移。
 
-为什么不让两个 narrate 各自从 raw events 算 file_type_breakdown / top_active_matters?
+## 调度状态机(`job_scheduler.py`)
 
-- 单一来源:同一份事实给两个 LLM,避免计数偏差
-- 复用:测试 / 渲染 / 调试也读同一份
-- LLM 输入构造时直接 dict,不需要每次计算
+参数(代码内常量,不暴露 settings):
 
-### 3.2 LLM 输入用 `category/slug` 而不是 matter title
-
-`top_active_matters[].path` = `Pivot/数据迁移方案`,不是单纯 title。
-
-理由:
-- title 是自然语言,LLM 容易自由"聚类"成虚构产品方向("UI 优化 / AI 集成"等)
-- path 是引用 token,LLM 更倾向当 ID 引用而非语义重组
-- prompt 明确禁止"把 path 中的 category 当方向归类"
-
-### 3.3 个人视角无活动者由程序填,不喂 LLM
-
-`narrate_personal` 把 active 用户的 input/output 喂 LLM,inactive 用户**不进 prompt**,直接由程序填固定字符串"今天没有任何输入和输出"。
-
-理由:
-- LLM 看不到无活动用户的数据时,不会编造任何叙述
-- 防御 LLM 出现"较为安静""活动较少"等模糊话术(dengke 明确禁止)
-- 节省 token
-
-### 3.4 进程内 asyncio scheduler vs 外部 systemd timer
-
-v0.1 用 systemd timer,v0.2 改为进程内。
-
-| 维度 | systemd timer | 进程内 |
+| 常量 | 默认值 | 说明 |
 |---|---|---|
-| 部署 | 单独装 unit + 改 user/path | 主服务一启就跑 |
-| 状态可观测 | journalctl + 自定义日志 | 跟主服务日志同流 + last-run 字典 |
-| 主服务 / 调度同生死 | 独立(主服务挂日报照跑) | 一起(主服务挂日报也停) |
-| 多 worker | 不影响 | **会重复 fire**(单 worker 假设) |
+| `POLL_INTERVAL_SEC` | 60 | 每 60 秒 poll 一次 jobs.list_due |
+| `MISSED_TOLERANCE_MIN` | 30 | 漏跑 ≤30 分钟立即补,>30 分钟发漏跑卡 |
+| `MAX_RETRY` | 3 | 失败重试上限(达上限后发失败卡 + 重置周期) |
+| `RETRY_DELAY_MIN` | 5 | 失败后下次 next_run_at 推迟分钟数 |
+| `RUNS_RETENTION_DAYS` | 365 | 每天清理 365 天前的 runs |
 
-我们选进程内,因为:
-- 部署简化(只要 rsync + restart 主服务)
-- 配置改完即时生效(scheduler 每轮 sleep 重读 settings,无需重装 unit)
-- prod 当前是单 uvicorn 进程,不存在多 worker 重复触发问题
+Poll 主循环:
 
-### 3.5 LLM 慢调用不阻塞 asyncio loop
+```
+loop every 60s:
+  for job in jobs_repo.list_due(now):
+    if job.id in self._running_threads and thread.is_alive(): skip
+    if now - job.next_run_at > 30min:
+      _handle_missed(job)         # 写 skipped run + 发漏跑卡 + 推下一周期
+    else:
+      _run_one_job_safely(job)    # 在 thread 里跑(LLM 慢调用不阻塞 asyncio loop)
+                                  # 成功 → retry=0, next=下一周期
+                                  # 失败 + retry<3 → retry++, next=now+5min
+                                  # 失败 + retry==3 → 发失败卡, 重置 retry=0, next=下一周期
 
-scheduler 在时间到时,把 `run_daily_report` offload 到新 thread(`threading.Thread`),不在 asyncio coroutine 里直接跑。
-
-理由:
-- `run_daily_report` 是同步 + LLM 慢调用(60-180s),阻塞 asyncio loop 会拖累整个 FastAPI 进程
-- thread daemon=True,主进程退出不等
-- 副作用:无法安全 abort 中途的 LLM 调用,主服务停止时只能让线程跑完(graceful shutdown 注释明确)
-
-### 3.6 配置懒初始化(SQLite settings)
-
-`Database.__init__` 只建表,不预填默认值。读路径 inline 默认值:
-
-```python
-_read_bool(settings, KEY_ENABLED, default=True)
-(settings.get(KEY_PUSH_TIME) or "09:30").strip()
+  if today not in self._last_cleanup_date:
+    runs_repo.delete_before(now - 365d) → ids
+    jobs_repo.clear_last_run_id_in(ids)
+    self._last_cleanup_date = today
 ```
 
-首次保存(admin 点保存)才把行写进 DB。好处:
-- 加新 key 无需 schema migration
-- 改默认值无需 DB 更新(没保存过的实例自动用新默认)
-- 删 key 无需 DB 清理
+## API 端点(全部 `Depends(require_admin)`)
 
----
-
-## 四、测试矩阵
-
-| 测试文件 | 覆盖 | 用例数 |
+| Method | 路径 | 作用 |
 |---|---|---|
-| `test_daily_report_window.py` | 时间窗口推算、跨月、闰年、tz 边界 | 7 |
-| `test_daily_report_collect_matter.py` | yaml 解析、timeline + comments 双过滤、created_at 兜底 | 11 |
-| `test_daily_report_shared_facts.py` | category_of / 派生指标 / activity_score 排序 / immutability | 13 |
-| `test_daily_report_company_narrate.py` | happy AI / fallback / schema 错 / tone 越界 / 截断 | 16 |
-| `test_daily_report_personal_narrate.py` | LLM 漏返回 / 多返回 / 无活动者程序填 / 不喂 inactive | 11 |
-| `test_daily_report_render.py` | 公司卡 + 个人卡布局 / template 颜色 / 合并行 / 免责声明 | 12 |
-| `test_daily_report_scheduler.py` | _next_fire_at / push_freq weekday-skip / 启停 / 重复 fire 防御 | 15 |
-| `test_daily_report_api.py` | GET/PUT config / 401 / trigger / last-run / 后台 thread crash | 7 |
-| `test_ai_oneshot.py` | generate_text 收集 deltas / timeout / AIError | 5+ |
-| `test_notify.py` | broadcast_card 委托 / SSL 重试(后续可加) | 既有 + 1 |
-| `test_users.py` | list_all 包含已注册全员 | 既有 + 1 |
+| GET | `/api/admin/daily-report/jobs` | 列任务(默认过滤 archived) |
+| POST | `/api/admin/daily-report/jobs` | 创建任务 |
+| GET | `/api/admin/daily-report/jobs/{id}` | 任务详情 |
+| PUT | `/api/admin/daily-report/jobs/{id}` | 部分更新配置 |
+| PUT | `/api/admin/daily-report/jobs/{id}/status` | 切 active / paused / archived |
+| DELETE | `/api/admin/daily-report/jobs/{id}` | 软删(置 archived) |
+| POST | `/api/admin/daily-report/jobs/{id}/run-now` | 立即跑该 job 一次 |
+| GET | `/api/admin/daily-report/jobs/{id}/runs?page=&size=` | 任务运行历史 |
+| GET | `/api/admin/daily-report/runs/{run_id}` | 单条 run 详情(含 debug_json) |
+| POST | `/api/admin/daily-report/manual-trigger` | 不绑 job 的一次性触发 |
+| GET | `/api/admin/daily-report/admin-notify` | 取系统通知接收人 |
+| PUT | `/api/admin/daily-report/admin-notify` | 写系统通知接收人 |
+| GET | `/api/admin/daily-report/feishu-chats` | bot 所在群列表(供 UI 多选) |
 
-不写实发飞书的 e2e。LLM 一律 mock。
+完整字段、Pydantic 形态见 `server/api/daily_report_v2.py`;完整接口契约同步在 [`pivot-interface.md`](../pivot-interface.md) 里。
 
----
+## 设置项(SQLite settings 表)
 
-## 五、降级路径汇总
+只 2 个 key,配置最少化:
 
-| 失败点 | 处理 | exit code |
-|---|---|---|
-| `daily_report.enabled = 0` | runner 跳过,日志 INFO | 0 |
-| db_path 不存在 | runner 报错,日志 ERROR | 2 |
-| workspace_index_dir 不存在 | runner 报错 | 2 |
-| 全员 0 活动 + 0 matter | 公司视角 `status="no_activity"` 固定文案;个人视角全员"无活动"行;**仍发卡** | 0 |
-| 公司视角 LLM 异常 / schema 错 | `CompanyNarrative.status="fallback"`,卡片 wathet,内容退化为统计陈述 | 0(发了) |
-| 个人视角 LLM 异常 | `PersonalNarrative.status="fallback"`,活跃成员走程序 stub,inactive 仍固定 | 0 |
-| 飞书 SSL 抖动 | notify._http_get/post_with_retry 重试 1 次 | 大概率成功 |
-| 飞书发送失败(2 次都不行) | 该卡片 broadcast_errors 记录,**另一卡不受影响** | 1(部分发) |
-| AI 配置缺失(api_key 空) | 两份报告都进 fallback,卡片仍发(标注"AI 生成失败") | 0 |
-| 主服务重启 | scheduler 优雅停;**正在跑的 LLM thread 不打断**(daemon=True 但等线程结束) | n/a |
-
----
-
-## 六、性能 / token 实测
-
-基于 prod 数据(11 用户 / 19 matter / 55 文件 / 13 状态变更):
-
-| 调用 | 输入 token | 输出 token | 端到端 |
+| Key | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| 公司视角 (qwen3.6-plus) | ~1500 | ~250 | 50-90s |
-| 个人视角 (qwen3.6-plus) | ~3000 | ~400 | 60-120s |
+| `daily_report.admin_notify_chat_ids` | JSON list | `[]` | 系统通知接收群,空 = fallback 全部 bot 群 |
+| `daily_report.admin_notify_open_ids` | JSON list | `[]` | 系统通知接收人 DM,空 = 不发 DM |
 
-公司视角 timeout 设 120s,个人视角 180s,实测够用。
+任务的所有配置项都在 `daily_report_jobs` 表里,**不**通过 settings 表读写;原 v0.2 的 `daily_report.{enabled, push_time, push_freq, time_window_hours, company_enabled, personal_enabled}` 已废弃,代码不再读。
 
----
+## 前端
 
-## 七、未来迭代方向
+`web/src/pages/admin/DailyReportSection.tsx` 是日报 section 唯一入口,放在 `/admin` 页的"日报配置" section 内。包含:
 
-- **多 worker 锁** —— SQLite 时间戳:scheduler fire 前先 INSERT (timestamp, scheduler_id),CONFLICT 即跳过本次
-- **补跑** —— 主服务启动后看 last-run.finished_at,若超过一个 push_time 周期,立即补一次
-- **AI 正文读取下钻** —— 公司视角 LLM 在 summary 不足时调用 `read_matter_file` 工具(MCP 工具);单次报告读取上限 + 后端记录 token 消耗
-- **个人日报独立路由** —— 选项推到个人 IM 会话(隐私感更好,terry #010 主张),需在个人 narrate 后接 FeishuNotifier.dm_user
-- **周报 / 月报** —— 复用 SharedFacts 派生层,把窗口扩大,LLM prompt 重写为聚合视角
+- **任务列表** + "新建任务"按钮 — 每行展示视角 / 状态 / 频率 / 窗口 / 接收人摘要 / 下次运行 / icon 操作(历史 / 立即运行 / 暂停-恢复 / 编辑 / 归档)
+- **任务编辑抽屉** — 右侧滑入,完整字段,radio 卡选接收类型,启用/暂停 toggle
+- **运行历史抽屉** — 右侧滑入,分页 20/页,展开每条看 debug_json
+- **手动触发卡** — 独立卡,view + 窗口 + 接收人,触发后轮询 run 状态
+- **系统通知接收人卡** — 默认折叠,展开后选群 + 选人
+
+`web/src/api.ts` 的 v2 fetcher 在 `// ── Daily Report v2 (multi-job) ──` 注释块下;旧 v0.2 fetcher 已删除。
+
+## 测试矩阵(`server/tests/test_daily_report_*`)
+
+| 测试文件 | 覆盖 |
+|---|---|
+| `test_daily_report_window.py` | compute_window:跨天、跨月、闰年边界 |
+| `test_daily_report_collect_matter.py` | fake yaml 解析,timeline + comments 双重过滤 |
+| `test_daily_report_shared_facts.py` | 聚合层不丢字段、tone 阈值 |
+| `test_daily_report_company_narrate.py` | mock AI:正常 JSON / 缺字段 / 非 JSON / 越界 → fallback |
+| `test_daily_report_personal_narrate.py` | mock AI:同上 + per-user 切换 |
+| `test_daily_report_render.py` | 卡片关键字段 + AI/fallback template 颜色不同 |
+| `test_daily_report_jobs_repo.py` | jobs CRUD + due query + 状态切换 + receiver_ids JSON 序列化 + 部分更新 + clear_last_run_id_in |
+| `test_daily_report_runs_repo.py` | runs CRUD + 分页 + 365 天清理批次 |
+| `test_daily_report_job_scheduler.py` | compute_next_run_at + poll 状态机(成功 / 失败重试 / 上限 / 漏跑) + 365 天清理 + 启停 |
+| `test_daily_report_v2_api.py` | 13 个端点 + admin auth + run-now / manual-trigger thread 跑 + 分页 + 系统通知 round-trip |
+
+整目录 75+ 用例全过。
+
+## 已知坑(部署时注意)
+
+- **AI 调用走主服务的 chat 设置**(`ai.openrouter_api_key` / `ai.base_url` / `ai.model`),没配 key 时 narrative 会走 fallback(浅蓝色卡 + "AI 缺席"提示),不会让 job 整体失败
+- **scheduler 内嵌主服务**,主服务挂掉就停;这是有意为之(简化部署),由监控告警发现就行,不要再加 systemd timer 形成双调度
+- **365 天清理**只在每天首次 poll 时跑一次(基于 `_last_cleanup_date` 当天日期);跨日不会重跑
+- **回填漏跑**只在主服务重启后的下一次 poll 触发,不主动追跑历史

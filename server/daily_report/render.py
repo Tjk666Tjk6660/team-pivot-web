@@ -151,6 +151,89 @@ def build_personal_card(facts: SharedFacts, narrative: PersonalNarrative) -> dic
 
 
 # --------------------------------------------------------------------------- #
+# v2 admin alert card(漏跑 / 失败通知)                                       #
+# --------------------------------------------------------------------------- #
+
+
+def build_admin_alert_card(
+    *,
+    alert_type: str,                        # "missed" | "failed"
+    job_name: str,
+    job_view: str,
+    expected_at: datetime | None = None,    # missed 用
+    error: str | None = None,               # failed 用
+    retry_count: int | None = None,         # failed 用
+    failures: list[dict] | None = None,     # failed 用,每条 {to, error, name?}
+) -> dict:
+    """系统级告警卡:发到 admin_notify_chat_ids/open_ids 或 fallback 全部 bot 群。
+
+    模板 'red'(若飞书不支持则 fallback 'wathet')使其与日常日报卡视觉
+    显著区分。
+    """
+    if alert_type == "missed":
+        header = f"⚠️ 日报漏跑提醒 · {job_name}"
+        lines = [
+            f"**任务**:{job_name}",
+            f"**视角**:{job_view}",
+        ]
+        if expected_at:
+            lines.append(f"**预期运行**:{_fmt_dt(expected_at)}")
+        lines.append("")
+        lines.append(f"已超过 30 分钟仍未运行,**未自动补跑**。")
+        lines.append("")
+        lines.append("请管理员检查:")
+        lines.append("- 主服务是否在该时间段重启过")
+        lines.append("- jobs 配置是否需要调整")
+        lines.append("- 可在 `/admin → 日报配置` 立即手动触发补一次")
+        body = "\n".join(lines)
+    elif alert_type == "failed":
+        header = f"⚠️ 日报失败提醒 · {job_name}"
+        lines = [
+            f"**任务**:{job_name}",
+            f"**视角**:{job_view}",
+        ]
+        if retry_count is not None:
+            lines.append(f"**重试**:{retry_count} 次后仍失败")
+        if error:
+            lines.append("")
+            lines.append(f"**错误**:`{error[:200]}`")
+        if failures:
+            lines.append("")
+            lines.append("**未送达明细**:")
+            # 最多列前 8 条避免卡片过长;剩余作为 "+N more" 收尾
+            for f in failures[:8]:
+                lines.append(_format_failure_line(f))
+            if len(failures) > 8:
+                lines.append(f"- … 另 {len(failures) - 8} 条未列出")
+        lines.append("")
+        lines.append("请管理员检查:")
+        lines.append("- 飞书目标 ID(open_id / chat_id)是否正确、bot 是否仍在该群 / 该用户对话内")
+        lines.append("- 飞书 token 是否正常")
+        lines.append("- AI 端点是否可用(超时 / 限流 / Key 失效)")
+        lines.append("- 数据仓库 workspace 是否正常")
+        body = "\n".join(lines)
+    else:
+        header = f"⚠️ 日报告警 · {job_name}"
+        body = f"alert_type={alert_type}"
+
+    return _card_shell(
+        header=header,
+        template="wathet",                  # 飞书 schema 2.0 安全色;red 在部分版本不支持
+        markdown=body,
+    )
+
+
+def _format_failure_line(f: dict) -> str:
+    """单条失败明细行。形如 '- 邓柯 (`ou_xxx`) — feishu_230015: receive_id invalid'"""
+    to = f.get("to") or "?"
+    name = f.get("name")
+    err = (f.get("error") or "?")[:140]
+    if name:
+        return f"- {name} (`{to}`) — {err}"
+    return f"- `{to}` — {err}"
+
+
+# --------------------------------------------------------------------------- #
 # format helpers                                                              #
 # --------------------------------------------------------------------------- #
 

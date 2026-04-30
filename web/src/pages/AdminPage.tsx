@@ -1,53 +1,69 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Bot, FileText, FolderGit2, Lock, Palette, Play, ShieldCheck, Users } from "lucide-react";
+import {
+  ArrowLeft,
+  Bot,
+  FileText,
+  FolderGit2,
+  Lock,
+  Menu,
+  Palette,
+  ShieldCheck,
+  Users,
+  X,
+} from "lucide-react";
 import { toast, Toaster } from "sonner";
 import {
   AdminRequiredError,
   clearAdminPassword,
   fetchAdminMarkdownSettings,
   fetchAISettings,
-  fetchDailyReportConfig,
-  fetchDailyReportLastRun,
   fetchWorkspaceAdminConfig,
   setAdminPassword,
   syncContacts,
-  triggerDailyReport,
   updateAdminMarkdownSettings,
   updateAISettings,
-  updateDailyReportConfig,
   updateWorkspaceAdminConfig,
-  type DailyReportConfig,
-  type DailyReportLastRun,
   type MarkdownStyleMeta,
+  type WorkspaceAdminConfig,
 } from "@/api";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Card } from "@/components/ui/card";
+import { DailyReportSection } from "./admin/DailyReportSection";
 
-const SUGGESTED_MODELS = [
-  "anthropic/claude-sonnet-4-5",
-  "anthropic/claude-haiku-4-5",
-  "openai/gpt-4o-mini",
-  "openai/gpt-4o",
-  "google/gemini-flash-1.5",
+const SUGGESTED_MODELS: Array<{ id: string; vendor: string; tag?: string }> = [
+  { id: "anthropic/claude-sonnet-4-5", vendor: "Anthropic", tag: "推荐" },
+  { id: "anthropic/claude-haiku-4-5",  vendor: "Anthropic", tag: "快速" },
+  { id: "openai/gpt-4o-mini",          vendor: "OpenAI",    tag: "经济" },
+  { id: "openai/gpt-4o",               vendor: "OpenAI",    tag: "通用" },
+  { id: "google/gemini-flash-1.5",     vendor: "Google",    tag: "高速" },
 ];
 
-const MARKDOWN_STYLE_SWATCHES: Record<string, { bg: string; accent: string; code: string }> = {
-  "code-light": { bg: "#ffffff", accent: "#0969da", code: "#f6f8fa" },
-  "collab-blue": { bg: "#f3f7ff", accent: "#3370ff", code: "#dbe8ff" },
-  "page-brown": { bg: "#fffdf7", accent: "#9b3f1b", code: "#2e241b" },
-  "solarized-light": { bg: "#fdf6e3", accent: "#cb4b16", code: "#073642" },
-  "neon-dark": { bg: "#282a36", accent: "#ff79c6", code: "#191a21" },
-  "nord-dark": { bg: "#2e3440", accent: "#88c0d0", code: "#242933" },
+const MARKDOWN_STYLE_SWATCHES: Record<string, { bg: string; accent: string; code: string; text: string }> = {
+  "code-light":      { bg: "#ffffff", accent: "#0969da", code: "#f6f8fa", text: "#1f2328" },
+  "collab-blue":     { bg: "#f3f7ff", accent: "#3370ff", code: "#dbe8ff", text: "#1d2433" },
+  "page-brown":      { bg: "#fffdf7", accent: "#9b3f1b", code: "#efe7d8", text: "#2e241b" },
+  "solarized-light": { bg: "#fdf6e3", accent: "#cb4b16", code: "#eee8d5", text: "#586e75" },
+  "neon-dark":       { bg: "#282a36", accent: "#ff79c6", code: "#191a21", text: "#f8f8f2" },
+  "nord-dark":       { bg: "#2e3440", accent: "#88c0d0", code: "#242933", text: "#d8dee9" },
 };
+
+type SectionKey = "repository" | "ai" | "markdown" | "reports" | "contacts";
+
+const SECTIONS: Array<{
+  key: SectionKey;
+  label: string;
+  icon: React.ReactNode;
+  sub: string;
+}> = [
+  { key: "repository", label: "数据仓库",     icon: <FolderGit2 className="h-4 w-4" />, sub: "服务器与客户端共用同一仓库地址" },
+  { key: "ai",         label: "AI 助手",      icon: <Bot        className="h-4 w-4" />, sub: "API 端点 / 模型 / 对话历史" },
+  { key: "markdown",   label: "Markdown 主题", icon: <Palette    className="h-4 w-4" />, sub: "matter 文档正文渲染主题" },
+  { key: "reports",    label: "日报配置",      icon: <FileText   className="h-4 w-4" />, sub: "多任务调度 · 系统通知 · 手动触发" },
+  { key: "contacts",   label: "联系人同步",    icon: <Users      className="h-4 w-4" />, sub: "从飞书通讯录拉取" },
+];
 
 export function AdminPage() {
   const [unlocked, setUnlocked] = useState(false);
@@ -58,139 +74,613 @@ export function AdminPage() {
   }, []);
 
   return (
-    <div className="min-h-screen" style={{ background: "var(--bg)" }}>
+    <div
+      className="min-h-screen"
+      style={{ background: "var(--bg)", color: "var(--text)" }}
+    >
       <Toaster position="top-center" richColors />
-      <header
-        className="px-6 py-4 backdrop-blur"
-        style={{
-          borderBottom: "1px solid var(--line)",
-          background: "rgba(255, 253, 248, 0.94)",
-        }}
-      >
-        <div className="mx-auto flex max-w-7xl items-center gap-4">
-          <Button
-            asChild
-            variant="ghost"
-            size="sm"
-            className="h-8 rounded-md hover:bg-[var(--surface-alt)]"
-            style={{ color: "var(--text-soft)" }}
-          >
-            <Link to="/"><ArrowLeft className="h-4 w-4" /> 返回</Link>
-          </Button>
-          <div className="min-w-0">
-            <h1
-              className="text-[16px] font-semibold"
-              style={{
-                fontFamily: "var(--font-serif)",
-                letterSpacing: "var(--letter-tight)",
-                color: "var(--text)",
-              }}
-            >
-              管理员设置
-            </h1>
-            <p
-              className="mt-0.5 text-[11.5px] font-meta"
-              style={{ color: "var(--text-mute)" }}
-            >
-              管理数据仓库 · AI 助手 · 联系人同步
-            </p>
-          </div>
-          <div className="ml-auto hidden items-center gap-2 lg:flex">
-            <InfoChip icon={<FolderGit2 className="h-3.5 w-3.5" />} label="Repo + Token" />
-            <InfoChip icon={<Bot className="h-3.5 w-3.5" />} label="AI Model + Key" />
-            <InfoChip icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Admin Session" />
-          </div>
-        </div>
-      </header>
-
       {!unlocked ? (
-        <AdminGate onUnlock={() => setUnlocked(true)} />
+        <>
+          <SimpleHeader />
+          <AdminGate onUnlock={() => setUnlocked(true)} />
+        </>
       ) : (
-        <main className="mx-auto max-w-7xl px-6 py-8">
-          <AdminIntro />
-          <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
-            <div className="space-y-6">
-              <WorkspaceConfigSection onAdminLost={() => setUnlocked(false)} />
-              <DailyReportSection onAdminLost={() => setUnlocked(false)} />
-              <SyncContactsSection onAdminLost={() => setUnlocked(false)} />
-            </div>
-            <div className="space-y-6">
-              <MarkdownSettingsSection onAdminLost={() => setUnlocked(false)} />
-              <AISettingsSection onAdminLost={() => setUnlocked(false)} />
-            </div>
-          </div>
-        </main>
+        <AdminShell onAdminLost={() => setUnlocked(false)} />
       )}
     </div>
   );
 }
 
-function InfoChip({ icon, label }: { icon: React.ReactNode; label: string }) {
+function SimpleHeader() {
   return (
-    <div
-      className="flex items-center gap-2 rounded-full px-3 py-1 text-[11.5px] font-meta tracking-wide"
+    <header
+      className="sticky top-0 z-40 backdrop-blur"
       style={{
-        background: "var(--surface-alt)",
-        border: "1px solid var(--line)",
-        color: "var(--text-mute)",
+        height: 64,
+        background: "color-mix(in srgb, var(--bg) 85%, transparent)",
+        borderBottom: "1px solid var(--line)",
       }}
     >
+      <div className="mx-auto flex h-full max-w-[1200px] items-center gap-4 px-7">
+        <Button
+          asChild
+          variant="ghost"
+          size="sm"
+          className="h-8 rounded-md hover:bg-[var(--surface-alt)]"
+          style={{ color: "var(--text-soft)" }}
+        >
+          <Link to="/">
+            <ArrowLeft className="h-4 w-4" /> 返回
+          </Link>
+        </Button>
+        <div className="min-w-0">
+          <div className="text-[15px] font-semibold leading-tight" style={{ color: "var(--text)" }}>
+            管理员设置
+          </div>
+          <div className="text-[12px] leading-tight" style={{ color: "var(--text-mute)" }}>
+            管理数据仓库 · AI 助手 · 日报 · 联系人
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+// ── Shell with sticky left nav + scroll-spy ─────────────────────────────────
+
+function AdminShell({ onAdminLost }: { onAdminLost: () => void }) {
+  const [active, setActive] = useState<SectionKey>("repository");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [navMeta, setNavMeta] = useState<{
+    branch: string;
+    repoVisibility: string;
+    session: string;
+  }>({ branch: "main", repoVisibility: "—", session: "active" });
+  const sectionRefs = useRef<Record<SectionKey, HTMLElement | null>>({
+    repository: null,
+    ai: null,
+    markdown: null,
+    reports: null,
+    contacts: null,
+  });
+
+  useEffect(() => {
+    const onScroll = () => {
+      const headerH = 64;
+      const probeY = headerH + 40;
+      let bestKey: SectionKey = "repository";
+      let bestDist = Infinity;
+      for (const s of SECTIONS) {
+        const el = sectionRefs.current[s.key];
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.top - probeY <= 0) {
+          const dist = Math.abs(rect.top - probeY);
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestKey = s.key;
+          }
+        }
+      }
+      setActive(bestKey);
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  const goto = (key: SectionKey) => {
+    const el = sectionRefs.current[key];
+    if (el) {
+      const headerH = 64;
+      const top = el.getBoundingClientRect().top + window.scrollY - headerH - 16;
+      window.scrollTo({ top, behavior: "smooth" });
+    }
+    setDrawerOpen(false);
+  };
+
+  useEffect(() => {
+    fetchWorkspaceAdminConfig()
+      .then((cfg) => {
+        setNavMeta((prev) => ({
+          ...prev,
+          repoVisibility: cfg.visibility || "—",
+        }));
+      })
+      .catch(() => {});
+  }, []);
+
+  return (
+    <>
+      <ShellHeader onMenu={() => setDrawerOpen(true)} active={active} />
+
+      <div
+        onClick={() => setDrawerOpen(false)}
+        className={`fixed inset-0 z-50 transition-opacity duration-200 lg:hidden ${
+          drawerOpen ? "opacity-100" : "pointer-events-none opacity-0"
+        }`}
+        style={{ background: "rgba(31,26,20,.4)" }}
+      />
+
+      <div
+        className="mx-auto grid max-w-[1200px] gap-9 px-7 pb-20 pt-7 lg:grid-cols-[244px_minmax(0,1fr)]"
+      >
+        <SideNav
+          active={active}
+          drawerOpen={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          onSelect={goto}
+          navMeta={navMeta}
+        />
+        <main className="flex min-w-0 flex-col gap-9">
+          <PageHead />
+
+          <SectionBlock
+            id="repository"
+            setRef={(el) => (sectionRefs.current.repository = el)}
+            icon={<FolderGit2 className="h-4 w-4" />}
+            title="数据仓库配置"
+            sub="服务器与客户端共用同一个仓库地址"
+          >
+            <WorkspaceConfigSection
+              onAdminLost={onAdminLost}
+              onChange={(v) =>
+                setNavMeta((prev) => ({ ...prev, repoVisibility: v.visibility }))
+              }
+            />
+          </SectionBlock>
+
+          <SectionBlock
+            id="ai"
+            setRef={(el) => (sectionRefs.current.ai = el)}
+            icon={<Bot className="h-4 w-4" />}
+            title="AI 助手配置"
+            sub="API 端点 · 模型 · 对话历史截断"
+          >
+            <AISettingsSection onAdminLost={onAdminLost} />
+          </SectionBlock>
+
+          <SectionBlock
+            id="markdown"
+            setRef={(el) => (sectionRefs.current.markdown = el)}
+            icon={<Palette className="h-4 w-4" />}
+            title="Markdown 主题"
+            sub="matter 文档正文渲染默认主题"
+          >
+            <MarkdownSettingsSection onAdminLost={onAdminLost} />
+          </SectionBlock>
+
+          <SectionBlock
+            id="reports"
+            setRef={(el) => (sectionRefs.current.reports = el)}
+            icon={<FileText className="h-4 w-4" />}
+            title="日报配置"
+            sub="多任务调度 · 系统通知 · 手动触发"
+          >
+            <DailyReportSection onAdminLost={onAdminLost} />
+          </SectionBlock>
+
+          <SectionBlock
+            id="contacts"
+            setRef={(el) => (sectionRefs.current.contacts = el)}
+            icon={<Users className="h-4 w-4" />}
+            title="联系人同步"
+            sub="从飞书通讯录拉取"
+          >
+            <SyncContactsSection onAdminLost={onAdminLost} />
+          </SectionBlock>
+        </main>
+      </div>
+    </>
+  );
+}
+
+function ShellHeader({ onMenu, active }: { onMenu: () => void; active: SectionKey }) {
+  const activeLabel = SECTIONS.find((s) => s.key === active)?.label ?? "";
+  return (
+    <header
+      className="sticky top-0 z-40 backdrop-blur"
+      style={{
+        height: 64,
+        background: "color-mix(in srgb, var(--bg) 85%, transparent)",
+        borderBottom: "1px solid var(--line)",
+      }}
+    >
+      <div className="mx-auto flex h-full max-w-[1200px] items-center gap-4 px-7">
+        <button
+          type="button"
+          onClick={onMenu}
+          aria-label="打开菜单"
+          className="hidden h-10 w-10 items-center justify-center rounded-[10px] max-lg:inline-flex"
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--line-strong, var(--line))",
+            color: "var(--text-soft)",
+          }}
+        >
+          <Menu className="h-4 w-4" />
+        </button>
+        <Button
+          asChild
+          variant="ghost"
+          size="sm"
+          className="h-8 rounded-md hover:bg-[var(--surface-alt)] max-lg:hidden"
+          style={{ color: "var(--text-soft)" }}
+        >
+          <Link to="/">
+            <ArrowLeft className="h-4 w-4" /> 返回
+          </Link>
+        </Button>
+        <div className="min-w-0 flex items-center gap-1.5 text-[13px]">
+          <span style={{ color: "var(--text-mute)" }}>管理员设置</span>
+          <span style={{ color: "var(--text-mute)" }}>/</span>
+          <span className="font-semibold truncate" style={{ color: "var(--text)" }}>
+            {activeLabel}
+          </span>
+        </div>
+        <div className="flex-1" />
+        <div className="hidden items-center gap-2 lg:flex">
+          <HeaderPill icon={<FolderGit2 className="h-3.5 w-3.5" />} label="Repo + Token" />
+          <HeaderPill icon={<Bot className="h-3.5 w-3.5" />} label="AI Model + Key" />
+          <HeaderPill icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Admin Session" muted />
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function HeaderPill({
+  icon,
+  label,
+  muted,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  muted?: boolean;
+}) {
+  return (
+    <span
+      className="inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[12px]"
+      style={{
+        background: "var(--surface)",
+        border: "1px solid var(--line)",
+        color: muted ? "var(--text-mute)" : "var(--text-soft)",
+      }}
+    >
+      <span
+        className="h-1.5 w-1.5 rounded-full"
+        style={{ background: muted ? "var(--text-mute)" : "var(--ok-600, #2F7A4D)" }}
+      />
       {icon}
       <span>{label}</span>
+    </span>
+  );
+}
+
+function SideNav({
+  active,
+  drawerOpen,
+  onClose,
+  onSelect,
+  navMeta,
+}: {
+  active: SectionKey;
+  drawerOpen: boolean;
+  onClose: () => void;
+  onSelect: (k: SectionKey) => void;
+  navMeta: { branch: string; repoVisibility: string; session: string };
+}) {
+  return (
+    <aside
+      className={`max-lg:fixed max-lg:left-0 max-lg:top-0 max-lg:z-[60] max-lg:h-[100dvh] max-lg:w-[280px] max-lg:max-w-[86vw] max-lg:overflow-y-auto max-lg:p-5 max-lg:transition-transform max-lg:duration-200 max-lg:border-r max-lg:shadow-[4px_0_24px_rgba(0,0,0,0.08)] ${
+        drawerOpen ? "max-lg:translate-x-0" : "max-lg:-translate-x-full"
+      } lg:sticky lg:top-[92px] lg:self-start lg:max-h-[calc(100vh-108px)] lg:overflow-y-auto`}
+      style={{ background: "var(--bg)", borderColor: "var(--line)" }}
+    >
+      <div className="flex items-center justify-between lg:hidden">
+        <div
+          className="text-[11px] font-semibold uppercase tracking-[0.08em]"
+          style={{ color: "var(--text-mute)" }}
+        >
+          设置
+        </div>
+        <button
+          type="button"
+          aria-label="关闭"
+          onClick={onClose}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md"
+          style={{ color: "var(--text-soft)" }}
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <div
+        className="px-2.5 pb-2 text-[11px] font-semibold uppercase tracking-[0.08em] max-lg:hidden"
+        style={{ color: "var(--text-mute)" }}
+      >
+        设置
+      </div>
+      <nav className="flex flex-col gap-px">
+        {SECTIONS.map((s) => {
+          const isActive = active === s.key;
+          return (
+            <button
+              key={s.key}
+              type="button"
+              onClick={() => onSelect(s.key)}
+              className="flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] transition-colors max-lg:h-10 max-lg:text-[14px]"
+              style={{
+                background: isActive ? "var(--surface)" : "transparent",
+                color: isActive ? "var(--text)" : "var(--text-soft)",
+                fontWeight: isActive ? 600 : 400,
+                border: `1px solid ${isActive ? "var(--line)" : "transparent"}`,
+                boxShadow: isActive ? "0 1px 2px rgba(31,26,20,.04)" : "none",
+              }}
+            >
+              <span
+                className="flex h-4 w-4 flex-none items-center justify-center"
+                style={{ color: isActive ? "var(--accent)" : "var(--text-mute)" }}
+              >
+                {s.icon}
+              </span>
+              <span>{s.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+      <div
+        className="my-3 h-px"
+        style={{ background: "var(--line)", marginInline: 6 }}
+      />
+      <div
+        className="flex flex-col gap-1.5 px-2.5 text-[12px]"
+        style={{ color: "var(--text-mute)" }}
+      >
+        <NavMetaRow label="主分支" value={navMeta.branch} />
+        <NavMetaRow label="仓库可见性" value={navMeta.repoVisibility} />
+        <NavMetaRow label="Session" value={navMeta.session} />
+      </div>
+    </aside>
+  );
+}
+
+function NavMetaRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between gap-2">
+      <span>{label}</span>
+      <span
+        style={{
+          color: "var(--text-soft)",
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+          fontSize: 11,
+        }}
+      >
+        {value}
+      </span>
     </div>
   );
 }
 
-function AdminIntro() {
+function PageHead() {
+  return (
+    <div
+      className="flex flex-col items-start gap-2 border-b pb-4 lg:flex-row lg:items-end lg:justify-between"
+      style={{ borderColor: "var(--line)" }}
+    >
+      <div>
+        <h1
+          className="m-0 text-[22px] font-bold"
+          style={{
+            color: "var(--text)",
+            letterSpacing: "-0.01em",
+          }}
+        >
+          管理员设置
+        </h1>
+        <p
+          className="mt-1 text-[13px]"
+          style={{ color: "var(--text-mute)" }}
+        >
+          这里控制 <strong style={{ color: "var(--text-soft)" }}>"写进哪个仓库"</strong> 和{" "}
+          <strong style={{ color: "var(--text-soft)" }}>"AI 用什么模型"</strong>。
+          数据仓库配置保存后会同时影响服务器工作区与 VS Code 客户端 mirror。
+        </p>
+      </div>
+    </div>
+  );
+}
+
+const SectionBlock = ({
+  id,
+  setRef,
+  icon,
+  title,
+  sub,
+  children,
+}: {
+  id: string;
+  setRef: (el: HTMLElement | null) => void;
+  icon: React.ReactNode;
+  title: string;
+  sub: string;
+  children: React.ReactNode;
+}) => (
+  <section
+    ref={setRef}
+    id={id}
+    className="scroll-mt-20"
+    style={{ scrollMarginTop: "calc(64px + 16px)" }}
+  >
+    <div className="mb-3.5 flex items-center gap-2.5">
+      <span
+        className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-lg"
+        style={{ background: "var(--accent-bg)", color: "var(--accent)" }}
+      >
+        {icon}
+      </span>
+      <h2
+        className="m-0 text-[15px] font-semibold"
+        style={{ color: "var(--text)", letterSpacing: "-0.005em" }}
+      >
+        {title}
+      </h2>
+      <span className="text-[12px] max-md:hidden" style={{ color: "var(--text-mute)" }}>
+        · {sub}
+      </span>
+    </div>
+    {children}
+  </section>
+);
+
+// ── Card primitives ─────────────────────────────────────────────────────────
+
+export function ACard({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
     <Card
-      className="shadow-none"
+      className={`overflow-hidden ${className}`}
       style={{
-        background: "linear-gradient(135deg, var(--bg-alt) 0%, var(--surface) 100%)",
+        background: "var(--surface)",
         border: "1px solid var(--line)",
+        borderRadius: 14,
+        boxShadow: "0 1px 0 rgba(31,26,20,.04), 0 1px 2px rgba(31,26,20,.04)",
       }}
     >
-      <CardContent className="grid gap-4 p-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(280px,0.6fr)] lg:items-start">
-        <div>
-          <div
-            className="mb-2 text-[11px] font-bold uppercase tracking-[0.18em] font-meta"
-            style={{ color: "var(--accent)" }}
-          >
-            管理面板
-          </div>
-          <h2
-            className="text-[22px] font-semibold"
-            style={{
-              fontFamily: "var(--font-serif)",
-              letterSpacing: "var(--letter-tight)",
-              color: "var(--text)",
-            }}
-          >
-            这里控制"写进哪个仓库"和"AI 用什么模型"。
-          </h2>
-          <p
-            className="mt-3 max-w-3xl text-[14px] leading-[1.65]"
-            style={{ fontFamily: "var(--font-serif)", color: "var(--text-soft)" }}
-          >
-            左侧处理数据仓库与同步动作，右侧集中管理 AI 助手参数。数据仓库配置保存后会同时影响服务器工作区与 VS Code 客户端 mirror。
-          </p>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
-          <QuickFact title="主分支固定" value="main" />
-          <QuickFact title="客户端镜像" value="readonly token" />
-          <QuickFact title="管理员权限" value="进入本页需重新输入" />
-        </div>
-      </CardContent>
+      {children}
     </Card>
   );
 }
 
-function QuickFact({ title, value }: { title: string; value: string }) {
+export function CardHead({
+  title,
+  desc,
+  trailing,
+}: {
+  title: string;
+  desc?: string;
+  trailing?: React.ReactNode;
+}) {
   return (
-    <div className="rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)]/80 p-4">
-      <div className="text-xs font-medium uppercase tracking-wide text-[var(--text-mute)]">{title}</div>
-      <div className="mt-1 text-sm font-semibold text-[var(--text)]">{value}</div>
+    <div
+      className="flex items-center justify-between gap-3 px-5 py-4"
+      style={{ borderBottom: "1px solid var(--line)" }}
+    >
+      <div className="min-w-0">
+        <h3 className="m-0 text-[14px] font-semibold" style={{ color: "var(--text)" }}>
+          {title}
+        </h3>
+        {desc && (
+          <div className="mt-0.5 text-[12px]" style={{ color: "var(--text-mute)" }}>
+            {desc}
+          </div>
+        )}
+      </div>
+      {trailing}
     </div>
+  );
+}
+
+export function Subsection({
+  title,
+  children,
+  first,
+}: {
+  title: string;
+  children: React.ReactNode;
+  first?: boolean;
+}) {
+  return (
+    <div
+      className="px-5 py-4"
+      style={
+        first
+          ? undefined
+          : { borderTop: "1px solid var(--line)" }
+      }
+    >
+      <div
+        className="mb-3 flex items-center gap-2 text-[12px] font-semibold"
+        style={{ color: "var(--text-soft)" }}
+      >
+        <span
+          className="h-1 w-1 rounded-full"
+          style={{ background: "var(--accent)" }}
+        />
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+export function CardFoot({
+  hint,
+  children,
+}: {
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="flex items-center justify-between gap-3 px-5 py-3.5 max-sm:flex-col-reverse max-sm:items-stretch"
+      style={{
+        borderTop: "1px solid var(--line)",
+        background:
+          "linear-gradient(to bottom, transparent, color-mix(in srgb, var(--bg) 50%, transparent))",
+      }}
+    >
+      <div className="text-[12px]" style={{ color: "var(--text-mute)" }}>
+        {hint}
+      </div>
+      <div className="flex items-center gap-2 max-sm:w-full max-sm:[&>button]:flex-1">{children}</div>
+    </div>
+  );
+}
+
+export function FieldLabel({
+  htmlFor,
+  children,
+  required,
+  badge,
+}: {
+  htmlFor?: string;
+  children: React.ReactNode;
+  required?: boolean;
+  badge?: string;
+}) {
+  return (
+    <Label
+      htmlFor={htmlFor}
+      className="flex items-center gap-1.5 text-[12px] font-medium"
+      style={{ color: "var(--text-soft)" }}
+    >
+      {children}
+      {required && <span style={{ color: "var(--warn-600, #B43E3E)" }}>*</span>}
+      {badge && (
+        <span
+          className="rounded px-1.5 text-[10px]"
+          style={{ background: "var(--surface-alt)", color: "var(--text-mute)" }}
+        >
+          {badge}
+        </span>
+      )}
+    </Label>
+  );
+}
+
+export function FieldHelp({ children }: { children: React.ReactNode }) {
+  return (
+    <p
+      className="m-0 text-[11.5px] leading-[1.45]"
+      style={{ color: "var(--text-mute)" }}
+    >
+      {children}
+    </p>
   );
 }
 
@@ -208,17 +698,29 @@ function AdminGate({ onUnlock }: { onUnlock: () => void }) {
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-12">
-      <Card className="overflow-hidden border-[var(--line)] shadow-[var(--shadow-sm)]">
+      <ACard>
         <div className="grid lg:grid-cols-[minmax(0,1.1fr)_420px]">
-          <div className="border-b border-[var(--line)] bg-[var(--surface-alt)] p-8 lg:border-b-0 lg:border-r">
-            <div className="mb-3 flex items-center gap-2 text-sm font-medium text-[var(--text-soft)]">
-              <Lock className="h-4 w-4 text-[var(--warn-600)]" />
+          <div
+            className="border-b p-8 lg:border-b-0 lg:border-r"
+            style={{ borderColor: "var(--line)", background: "var(--surface-alt)" }}
+          >
+            <div
+              className="mb-3 flex items-center gap-2 text-sm font-medium"
+              style={{ color: "var(--text-soft)" }}
+            >
+              <Lock className="h-4 w-4" style={{ color: "var(--warn-600)" }} />
               需要管理员密码
             </div>
-            <h2 className="text-2xl font-semibold tracking-tight text-[var(--text)]">
+            <h2
+              className="text-2xl font-semibold tracking-tight"
+              style={{ color: "var(--text)" }}
+            >
               解锁管理面板
             </h2>
-            <p className="mt-3 max-w-xl text-sm leading-6 text-[var(--text-soft)]">
+            <p
+              className="mt-3 max-w-xl text-sm leading-6"
+              style={{ color: "var(--text-soft)" }}
+            >
               此页面包含数据仓库连接信息、AI 配置以及联系人同步动作。每次进入本页都需要重新输入管理员密码。
             </p>
           </div>
@@ -241,12 +743,20 @@ function AdminGate({ onUnlock }: { onUnlock: () => void }) {
             </form>
           </div>
         </div>
-      </Card>
+      </ACard>
     </main>
   );
 }
 
-function WorkspaceConfigSection({ onAdminLost }: { onAdminLost: () => void }) {
+// ── Workspace section ───────────────────────────────────────────────────────
+
+function WorkspaceConfigSection({
+  onAdminLost,
+  onChange,
+}: {
+  onAdminLost: () => void;
+  onChange?: (cfg: WorkspaceAdminConfig) => void;
+}) {
   const [repoUrl, setRepoUrl] = useState("");
   const [visibility, setVisibility] = useState<"public" | "private">("private");
   const [writeToken, setWriteToken] = useState("");
@@ -283,13 +793,21 @@ function WorkspaceConfigSection({ onAdminLost }: { onAdminLost: () => void }) {
     }
     setSaving(true);
     try {
-      await updateWorkspaceAdminConfig({
+      const body = {
         repo_url: repoUrl.trim(),
         visibility,
         write_token: writeToken.trim(),
         readonly_token: visibility === "private" ? readonlyToken.trim() : "",
-      });
+      };
+      await updateWorkspaceAdminConfig(body);
       toast.success("数据仓库配置已保存");
+      onChange?.({
+        repo_url: body.repo_url,
+        visibility: body.visibility,
+        write_token: body.write_token,
+        readonly_token: body.readonly_token,
+        branch: "main",
+      });
     } catch (e) {
       if (e instanceof AdminRequiredError) {
         onAdminLost();
@@ -302,58 +820,56 @@ function WorkspaceConfigSection({ onAdminLost }: { onAdminLost: () => void }) {
   };
 
   return (
-    <section>
-      <Card className="shadow-[var(--shadow-sm)]">
-        <CardHeader className="pb-4">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <FolderGit2 className="h-4 w-4" />
-            数据仓库配置
-          </CardTitle>
-          <CardDescription>
-            同一套仓库配置会同时服务服务器工作区和 VS Code 客户端 mirror。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-        {loading ? (
-          <p className="text-sm text-muted-foreground">加载中…</p>
-        ) : (
-          <>
-            <div className="grid gap-5 lg:grid-cols-2">
-              <div className="space-y-2 lg:col-span-2">
-                <Label htmlFor="repo-url">Repo URL</Label>
+    <ACard>
+      {loading ? (
+        <div className="px-5 py-6 text-sm" style={{ color: "var(--text-mute)" }}>
+          加载中…
+        </div>
+      ) : (
+        <>
+          <Subsection title="仓库地址" first>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="lg:col-span-2 flex flex-col gap-1.5">
+                <FieldLabel htmlFor="repo-url" required>
+                  Repo URL
+                </FieldLabel>
                 <Input
                   id="repo-url"
                   placeholder="https://github.com/org/repo.git"
                   value={repoUrl}
                   onChange={(e) => setRepoUrl(e.target.value)}
                 />
-                <p className="text-xs text-muted-foreground">
-                  branch 固定为 <code>main</code>，服务器与客户端共用同一个仓库地址。
-                </p>
+                <FieldHelp>
+                  分支固定为 <code>main</code>,服务器与客户端共用同一个仓库地址。
+                </FieldHelp>
               </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="repo-visibility">仓库可见性</Label>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel htmlFor="repo-visibility">仓库可见性</FieldLabel>
                 <select
                   id="repo-visibility"
                   value={visibility}
-                  onChange={(e) => setVisibility(e.target.value as "public" | "private")}
-                  className="flex h-10 w-full rounded-[var(--r-sm)] border border-[var(--line-strong)] bg-[var(--surface)] px-3 py-2 text-sm"
+                  onChange={(e) =>
+                    setVisibility(e.target.value as "public" | "private")
+                  }
+                  className="h-[34px] rounded-md border bg-white px-3 text-[13px]"
+                  style={{
+                    borderColor: "var(--line-strong, var(--line))",
+                    color: "var(--text)",
+                  }}
                 >
                   <option value="private">private</option>
                   <option value="public">public</option>
                 </select>
               </div>
+            </div>
+          </Subsection>
 
-              <div className="rounded-[var(--r-md)] border bg-muted/25 p-4 text-sm text-muted-foreground">
-                <div className="font-medium text-foreground">使用说明</div>
-                <p className="mt-2 leading-6">
-                  `write token` 给服务器 pull / push 用；`readonly token` 只给 VS Code 客户端 clone / pull 用。
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="write-token">服务器写入 Token</Label>
+          <Subsection title="访问凭证">
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel htmlFor="write-token" required>
+                  服务器写入 Token
+                </FieldLabel>
                 <Input
                   id="write-token"
                   type="password"
@@ -361,15 +877,12 @@ function WorkspaceConfigSection({ onAdminLost }: { onAdminLost: () => void }) {
                   value={writeToken}
                   onChange={(e) => setWriteToken(e.target.value)}
                 />
+                <FieldHelp>给主服务 git pull / push 用</FieldHelp>
               </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="readonly-token">
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel htmlFor="readonly-token" badge={visibility === "public" ? "public 可留空" : undefined}>
                   客户端只读 Token
-                  {visibility === "public" && (
-                    <span className="ml-2 text-xs text-muted-foreground">（public 仓库可留空）</span>
-                  )}
-                </Label>
+                </FieldLabel>
                 <Input
                   id="readonly-token"
                   type="password"
@@ -377,205 +890,23 @@ function WorkspaceConfigSection({ onAdminLost }: { onAdminLost: () => void }) {
                   value={readonlyToken}
                   onChange={(e) => setReadonlyToken(e.target.value)}
                 />
+                <FieldHelp>只给 VS Code 客户端 clone / pull 用</FieldHelp>
               </div>
             </div>
+          </Subsection>
 
-            <div className="flex justify-end border-t pt-4">
-              <Button onClick={save} disabled={saving}>
-                {saving ? "保存中…" : "保存"}
-              </Button>
-            </div>
-          </>
-        )}
-        </CardContent>
-      </Card>
-    </section>
+          <CardFoot hint="保存后立即影响新的 git 操作。">
+            <Button onClick={save} disabled={saving}>
+              {saving ? "保存中…" : "保存"}
+            </Button>
+          </CardFoot>
+        </>
+      )}
+    </ACard>
   );
 }
 
-// ── AI settings ──────────────────────────────────────────────────────────────
-
-function MarkdownSettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
-  const [styles, setStyles] = useState<MarkdownStyleMeta[]>([]);
-  const [systemDefaultStyle, setSystemDefaultStyle] = useState("");
-  const [effectiveStyle, setEffectiveStyle] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
-
-  useEffect(() => {
-    fetchAdminMarkdownSettings()
-      .then((s) => {
-        setStyles(s.styles);
-        setSystemDefaultStyle(
-          s.system_default_style || s.effective_system_default_style,
-        );
-        setEffectiveStyle(s.effective_system_default_style);
-      })
-      .catch((e) => {
-        if (e instanceof AdminRequiredError) {
-          toast.error("管理员密码已失效，请重新输入");
-          onAdminLost();
-        } else {
-          toast.error(e instanceof Error ? e.message : String(e));
-        }
-      })
-      .finally(() => setLoading(false));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const save = async () => {
-    if (!systemDefaultStyle) {
-      toast.error("请选择系统默认 Markdown 主题");
-      return;
-    }
-    setSaving(true);
-    try {
-      await updateAdminMarkdownSettings({
-        system_default_style: systemDefaultStyle,
-      });
-      setEffectiveStyle(systemDefaultStyle);
-      toast.success("Markdown 默认主题已保存");
-    } catch (e) {
-      if (e instanceof AdminRequiredError) {
-        onAdminLost();
-      } else {
-        toast.error(e instanceof Error ? e.message : String(e));
-      }
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const selectedStyle = styles.find((s) => s.id === systemDefaultStyle);
-
-  return (
-    <section>
-      <Card className="shadow-[var(--shadow-sm)]">
-        <CardHeader className="pb-4">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Palette className="h-4 w-4" />
-            Markdown 正文主题
-          </CardTitle>
-          <CardDescription>
-            设置 matter 文档正文的系统默认 Markdown 渲染主题；用户个人选择优先。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          {loading ? (
-            <p className="text-sm text-muted-foreground">加载中...</p>
-          ) : (
-            <>
-              <div className="space-y-2">
-                <Label htmlFor="markdown-default-style">系统默认主题</Label>
-                <div className="relative">
-                  <button
-                    id="markdown-default-style"
-                    type="button"
-                    onClick={() => setMenuOpen((v) => !v)}
-                    className="flex min-h-12 w-full items-center gap-3 rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface-alt)] px-3 py-2 text-left transition hover:border-[var(--accent-soft)] hover:bg-[var(--surface)]"
-                  >
-                    {selectedStyle && <MarkdownAdminSwatch style={selectedStyle} />}
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-semibold text-[var(--text)]">
-                        {selectedStyle?.label ?? "未选择"}
-                        {selectedStyle && (
-                          <span className="ml-2 rounded-full bg-[var(--surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-mute)] ring-1 ring-[var(--line)]">
-                            {selectedStyle.tone === "dark" ? "暗色" : "亮色"}
-                          </span>
-                        )}
-                      </span>
-                      {selectedStyle && (
-                        <span className="mt-0.5 block truncate text-xs text-[var(--text-mute)]">
-                          {selectedStyle.description}
-                        </span>
-                      )}
-                    </span>
-                    <span className="text-[11px] text-[var(--text-mute)]">▼</span>
-                  </button>
-
-                  {menuOpen && (
-                    <div className="absolute left-0 right-0 top-full z-50 mt-2 max-h-80 overflow-y-auto rounded-[var(--r-md)] border border-[var(--line-strong)] bg-[var(--surface)] p-2 shadow-[var(--shadow-lg)]">
-                      {styles.map((style) => (
-                        <button
-                          key={style.id}
-                          type="button"
-                          onClick={() => {
-                            setSystemDefaultStyle(style.id);
-                            setMenuOpen(false);
-                          }}
-                          className={`flex w-full items-center gap-3 rounded-[var(--r-sm)] px-2.5 py-2.5 text-left transition ${
-                            systemDefaultStyle === style.id
-                              ? "bg-[color-mix(in_srgb,var(--accent-bg)_62%,var(--surface))] ring-1 ring-[var(--accent-soft)]"
-                              : "hover:bg-[var(--surface-alt)]"
-                          }`}
-                        >
-                          <MarkdownAdminSwatch style={style} />
-                          <span className="min-w-0 flex-1">
-                            <span className="flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--text)]">
-                              {style.label}
-                              <span className="rounded-full bg-[var(--surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-mute)] ring-1 ring-[var(--line)]">
-                                {style.tone === "dark" ? "暗色" : "亮色"}
-                              </span>
-                              {systemDefaultStyle === style.id && (
-                                <span className="rounded-full bg-[var(--surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent)] ring-1 ring-[var(--accent-soft)]">
-                                  已选
-                                </span>
-                              )}
-                            </span>
-                            <span className="mt-0.5 block text-[11px] leading-4 text-[var(--text-mute)]">
-                              {style.description}
-                            </span>
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  当前生效系统默认：
-                  {styles.find((s) => s.id === effectiveStyle)?.label ?? effectiveStyle}
-                </p>
-              </div>
-              <div className="flex justify-end border-t pt-4">
-                <Button onClick={save} disabled={saving}>
-                  {saving ? "保存中..." : "保存"}
-                </Button>
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
-    </section>
-  );
-}
-
-function MarkdownAdminSwatch({ style }: { style: MarkdownStyleMeta }) {
-  const swatch = MARKDOWN_STYLE_SWATCHES[style.id] ?? {
-    bg: "#ffffff",
-    accent: "var(--accent)",
-    code: "var(--surface-alt)",
-  };
-  return (
-    <span
-      className="relative h-9 w-11 shrink-0 overflow-hidden rounded-[7px] ring-1 ring-[var(--line)]"
-      style={{ background: swatch.bg }}
-      aria-hidden
-    >
-      <span
-        className="absolute left-2 right-2 top-2 h-1 rounded-full"
-        style={{ background: swatch.accent }}
-      />
-      <span
-        className="absolute left-2 top-[17px] h-1 w-4 rounded-full opacity-80"
-        style={{ background: swatch.accent }}
-      />
-      <span
-        className="absolute bottom-2 left-2 right-2 h-2 rounded-[4px]"
-        style={{ background: swatch.code }}
-      />
-    </span>
-  );
-}
+// ── AI section ──────────────────────────────────────────────────────────────
 
 function AISettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
   const [baseUrl, setBaseUrl] = useState("");
@@ -640,41 +971,29 @@ function AISettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
   };
 
   return (
-    <section>
-      <Card className="shadow-[var(--shadow-sm)]">
-        <CardHeader className="pb-4">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Bot className="h-4 w-4" />
-            AI 助手配置
-          </CardTitle>
-          <CardDescription>
-            管理 OpenAI-compatible API 地址、凭据、默认模型以及对话历史截断参数。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-        {loading ? (
-          <p className="text-sm text-muted-foreground">加载中…</p>
-        ) : (
-          <>
-            <div className="grid gap-5 xl:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="ai-base-url">API Base URL</Label>
+    <ACard>
+      {loading ? (
+        <div className="px-5 py-6 text-sm" style={{ color: "var(--text-mute)" }}>
+          加载中…
+        </div>
+      ) : (
+        <>
+          <Subsection title="API 端点" first>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel htmlFor="ai-base-url">API Base URL</FieldLabel>
                 <Input
                   id="ai-base-url"
                   placeholder="https://openrouter.ai/api/v1"
                   value={baseUrl}
                   onChange={(e) => setBaseUrl(e.target.value)}
                 />
-                <p className="text-xs text-muted-foreground">
-                  兼容 OpenAI Chat Completions 的服务地址，例如 OpenRouter 或 DashScope。
-                </p>
+                <FieldHelp>兼容 OpenAI Chat Completions 的服务地址。</FieldHelp>
               </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="ai-key">
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel htmlFor="ai-key" badge={hasKey ? "已配置" : undefined}>
                   AI API Key
-                  {hasKey && <span className="ml-2 text-xs text-[var(--ok-600)]">（已配置）</span>}
-                </Label>
+                </FieldLabel>
                 <Input
                   id="ai-key"
                   type="password"
@@ -682,106 +1001,161 @@ function AISettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
                 />
-                <p className="text-xs text-muted-foreground">
-                  留空表示保持现有 Key 不变。
-                </p>
+                <FieldHelp>留空表示保持现有 Key 不变。</FieldHelp>
               </div>
+            </div>
+          </Subsection>
 
-              <div className="space-y-2">
-                <Label htmlFor="ai-model">模型</Label>
+          <Subsection title="默认模型">
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel htmlFor="ai-model">模型 ID</FieldLabel>
                 <Input
                   id="ai-model"
                   placeholder="anthropic/claude-sonnet-4-5"
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
+                  style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
                 />
-                <div className="flex flex-wrap gap-1.5">
-                  {SUGGESTED_MODELS.map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => setModel(m)}
-                      className={`rounded px-2 py-0.5 text-xs transition-colors ${
-                        model === m
-                          ? "bg-[var(--accent-bg)] text-[var(--accent)]"
-                          : "bg-[var(--surface-alt)] text-[var(--text-mute)] hover:bg-[var(--accent-bg)]"
-                      }`}
-                    >
-                      {m}
-                    </button>
-                  ))}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[11.5px]" style={{ color: "var(--text-mute)" }}>
+                  常用模型（点击直接应用）
+                </span>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {SUGGESTED_MODELS.map((m) => {
+                    const [, name] = m.id.split("/");
+                    const isActive = model === m.id;
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => setModel(m.id)}
+                        className="flex items-center gap-3 rounded-[10px] px-3.5 py-2.5 text-left transition-all"
+                        style={{
+                          background: isActive
+                            ? "color-mix(in srgb, var(--accent-bg) 60%, var(--surface))"
+                            : "var(--surface)",
+                          border: `1px solid ${isActive ? "var(--accent)" : "var(--line)"}`,
+                          boxShadow: isActive
+                            ? "0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent)"
+                            : "none",
+                        }}
+                      >
+                        <span
+                          className="h-4 w-4 flex-none rounded-full"
+                          style={{
+                            border: `${isActive ? 5 : 1.5}px solid ${
+                              isActive ? "var(--accent)" : "var(--line-strong, var(--line))"
+                            }`,
+                            transition: "border-width .12s, border-color .12s",
+                          }}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span
+                            className="block truncate text-[13px] font-medium"
+                            style={{
+                              color: "var(--text)",
+                              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                            }}
+                          >
+                            {name}
+                          </span>
+                          <span className="block text-[11.5px]" style={{ color: "var(--text-mute)" }}>
+                            {m.vendor}
+                          </span>
+                        </span>
+                        {m.tag && (
+                          <span
+                            className="rounded px-1.5 py-0.5 text-[10px] flex-none"
+                            style={{
+                              background: isActive ? "var(--surface)" : "var(--surface-alt)",
+                              color: isActive ? "var(--accent)" : "var(--text-mute)",
+                            }}
+                          >
+                            {m.tag}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
+          </Subsection>
 
-            <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
-              <p className="text-xs font-semibold text-muted-foreground">对话历史截断参数</p>
-              <div className="grid gap-3 md:grid-cols-3">
-                <div className="space-y-1">
-                  <Label htmlFor="ai-max-tokens" className="text-xs">最大上下文 Token</Label>
-                  <Input
-                    id="ai-max-tokens"
-                    type="number"
-                    min={1000} max={200000} step={1000}
-                    value={maxContextTokens}
-                    onChange={(e) => setMaxContextTokens(Number(e.target.value))}
-                    className="text-sm"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    ≈ {(maxContextTokens * 4 / 1000).toFixed(0)}k 字符
-                  </p>
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="ai-min-rounds" className="text-xs">最少保留轮数</Label>
-                  <Input
-                    id="ai-min-rounds" type="number" min={1} max={50}
-                    value={minRounds}
-                    onChange={(e) => setMinRounds(Number(e.target.value))}
-                    className="text-sm"
-                  />
-                  <p className="text-xs text-muted-foreground">超限也强制带上</p>
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="ai-max-rounds" className="text-xs">最多保留轮数</Label>
-                  <Input
-                    id="ai-max-rounds" type="number" min={1} max={200}
-                    value={maxRounds}
-                    onChange={(e) => setMaxRounds(Number(e.target.value))}
-                    className="text-sm"
-                  />
-                  <p className="text-xs text-muted-foreground">超出即截断</p>
-                </div>
+          <Subsection title="对话历史截断">
+            <div className="grid gap-3.5 md:grid-cols-3">
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel htmlFor="ai-max-tokens">最大上下文 Token</FieldLabel>
+                <Input
+                  id="ai-max-tokens"
+                  type="number"
+                  min={1000} max={200000} step={1000}
+                  value={maxContextTokens}
+                  onChange={(e) => setMaxContextTokens(Number(e.target.value))}
+                  style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
+                />
+                <FieldHelp>
+                  ≈ {(maxContextTokens * 4 / 1000).toFixed(0)}k 字符
+                </FieldHelp>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel htmlFor="ai-min-rounds">最少保留轮数</FieldLabel>
+                <Input
+                  id="ai-min-rounds"
+                  type="number"
+                  min={1} max={50}
+                  value={minRounds}
+                  onChange={(e) => setMinRounds(Number(e.target.value))}
+                  style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
+                />
+                <FieldHelp>超限也强制带上</FieldHelp>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel htmlFor="ai-max-rounds">最多保留轮数</FieldLabel>
+                <Input
+                  id="ai-max-rounds"
+                  type="number"
+                  min={1} max={200}
+                  value={maxRounds}
+                  onChange={(e) => setMaxRounds(Number(e.target.value))}
+                  style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
+                />
+                <FieldHelp>超出即截断</FieldHelp>
               </div>
             </div>
+          </Subsection>
 
-            <div className="flex justify-end border-t pt-4">
-              <Button onClick={save} disabled={saving}>
-                {saving ? "保存中…" : "保存"}
-              </Button>
-            </div>
-          </>
-        )}
-        </CardContent>
-      </Card>
-    </section>
+          <CardFoot hint="保存后下一次对话起生效。">
+            <Button onClick={save} disabled={saving}>
+              {saving ? "保存中…" : "保存"}
+            </Button>
+          </CardFoot>
+        </>
+      )}
+    </ACard>
   );
 }
 
-// ── Daily Report (Phase 5) ────────────────────────────────────────────────────
+// ── Markdown section ────────────────────────────────────────────────────────
 
-function DailyReportSection({ onAdminLost }: { onAdminLost: () => void }) {
-  const [cfg, setCfg] = useState<DailyReportConfig | null>(null);
+function MarkdownSettingsSection({ onAdminLost }: { onAdminLost: () => void }) {
+  const [styles, setStyles] = useState<MarkdownStyleMeta[]>([]);
+  const [systemDefaultStyle, setSystemDefaultStyle] = useState("");
+  const [effectiveStyle, setEffectiveStyle] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [triggering, setTriggering] = useState(false);
-  const [dryRun, setDryRun] = useState(true);
-  const [noAi, setNoAi] = useState(false);
-  const [lastRun, setLastRun] = useState<DailyReportLastRun | null>(null);
-  const [pollingRunId, setPollingRunId] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchDailyReportConfig()
-      .then(setCfg)
+    fetchAdminMarkdownSettings()
+      .then((s) => {
+        setStyles(s.styles);
+        setSystemDefaultStyle(
+          s.system_default_style || s.effective_system_default_style,
+        );
+        setEffectiveStyle(s.effective_system_default_style);
+      })
       .catch((e) => {
         if (e instanceof AdminRequiredError) {
           toast.error("管理员密码已失效，请重新输入");
@@ -791,45 +1165,20 @@ function DailyReportSection({ onAdminLost }: { onAdminLost: () => void }) {
         }
       })
       .finally(() => setLoading(false));
-    fetchDailyReportLastRun().then(setLastRun).catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // poll last-run when a trigger has just kicked off
-  useEffect(() => {
-    if (!pollingRunId) return;
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const lr = await fetchDailyReportLastRun();
-        if (cancelled) return;
-        setLastRun(lr);
-        if (lr.run_id === pollingRunId && lr.finished_at) {
-          setPollingRunId(null);
-          if (lr.error) {
-            toast.error(`触发失败：${lr.error}`);
-          } else if (lr.rc === 0) {
-            toast.success("日报已生成");
-          } else {
-            toast.error(`运行结束 rc=${lr.rc}`);
-          }
-        }
-      } catch {
-        /* ignore polling error */
-      }
-    };
-    const t = window.setInterval(tick, 3000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(t);
-    };
-  }, [pollingRunId]);
-
   const save = async () => {
-    if (!cfg) return;
+    if (!systemDefaultStyle) {
+      toast.error("请选择系统默认 Markdown 主题");
+      return;
+    }
     setSaving(true);
     try {
-      await updateDailyReportConfig(cfg);
-      toast.success("日报配置已保存");
+      await updateAdminMarkdownSettings({
+        system_default_style: systemDefaultStyle,
+      });
+      setEffectiveStyle(systemDefaultStyle);
+      toast.success("Markdown 默认主题已保存");
     } catch (e) {
       if (e instanceof AdminRequiredError) {
         onAdminLost();
@@ -841,244 +1190,120 @@ function DailyReportSection({ onAdminLost }: { onAdminLost: () => void }) {
     }
   };
 
-  const trigger = async () => {
-    if (!cfg) return;
-    if (!cfg.enabled) {
-      toast.error("总开关 enabled=false，请先打开后保存再触发");
-      return;
-    }
-    setTriggering(true);
-    try {
-      const r = await triggerDailyReport({ dry_run: dryRun, no_ai: noAi });
-      toast.message(`已开始：${r.run_id}`);
-      setPollingRunId(r.run_id);
-    } catch (e) {
-      if (e instanceof AdminRequiredError) {
-        onAdminLost();
-      } else {
-        toast.error(e instanceof Error ? e.message : String(e));
-      }
-    } finally {
-      setTriggering(false);
-    }
-  };
-
-  const update = (patch: Partial<DailyReportConfig>) => {
-    if (!cfg) return;
-    setCfg({ ...cfg, ...patch });
-  };
-
   return (
-    <section>
-      <Card className="shadow-[var(--shadow-sm)]">
-        <CardHeader className="pb-4">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <FileText className="h-4 w-4" />
-            日报配置 · 公司视角 / 个人视角
-          </CardTitle>
-          <CardDescription>
-            两份独立报告（公司视角 + 个人视角）的开关、推送窗口、触发方式与手动执行入口。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {loading || !cfg ? (
-            <p className="text-sm text-muted-foreground">加载中…</p>
-          ) : (
-            <>
-              <div className="grid gap-4 lg:grid-cols-2">
-                <ToggleRow
-                  label="总开关"
-                  checked={cfg.enabled}
-                  onChange={(v) => update({ enabled: v })}
-                  hint="关闭后定时调度和手动触发都跳过"
-                />
-                <ToggleRow
-                  label="仅工作日推送"
-                  checked={cfg.push_freq === "weekdays"}
-                  onChange={(v) =>
-                    update({ push_freq: v ? "weekdays" : "daily" })
-                  }
-                  hint="开启时周末跳过(避免空卡噪音);关闭则每天发"
-                />
-
-                <ToggleRow
-                  label="公司视角报告"
-                  checked={cfg.company_enabled}
-                  onChange={(v) => update({ company_enabled: v })}
-                  hint="一段叙事 + 整体节奏定性（积极/平稳/偏停滞）"
-                />
-                <ToggleRow
-                  label="个人视角报告"
-                  checked={cfg.personal_enabled}
-                  onChange={(v) => update({ personal_enabled: v })}
-                  hint="逐人输入/输出叙述，无活动者合并到一行"
-                />
-
-                <div className="space-y-2 rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] p-3">
-                  <Label htmlFor="dr-window-hours" className="text-sm font-semibold">
-                    统计时间窗口（小时）
-                  </Label>
-                  <Input
-                    id="dr-window-hours"
-                    type="number"
-                    min={1}
-                    max={168}
-                    value={cfg.time_window_hours}
-                    onChange={(e) =>
-                      update({ time_window_hours: Number(e.target.value) || 24 })
-                    }
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    默认 24 小时;范围 1-168
-                  </p>
-                </div>
-                <div className="space-y-2 rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] p-3">
-                  <Label htmlFor="dr-push-time" className="text-sm font-semibold">
-                    每日推送时刻 (HH:MM)
-                  </Label>
-                  <Input
-                    id="dr-push-time"
-                    type="time"
-                    value={cfg.push_time}
-                    onChange={(e) =>
-                      update({ push_time: e.target.value || "09:30" })
-                    }
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Asia/Shanghai,主服务进程内置定时
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex justify-end border-t pt-4">
-                <Button onClick={save} disabled={saving}>
-                  {saving ? "保存中…" : "保存配置"}
-                </Button>
-              </div>
-
-              <div className="rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface-alt)] p-4 space-y-3">
-                <div className="text-sm font-semibold text-[var(--text)]">
-                  立即手动触发一次
-                </div>
-                <div className="flex flex-wrap items-center gap-4 text-sm">
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={dryRun}
-                      onChange={(e) => setDryRun(e.target.checked)}
-                    />
-                    Dry-run（不发飞书）
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={noAi}
-                      onChange={(e) => setNoAi(e.target.checked)}
-                    />
-                    No AI（fallback 文案）
-                  </label>
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={trigger}
-                  disabled={triggering || pollingRunId !== null}
-                >
-                  <Play className="mr-1.5 h-3.5 w-3.5" />
-                  {triggering
-                    ? "启动中…"
-                    : pollingRunId
-                    ? "运行中…"
-                    : "立即触发"}
-                </Button>
-                {lastRun && (lastRun.started_at || lastRun.run_id) && (
-                  <div className="rounded border bg-[var(--surface)] p-3 text-xs space-y-1">
-                    <div>
-                      <span className="font-medium">run_id:</span>{" "}
-                      {lastRun.run_id ?? "-"}
-                    </div>
-                    <div>
-                      <span className="font-medium">started:</span>{" "}
-                      {lastRun.started_at ?? "-"}
-                    </div>
-                    <div>
-                      <span className="font-medium">finished:</span>{" "}
-                      {lastRun.finished_at ?? "(running…)"}
-                    </div>
-                    {lastRun.rc !== null && (
-                      <div>
-                        <span className="font-medium">rc:</span>{" "}
-                        <span
-                          style={{
-                            color:
-                              lastRun.rc === 0
-                                ? "var(--ok-600)"
-                                : "var(--warn-600)",
-                          }}
-                        >
-                          {lastRun.rc}
-                        </span>
+    <ACard>
+      {loading ? (
+        <div className="px-5 py-6 text-sm" style={{ color: "var(--text-mute)" }}>
+          加载中…
+        </div>
+      ) : (
+        <>
+          <Subsection title="系统默认主题" first>
+            <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+              {styles.map((style) => {
+                const active = systemDefaultStyle === style.id;
+                return (
+                  <button
+                    key={style.id}
+                    type="button"
+                    onClick={() => setSystemDefaultStyle(style.id)}
+                    className="overflow-hidden rounded-[10px] text-left transition-all"
+                    style={{
+                      background: "var(--surface)",
+                      border: `1px solid ${active ? "var(--accent)" : "var(--line)"}`,
+                      boxShadow: active
+                        ? "0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent)"
+                        : "none",
+                    }}
+                  >
+                    <MarkdownAdminPreview style={style} />
+                    <div
+                      className="flex items-center justify-between gap-2 px-2.5 py-2"
+                      style={{ borderTop: "1px solid var(--line)" }}
+                    >
+                      <div
+                        className="truncate text-[12px] font-medium"
+                        style={{ color: "var(--text)" }}
+                      >
+                        {style.label}
                       </div>
-                    )}
-                    {lastRun.error && (
-                      <div className="text-[var(--warn-600)]">
-                        error: {lastRun.error}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
-    </section>
+                      <span
+                        className="text-[11px]"
+                        style={{ color: "var(--text-mute)" }}
+                      >
+                        {style.tone === "dark" ? "暗色" : "亮色"}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            <FieldHelp>
+              当前生效系统默认:
+              {styles.find((s) => s.id === effectiveStyle)?.label ?? effectiveStyle}
+            </FieldHelp>
+          </Subsection>
+          <CardFoot hint="用户个人选择优先于系统默认。">
+            <Button onClick={save} disabled={saving}>
+              {saving ? "保存中…" : "保存"}
+            </Button>
+          </CardFoot>
+        </>
+      )}
+    </ACard>
   );
 }
 
-function ToggleRow({
-  label,
-  checked,
-  onChange,
-  hint,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-  hint?: string;
-}) {
+function MarkdownAdminPreview({ style }: { style: MarkdownStyleMeta }) {
+  const swatch = MARKDOWN_STYLE_SWATCHES[style.id] ?? {
+    bg: "#ffffff",
+    accent: "var(--accent)",
+    code: "#f0eee8",
+    text: "#333",
+  };
   return (
-    <label className="flex items-start gap-3 rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] p-3 cursor-pointer hover:bg-[var(--surface-alt)]">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="mt-0.5"
-      />
-      <span className="min-w-0 flex-1">
-        <span className="block text-sm font-semibold text-[var(--text)]">
-          {label}
-        </span>
-        {hint && (
-          <span className="mt-0.5 block text-xs text-[var(--text-mute)]">
-            {hint}
-          </span>
-        )}
-      </span>
-    </label>
+    <div
+      className="relative h-[96px] p-3"
+      style={{ background: swatch.bg }}
+      aria-hidden
+    >
+      {/* Title block */}
+      <div className="mb-2 flex items-center gap-1.5">
+        <div
+          className="h-1.5 w-1.5 rounded-full"
+          style={{ background: swatch.accent }}
+        />
+        <div
+          className="h-1.5 rounded-full"
+          style={{ width: 56, background: swatch.accent, opacity: 0.85 }}
+        />
+      </div>
+      {/* Body lines */}
+      <div className="mb-1 h-1 rounded-full" style={{ width: "92%", background: swatch.text, opacity: 0.35 }} />
+      <div className="mb-1 h-1 rounded-full" style={{ width: "78%", background: swatch.text, opacity: 0.35 }} />
+      <div className="mb-2 h-1 rounded-full" style={{ width: "55%", background: swatch.text, opacity: 0.35 }} />
+      {/* Code block */}
+      <div className="flex gap-1">
+        <div className="h-2.5 rounded" style={{ width: "30%", background: swatch.code }} />
+        <div className="h-2.5 rounded" style={{ width: "20%", background: swatch.code, opacity: 0.7 }} />
+        <div className="h-2.5 rounded" style={{ width: "15%", background: swatch.code, opacity: 0.5 }} />
+      </div>
+    </div>
   );
 }
 
-// ── Sync Contacts ─────────────────────────────────────────────────────────────
+// ── Contacts section ────────────────────────────────────────────────────────
 
 function SyncContactsSection({ onAdminLost }: { onAdminLost: () => void }) {
   const [syncing, setSyncing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
 
   const onSync = async () => {
     setSyncing(true);
     try {
       const r = await syncContacts();
-      toast.success(`同步完成：共 ${r.total} 位联系人（刷新 ${r.synced}）`);
+      toast.success(`同步完成:共 ${r.total} 位联系人(刷新 ${r.synced})`);
+      setLastSyncedAt(new Date().toLocaleString("zh-CN"));
     } catch (e) {
       if (e instanceof AdminRequiredError) {
         onAdminLost();
@@ -1091,29 +1316,26 @@ function SyncContactsSection({ onAdminLost }: { onAdminLost: () => void }) {
   };
 
   return (
-    <section>
-      <Card className="shadow-[var(--shadow-sm)]">
-        <CardHeader className="pb-4">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Users className="h-4 w-4" />
-            联系人同步
-          </CardTitle>
-          <CardDescription>
-            从飞书通讯录拉取联系人，供 @ 提及功能使用。该操作只需要偶尔执行。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-            同步会访问飞书 API，并刷新本地联系人缓存。推荐在新增成员、改名或组织架构调整后执行。
-          </p>
-          <Button size="sm" onClick={onSync} disabled={syncing} className="shrink-0">
-            <Users className={`mr-1.5 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-            {syncing ? "同步中…" : "立即同步联系人"}
-          </Button>
-        </CardContent>
-      </Card>
-    </section>
+    <ACard>
+      <div className="px-5 py-5">
+        <p
+          className="m-0 max-w-2xl text-[13px] leading-6"
+          style={{ color: "var(--text-soft)" }}
+        >
+          从飞书通讯录拉取联系人,供 @ 提及功能使用。该操作只需要偶尔执行 ——
+          推荐在新增成员、改名或组织架构调整后执行。
+        </p>
+      </div>
+      <CardFoot hint={lastSyncedAt ? `上次同步:${lastSyncedAt}` : "尚未在本会话同步过"}>
+        <Button onClick={onSync} disabled={syncing} size="sm">
+          <Users className={`mr-1.5 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+          {syncing ? "同步中…" : "立即同步联系人"}
+        </Button>
+      </CardFoot>
+    </ACard>
   );
 }
+
+// ── Re-export for ProtectedRoute use ────────────────────────────────────────
 
 export { clearAdminPassword };

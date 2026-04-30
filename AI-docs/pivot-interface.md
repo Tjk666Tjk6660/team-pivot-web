@@ -282,6 +282,107 @@ matter 草稿在 `matter_payload` 字段（JSON）里承载全部 matter 专属�
 ### GET /api/admin/workspace-config
 - 作用：读取管理员工作区配置
 
+## Admin · Daily Report (v2)
+
+> 全部端点鉴权：Cookie + `X-Admin-Password` 头(`require_admin`)。Bearer PAT 不可用。
+> 时间字段统一返回 ISO 8601 字符串(Asia/Shanghai)。
+> 详细设计见 [`AI-docs/daily-report/`](./daily-report/)。
+
+### GET /api/admin/daily-report/jobs
+- 作用：列出所有定时任务(默认过滤 `archived`)
+- Query:
+  - `include_archived=true`：包含已归档
+- 返回：`Job[]`（字段同下方 GET /jobs/{id}）
+
+### POST /api/admin/daily-report/jobs
+- 作用：创建定时任务；`status=active` 时同步算 `next_run_at`
+- 请求体：
+  - `name`（必填,1–100 字符）
+  - `view`：`"company" | "personal"`
+  - `push_time`：`"HH:MM"` 24h 制
+  - `push_freq`：`"daily" | "weekdays" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun" | "month_start" | "month_end"`,默认 `weekdays`
+  - `window_hours`：`1–168`，默认 `24`
+  - `receiver_type`：`"groups" | "users"`
+  - `receiver_ids`：字符串数组，可为 `null`(=全部 bot 群,仅 `groups` 有效)
+  - `status`：`"active" | "paused"`，默认 `active`
+- 返回：完整 Job(状态码 201)
+
+### GET /api/admin/daily-report/jobs/{job_id}
+- 作用：取单条任务详情
+- 返回字段：
+  - `id` / `name` / `view` / `status`
+  - `push_time` / `push_freq` / `window_hours` / `channel`
+  - `receiver_type` / `receiver_ids`
+  - `next_run_at`（ISO，可 null）
+  - `last_run_id` / `last_status`
+  - `retry_count` / `last_notified_at`
+  - `created_by` / `created_at` / `updated_at`
+- 可能错误：`404 job not found`
+
+### PUT /api/admin/daily-report/jobs/{job_id}
+- 作用：部分更新任务配置(只传需要改的字段)
+- 可改字段：`name / view / push_time / push_freq / window_hours / receiver_type / receiver_ids`
+- 备注：
+  - `receiver_ids` 显式传 `[]` 或 `null` 都视为"清空回默认 bot 群"
+  - 改 `push_time` / `push_freq` 且 `status=active` 时,服务端重算 `next_run_at`
+- 可能错误：`404 job not found`、`409 cannot update archived job`
+
+### PUT /api/admin/daily-report/jobs/{job_id}/status
+- 作用：切换状态。`active` → 算 `next_run_at`；`paused`/`archived` → 清 `next_run_at`
+- 请求体：`{"status": "active" | "paused" | "archived"}`
+
+### DELETE /api/admin/daily-report/jobs/{job_id}
+- 作用：软删(置 `archived` + 清 `next_run_at`)；不会真 DELETE 行
+- 返回：`{"ok": true}`
+
+### POST /api/admin/daily-report/jobs/{job_id}/run-now
+- 作用：用该 job 配置立即跑一次(后台 thread,异步)；不影响 `next_run_at` / `retry_count` / `last_status`
+- 请求体：`{"dry_run"?: bool, "no_ai"?: bool}`
+- 返回：`{"ok": true, "run_id": int, "started_at": iso}`
+- 可能错误：`404 job not found`、`409 cannot run-now archived job`
+
+### POST /api/admin/daily-report/manual-trigger
+- 作用：不绑任何 job 的一次性触发；窗口 = `[now - window_hours, now)`
+- 请求体：
+  - `view`：`"company" | "personal"`
+  - `window_hours`：默认 24
+  - `receiver_type`：`"groups" | "users"`
+  - `receiver_ids`：`users` 类型必填且非空
+  - `dry_run`、`no_ai`：可选 bool
+- 返回：`{"ok": true, "run_id": int, "started_at": iso}`
+- 备注：runs 表 `job_id=null` `trigger_type="manual"`
+
+### GET /api/admin/daily-report/jobs/{job_id}/runs
+- 作用：该 job 的运行历史(分页,按 `started_at` DESC)
+- Query:
+  - `page`：默认 1,`>=1`
+  - `size`：默认 20,`1–200`
+- 返回：`{ items: Run[], page, size, total }`
+- Run 字段:
+  - `id` / `job_id` / `trigger_type` / `view`
+  - `started_at` / `finished_at`（可 null）
+  - `status`：`"running" | "succeeded" | "failed" | "partial" | "skipped"`
+  - `rc` / `cards_sent` / `cards_total`
+  - `ai_tokens_in` / `ai_tokens_out`
+  - `error`（≤200 字摘要）
+
+### GET /api/admin/daily-report/runs/{run_id}
+- 作用：单条 run 详情(含完整 `debug_json`)
+- 返回字段：与 `Run[]` 元素一致 + `debug_json`(JSON 字符串)
+- 可能错误：`404 run not found`
+
+### GET /api/admin/daily-report/admin-notify
+- 作用：取系统通知接收人(漏跑/失败告警走这里;不配置时 fallback 全部 bot 群)
+- 返回：`{"chat_ids": string[], "open_ids": string[]}`
+
+### PUT /api/admin/daily-report/admin-notify
+- 作用：写系统通知接收人(JSON 数组,空数组 = 清空)
+- 请求体：`{"chat_ids": string[], "open_ids": string[]}`
+
+### GET /api/admin/daily-report/feishu-chats
+- 作用：列出 bot 所在的飞书群(供 UI 多选选群)
+- 返回：`Array<{ chat_id, name, avatar }>`
+
 ## Matter API（设计草案）
 
 这一组接口服务于新的 `matter` 模型。第一版目标不是替换所有 thread 接口，而是在现有 discussion 基础上，逐步补出 `matter timeline + 文件创建 + 状态迁移` 的最小闭环。

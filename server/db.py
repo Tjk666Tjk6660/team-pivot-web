@@ -113,6 +113,58 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     updated_at   REAL NOT NULL,
     PRIMARY KEY (user_open_id, key)
 );
+-- Daily report v2: 多任务管理
+CREATE TABLE IF NOT EXISTS daily_report_jobs (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    name             TEXT NOT NULL,
+    view             TEXT NOT NULL CHECK(view IN ('company', 'personal')),
+    status           TEXT NOT NULL DEFAULT 'active'
+                     CHECK(status IN ('active', 'paused', 'archived')),
+    push_time        TEXT NOT NULL,                                  -- 'HH:MM' Asia/Shanghai
+    push_freq        TEXT NOT NULL DEFAULT 'weekdays',                -- 枚举值校验在代码层 (jobs_repo.PushFreq)
+    window_hours     INTEGER NOT NULL DEFAULT 24
+                     CHECK(window_hours BETWEEN 1 AND 168),
+    channel          TEXT NOT NULL DEFAULT 'feishu'
+                     CHECK(channel IN ('feishu')),                  -- v1 仅 feishu
+    receiver_type    TEXT NOT NULL
+                     CHECK(receiver_type IN ('groups', 'users')),
+    receiver_ids     TEXT,                                          -- JSON 数组,NULL = 默认全部 bot 群
+    next_run_at      REAL,                                          -- Unix epoch,active 时才有值
+    last_run_id      INTEGER,                                       -- 引用 daily_report_runs(id),代码层维护
+    last_status      TEXT,                                          -- 冗余 cache:succeeded/failed/partial/missed/skipped/running
+    retry_count      INTEGER NOT NULL DEFAULT 0,
+    last_notified_at REAL,                                          -- 上次"漏跑/失败通知"时间(去重)
+    created_by       TEXT,                                          -- creator open_id
+    created_at       REAL NOT NULL,
+    updated_at       REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_daily_report_jobs_active_due
+    ON daily_report_jobs(status, next_run_at);
+CREATE INDEX IF NOT EXISTS idx_daily_report_jobs_status
+    ON daily_report_jobs(status);
+
+CREATE TABLE IF NOT EXISTS daily_report_runs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id          INTEGER,                                        -- NULL = 手动一次性触发(不绑 job)
+    trigger_type    TEXT NOT NULL
+                    CHECK(trigger_type IN ('scheduled', 'manual', 'retry', 'makeup')),
+    view            TEXT NOT NULL,                                  -- 冗余:即使 job 删了也能查历史
+    started_at      REAL NOT NULL,
+    finished_at     REAL,
+    status          TEXT NOT NULL DEFAULT 'running'
+                    CHECK(status IN ('running', 'succeeded', 'failed', 'partial', 'skipped')),
+    rc              INTEGER,
+    cards_sent      INTEGER,
+    cards_total     INTEGER,
+    ai_tokens_in    INTEGER,
+    ai_tokens_out   INTEGER,
+    error           TEXT,
+    debug_json      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_daily_report_runs_job_started
+    ON daily_report_runs(job_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_daily_report_runs_started
+    ON daily_report_runs(started_at);
 """
 
 
@@ -190,6 +242,67 @@ def _migrate(conn) -> None:
     # and migrated ones (column came from the ALTER above). Cheap on every boot.
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_contacts_pinyin ON contacts(pinyin)"
+    )
+
+    _drop_daily_report_jobs_push_freq_check(conn)
+
+
+def _drop_daily_report_jobs_push_freq_check(conn) -> None:
+    """老库 daily_report_jobs.push_freq 上有 CHECK(push_freq IN ('daily','weekdays'))
+    限制,扩枚举(增加 mon-sun / month_start / month_end)需要先去掉 CHECK。
+    SQLite 不支持 ALTER CHECK,只能重建表。
+
+    幂等:检测 sqlite_master.sql 含 'CHECK(push_freq IN' 时才重建,
+    新部署或已迁移过的 DB 跳过。"""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='daily_report_jobs'"
+    ).fetchone()
+    if not row:
+        return  # 表还没建,SCHEMA 里已经是无 CHECK 版本,无需迁移
+    sql = row["sql"] or ""
+    if "CHECK(push_freq IN" not in sql:
+        return  # 已是新结构(或 SCHEMA 直建的新表),跳过
+
+    conn.execute("""
+        CREATE TABLE daily_report_jobs_new (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            name             TEXT NOT NULL,
+            view             TEXT NOT NULL CHECK(view IN ('company', 'personal')),
+            status           TEXT NOT NULL DEFAULT 'active'
+                             CHECK(status IN ('active', 'paused', 'archived')),
+            push_time        TEXT NOT NULL,
+            push_freq        TEXT NOT NULL DEFAULT 'weekdays',
+            window_hours     INTEGER NOT NULL DEFAULT 24
+                             CHECK(window_hours BETWEEN 1 AND 168),
+            channel          TEXT NOT NULL DEFAULT 'feishu'
+                             CHECK(channel IN ('feishu')),
+            receiver_type    TEXT NOT NULL
+                             CHECK(receiver_type IN ('groups', 'users')),
+            receiver_ids     TEXT,
+            next_run_at      REAL,
+            last_run_id      INTEGER,
+            last_status      TEXT,
+            retry_count      INTEGER NOT NULL DEFAULT 0,
+            last_notified_at REAL,
+            created_by       TEXT,
+            created_at       REAL NOT NULL,
+            updated_at       REAL NOT NULL
+        )
+    """)
+    conn.execute(
+        "INSERT INTO daily_report_jobs_new SELECT * FROM daily_report_jobs"
+    )
+    conn.execute("DROP TABLE daily_report_jobs")
+    conn.execute(
+        "ALTER TABLE daily_report_jobs_new RENAME TO daily_report_jobs"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_daily_report_jobs_active_due"
+        " ON daily_report_jobs(status, next_run_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_daily_report_jobs_status"
+        " ON daily_report_jobs(status)"
     )
 
 

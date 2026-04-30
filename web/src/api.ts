@@ -588,6 +588,18 @@ export async function searchContacts(q: string): Promise<Contact[]> {
   return body.items;
 }
 
+export async function fetchContactsByIds(open_ids: string[]): Promise<Contact[]> {
+  if (open_ids.length === 0) return [];
+  const ids = open_ids.join(",");
+  const r = await fetch(`/api/contacts/by-ids?ids=${encodeURIComponent(ids)}`, {
+    credentials: "include",
+  });
+  await throwIfSessionExpired(r);
+  if (!r.ok) throw new Error(`/api/contacts/by-ids failed: ${r.status}`);
+  const body = (await r.json()) as { items: Contact[] };
+  return body.items;
+}
+
 export async function syncContacts(): Promise<{ ok: true; synced: number; total: number }> {
   const r = await adminFetch("/api/contacts/sync", { method: "POST" });
   const body = await r.json().catch(() => ({ detail: r.statusText }));
@@ -895,68 +907,247 @@ export async function updateAdminMarkdownSettings(body: {
 
 // ── Daily report admin (Phase 5) ─────────────────────────────────────────────
 
-export type DailyReportConfig = {
-  enabled: boolean;
-  company_enabled: boolean;
-  personal_enabled: boolean;
-  time_window_hours: number;
-  push_time: string;                // "HH:MM" Asia/Shanghai
-  push_freq: "daily" | "weekdays";  // 默认 weekdays(仅周一到周五)
+// ── Daily Report v2 (multi-job) ─────────────────────────────────────────────
+
+export type DailyReportPushFreq =
+  | "daily"
+  | "weekdays"
+  | "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun"
+  | "month_start"
+  | "month_end";
+
+export type DailyReportJob = {
+  id: number;
+  name: string;
+  view: "company" | "personal";
+  status: "active" | "paused" | "archived";
+  push_time: string;                          // "HH:MM"
+  push_freq: DailyReportPushFreq;
+  window_hours: number;
+  channel: "feishu";
+  receiver_type: "groups" | "users";
+  receiver_ids: string[] | null;              // null = 默认全部 bot 群
+  next_run_at: string | null;                 // ISO
+  last_run_id: number | null;
+  last_status: string | null;
+  retry_count: number;
+  last_notified_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
-export type DailyReportLastRun = {
-  run_id: string | null;
-  started_at: string | null;
+export type DailyReportRun = {
+  id: number;
+  job_id: number | null;                      // null = 手动触发
+  trigger_type: "scheduled" | "manual" | "retry" | "makeup";
+  view: string;
+  started_at: string;
   finished_at: string | null;
+  status: "running" | "succeeded" | "failed" | "partial" | "skipped";
   rc: number | null;
-  debug: Record<string, unknown> | null;
+  cards_sent: number | null;
+  cards_total: number | null;
+  ai_tokens_in: number | null;
+  ai_tokens_out: number | null;
   error: string | null;
 };
 
-export async function fetchDailyReportConfig(): Promise<DailyReportConfig> {
-  const r = await adminFetch("/api/admin/daily-report/config");
-  if (!r.ok) {
-    const d = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(d.detail || `/api/admin/daily-report/config failed: ${r.status}`);
-  }
-  return (await r.json()) as DailyReportConfig;
+export type DailyReportRunDetail = DailyReportRun & {
+  debug_json: string | null;
+};
+
+export type DailyReportRunsPage = {
+  items: DailyReportRun[];
+  page: number;
+  size: number;
+  total: number;
+};
+
+export type AdminNotifyConfig = {
+  chat_ids: string[];
+  open_ids: string[];
+};
+
+export type FeishuChat = {
+  chat_id: string;
+  name: string;
+  avatar: string | null;
+};
+
+export type DailyReportJobIn = {
+  name: string;
+  view: "company" | "personal";
+  push_time: string;
+  push_freq?: DailyReportPushFreq;
+  window_hours?: number;
+  receiver_type: "groups" | "users";
+  receiver_ids?: string[] | null;
+  status?: "active" | "paused";
+};
+
+export type DailyReportJobUpdate = Partial<{
+  name: string;
+  view: "company" | "personal";
+  push_time: string;
+  push_freq: DailyReportPushFreq;
+  window_hours: number;
+  receiver_type: "groups" | "users";
+  receiver_ids: string[] | null;
+}>;
+
+const V2_BASE = "/api/admin/daily-report";
+
+export async function fetchDailyReportJobs(
+  includeArchived = false,
+): Promise<DailyReportJob[]> {
+  const url = `${V2_BASE}/jobs${includeArchived ? "?include_archived=true" : ""}`;
+  const r = await adminFetch(url);
+  if (!r.ok) throw new Error(`list jobs failed: ${r.status}`);
+  return (await r.json()) as DailyReportJob[];
 }
 
-export async function updateDailyReportConfig(body: DailyReportConfig): Promise<void> {
-  const r = await adminFetch("/api/admin/daily-report/config", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) {
-    const d = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(d.detail || `update daily-report config failed: ${r.status}`);
-  }
-}
-
-export async function triggerDailyReport(body: {
-  dry_run: boolean;
-  no_ai: boolean;
-}): Promise<{ ok: boolean; run_id: string; started_at: string }> {
-  const r = await adminFetch("/api/admin/daily-report/trigger", {
+export async function createDailyReportJob(
+  body: DailyReportJobIn,
+): Promise<DailyReportJob> {
+  const r = await adminFetch(`${V2_BASE}/jobs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   if (!r.ok) {
     const d = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(d.detail || `trigger daily-report failed: ${r.status}`);
+    throw new Error(d.detail || `create job failed: ${r.status}`);
   }
-  return r.json();
+  return (await r.json()) as DailyReportJob;
 }
 
-export async function fetchDailyReportLastRun(): Promise<DailyReportLastRun> {
-  const r = await adminFetch("/api/admin/daily-report/last-run");
+export async function updateDailyReportJob(
+  id: number,
+  body: DailyReportJobUpdate,
+): Promise<DailyReportJob> {
+  const r = await adminFetch(`${V2_BASE}/jobs/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   if (!r.ok) {
     const d = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(d.detail || `last-run failed: ${r.status}`);
+    throw new Error(d.detail || `update job failed: ${r.status}`);
   }
-  return (await r.json()) as DailyReportLastRun;
+  return (await r.json()) as DailyReportJob;
+}
+
+export async function setDailyReportJobStatus(
+  id: number,
+  status: "active" | "paused" | "archived",
+): Promise<DailyReportJob> {
+  const r = await adminFetch(`${V2_BASE}/jobs/${id}/status`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status }),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `set status failed: ${r.status}`);
+  }
+  return (await r.json()) as DailyReportJob;
+}
+
+export async function deleteDailyReportJob(id: number): Promise<void> {
+  const r = await adminFetch(`${V2_BASE}/jobs/${id}`, { method: "DELETE" });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `delete job failed: ${r.status}`);
+  }
+}
+
+export type DailyReportTriggerResponse = {
+  ok: boolean;
+  run_id: number;
+  started_at: string;
+};
+
+export async function runDailyReportJobNow(
+  id: number,
+  body: { dry_run?: boolean; no_ai?: boolean } = {},
+): Promise<DailyReportTriggerResponse> {
+  const r = await adminFetch(`${V2_BASE}/jobs/${id}/run-now`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `run-now failed: ${r.status}`);
+  }
+  return (await r.json()) as DailyReportTriggerResponse;
+}
+
+export async function manualTriggerDailyReport(body: {
+  view: "company" | "personal";
+  window_hours?: number;
+  receiver_type: "groups" | "users";
+  receiver_ids?: string[] | null;
+  dry_run?: boolean;
+  no_ai?: boolean;
+}): Promise<DailyReportTriggerResponse> {
+  const r = await adminFetch(`${V2_BASE}/manual-trigger`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `manual-trigger failed: ${r.status}`);
+  }
+  return (await r.json()) as DailyReportTriggerResponse;
+}
+
+export async function fetchDailyReportRunsPage(
+  jobId: number,
+  page = 1,
+  size = 20,
+): Promise<DailyReportRunsPage> {
+  const r = await adminFetch(
+    `${V2_BASE}/jobs/${jobId}/runs?page=${page}&size=${size}`,
+  );
+  if (!r.ok) throw new Error(`runs page failed: ${r.status}`);
+  return (await r.json()) as DailyReportRunsPage;
+}
+
+export async function fetchDailyReportRun(
+  runId: number,
+): Promise<DailyReportRunDetail> {
+  const r = await adminFetch(`${V2_BASE}/runs/${runId}`);
+  if (!r.ok) throw new Error(`get run failed: ${r.status}`);
+  return (await r.json()) as DailyReportRunDetail;
+}
+
+export async function fetchAdminNotifyConfig(): Promise<AdminNotifyConfig> {
+  const r = await adminFetch(`${V2_BASE}/admin-notify`);
+  if (!r.ok) throw new Error(`admin-notify get failed: ${r.status}`);
+  return (await r.json()) as AdminNotifyConfig;
+}
+
+export async function updateAdminNotifyConfig(
+  body: AdminNotifyConfig,
+): Promise<void> {
+  const r = await adminFetch(`${V2_BASE}/admin-notify`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `admin-notify put failed: ${r.status}`);
+  }
+}
+
+export async function fetchFeishuChats(): Promise<FeishuChat[]> {
+  const r = await adminFetch(`${V2_BASE}/feishu-chats`);
+  if (!r.ok) throw new Error(`feishu-chats failed: ${r.status}`);
+  return (await r.json()) as FeishuChat[];
 }
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
