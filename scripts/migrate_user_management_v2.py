@@ -574,10 +574,15 @@ def _process_downstream(
     # Step d-g: rebuild the table to drop user_open_id + adjust PK, then
     # re-create indexes.
     _execute_sql_block(conn, spec.new_schema)
+    existing_cols = set(_table_columns(conn, spec.name))
     col_list = ", ".join(spec.copy_columns)
+    select_list = ", ".join(
+        col if col in existing_cols else _default_select_expr(col)
+        for col in spec.copy_columns
+    )
     conn.execute(
         f"INSERT INTO __new_{spec.name} ({col_list})"
-        f" SELECT {col_list} FROM {spec.name}"
+        f" SELECT {select_list} FROM {spec.name}"
     )
     moved = conn.execute(
         f"SELECT COUNT(*) FROM __new_{spec.name}"
@@ -595,6 +600,33 @@ def _process_downstream(
     for idx_sql in spec.indexes:
         conn.execute(idx_sql)
     return True
+
+
+def _default_select_expr(column: str) -> str:
+    """Default values for optional columns introduced by later schema versions.
+
+    Production databases may be older than this migration script. During a
+    rebuild we can safely seed these columns with the same defaults used by
+    server/db.py's online migrations.
+    """
+    defaults = {
+        "mentions_json": "NULL",
+        "reply_to": "NULL",
+        "references_json": "'[]'",
+        "summary": "''",
+        "matter_payload_json": "NULL",
+        "user_access_token": "NULL",
+        "context_files_json": "'[]'",
+        "reference_files_json": "'[]'",
+        "reply_target": "NULL",
+        "schema_ver": "1",
+    }
+    if column not in defaults:
+        raise MigrationError(
+            f"cannot rebuild table: source column '{column}' is missing and"
+            " no migration default is defined"
+        )
+    return defaults[column]
 
 
 # ─── Top-level driver ─────────────────────────────────────────────────────
