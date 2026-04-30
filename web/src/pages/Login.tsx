@@ -1,4 +1,7 @@
+import { PendingApproval, reasonFromQuery } from "@/pages/PendingApproval";
+
 export function Login() {
+  const reason = reasonFromQuery();
   return (
     <div
       className="grid min-h-screen lg:grid-cols-2"
@@ -104,6 +107,7 @@ export function Login() {
             boxShadow: "var(--shadow-md)",
           }}
         >
+          {reason && <PendingApproval reason={reason} />}
           <div
             className="mb-3 text-[10.5px] font-bold uppercase tracking-[0.22em] font-meta"
             style={{ color: "var(--text-mute)" }}
