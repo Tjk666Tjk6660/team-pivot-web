@@ -86,10 +86,15 @@ export function AdminLayout() {
         >
           <Link
             to="/"
-            className="flex items-center gap-1.5 text-[12.5px] font-meta hover:text-[var(--text)]"
-            style={{ color: "var(--text-mute)" }}
+            className="flex items-center justify-center gap-2 rounded-[var(--r-sm)] px-3 py-2 text-[14px] font-semibold transition-colors hover:opacity-90"
+            style={{
+              background: "var(--surface)",
+              color: "var(--text)",
+              border: "1px solid var(--line-strong, var(--line))",
+              fontFamily: "var(--font-serif)",
+            }}
           >
-            <ArrowLeft className="h-3.5 w-3.5" /> 返回 Pivot
+            <ArrowLeft className="h-4 w-4" /> 返回 Pivot 主页
           </Link>
         </div>
       </aside>
