@@ -9,6 +9,16 @@ from server.db import Database
 KIND_FILE = "file"
 KIND_MENTION = "mention"
 REASON_COMMENT_MENTION = "comment_mention"
+REASON_MATTER_OWNER_CHANGED = "matter_owner_changed"
+
+# Matter-level events (e.g. owner transfer) aren't tied to a specific file,
+# but the schema requires a filename. Use empty string as the sentinel:
+# - excluded from `file_reasons_for_matter` (kind='file' only)
+# - excluded from comment-highlight matching in `unread_mention_keys_for_matter`
+#   because no real comment lives on the empty filename
+# - cleared via `mark_all_read_for_file` whenever the user reads any file in
+#   the same matter (see SQL below)
+MATTER_EVENT_FILENAME = ""
 
 
 @dataclass(frozen=True)
@@ -86,6 +96,24 @@ class RelevanceEventsRepo:
             REASON_COMMENT_MENTION, comment_at, actor_pinyin, read_at,
         )
 
+    def insert_matter_event(
+        self,
+        user_open_id: str,
+        matter_id: str,
+        *,
+        reason: str,
+        event_at: str,
+        actor_pinyin: str,
+        read_at: float | None = None,
+    ) -> bool:
+        """INSERT OR IGNORE a matter-level event row (kind='mention' so it
+        adds to the red badge, filename='' sentinel since no specific file).
+        Used for matter owner transfers."""
+        return self._insert_or_ignore(
+            user_open_id, matter_id, MATTER_EVENT_FILENAME, KIND_MENTION,
+            reason, event_at, actor_pinyin, read_at,
+        )
+
     def _insert_or_ignore(
         self,
         user_open_id: str,
@@ -155,14 +183,20 @@ class RelevanceEventsRepo:
         """Mark every unread row on (user, matter, filename) as read.
         Returns the number of rows updated. Both kind='file' and
         kind='mention' rows on this file are touched.
+
+        Also clears matter-level event rows (filename=MATTER_EVENT_FILENAME)
+        for the same (user, matter): owner-transfer notifications have no
+        natural file to bind to, and reading any file in the matter implies
+        the user has engaged with it.
         """
         now = time()
         with self._db.connect() as conn:
             cur = conn.execute(
                 "UPDATE relevance_events SET read_at = ?"
-                " WHERE user_open_id = ? AND matter_id = ? AND filename = ?"
+                " WHERE user_open_id = ? AND matter_id = ?"
+                "   AND (filename = ? OR filename = ?)"
                 "   AND read_at IS NULL",
-                (now, user_open_id, matter_id, filename),
+                (now, user_open_id, matter_id, filename, MATTER_EVENT_FILENAME),
             )
             return cur.rowcount
 

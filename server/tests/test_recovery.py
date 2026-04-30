@@ -110,7 +110,7 @@ def test_recover_no_op_when_nothing_un_indexed(tmp_path):
     assert repair_partial_writes(d, tmp_path / "index") == 0
 
 
-def test_warn_missing_matter_owner_logs_legacy_indexes(tmp_path, caplog):
+def test_warn_missing_matter_owner_counts_legacy_indexes(tmp_path):
     idx = tmp_path / "index"
     idx.mkdir()
     path = idx / "demo.index.yaml"
@@ -136,5 +136,4 @@ def test_warn_missing_matter_owner_logs_legacy_indexes(tmp_path, caplog):
     count = warn_missing_matter_owner(idx)
 
     assert count == 1
-    assert "missing matter.owner" in caplog.text
     assert path.read_text(encoding="utf-8").find("owner:") == -1

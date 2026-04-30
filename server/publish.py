@@ -394,6 +394,52 @@ def _extract_notify_mentions(
     return open_ids, (text or None)
 
 
+def _resolve_file_author_recipients(
+    matter_data: dict,
+    target_file: str,
+    *,
+    actor: User,
+    users: UserRepo | None,
+    already_notified: list[str],
+) -> list[str]:
+    """Find the open_ids that should be DMed/relevance-rowed because the
+    comment is on *their* file — i.e. the targeted timeline item's creator
+    and owner. Skips: the actor (self), unregistered identifiers (no User
+    row to map to an open_id), and anyone already in ``already_notified``
+    (the explicit @-mention list — they're handled separately).
+    Result is order-stable + deduped."""
+    if users is None or not target_file:
+        return []
+    item = _find_timeline_item(matter_data, target_file)
+    if item is None:
+        return []
+    candidates: list[str] = []
+    seen: set[str] = set(already_notified or [])
+    for pinyin in (item.get("creator"), item.get("owner")):
+        if not pinyin:
+            continue
+        u = users.get_by_any_id(str(pinyin))
+        if u is None or not u.open_id:
+            continue
+        if u.open_id == actor.open_id or u.open_id in seen:
+            continue
+        candidates.append(u.open_id)
+        seen.add(u.open_id)
+    return candidates
+
+
+def _find_timeline_item(matter_data: dict, target_file: str) -> dict | None:
+    """Match by full path or basename — the comments API accepts either, and
+    the matter index stores the full ``discussions/<cat>/<slug>/<file>`` form."""
+    if not target_file:
+        return None
+    for it in matter_data.get("timeline") or []:
+        rel = it.get("file") or ""
+        if rel == target_file or rel.endswith("/" + target_file):
+            return it
+    return None
+
+
 def _resolve_owner_name(owner: str | None, users: UserRepo | None) -> str | None:
     if not owner:
         return None
@@ -761,6 +807,16 @@ def publish_matter_comment(
         list(mentions) if mentions else None, contacts,
     )
 
+    # File author / owner deserve a notification when someone comments on
+    # their file, even if they weren't explicitly @-ed: the relevance system
+    # only fires on explicit mentions (see relevance_writer), and the
+    # standalone-mention card only highlights @-ed users. Without this, the
+    # file's author is completely silent about activity on their own work.
+    file_author_open_ids = _resolve_file_author_recipients(
+        data, target_file, actor=user, users=users,
+        already_notified=notify_open_ids,
+    )
+
     now = _now_iso()
     comment = {
         "body": body,
@@ -794,11 +850,16 @@ def publish_matter_comment(
         matter_id=matter_id,
         actor=user.pinyin,
         at=now,
-        payload={"target_file": target_file, "body": body, "mentions": mentions or []},
+        payload={
+            "target_file": target_file,
+            "body": body,
+            "mentions": mentions or [],
+            "file_author_open_ids": file_author_open_ids,
+        },
     )
 
     # Notifier: reuse the standalone-mention path so @-recipients get a DM.
-    if notifier is not None and notify_open_ids:
+    if notifier is not None and (notify_open_ids or file_author_open_ids):
         matter_meta = data.get("matter") or {}
         matter_title = matter_meta.get("title") or matter_id
         category = _derive_category_from_timeline(data) or "matters"
@@ -809,6 +870,7 @@ def publish_matter_comment(
             author_name=user.name,
             mention_open_ids=notify_open_ids,
             mention_comments=body,
+            dm_extra_open_ids=file_author_open_ids or None,
         )
 
     return {"matter_id": matter_id, "target_file": target_file, "at": now}
@@ -874,6 +936,7 @@ def publish_matter_owner_change(
     matter_snapshot = read_matter_index(index_path) or {}
     matter_meta = matter_snapshot.get("matter") or {}
     category = _derive_category_from_timeline(matter_snapshot) or "matters"
+    matter_creator = _matter_creator_pinyin(matter_snapshot)
     emit(
         TOPIC_MATTER_OWNER_CHANGED,
         matter_id=matter_id,
@@ -884,6 +947,11 @@ def publish_matter_owner_change(
             "to_owner": to_owner,
             "reason": reason,
             "status_change": dict(status_change) if status_change else None,
+            # matter_creator: pinyin of the first non-event timeline item's
+            # creator. Pre-resolved here so relevance_writer doesn't re-read
+            # the index. Used to mark the matter creator as "与我相关" on
+            # ownership transfers.
+            "matter_creator": matter_creator,
         },
     )
     if notifier is not None:
@@ -942,6 +1010,18 @@ def _effective_matter_owner(matter_data: dict) -> str | None:
         if item.get("type") == "owner_change":
             continue
         return item.get("owner") or item.get("creator")
+    return None
+
+
+def _matter_creator_pinyin(matter_data: dict) -> str | None:
+    """First non-event timeline item's creator (pinyin). Mirrors how
+    api/matters._summarize_matter derives the matter-level creator field —
+    keep the two in lock-step."""
+    for item in matter_data.get("timeline") or []:
+        if item.get("type") == "owner_change":
+            continue
+        creator = item.get("creator")
+        return str(creator) if creator else None
     return None
 
 
