@@ -22,24 +22,41 @@ export class SessionExpiredError extends Error {
 
 let loginRedirectStarted = false;
 
-function isSessionExpiredDetail(detail: unknown): boolean {
-  return detail === "invalid_token" || detail === "not logged in";
-}
+const SESSION_DEAD_DETAILS = new Set([
+  "invalid_token",
+  "not logged in",
+]);
 
-function redirectToLogin(): void {
+const STATUS_REASON_DETAILS = new Set([
+  "suspended",
+  "deleted",
+]);
+
+function redirectToLogin(reason?: string): void {
   if (loginRedirectStarted || typeof window === "undefined") return;
   loginRedirectStarted = true;
   const current = window.location.href;
-  const next = window.location.pathname.startsWith("/login")
-    ? window.location.origin + "/"
-    : current;
-  window.location.assign(`/login?next=${encodeURIComponent(next)}`);
+  const params = new URLSearchParams();
+  // 只在不是从 /login 来 + 没有 reason 时才带 next，避免循环或覆盖 reason 的视觉。
+  if (reason) {
+    params.set("reason", reason);
+  } else if (!window.location.pathname.startsWith("/login")) {
+    params.set("next", current);
+  }
+  const qs = params.toString();
+  window.location.assign(`/login${qs ? `?${qs}` : ""}`);
 }
 
 async function throwIfSessionExpired(resp: Response): Promise<void> {
   if (resp.status !== 401) return;
   const body = await resp.clone().json().catch(() => ({}));
-  if (isSessionExpiredDetail((body as { detail?: unknown }).detail)) {
+  const detail = (body as { detail?: unknown }).detail;
+  if (typeof detail !== "string") return;
+  if (STATUS_REASON_DETAILS.has(detail)) {
+    redirectToLogin(detail);
+    throw new SessionExpiredError();
+  }
+  if (SESSION_DEAD_DETAILS.has(detail)) {
     redirectToLogin();
     throw new SessionExpiredError();
   }
@@ -1048,9 +1065,15 @@ export async function* streamAIChat(
   );
   if (!resp.ok) {
     const d = await resp.json().catch(() => ({ detail: resp.statusText }));
-    if (resp.status === 401 && isSessionExpiredDetail(d.detail)) {
-      redirectToLogin();
-      throw new SessionExpiredError();
+    if (resp.status === 401 && typeof d.detail === "string") {
+      if (STATUS_REASON_DETAILS.has(d.detail)) {
+        redirectToLogin(d.detail);
+        throw new SessionExpiredError();
+      }
+      if (SESSION_DEAD_DETAILS.has(d.detail)) {
+        redirectToLogin();
+        throw new SessionExpiredError();
+      }
     }
     const detail = Array.isArray(d.detail)
       ? d.detail

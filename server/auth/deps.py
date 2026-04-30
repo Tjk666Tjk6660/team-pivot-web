@@ -12,6 +12,16 @@ from server.pivot_users import PivotUser, PivotUserRepo
 BEARER_PREFIX = "Bearer "
 
 
+class _BlockedUser(Exception):
+    """Internal sentinel: the resolved user exists but is suspended /
+    deleted. Carries the status for the dependency factory to surface
+    as detail so the frontend can route to /login?reason=<status>."""
+
+    def __init__(self, status: str) -> None:
+        super().__init__(status)
+        self.status = status
+
+
 def _resolve_user(user_id: str, users: PivotUserRepo,
                   on_block_cleanup: Callable[[], None]) -> PivotUser | None:
     u = users.get(user_id)
@@ -20,7 +30,7 @@ def _resolve_user(user_id: str, users: PivotUserRepo,
         return None
     if u.status != "active":
         on_block_cleanup()
-        return None
+        raise _BlockedUser(u.status)
     return u
 
 
@@ -59,9 +69,16 @@ def make_current_user(
         sid: str | None = Cookie(default=None),
         authorization: str | None = Header(default=None),
     ) -> PivotUser:
-        u = _user_from_session(sid, sessions, users)
-        if u is None:
-            u = _user_from_bearer(authorization, tokens, users)
+        try:
+            u = _user_from_session(sid, sessions, users)
+            if u is None:
+                u = _user_from_bearer(authorization, tokens, users)
+        except _BlockedUser as blk:
+            # 状态被改成 suspended / deleted —— session 已清，给前端
+            # 一个能区分的 detail 以便跳 /login?reason=<status>。
+            raise HTTPException(
+                status_code=401, detail=blk.status,
+            ) from None
         if u is None:
             raise HTTPException(status_code=401, detail="invalid_token")
         return u
@@ -72,7 +89,12 @@ def make_current_user_cookie_only(
     sessions: SessionStore, users: PivotUserRepo,
 ) -> Callable:
     def current_user_cookie(sid: str | None = Cookie(default=None)) -> PivotUser:
-        u = _user_from_session(sid, sessions, users)
+        try:
+            u = _user_from_session(sid, sessions, users)
+        except _BlockedUser as blk:
+            raise HTTPException(
+                status_code=401, detail=blk.status,
+            ) from None
         if u is None:
             raise HTTPException(status_code=401, detail="not logged in")
         return u
@@ -101,7 +123,12 @@ def make_require_admin_user_cookie(
     here — admin-scoped endpoints stay browser-only.
     """
     def admin(sid: str | None = Cookie(default=None)) -> PivotUser:
-        u = _user_from_session(sid, sessions, users)
+        try:
+            u = _user_from_session(sid, sessions, users)
+        except _BlockedUser as blk:
+            raise HTTPException(
+                status_code=401, detail=blk.status,
+            ) from None
         if u is None:
             raise HTTPException(status_code=401, detail="not logged in")
         if u.role != "admin":

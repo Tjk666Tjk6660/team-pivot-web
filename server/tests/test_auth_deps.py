@@ -43,6 +43,8 @@ def test_suspended_user_blocked_via_cookie(stack):
     with pytest.raises(HTTPException) as exc:
         dep(sid=sid, authorization=None)
     assert exc.value.status_code == 401
+    # Detail carries the status so the frontend can route to /login?reason=
+    assert exc.value.detail == "suspended"
 
 
 def test_deleted_user_blocked_via_cookie(stack):
@@ -50,8 +52,10 @@ def test_deleted_user_blocked_via_cookie(stack):
     sid = sessions.create(pivot_user_id=user.id)
     users.update_status(user_id=user.id, status="deleted", note=None, changed_by=user.id)
     dep = make_current_user(sessions, users, api_tokens)
-    with pytest.raises(HTTPException):
+    with pytest.raises(HTTPException) as exc:
         dep(sid=sid, authorization=None)
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "deleted"
 
 
 def test_session_deleted_after_status_block(stack):
