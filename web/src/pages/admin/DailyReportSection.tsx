@@ -656,7 +656,9 @@ function JobEditDrawer({
   const [pushFreq, setPushFreq] = useState<DailyReportPushFreq>(
     job?.push_freq ?? "weekdays",
   );
-  const [windowHours, setWindowHours] = useState(job?.window_hours ?? 24);
+  const [windowHours, setWindowHours] = useState<number | null>(
+    job?.window_hours ?? 24,
+  );
   const [receiverType, setReceiverType] = useState<"groups" | "users">(
     job?.receiver_type ?? "groups",
   );
@@ -681,7 +683,7 @@ function JobEditDrawer({
           view,
           push_time: pushTime,
           push_freq: pushFreq,
-          window_hours: windowHours,
+          window_hours: windowHours ?? 24,
           receiver_type: receiverType,
           receiver_ids: receiverIds.length > 0 ? receiverIds : null,
           status: paused ? "paused" : "active",
@@ -694,7 +696,7 @@ function JobEditDrawer({
           view,
           push_time: pushTime,
           push_freq: pushFreq,
-          window_hours: windowHours,
+          window_hours: windowHours ?? 24,
           receiver_type: receiverType,
           receiver_ids: receiverIds.length > 0 ? receiverIds : null,
         };
@@ -789,10 +791,20 @@ function JobEditDrawer({
               type="number"
               min={1}
               max={168}
-              value={windowHours}
-              onChange={(e) =>
-                setWindowHours(Number(e.target.value) || 24)
-              }
+              value={windowHours ?? ""}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "") {
+                  setWindowHours(null);
+                  return;
+                }
+                const n = Number(v);
+                if (!Number.isNaN(n)) setWindowHours(n);
+              }}
+              onBlur={() => {
+                if (windowHours === null || windowHours < 1)
+                  setWindowHours(24);
+              }}
             />
             <FieldHelp>1–168 小时</FieldHelp>
           </div>
@@ -1202,7 +1214,7 @@ function ManualTriggerCard({
   chats: FeishuChat[];
 }) {
   const [view, setView] = useState<"company" | "personal">("company");
-  const [windowHours, setWindowHours] = useState(24);
+  const [windowHours, setWindowHours] = useState<number | null>(24);
   const [receiverType, setReceiverType] = useState<"groups" | "users">("groups");
   const [receiverIds, setReceiverIds] = useState<string[]>([]);
   const [openIdNames, setOpenIdNames] = useState<Record<string, string>>({});
@@ -1248,7 +1260,7 @@ function ManualTriggerCard({
     try {
       const r = await manualTriggerDailyReport({
         view,
-        window_hours: windowHours,
+        window_hours: windowHours ?? 24,
         receiver_type: receiverType,
         receiver_ids: receiverIds.length > 0 ? receiverIds : null,
       });
@@ -1307,8 +1319,20 @@ function ManualTriggerCard({
               type="number"
               min={1}
               max={168}
-              value={windowHours}
-              onChange={(e) => setWindowHours(Number(e.target.value) || 24)}
+              value={windowHours ?? ""}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "") {
+                  setWindowHours(null);
+                  return;
+                }
+                const n = Number(v);
+                if (!Number.isNaN(n)) setWindowHours(n);
+              }}
+              onBlur={() => {
+                if (windowHours === null || windowHours < 1)
+                  setWindowHours(24);
+              }}
             />
           </div>
         </div>
