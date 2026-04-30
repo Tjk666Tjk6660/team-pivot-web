@@ -803,10 +803,14 @@ export function NewMatterGuidedFlow({
           <PreviewPanel
             data={data}
             phase={phase}
+            me={me}
+            availableCategories={availableCategories}
             // Show streaming body during initial drafting AND active revision.
             streamingBody={revising || phase === "drafting" ? streamingBody : ""}
             isStreaming={revising || phase === "drafting"}
             resolvedNames={resolvedNames}
+            onUpdateData={(patch) => setData((d) => ({ ...d, ...patch }))}
+            onSelectCategory={(category) => setData((d) => ({ ...d, category }))}
             onEditBody={(b) => setData((d) => ({ ...d, body: b }))}
             onEditSummary={(s) => setData((d) => ({ ...d, summary: s }))}
             canEdit={phase === "review" && !revising}
@@ -1303,60 +1307,258 @@ function ReviseStep({
   );
 }
 
+function CategoryPicker({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: string[];
+  onChange: (category: string) => void;
+}) {
+  const [query, setQuery] = useState(value);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    setQuery(value);
+  }, [value]);
+
+  const normalizedQuery = query.trim();
+  const filtered = options
+    .filter((cat) => cat.toLowerCase().includes(normalizedQuery.toLowerCase()))
+    .slice(0, 8);
+  const exact = options.some(
+    (cat) => cat.toLowerCase() === normalizedQuery.toLowerCase(),
+  );
+  const isSelectedCustom =
+    normalizedQuery.length > 0 &&
+    value.trim().toLowerCase() === normalizedQuery.toLowerCase() &&
+    !exact;
+  const canCreate = normalizedQuery.length > 0 && !exact;
+
+  const choose = (category: string) => {
+    const next = category.trim();
+    if (!CATEGORY_PATTERN.test(next)) {
+      toast.error('种类需为 1-20 个字符，且不能包含 / \\ : * ? " < > | 或换行');
+      return;
+    }
+    onChange(next);
+    setQuery(next);
+    setOpen(false);
+  };
+
+  return (
+    <div className="relative">
+      <div className="flex h-9 items-center rounded-[var(--r-sm)] border border-[var(--line-strong)] bg-[var(--surface-alt)] focus-within:border-[var(--accent)]">
+        <input
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            if (exact) {
+              const match = options.find(
+                (cat) => cat.toLowerCase() === normalizedQuery.toLowerCase(),
+              );
+              if (match) choose(match);
+              return;
+            }
+            if (canCreate) choose(normalizedQuery);
+          }}
+          placeholder="搜索或新建种类"
+          className="h-full min-w-0 flex-1 bg-transparent px-3 text-sm outline-none"
+        />
+        <button
+          type="button"
+          className="h-full px-3 text-xs text-[var(--text-mute)] hover:text-[var(--text)]"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => setOpen((v) => !v)}
+          aria-label="展开种类"
+        >
+          ▼
+        </button>
+      </div>
+
+      {open && (
+        <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-64 overflow-auto rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] p-1 shadow-lg">
+          {filtered.length > 0 && (
+            <>
+              <div className="px-2 py-1 text-[10px] font-medium text-[var(--text-mute)]">
+                已有种类
+              </div>
+              {filtered.map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => choose(cat)}
+                  className={cn(
+                    "block w-full rounded-[var(--r-sm)] px-2 py-1.5 text-left text-sm hover:bg-[var(--surface-alt)]",
+                    cat === value ? "font-medium text-[var(--accent)]" : "text-[var(--text)]",
+                  )}
+                >
+                  {cat}
+                </button>
+              ))}
+            </>
+          )}
+
+          {isSelectedCustom && (
+            <>
+              {filtered.length > 0 && (
+                <div className="my-1 border-t border-[var(--line)]" />
+              )}
+              <div className="rounded-[var(--r-sm)] px-2 py-1.5 text-sm text-[var(--text-soft)]">
+                当前新建：{normalizedQuery}
+              </div>
+            </>
+          )}
+
+          {canCreate && !isSelectedCustom && (
+            <>
+              {filtered.length > 0 && (
+                <div className="my-1 border-t border-[var(--line)]" />
+              )}
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => choose(normalizedQuery)}
+                className="block w-full rounded-[var(--r-sm)] px-2 py-1.5 text-left text-sm text-[var(--accent)] hover:bg-[var(--accent-bg)]"
+              >
+                + 新建 “{normalizedQuery}”
+              </button>
+            </>
+          )}
+
+          {filtered.length === 0 && !canCreate && (
+            <div className="px-2 py-2 text-sm text-[var(--text-mute)]">
+              输入种类名称
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PreviewPanel({
   data,
   phase,
+  me,
+  availableCategories,
   streamingBody,
   isStreaming,
   resolvedNames,
+  onUpdateData,
+  onSelectCategory,
   onEditBody,
   onEditSummary,
   canEdit,
 }: {
   data: StepData;
   phase: Phase;
+  me: Me;
+  availableCategories: string[];
   streamingBody: string;
   isStreaming: boolean;
   resolvedNames: Record<string, string>;
+  onUpdateData: (patch: Partial<StepData>) => void;
+  onSelectCategory: (category: string) => void;
   onEditBody: (b: string) => void;
   onEditSummary: (s: string) => void;
   canEdit: boolean;
 }) {
   const reached = (p: Phase) => PHASE_ORDER.indexOf(p) <= PHASE_ORDER.indexOf(phase);
-  // While streaming, show the partial AI output. When idle (review w/o
-  // revision), show the saved data.body the user can edit.
   const bodyToShow = isStreaming ? streamingBody : data.body;
+
   return (
     <Card className="space-y-4 rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] p-4">
       <PreviewRow label="话题" filled={reached("type") && !!data.topic}>
         {data.topic || <Empty />}
       </PreviewRow>
+
       <PreviewRow label="类型" filled={reached("category")}>
-        {reached("category") ? (
+        {canEdit ? (
+          <div className="inline-flex rounded-[var(--r-sm)] border border-[var(--line)] bg-[var(--surface-alt)] p-0.5">
+            {(["think", "act"] as const).map((type) => (
+              <button
+                key={type}
+                type="button"
+                onClick={() => onUpdateData({ docType: type })}
+                className={cn(
+                  "rounded-[var(--r-sm)] px-2.5 py-1 font-mono text-xs",
+                  data.docType === type
+                    ? "bg-[var(--accent)] text-white"
+                    : "text-[var(--text-soft)] hover:bg-[var(--surface)]",
+                )}
+              >
+                {type}
+              </button>
+            ))}
+          </div>
+        ) : reached("category") ? (
           <span className="font-mono">{data.docType}</span>
         ) : (
           <Empty />
         )}
       </PreviewRow>
+
       <PreviewRow label="种类" filled={reached("title") && !!data.category}>
-        {data.category || <Empty />}
+        {canEdit ? (
+          <CategoryPicker
+            value={data.category}
+            options={availableCategories}
+            onChange={onSelectCategory}
+          />
+        ) : (
+          data.category || <Empty />
+        )}
       </PreviewRow>
+
       <PreviewRow label="标题" filled={reached("owner") && !!data.title}>
-        {data.title || <Empty />}
+        {canEdit ? (
+          <Input
+            value={data.title}
+            onChange={(e) => onUpdateData({ title: e.target.value })}
+            maxLength={200}
+            className="h-9 text-sm"
+          />
+        ) : (
+          data.title || <Empty />
+        )}
       </PreviewRow>
+
       <PreviewRow label="责任人" filled={reached("mentions") && !!data.matterOwner.openId}>
         {!reached("mentions") ? (
           <Empty />
+        ) : canEdit ? (
+          <OwnerPicker
+            value={data.matterOwner.openId}
+            onChange={(openId, name) => onUpdateData({ matterOwner: { openId, name } })}
+            sessionOpenId={me.open_id}
+            sessionName={me.name}
+            displayName={data.matterOwner.name}
+            dropdownMode="inline"
+          />
         ) : (
           <span>{data.matterOwner.name || data.matterOwner.openId || "我"}</span>
         )}
       </PreviewRow>
-      <PreviewRow
-        label="圈人"
-        filled={reached("drafting")}
-      >
+
+      <PreviewRow label="圈人" filled={reached("drafting")}>
         {!reached("drafting") ? (
           <Empty />
+        ) : canEdit ? (
+          <MentionField
+            value={data.mentions}
+            onChange={(mentions) => onUpdateData({ mentions })}
+            resolvedNames={resolvedNames}
+          />
         ) : data.mentions.open_ids.length === 0 ? (
           <span className="text-[var(--text-mute)]">未圈人</span>
         ) : (
@@ -1373,19 +1575,20 @@ function PreviewPanel({
             </div>
             {data.mentions.comments.trim() && (
               <div className="mt-1 text-xs text-[var(--text-mute)]">
-                💬 {data.mentions.comments.trim()}
+                {data.mentions.comments.trim()}
               </div>
             )}
           </div>
         )}
       </PreviewRow>
+
       <PreviewRow
         label="正文"
         filled={!!bodyToShow}
         action={
           isStreaming ? (
             <span className="text-xs text-[var(--accent)]">
-              <Sparkles className="inline h-3 w-3 animate-pulse" /> 正在生成…
+              <Sparkles className="inline h-3 w-3 animate-pulse" /> 正在生成...
             </span>
           ) : null
         }
@@ -1406,6 +1609,7 @@ function PreviewPanel({
           </pre>
         )}
       </PreviewRow>
+
       <PreviewRow label="摘要" filled={!!data.summary}>
         {!data.summary ? (
           <Empty hint="AI 起草后显示" />
@@ -1423,7 +1627,6 @@ function PreviewPanel({
     </Card>
   );
 }
-
 function PreviewRow({
   label,
   filled,
