@@ -15,6 +15,7 @@ import yaml
 from server.events import (
     TOPIC_COMMENT_APPENDED,
     TOPIC_FILE_APPENDED,
+    TOPIC_MATTER_OWNER_CHANGED,
     clear_subscribers,
     emit,
 )
@@ -414,3 +415,188 @@ def test_unsubscribe_stops_writes(
     )
     # 仍然只有第一条,unsubscribe 之后没有新行
     assert relevance_repo.unread_breakdown_per_matter(alice_id) == {"m-x": (0, 1)}
+
+
+# ---------- matter owner change ----------
+
+
+def test_owner_changed_writes_rows_for_creator_old_and_new_owner(
+    workspace, users, relevance_repo, writer_installed,
+):
+    """A 创建 matter 指定 owner=B,B 自己把 owner 转给 C:
+    A(创建者)和 C(新 owner)各拿一行;B 是 actor → 自排除。"""
+    alice_id = _register_user(users, pinyin="alice")
+    _register_user(users, pinyin="bob")  # actor + from_owner
+    charlie_id = _register_user(users, pinyin="charlie")
+
+    emit(
+        TOPIC_MATTER_OWNER_CHANGED,
+        matter_id="m-x", actor="bob",
+        at="2026-04-29T10:00:00+08:00",
+        payload={
+            "from_owner": "bob",
+            "to_owner": "charlie",
+            "reason": "由 charlie 接手后续推进",
+            "status_change": None,
+            "matter_creator": "alice",
+        },
+    )
+
+    assert relevance_repo.unread_breakdown_per_matter(alice_id) == {"m-x": (0, 1)}
+    assert relevance_repo.unread_breakdown_per_matter(charlie_id) == {"m-x": (0, 1)}
+    # bob 是 actor,自排除
+    assert relevance_repo.unread_breakdown_per_matter("ou_bob") == {}
+
+
+def test_owner_changed_admin_actor_notifies_old_owner(
+    workspace, users, relevance_repo, writer_installed,
+):
+    """admin(非 from/to/creator)主导转交时,B(旧 owner)也应拿到红点 ——
+    告诉他"你已不再是 owner"。"""
+    alice_id = _register_user(users, pinyin="alice")
+    bob_id = _register_user(users, pinyin="bob")
+    charlie_id = _register_user(users, pinyin="charlie")
+    _register_user(users, pinyin="admin")  # actor
+
+    emit(
+        TOPIC_MATTER_OWNER_CHANGED,
+        matter_id="m-x", actor="admin",
+        at="2026-04-29T10:00:00+08:00",
+        payload={
+            "from_owner": "bob",
+            "to_owner": "charlie",
+            "reason": "管理员强制转交",
+            "status_change": None,
+            "matter_creator": "alice",
+        },
+    )
+
+    assert relevance_repo.unread_breakdown_per_matter(alice_id) == {"m-x": (0, 1)}
+    assert relevance_repo.unread_breakdown_per_matter(bob_id) == {"m-x": (0, 1)}
+    assert relevance_repo.unread_breakdown_per_matter(charlie_id) == {"m-x": (0, 1)}
+    assert relevance_repo.unread_breakdown_per_matter("ou_admin") == {}
+
+
+def test_owner_changed_creator_equals_actor_skips_creator(
+    workspace, users, relevance_repo, writer_installed,
+):
+    """A 自己创建并转交 owner B→C:A 是 actor 兼 creator,A 自排除,
+    只有 C 拿到行。"""
+    _register_user(users, pinyin="alice")  # actor + creator
+    bob_id = _register_user(users, pinyin="bob")
+    charlie_id = _register_user(users, pinyin="charlie")
+
+    emit(
+        TOPIC_MATTER_OWNER_CHANGED,
+        matter_id="m-x", actor="alice",
+        at="2026-04-29T10:00:00+08:00",
+        payload={
+            "from_owner": "bob",
+            "to_owner": "charlie",
+            "reason": "回收后再分配",
+            "status_change": None,
+            "matter_creator": "alice",
+        },
+    )
+
+    assert relevance_repo.unread_breakdown_per_matter("ou_alice") == {}
+    assert relevance_repo.unread_breakdown_per_matter(bob_id) == {"m-x": (0, 1)}
+    assert relevance_repo.unread_breakdown_per_matter(charlie_id) == {"m-x": (0, 1)}
+
+
+def test_owner_changed_creator_equals_to_owner_no_duplicate(
+    workspace, users, relevance_repo, writer_installed,
+):
+    """matter_creator 与 to_owner 同一人(C 创建并自接 owner)时只插一行,
+    不应该因为命中两个分类而双倍计数。"""
+    _register_user(users, pinyin="bob")  # actor
+    charlie_id = _register_user(users, pinyin="charlie")  # creator + to_owner
+
+    emit(
+        TOPIC_MATTER_OWNER_CHANGED,
+        matter_id="m-x", actor="bob",
+        at="2026-04-29T10:00:00+08:00",
+        payload={
+            "from_owner": "bob",
+            "to_owner": "charlie",
+            "reason": "把这单还给原作者",
+            "status_change": None,
+            "matter_creator": "charlie",
+        },
+    )
+
+    assert relevance_repo.unread_breakdown_per_matter(charlie_id) == {"m-x": (0, 1)}
+
+
+def test_owner_changed_unregistered_owner_skipped(
+    workspace, users, relevance_repo, writer_installed,
+):
+    """from_owner 是未注册联系人(get_by_any_id 返回 None)→ 跳过。
+    其他注册用户照常落行。"""
+    alice_id = _register_user(users, pinyin="alice")
+    charlie_id = _register_user(users, pinyin="charlie")
+    _register_user(users, pinyin="actor_admin")
+
+    emit(
+        TOPIC_MATTER_OWNER_CHANGED,
+        matter_id="m-x", actor="actor_admin",
+        at="2026-04-29T10:00:00+08:00",
+        payload={
+            "from_owner": "ghost_pinyin_no_user",
+            "to_owner": "charlie",
+            "reason": "替换掉离职的旧负责人",
+            "status_change": None,
+            "matter_creator": "alice",
+        },
+    )
+
+    assert relevance_repo.unread_breakdown_per_matter(alice_id) == {"m-x": (0, 1)}
+    assert relevance_repo.unread_breakdown_per_matter(charlie_id) == {"m-x": (0, 1)}
+
+
+def test_owner_changed_idempotent(
+    workspace, users, relevance_repo, writer_installed,
+):
+    """同一个 owner_change 事件重复 emit(同 event_at + actor),
+    INSERT OR IGNORE 保证不重复。"""
+    alice_id = _register_user(users, pinyin="alice")
+    _register_user(users, pinyin="bob")
+    charlie_id = _register_user(users, pinyin="charlie")
+
+    payload = {
+        "from_owner": "bob", "to_owner": "charlie",
+        "reason": "r", "status_change": None,
+        "matter_creator": "alice",
+    }
+    emit(TOPIC_MATTER_OWNER_CHANGED, matter_id="m-x", actor="bob",
+         at="2026-04-29T10:00:00+08:00", payload=payload)
+    emit(TOPIC_MATTER_OWNER_CHANGED, matter_id="m-x", actor="bob",
+         at="2026-04-29T10:00:00+08:00", payload=payload)
+
+    assert relevance_repo.unread_breakdown_per_matter(alice_id) == {"m-x": (0, 1)}
+    assert relevance_repo.unread_breakdown_per_matter(charlie_id) == {"m-x": (0, 1)}
+
+
+def test_owner_changed_cleared_when_user_reads_a_file(
+    workspace, users, relevance_repo, writer_installed,
+):
+    """A 读了 matter 里任意一个文件后,owner_change 行也应一起标记为已读 ——
+    matter 级事件没有专属文件,挂在文件级 mark_all_read_for_file 上。"""
+    alice_id = _register_user(users, pinyin="alice")
+    _register_user(users, pinyin="bob")
+
+    emit(
+        TOPIC_MATTER_OWNER_CHANGED,
+        matter_id="m-x", actor="bob",
+        at="2026-04-29T10:00:00+08:00",
+        payload={
+            "from_owner": "bob", "to_owner": "alice",
+            "reason": "r", "status_change": None,
+            "matter_creator": "alice",
+        },
+    )
+    assert relevance_repo.unread_breakdown_per_matter(alice_id) == {"m-x": (0, 1)}
+
+    # alice 打开任意一个文件
+    relevance_repo.mark_all_read_for_file(alice_id, "m-x", "01-think.md")
+    assert relevance_repo.unread_breakdown_per_matter(alice_id) == {}

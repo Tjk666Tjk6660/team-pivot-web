@@ -10,6 +10,7 @@
 // optimistic state and bypassing the post-mark UI delays we just baked in.
 
 const listeners = new Set<() => void>();
+const draftListeners = new Set<() => void>();
 
 export function publishListRefresh(): void {
   listeners.forEach((fn) => {
@@ -25,5 +26,22 @@ export function subscribeListRefresh(fn: () => void): () => void {
   listeners.add(fn);
   return () => {
     listeners.delete(fn);
+  };
+}
+
+export function publishDraftsRefresh(): void {
+  draftListeners.forEach((fn) => {
+    try {
+      fn();
+    } catch (err) {
+      console.error("draftsRefresh listener error", err);
+    }
+  });
+}
+
+export function subscribeDraftsRefresh(fn: () => void): () => void {
+  draftListeners.add(fn);
+  return () => {
+    draftListeners.delete(fn);
   };
 }

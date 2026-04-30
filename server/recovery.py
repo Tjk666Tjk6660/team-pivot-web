@@ -32,7 +32,7 @@ def repair_partial_writes(discussions_root: Path, index_dir: Path) -> int:
 
 
 def warn_missing_matter_owner(index_dir: Path) -> int:
-    """Log legacy matter indexes that still lack matter.owner.
+    """Count legacy matter indexes that still lack matter.owner.
 
     This is intentionally read-only. Operators can run the backfill script when
     they are ready to migrate historical workspace data.
@@ -48,12 +48,6 @@ def warn_missing_matter_owner(index_dir: Path) -> int:
         if matter.get("owner"):
             continue
         missing += 1
-        log.warning(
-            "recovery: matter index missing matter.owner path=%s matter_id=%s; "
-            "run server/scripts/backfill_matter_owner.py to backfill historical data",
-            index_path,
-            matter.get("id"),
-        )
     return missing
 
 
@@ -75,15 +69,9 @@ def _repair_post(post_path: Path, discussions_root: Path, index_dir: Path) -> No
     # frontmatter. If the MD was written but the matter index update failed,
     # we cannot reconstruct the item from the MD alone. Do NOT fall through to
     # the old thread-repair path — it would create a stale
-    # `{slug}-discuss.index.yaml`. Log a warning so an operator can inspect,
-    # then flip the state to indexed to stop repeat warnings on every startup.
+    # `{slug}-discuss.index.yaml`. Flip the state to indexed so the file
+    # stops bouncing through recovery on every startup.
     if ptype in VALID_DOC_TYPES:
-        log.warning(
-            "recovery: partially-written matter file detected path=%s type=%s; "
-            "matter index update did not complete. Manual inspection required. "
-            "Flipping index_state to indexed to silence repeat warnings.",
-            post_path, ptype,
-        )
         mark_indexed(post_path)
         return
 
