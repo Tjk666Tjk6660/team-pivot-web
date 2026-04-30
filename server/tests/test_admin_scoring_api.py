@@ -459,7 +459,9 @@ def test_get_run_detail_returns_score_and_evidence(
     body = r.json()
     assert body["run"]["status"] == "success"
     assert body["run"]["prompt_tokens"] == 100
-    assert body["run"]["score"] == {"overall": 4.2, "confidence": "high"}
+    assert body["run"]["score"] == {
+        "overall": 4.2, "confidence": "high", "override_overall": None,
+    }
     assert body["score"]["overall"] == 4.2
     assert body["score"]["dimensions"]["delivery"] == 4.5
     assert body["score"]["dimensions"]["judgment"] is None
@@ -673,6 +675,34 @@ def test_override_overwrites_prior_override(
     body = r.json()
     assert body["human_override"]["overall"] == 4.0
     assert body["human_override"]["note"] == "reconsidered"
+
+
+def test_list_runs_exposes_override_overall_in_score_brief(
+    client, store, pivot_users, workspace, admin_user,
+):
+    """List view needs override_overall so the table can render the effective
+    score (with ✏ marker) without drilling into a drawer."""
+    owner = pivot_users.create(
+        display_name="zs", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    rid = _setup_run_with_score(client, store, pivot_users, workspace, owner)
+
+    # Before override: override_overall is null
+    r1 = client.get("/api/admin/scoring/runs", headers=_admin_headers())
+    item = r1.json()["items"][0]
+    assert item["score"]["overall"] == 4.2
+    assert item["score"]["override_overall"] is None
+
+    # After override: override_overall reflects the new value, AI overall stays
+    client.post(
+        f"/api/admin/scoring/scores/{rid}/override",
+        headers=_admin_headers(),
+        json={"overall": 3.5, "note": "n/a"},
+    )
+    r2 = client.get("/api/admin/scoring/runs", headers=_admin_headers())
+    item = r2.json()["items"][0]
+    assert item["score"]["overall"] == 4.2          # AI original preserved
+    assert item["score"]["override_overall"] == 3.5  # admin's adjustment
 
 
 # ---------- commenter weights ----------

@@ -272,6 +272,16 @@ function ScoreCard({
   const { run, score, evidence } = detail;
   if (!score) return null;
 
+  // When admin manually overrode, treat the override as the current /
+  // displayed total. AI's original number is shown as a secondary annotation
+  // for transparency. Confidence label keeps its AI-context meaning either
+  // way (it's a property of the AI evaluation, not the override).
+  const isOverridden =
+    score.human_override !== null && score.human_override.overall !== null;
+  const effectiveOverall = isOverridden
+    ? (score.human_override!.overall as number)
+    : score.overall;
+
   return (
     <div className="rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] p-4 space-y-3">
       <div className="flex items-center gap-3">
@@ -298,12 +308,18 @@ function ScoreCard({
         </div>
         <div className="text-right">
           <div className="text-2xl font-bold tabular-nums">
-            ⭐ {score.overall.toFixed(1)}
+            ⭐ {effectiveOverall.toFixed(1)}
             <span className="ml-0.5 text-sm font-normal text-[var(--text-mute)]">
               / 5
             </span>
           </div>
-          <ScoreConfidenceBadge confidence={score.confidence} />
+          {isOverridden ? (
+            <div className="mt-0.5 text-[11px] text-[var(--text-mute)]">
+              ✏ 修正自 AI {score.overall.toFixed(1)} ({score.confidence})
+            </div>
+          ) : (
+            <ScoreConfidenceBadge confidence={score.confidence} />
+          )}
         </div>
       </div>
 
@@ -324,14 +340,10 @@ function ScoreCard({
         </Button>
       </div>
 
-      {score.human_override && score.human_override.overall !== null && (
-        <div className="rounded border border-[var(--accent-soft)] bg-[var(--accent-bg)]/40 px-3 py-2 text-xs">
-          ✏ 人工修正: <strong>{score.human_override.overall}</strong>
-          {score.human_override.note && (
-            <span className="ml-2 text-[var(--text-mute)]">
-              ({score.human_override.note})
-            </span>
-          )}
+      {isOverridden && score.human_override!.note && (
+        <div className="rounded border border-[var(--accent-soft)] bg-[var(--accent-bg)]/40 px-3 py-2 text-xs text-[var(--text-soft)]">
+          <span className="font-semibold">修正原因:</span>{" "}
+          {score.human_override!.note}
         </div>
       )}
     </div>
