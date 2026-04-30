@@ -5,7 +5,6 @@ import {
   AdminRequiredError,
   fetchScoringRunDetail,
   triggerScoringRerun,
-  type ScoringDimensions,
   type ScoringRunDetail,
 } from "@/api";
 import { Button } from "@/components/ui/button";
@@ -273,12 +272,6 @@ function ScoreCard({
   const { run, score, evidence } = detail;
   if (!score) return null;
 
-  // Count evidence per dimension for display
-  const evidenceCounts: Partial<Record<keyof ScoringDimensions, number>> = {};
-  for (const e of evidence) {
-    evidenceCounts[e.dimension] = (evidenceCounts[e.dimension] ?? 0) + 1;
-  }
-
   return (
     <div className="rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] p-4 space-y-3">
       <div className="flex items-center gap-3">
@@ -321,10 +314,7 @@ function ScoreCard({
       )}
 
       <div className="rounded border border-[var(--line)] bg-[var(--surface-alt)] p-3">
-        <DimensionBars
-          dimensions={score.dimensions}
-          evidenceCounts={evidenceCounts}
-        />
+        <DimensionBars dimensions={score.dimensions} />
       </div>
 
       <div className="flex justify-end">
