@@ -16,13 +16,25 @@ PR2/3 会再加：从 schema.py 的 ScoringOutput 适配到 ScoreWrite/EvidenceW
 """
 from __future__ import annotations
 
+import logging
 import sqlite3
+import time as _time
 import uuid
 from dataclasses import dataclass, field
 from time import time
 from typing import Iterable, Literal, Sequence
 
 from server.db import Database
+
+log = logging.getLogger(__name__)
+
+# Threshold for warning when a runs-list / count query stalls. Substring
+# matter_query goes through LIKE '%xxx%' which can't use the matter_id
+# index — full scan, so cost grows ~linearly with table size. Logging
+# this lets us notice the day it actually starts mattering and switch
+# to FTS5 / denormalized title columns proactively rather than after a
+# user complaint.
+_SLOW_QUERY_WARN_MS = 200
 
 # ---------- types ----------
 
@@ -318,7 +330,12 @@ class ScoringStore:
         sql += " ORDER BY started_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         with self._db.connect() as conn:
+            t0 = _time.perf_counter()
             rows = conn.execute(sql, params).fetchall()
+            _warn_if_slow(
+                "list_runs", t0,
+                status=status, matter_id=matter_id, matter_query=matter_query,
+            )
         return [_row_to_run(r) for r in rows]
 
     def count_runs(
@@ -333,7 +350,12 @@ class ScoringStore:
         )
         sql = f"SELECT COUNT(*) AS n FROM matter_scoring_runs WHERE 1=1{sql}"
         with self._db.connect() as conn:
+            t0 = _time.perf_counter()
             row = conn.execute(sql, params).fetchone()
+            _warn_if_slow(
+                "count_runs", t0,
+                status=status, matter_id=matter_id, matter_query=matter_query,
+            )
         return int(row["n"])
 
     @staticmethod
@@ -565,6 +587,23 @@ class ScoringStore:
 
 def _new_run_id() -> str:
     return uuid.uuid4().hex
+
+
+def _warn_if_slow(query_name: str, start_perf: float, **filters: object) -> None:
+    """Emit WARNING when a list / count query crosses _SLOW_QUERY_WARN_MS.
+
+    Filters dict is passed for quick triage — typically tells you whether a
+    matter_query substring search is dragging the page (LIKE '%x%' bypasses
+    the matter_id index and full-scans the runs table).
+    """
+    elapsed_ms = (_time.perf_counter() - start_perf) * 1000.0
+    if elapsed_ms < _SLOW_QUERY_WARN_MS:
+        return
+    nonempty = {k: v for k, v in filters.items() if v}
+    log.warning(
+        "scoring %s slow: %.0fms (filters=%r) — consider FTS5 / denormalized title",
+        query_name, elapsed_ms, nonempty,
+    )
 
 
 def _validate_triggered_by(v: str) -> None:
