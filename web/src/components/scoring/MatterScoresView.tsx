@@ -5,13 +5,13 @@ import {
   AdminRequiredError,
   fetchScoringRunDetail,
   triggerScoringRerun,
-  type ScoringDimensions,
   type ScoringRunDetail,
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import { ScoreConfidenceBadge } from "./ScoreConfidenceBadge";
 import { DimensionBars } from "./DimensionBars";
 import { EvidenceDialog } from "./EvidenceDialog";
+import { OverrideDialog } from "./OverrideDialog";
 import { RunMetadataDialog } from "./RunMetadataDialog";
 
 type Props = {
@@ -31,6 +31,7 @@ export function MatterScoresView({
   const [loading, setLoading] = useState(true);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [metaOpen, setMetaOpen] = useState(false);
+  const [overrideOpen, setOverrideOpen] = useState(false);
   const [rerunning, setRerunning] = useState(false);
 
   const load = () => {
@@ -116,6 +117,7 @@ export function MatterScoresView({
                 rerunning={rerunning}
                 onRerun={onRerun}
                 onShowMeta={() => setMetaOpen(true)}
+                onShowOverride={() => setOverrideOpen(true)}
               />
               {detail.score ? (
                 <ScoreCard
@@ -164,6 +166,24 @@ export function MatterScoresView({
           onClose={() => setMetaOpen(false)}
         />
       )}
+
+      {overrideOpen && detail?.score && (
+        <OverrideDialog
+          runId={detail.run.run_id}
+          currentOverall={detail.score.overall}
+          currentOverride={detail.score.human_override}
+          subjectDisplay={detail.run.subject_display}
+          onClose={() => setOverrideOpen(false)}
+          onSaved={(updated) => {
+            // Patch the local detail so UI reflects override without refetch
+            setDetail((prev) =>
+              prev ? { ...prev, score: updated } : prev,
+            );
+            setOverrideOpen(false);
+          }}
+          onAdminLost={onAdminLost}
+        />
+      )}
     </>
   );
 }
@@ -173,13 +193,16 @@ function RunHeader({
   rerunning,
   onRerun,
   onShowMeta,
+  onShowOverride,
 }: {
   detail: ScoringRunDetail;
   rerunning: boolean;
   onRerun: () => void;
   onShowMeta: () => void;
+  onShowOverride: () => void;
 }) {
   const r = detail.run;
+  const hasScore = detail.score !== null;
   return (
     <div className="rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-3 space-y-2">
       <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-[var(--text-mute)]">
@@ -224,8 +247,13 @@ function RunHeader({
         <Button
           size="sm"
           variant="outline"
-          disabled
-          title="v1.1 启用：人工修正分数"
+          onClick={onShowOverride}
+          disabled={!hasScore}
+          title={
+            hasScore
+              ? "人工修正总分（保留 AI 原始打分作为审计）"
+              : "无 score 行可修正（run 失败 / 跳过）"
+          }
         >
           ✏ 人工修正
         </Button>
@@ -243,12 +271,6 @@ function ScoreCard({
 }) {
   const { run, score, evidence } = detail;
   if (!score) return null;
-
-  // Count evidence per dimension for display
-  const evidenceCounts: Partial<Record<keyof ScoringDimensions, number>> = {};
-  for (const e of evidence) {
-    evidenceCounts[e.dimension] = (evidenceCounts[e.dimension] ?? 0) + 1;
-  }
 
   return (
     <div className="rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] p-4 space-y-3">
@@ -292,10 +314,7 @@ function ScoreCard({
       )}
 
       <div className="rounded border border-[var(--line)] bg-[var(--surface-alt)] p-3">
-        <DimensionBars
-          dimensions={score.dimensions}
-          evidenceCounts={evidenceCounts}
-        />
+        <DimensionBars dimensions={score.dimensions} />
       </div>
 
       <div className="flex justify-end">

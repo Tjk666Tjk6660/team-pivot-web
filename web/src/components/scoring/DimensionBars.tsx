@@ -18,26 +18,19 @@ const DIM_ORDER: (keyof ScoringDimensions)[] = [
 
 export function DimensionBars({
   dimensions,
-  evidenceCounts,
 }: {
   dimensions: ScoringDimensions;
-  evidenceCounts?: Partial<Record<keyof ScoringDimensions, number>>;
 }) {
   return (
     <div className="space-y-1.5">
-      {DIM_ORDER.map((dim) => {
-        const score = dimensions[dim];
-        const count = evidenceCounts?.[dim] ?? 0;
-        return (
-          <DimensionBarRow
-            key={dim}
-            label={DIM_LABELS[dim]}
-            dim={dim}
-            score={score}
-            evidenceCount={count}
-          />
-        );
-      })}
+      {DIM_ORDER.map((dim) => (
+        <DimensionBarRow
+          key={dim}
+          label={DIM_LABELS[dim]}
+          dim={dim}
+          score={dimensions[dim]}
+        />
+      ))}
     </div>
   );
 }
@@ -46,12 +39,10 @@ function DimensionBarRow({
   label,
   dim,
   score,
-  evidenceCount,
 }: {
   label: string;
   dim: string;
   score: number | null;
-  evidenceCount: number;
 }) {
   const pct = score === null ? 0 : (score / 5) * 100;
   return (
@@ -80,14 +71,7 @@ function DimensionBarRow({
             —
           </span>
         ) : (
-          <>
-            <span className="font-semibold">{score.toFixed(1)}</span>
-            {evidenceCount > 0 && (
-              <span className="ml-1 text-[10px] text-[var(--text-mute)]">
-                ·{evidenceCount}
-              </span>
-            )}
-          </>
+          <span className="font-semibold">{score.toFixed(1)}</span>
         )}
       </div>
     </div>

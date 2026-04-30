@@ -88,6 +88,11 @@ class RerunResponse(BaseModel):
     message: str
 
 
+class HumanOverrideBody(BaseModel):
+    overall: float = Field(ge=1.0, le=5.0)
+    note: str = Field(min_length=1, max_length=500)
+
+
 # --------------------------------------------------------------------------- #
 # Router                                                                      #
 # --------------------------------------------------------------------------- #
@@ -238,6 +243,51 @@ def build_router(
             queued=True,
             message="已入队，等待 worker 处理（约 1-2 分钟）",
         )
+
+    @router.post("/scores/{run_id}/override")
+    def override_score(
+        run_id: str,
+        body: HumanOverrideBody,
+        admin_user: PivotUser = Depends(admin_user_dep),
+    ):
+        """Admin manual correction of an AI-generated score.
+
+        Stores the override on the existing matter_scores row (no new run is
+        created — overrides are an annotation, not a re-evaluation). If the
+        run is non-existent or has no score (failed/skipped/queued), 404/422.
+        Note is required so the audit trail captures *why* the admin disagreed
+        with the AI.
+        """
+        run = store.get_run(run_id)
+        if run is None:
+            raise HTTPException(404, "run_not_found")
+        got = store.get_score(run.run_id)
+        if got is None:
+            raise HTTPException(
+                422,
+                {
+                    "code": "no_score_to_override",
+                    "message": "this run has no score row (may be failed / queued / skipped)",
+                },
+            )
+        try:
+            store.apply_human_override(
+                run_id, run.subject_user_id,
+                overall=body.overall,
+                note=body.note.strip(),
+                by_user_id=admin_user.id,
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        log.info(
+            "scoring human override applied run=%s subject=%s overall=%.2f admin=%s",
+            run_id, run.subject_user_id, body.overall, admin_user.id,
+        )
+        # Return the updated score for client-side cache update.
+        got = store.get_score(run.run_id)
+        assert got is not None
+        score, _ = got
+        return _score_to_dict(score)
 
     # ── Commenter weights ───────────────────────────────────────────────
 

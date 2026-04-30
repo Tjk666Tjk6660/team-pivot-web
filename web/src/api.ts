@@ -1905,3 +1905,25 @@ export async function searchScoringUsers(q: string): Promise<{
   if (!r.ok) throw new Error(`search users failed: ${r.status}`);
   return (await r.json()) as { items: ScoringUserSearchHit[] };
 }
+
+export type ScoringScorePayload = NonNullable<ScoringRunDetail["score"]>;
+
+export async function overrideScoringScore(
+  runId: string,
+  body: { overall: number; note: string },
+): Promise<ScoringScorePayload> {
+  const r = await adminFetch(
+    `/api/admin/scoring/scores/${encodeURIComponent(runId)}/override`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    const detail = typeof d.detail === "string" ? d.detail : d.detail?.message || JSON.stringify(d.detail);
+    throw new Error(detail || `override score failed: ${r.status}`);
+  }
+  return (await r.json()) as ScoringScorePayload;
+}

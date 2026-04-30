@@ -529,6 +529,152 @@ def test_rerun_422_when_owner_empty(client, workspace, queue):
     assert r.json()["detail"]["code"] == "no_owner"
 
 
+# ---------- human override ----------
+
+
+def _setup_run_with_score(client, store, pivot_users, workspace, owner):
+    """Helper: create a run + score so override tests have something to work on."""
+    from server.scoring.store import EvidenceWrite, ScoreWrite
+    _write_matter(workspace, "m")
+    rid = store.start_run(_job(owner.id), timeline_hash="h", model="m")
+    store.write_results(
+        rid,
+        ScoreWrite(
+            overall=4.2, confidence="high", rationale="...",
+            delivery=4.5, accountability=4.0, process=4.0,
+        ),
+        [
+            EvidenceWrite(
+                dimension="delivery", polarity="positive", confidence="high",
+                source_kind="file", source_filename="001.md",
+                source_file_type="act", quote="...", explanation="...",
+            ),
+            EvidenceWrite(
+                dimension="accountability", polarity="positive", confidence="high",
+                source_kind="file", source_filename="003.md",
+                source_file_type="result", quote="...", explanation="...",
+            ),
+            EvidenceWrite(
+                dimension="process", polarity="positive", confidence="medium",
+                source_kind="file", source_filename="003.md",
+                source_file_type="result", quote="...", explanation="...",
+            ),
+        ],
+    )
+    store.finish_run(rid, "success")
+    return rid
+
+
+def test_override_404_when_run_missing(client):
+    r = client.post(
+        "/api/admin/scoring/scores/nonexistent/override",
+        headers=_admin_headers(),
+        json={"overall": 3.5, "note": "too generous"},
+    )
+    assert r.status_code == 404
+
+
+def test_override_422_when_run_has_no_score(
+    client, store, pivot_users, workspace, admin_user,
+):
+    """Failed / queued / skipped runs have no score row — 422."""
+    owner = pivot_users.create(
+        display_name="zs", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    _write_matter(workspace, "m")
+    rid = store.start_run(_job(owner.id), timeline_hash="h", model="m")
+    store.finish_run(rid, "failed", error="ai_timeout")
+
+    r = client.post(
+        f"/api/admin/scoring/scores/{rid}/override",
+        headers=_admin_headers(),
+        json={"overall": 3.5, "note": "n/a"},
+    )
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "no_score_to_override"
+
+
+def test_override_writes_human_fields(
+    client, store, pivot_users, workspace, admin_user,
+):
+    owner = pivot_users.create(
+        display_name="zs", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    rid = _setup_run_with_score(client, store, pivot_users, workspace, owner)
+
+    r = client.post(
+        f"/api/admin/scoring/scores/{rid}/override",
+        headers=_admin_headers(),
+        json={"overall": 3.5, "note": "AI 给得太高，扣回半分"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["human_override"]["overall"] == 3.5
+    assert body["human_override"]["note"] == "AI 给得太高，扣回半分"
+    assert body["human_override"]["by"] == admin_user.id
+    assert body["human_override"]["at"] is not None
+    # Original AI score is preserved
+    assert body["overall"] == 4.2
+
+
+def test_override_422_for_invalid_overall(
+    client, store, pivot_users, workspace, admin_user,
+):
+    owner = pivot_users.create(
+        display_name="zs", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    rid = _setup_run_with_score(client, store, pivot_users, workspace, owner)
+
+    r = client.post(
+        f"/api/admin/scoring/scores/{rid}/override",
+        headers=_admin_headers(),
+        json={"overall": 99.0, "note": "x"},
+    )
+    assert r.status_code == 422  # pydantic ge/le
+
+
+def test_override_422_for_blank_note(
+    client, store, pivot_users, workspace, admin_user,
+):
+    owner = pivot_users.create(
+        display_name="zs", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    rid = _setup_run_with_score(client, store, pivot_users, workspace, owner)
+
+    r = client.post(
+        f"/api/admin/scoring/scores/{rid}/override",
+        headers=_admin_headers(),
+        json={"overall": 3.5, "note": ""},
+    )
+    assert r.status_code == 422  # pydantic min_length
+
+
+def test_override_overwrites_prior_override(
+    client, store, pivot_users, workspace, admin_user,
+):
+    owner = pivot_users.create(
+        display_name="zs", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    rid = _setup_run_with_score(client, store, pivot_users, workspace, owner)
+
+    # First override
+    client.post(
+        f"/api/admin/scoring/scores/{rid}/override",
+        headers=_admin_headers(),
+        json={"overall": 3.5, "note": "first"},
+    )
+    # Second override replaces it
+    r = client.post(
+        f"/api/admin/scoring/scores/{rid}/override",
+        headers=_admin_headers(),
+        json={"overall": 4.0, "note": "reconsidered"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["human_override"]["overall"] == 4.0
+    assert body["human_override"]["note"] == "reconsidered"
+
+
 # ---------- commenter weights ----------
 
 
