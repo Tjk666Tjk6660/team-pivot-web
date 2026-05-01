@@ -78,6 +78,7 @@ class MatterEvent:
     # matter 级语境(同一 matter 各 event 携带相同值;空串 = 信号不存在)
     matter_intent: str = ""            # 第一条 think.summary —— 这件事是干啥的、解决什么问题
     matter_prev_summary: str = ""      # 窗口之前最后一条 timeline.summary —— 上一步推到哪了
+    matter_timeline_yaml: str = ""     # 完整 timeline 的精简 yaml(v0.4) —— 给 LLM 看 quote 链/状态推进/协作触发的原始 yaml 结构
 
 
 # --------------------------------------------------------------------------- #

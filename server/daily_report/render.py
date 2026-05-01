@@ -47,16 +47,8 @@ def build_company_card(facts: SharedFacts, narrative: CompanyNarrative) -> dict:
     )
     parts.append("")
 
-    # Team stats — 简短一行,公司视角不堆数字
-    parts.append("**📈 团队总览**")
-    parts.append(
-        f"matter 事件 **{s.total_files}** 篇 · "
-        f"状态推进 **{s.total_status_changes}** 次 · "
-        f"评论 **{s.total_comments}** 条 · "
-        f"涉及 matter **{s.matters_touched}** 个 · "
-        f"活跃成员 **{facts.n_active}** 人"
-    )
-    parts.append("")
+    # 注:不再渲染"📈 团队总览"统计行 —— 老板不爱看僵硬的统计数字,
+    # 真正有价值的"5 人 / 4 个事项"等业务数字由 narrative 收尾段自己写。
 
     # 整体定性 emoji(状态可视化)
     tone_emoji = {

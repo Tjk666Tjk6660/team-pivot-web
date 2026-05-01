@@ -290,14 +290,14 @@ def test_invalid_tone_in_tag_falls_back_to_derived_tone():
 
 def test_excessively_long_summary_is_truncated():
     facts = _facts_with_activity()
-    long_text = "a" * 900
+    long_text = "a" * 1700
     with patch(
         "server.daily_report.company_narrate.generate_text",
         return_value=f"{long_text}\n[tone: active]",
     ):
         result = narrate_company(facts, ai_settings=_ai())
     assert result.status == "ai"
-    assert len(result.summary) <= 701   # 700 + ellipsis
+    assert len(result.summary) <= 1501   # 1500 + ellipsis
     assert result.summary.endswith("…")
 
 

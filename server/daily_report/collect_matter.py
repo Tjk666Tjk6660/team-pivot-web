@@ -14,6 +14,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
+from server.daily_report.matter_timeline_renderer import render_matter_timeline_yaml
 from server.daily_report.types import (
     MatterEvent,
     MatterEventComment,
@@ -62,6 +63,8 @@ def _scan_one_matter(path: Path, window: TimeWindow) -> list[MatterEvent]:
     timeline = data.get("timeline") or []
     matter_intent = _derive_intent(timeline)
     matter_prev_summary = _derive_prev_summary(timeline, window)
+    # v0.4: 把整段 timeline 精简成 yaml 字符串,作为 matter 级语境跟着每个 event 走
+    matter_timeline_yaml = render_matter_timeline_yaml(data, window)
 
     out: list[MatterEvent] = []
     for item in timeline:
@@ -72,6 +75,7 @@ def _scan_one_matter(path: Path, window: TimeWindow) -> list[MatterEvent]:
             matter_status=matter_status,
             matter_intent=matter_intent,
             matter_prev_summary=matter_prev_summary,
+            matter_timeline_yaml=matter_timeline_yaml,
             window=window,
         )
         if ev is not None:
@@ -120,6 +124,7 @@ def _convert_item(
     matter_status: str,
     matter_intent: str,
     matter_prev_summary: str,
+    matter_timeline_yaml: str,
     window: TimeWindow,
 ) -> MatterEvent | None:
     file_path = str(item.get("file") or "")
@@ -179,6 +184,7 @@ def _convert_item(
         matter_current_status=matter_status,
         matter_intent=matter_intent,
         matter_prev_summary=matter_prev_summary,
+        matter_timeline_yaml=matter_timeline_yaml,
         file=file_path,
         file_type=file_type,
         created_at=ev_dt,

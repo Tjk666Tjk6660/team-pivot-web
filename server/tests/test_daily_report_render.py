@@ -123,16 +123,19 @@ def test_no_activity_card_uses_wathet_and_marks_stalled():
     assert "偏停滞" in md
 
 
-def test_ai_card_renders_window_and_stats():
+def test_ai_card_renders_window_no_stats():
+    """v0.7(2026-05-01): 不再渲染"📈 团队总览"统计行 —— 老板不爱看僵硬
+    的统计数字。真正有价值的"X 人 / Y 个事项"等业务数字由 narrative
+    收尾段自己写。"""
     nar = CompanyNarrative(status="ai", summary="x", tone="steady")
     md = _markdown_from(build_company_card(_facts(), nar))
     assert "覆盖窗口" in md
     assert "2026-04-28 09:00" in md
     assert "2026-04-29 09:00" in md
-    assert "matter 事件 **5** 篇" in md
-    assert "状态推进 **1** 次" in md
-    assert "评论 **3** 条" in md
-    assert "活跃成员 **1** 人" in md   # _ua("alice") active, _ua("zhang") inactive
+    # 统计行已删除
+    assert "团队总览" not in md
+    assert "matter 事件" not in md
+    assert "状态推进" not in md
 
 
 def test_tone_emoji_and_label_match():
