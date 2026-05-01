@@ -1086,7 +1086,11 @@ export async function runDailyReportJobNow(
 
 export async function manualTriggerDailyReport(body: {
   view: "company" | "personal";
+  // 模式 A:倒推窗口(默认)
   window_hours?: number;
+  // 模式 B:显式时间区间(都给则覆盖 window_hours)。ISO8601 字符串
+  since?: string;
+  until?: string;
   receiver_type: "groups" | "users";
   receiver_ids?: string[] | null;
   dry_run?: boolean;

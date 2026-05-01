@@ -632,6 +632,12 @@ function fmtTime(iso: string): string {
   }
 }
 
+// 把 Date 转成 datetime-local input 接受的字符串(本地时区,YYYY-MM-DDTHH:mm)
+function toLocalInputValue(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 // --------------------------------------------------------------------------
 // JobEditDrawer
 // --------------------------------------------------------------------------
@@ -1214,7 +1220,11 @@ function ManualTriggerCard({
   chats: FeishuChat[];
 }) {
   const [view, setView] = useState<"company" | "personal">("company");
+  const [windowMode, setWindowMode] = useState<"hours" | "range">("hours");
   const [windowHours, setWindowHours] = useState<number | null>(24);
+  // datetime-local input 值(无时区,后端按 Asia/Shanghai 解释)
+  const [sinceLocal, setSinceLocal] = useState<string>("");
+  const [untilLocal, setUntilLocal] = useState<string>("");
   const [receiverType, setReceiverType] = useState<"groups" | "users">("groups");
   const [receiverIds, setReceiverIds] = useState<string[]>([]);
   const [openIdNames, setOpenIdNames] = useState<Record<string, string>>({});
@@ -1252,18 +1262,42 @@ function ManualTriggerCard({
     };
   }, [pollingRunId]);
 
+  // 切到"时间区间"模式时,如果还没填,默认填过去 24h
+  useEffect(() => {
+    if (windowMode !== "range") return;
+    if (sinceLocal || untilLocal) return;
+    const now = new Date();
+    const past = new Date(now.getTime() - 24 * 3600 * 1000);
+    setSinceLocal(toLocalInputValue(past));
+    setUntilLocal(toLocalInputValue(now));
+  }, [windowMode, sinceLocal, untilLocal]);
+
   const trigger = async () => {
     if (receiverType === "users" && receiverIds.length === 0) {
       return toast.error("接收类型为个人时,至少选 1 个 open_id");
     }
+    // 构造 body —— 按窗口模式分支
+    const body: Parameters<typeof manualTriggerDailyReport>[0] = {
+      view,
+      receiver_type: receiverType,
+      receiver_ids: receiverIds.length > 0 ? receiverIds : null,
+    };
+    if (windowMode === "range") {
+      if (!sinceLocal || !untilLocal) {
+        return toast.error("时间区间模式需要填写起止时间");
+      }
+      if (sinceLocal >= untilLocal) {
+        return toast.error("起始时间必须早于结束时间");
+      }
+      // datetime-local 给的是 YYYY-MM-DDTHH:mm,补 :00 凑成完整 ISO
+      body.since = `${sinceLocal}:00`;
+      body.until = `${untilLocal}:00`;
+    } else {
+      body.window_hours = windowHours ?? 24;
+    }
     setBusy(true);
     try {
-      const r = await manualTriggerDailyReport({
-        view,
-        window_hours: windowHours ?? 24,
-        receiver_type: receiverType,
-        receiver_ids: receiverIds.length > 0 ? receiverIds : null,
-      });
+      const r = await manualTriggerDailyReport(body);
       toast.message(`已开始 run_id=${r.run_id}`);
       setPollingRunId(r.run_id);
       setLastRun(null);
@@ -1298,7 +1332,7 @@ function ManualTriggerCard({
         }
       />
       <div className="px-5 py-4 flex flex-col gap-3.5">
-        {/* 视角 + 窗口 */}
+        {/* 视角 + 窗口模式选择 */}
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="flex flex-col gap-1.5">
             <FieldLabel>视角</FieldLabel>
@@ -1312,6 +1346,36 @@ function ManualTriggerCard({
               <option value="personal">个人视角</option>
             </select>
           </div>
+          <div className="flex flex-col gap-1.5">
+            <FieldLabel>窗口模式</FieldLabel>
+            <div
+              className="flex h-[34px] items-center gap-4 rounded-md border bg-white px-3 text-[13px]"
+              style={{ borderColor: "var(--line-strong, var(--line))" }}
+            >
+              <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="radio"
+                  name="manual-window-mode"
+                  checked={windowMode === "hours"}
+                  onChange={() => setWindowMode("hours")}
+                />
+                <span>统计窗口</span>
+              </label>
+              <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="radio"
+                  name="manual-window-mode"
+                  checked={windowMode === "range"}
+                  onChange={() => setWindowMode("range")}
+                />
+                <span>时间区间</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        {/* 窗口具体输入 — 按模式分支 */}
+        {windowMode === "hours" ? (
           <div className="flex flex-col gap-1.5">
             <FieldLabel htmlFor="manual-window">统计窗口(小时)</FieldLabel>
             <Input
@@ -1334,8 +1398,35 @@ function ManualTriggerCard({
                   setWindowHours(24);
               }}
             />
+            <FieldHelp>1–168 小时,从当前时间倒推</FieldHelp>
           </div>
-        </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <FieldLabel htmlFor="manual-since">起始时间</FieldLabel>
+              <Input
+                id="manual-since"
+                type="datetime-local"
+                value={sinceLocal}
+                onChange={(e) => setSinceLocal(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <FieldLabel htmlFor="manual-until">结束时间</FieldLabel>
+              <Input
+                id="manual-until"
+                type="datetime-local"
+                value={untilLocal}
+                onChange={(e) => setUntilLocal(e.target.value)}
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <FieldHelp>
+                区间最长 168 小时(7 天),时区为 Asia/Shanghai
+              </FieldHelp>
+            </div>
+          </div>
+        )}
 
         {/* 接收人 — 折叠 */}
         <div

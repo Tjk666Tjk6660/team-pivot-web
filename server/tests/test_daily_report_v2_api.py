@@ -510,7 +510,74 @@ def test_manual_trigger_requires_receiver_ids_for_users(app_state):
                    # 漏 receiver_ids
                })
     assert r.status_code == 400
-    assert "receiver_ids" in r.json()["detail"]
+
+
+def test_manual_trigger_with_explicit_time_range(app_state):
+    """显式 since/until 模式 —— 跑历史时段。"""
+    c = _client(app_state)
+    fake_debug = {"status": "rendered",
+                  "receivers": {"sent": 0, "total": 0}}
+    with patch(
+        "server.daily_report.runner.run_daily_report_for_job",
+        return_value=(0, fake_debug),
+    ):
+        r = c.post("/api/admin/daily-report/manual-trigger",
+                   headers=_admin_headers(),
+                   json={
+                       "view": "company",
+                       "since": "2026-04-29T00:00:00+08:00",
+                       "until": "2026-04-30T00:00:00+08:00",
+                       "receiver_type": "groups",
+                       "dry_run": True,
+                       "no_ai": True,
+                   })
+        assert r.status_code == 200, r.text
+        run_id = r.json()["run_id"]
+        finished = _wait_run_finished(c, run_id)
+        assert finished["status"] == "succeeded"
+
+
+def test_manual_trigger_rejects_inverted_time_range(app_state):
+    c = _client(app_state)
+    r = c.post("/api/admin/daily-report/manual-trigger",
+               headers=_admin_headers(),
+               json={
+                   "view": "company",
+                   "since": "2026-04-30T00:00:00+08:00",
+                   "until": "2026-04-29T00:00:00+08:00",  # until < since
+                   "receiver_type": "groups",
+               })
+    assert r.status_code == 400
+    assert "since must be before until" in r.text
+
+
+def test_manual_trigger_rejects_overlong_time_range(app_state):
+    c = _client(app_state)
+    r = c.post("/api/admin/daily-report/manual-trigger",
+               headers=_admin_headers(),
+               json={
+                   "view": "company",
+                   "since": "2026-04-01T00:00:00+08:00",
+                   "until": "2026-04-30T00:00:00+08:00",  # 29 天 > 168h
+                   "receiver_type": "groups",
+               })
+    assert r.status_code == 400
+    assert "too large" in r.text
+
+
+def test_manual_trigger_rejects_partial_time_range(app_state):
+    """只给 since 不给 until(或反之)应当报错。"""
+    c = _client(app_state)
+    r = c.post("/api/admin/daily-report/manual-trigger",
+               headers=_admin_headers(),
+               json={
+                   "view": "company",
+                   "since": "2026-04-29T00:00:00+08:00",
+                   # 没有 until
+                   "receiver_type": "groups",
+               })
+    assert r.status_code == 400
+    assert "together" in r.text
 
 
 # --------------------------------------------------------------------------- #

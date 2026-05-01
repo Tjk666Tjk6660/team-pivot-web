@@ -99,9 +99,19 @@ class RunNowIn(BaseModel):
 
 
 class ManualTriggerIn(BaseModel):
-    """不绑 job 的一次性触发。窗口 = [now - window_hours, now)。"""
+    """不绑 job 的一次性触发。
+
+    窗口模式两选一(都给以 since/until 优先):
+      - 模式 A:`window_hours` —— 窗口 = [now - window_hours, now)
+      - 模式 B:`since` + `until` —— 窗口 = [since, until),允许跑历史时段
+    """
     view: Literal["company", "personal"]
+    # 模式 A:倒推
     window_hours: int = Field(default=24, ge=1, le=168)
+    # 模式 B:显式时间区间(都给则覆盖 window_hours)。ISO8601,带不带时区都行
+    # (无时区按 Asia/Shanghai 解释)
+    since: datetime | None = None
+    until: datetime | None = None
     receiver_type: Literal["groups", "users"]
     receiver_ids: list[str] | None = None
     dry_run: bool = False
@@ -385,12 +395,33 @@ def build_router(
         body: ManualTriggerIn,
         _: User = Depends(current_user_cookie_only),
     ) -> TriggerResponse:
-        """不绑 job 的一次性触发。窗口 = [now - window_hours, now)。"""
+        """不绑 job 的一次性触发。窗口模式见 ManualTriggerIn。"""
         if body.receiver_type == "users" and not body.receiver_ids:
             raise HTTPException(400, "receiver_ids required when receiver_type=users")
 
         now = datetime.now(tz=CHINA_TZ)
-        # 构造 dummy Job(不入库,只供 runner 用)
+
+        # 决定窗口:since/until 都给 → 用显式区间;否则倒推
+        if body.since is not None and body.until is not None:
+            since = body.since if body.since.tzinfo else body.since.replace(tzinfo=CHINA_TZ)
+            until = body.until if body.until.tzinfo else body.until.replace(tzinfo=CHINA_TZ)
+            if since >= until:
+                raise HTTPException(400, "since must be before until")
+            span_hours = (until - since).total_seconds() / 3600
+            if span_hours > 168:
+                raise HTTPException(400, "time range too large (max 168 hours = 7 days)")
+            explicit_window = TimeWindow(since=since, until=until)
+        elif body.since is not None or body.until is not None:
+            raise HTTPException(400, "since and until must be provided together")
+        else:
+            explicit_window = TimeWindow(
+                since=now - timedelta(hours=body.window_hours),
+                until=now,
+            )
+
+        # 构造 dummy Job(不入库,只供 runner 用)。window_hours 字段保留 body 值
+        # (即便走 since/until 模式,job 字段沿用默认或 body 给的);runner 会优先
+        # 用 explicit_window,所以 dummy.window_hours 实际不被消费。
         dummy = Job(
             id=0, name="manual-trigger", view=body.view,
             status="active",
@@ -402,11 +433,6 @@ def build_router(
             next_run_at=None, last_run_id=None, last_status=None,
             retry_count=0, last_notified_at=None,
             created_by=None, created_at=now, updated_at=now,
-        )
-        # 显式时间窗口 = 过去 N 小时
-        explicit_window = TimeWindow(
-            since=now - timedelta(hours=body.window_hours),
-            until=now,
         )
 
         run_id = runs_repo.start(
