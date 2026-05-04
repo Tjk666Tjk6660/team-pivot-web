@@ -34,6 +34,8 @@ import {
 } from "./timeline-config";
 import { ReadersRow } from "./ReadersRow";
 import { RelevanceChip } from "./RelevanceChip";
+import { InvalidatedBadge } from "./InvalidatedBadge";
+import { InvalidateDialog } from "./InvalidateDialog";
 import { publishListRefresh } from "@/events/listRefresh";
 
 const COLLAPSE_HEIGHT = 208;
@@ -83,6 +85,7 @@ export function FileCard({
   highlighted,
   markdownStyle,
   me,
+  onMatterChanged,
 }: {
   item: TimelineFileItem;
   index: number;
@@ -95,11 +98,27 @@ export function FileCard({
   registerRef?: (el: HTMLDivElement | null) => void;
   highlighted?: boolean;
   markdownStyle: MarkdownStyleId;
-  me: { open_id: string; name: string; avatar_url: string | null };
+  me: {
+    open_id: string;
+    name: string;
+    avatar_url: string | null;
+    // pinyin gates author-only actions (invalidate / restore). When null,
+    // the action menu is hidden — the user hasn't completed profile setup.
+    pinyin: string | null;
+  };
+  // Invoked after a successful invalidate / restore so the parent can refetch
+  // matter detail and show the new event entry + reverse-write fields.
+  onMatterChanged?: () => void;
 }) {
   const cfg = TYPE_VISUAL[item.type];
   const [expanded, setExpanded] = useState(false);
   const [canExpand, setCanExpand] = useState(false);
+  // Author-only invalidate/restore dialog. Visibility is gated below.
+  const [invalidateDialog, setInvalidateDialog] = useState<
+    "invalidate" | "restore" | null
+  >(null);
+  const isAuthor = !!me.pinyin && me.pinyin === item.creator;
+  const isInvalidated = item.invalidated === true;
   const bodyRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLElement | null>(null);
   const allowed = ALLOWED_TYPES_BY_STATUS[matterStatus];
@@ -285,6 +304,12 @@ export function FileCard({
             {relativeTime(item.created_at)}
           </span>
           <RelevanceChip reason={item.relevance_reason} />
+          {isInvalidated && (
+            <InvalidatedBadge
+              reason={item.invalidated_reason ?? null}
+              by={item.invalidated_by ?? null}
+            />
+          )}
         </div>
         <MentionPopover onSubmit={onAddComment} align="right" />
       </div>
@@ -444,11 +469,45 @@ export function FileCard({
           onClick={() => onCreate("verify", item.file)}
         />
         <CopyForAIButton matterId={matterId} filePath={item.file} />
+        {/* Author-only invalidate / restore. The button label switches by
+            current state: 撤回 (when not yet invalidated) ↔ 恢复 (when
+            invalidated). The actual permission check is enforced server-side
+            (event_creator_mismatch → 403), this gating is just UI hygiene. */}
+        {isAuthor &&
+          (isInvalidated ? (
+            <button
+              type="button"
+              onClick={() => setInvalidateDialog("restore")}
+              className="rounded-[var(--r-sm)] border border-[var(--accent-soft)] bg-transparent px-2 py-1 text-[11px] font-semibold text-[var(--accent)] hover:bg-[var(--accent-bg)]"
+              title="把这条文档恢复"
+            >
+              ↺ 恢复
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setInvalidateDialog("invalidate")}
+              className="rounded-[var(--r-sm)] border border-[var(--line)] bg-transparent px-2 py-1 text-[11px] font-semibold text-[var(--text-mute)] hover:border-[var(--warn-500,#f59e0b)] hover:text-[var(--warn-700,#b45309)]"
+              title="作者撤回此文档"
+            >
+              ⊘ 撤回
+            </button>
+          ))}
         <div className="ml-auto text-[10px] text-[var(--text-fade)]">
           点按钮 · 新文件 quote 自动写入{" "}
           <span className="font-mono">{shortFile(item.file)}</span>
         </div>
       </div>
+
+      {invalidateDialog && (
+        <InvalidateDialog
+          matterId={matterId}
+          targetFile={item.file}
+          mode={invalidateDialog}
+          onClose={() => setInvalidateDialog(null)}
+          onDone={() => onMatterChanged?.()}
+        />
+      )}
     </article>
   );
 }

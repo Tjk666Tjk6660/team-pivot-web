@@ -220,11 +220,15 @@ export function CreateFileForm({
   // 不该出现(matter 都没启动过执行,何来"恢复执行")。
   const everExecuted = useMemo(
     () =>
-      timeline.some(
-        (t) =>
+      timeline.some((t) => {
+        // status_change exists on file items + owner_change events only;
+        // invalidation events have no status_change.
+        if (!("status_change" in t)) return false;
+        return (
           t.status_change?.to === "executing" ||
-          t.status_change?.from === "executing",
-      ),
+          t.status_change?.from === "executing"
+        );
+      }),
     [timeline],
   );
 

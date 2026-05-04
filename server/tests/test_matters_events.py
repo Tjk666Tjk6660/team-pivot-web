@@ -13,6 +13,7 @@ from server.events import (
     TOPIC_COMMENT_APPENDED,
     TOPIC_FILE_APPENDED,
     TOPIC_MATTER_CREATED,
+    TOPIC_MATTER_EVENT_APPENDED,
     TOPIC_RESULT_CREATED,
     TOPIC_STATUS_CHANGED,
 )
@@ -66,3 +67,35 @@ def test_make_sse_event_envelope_has_required_keys():
     assert set(sse.keys()) == {"id", "event", "data"}
     assert "-" in sse["id"]  # <ms-ts>-<seq>
     assert {"matter_id", "reason", "actor", "at"} == set(sse["data"].keys())
+
+
+def test_make_sse_event_maps_event_appended_thin():
+    """Invalidation/restoration events (P1–P3) are thin: they ride the same
+    `matter.updated` SSE event name with reason='event_appended', so the
+    front-end treats them identically to file/comment updates and refetches
+    the full matter detail. Per AI-docs/invalidate-self/product-design.md §5.1.
+
+    Critically, the SSE data payload must NOT carry business fields (target_file,
+    summary, etc.) — those live in the events.py bus payload for the notifier
+    but are stripped at the SSE boundary.
+    """
+    bus_event = Event(
+        topic=TOPIC_MATTER_EVENT_APPENDED,
+        matter_id="m1",
+        actor="dengke",
+        at="2026-04-27T20:00:00+08:00",
+        payload={
+            "target_file": "discussions/Pivot/m1/002_dengke_act_x.md",
+            "reason": "misposted",
+            "summary": "误发,撤回",
+        },
+    )
+    sse = _make_sse_event(bus_event)
+    assert sse is not None
+    assert sse["event"] == "matter.updated"
+    assert sse["data"]["reason"] == "event_appended"
+    assert sse["data"]["matter_id"] == "m1"
+    assert sse["data"]["actor"] == "dengke"
+    # Thin SSE: business fields must NOT leak into the SSE data payload
+    assert "target_file" not in sse["data"]
+    assert "summary" not in sse["data"]

@@ -1430,3 +1430,202 @@ def test_get_matter_detail_includes_readers(client):
     # file2 unaffected (still just the auto-marked author).
     assert by_basename[file2]["readers_count"] == 1
     assert by_basename[file2]["readers"][0]["open_id"] == "ou_1"
+
+
+# ---------- POST /api/matters/{id}/events (invalidate / restore) ---------
+
+
+def _create_matter_with_act(client, *, title: str = "Auth", category: str = "Pivot"):
+    """Helper: dengke creates a matter (think) + appends an act. Returns
+    (matter_id, act_file_path)."""
+    r = client.post("/api/matters", json={
+        "category": category, "title": title,
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+    assert r.status_code == 200, r.text
+    matter_id = r.json()["matter_id"]
+    r2 = client.post(f"/api/matters/{matter_id}/files", json={
+        "type": "act",
+        "summary": "推进",
+        "body": "",
+        "status_change": {"from": "planning", "to": "executing"},
+    })
+    assert r2.status_code == 200, r2.text
+    act_file = r2.json()["item"]["file"]
+    return matter_id, act_file
+
+
+def test_post_event_invalidate_happy_path(client, event_bucket):
+    matter_id, act_file = _create_matter_with_act(client)
+    # Reset event bucket so we only see the event_appended emission
+    event_bucket.clear()
+
+    r = client.post(f"/api/matters/{matter_id}/events", json={
+        "target_file": act_file,
+        "reason": "misposted",
+        "summary": "误发,撤回此文档",
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # event echo
+    assert body["event"]["creator"] == "dengke"
+    assert body["event"]["quote"] == act_file
+    assert body["event"]["reason"] == "misposted"
+    assert body["event"]["summary"] == "误发,撤回此文档"
+    # target reverse-write echo
+    target = body["target"]
+    assert target["file"] == act_file
+    assert target["invalidated"] is True
+    assert target["invalidated_reason"] == "misposted"
+    assert target["invalidated_by"] == "dengke"
+    assert target["invalidated_at"] is not None
+    # emit event
+    topics = [e.topic for e in event_bucket]
+    assert "matter.event_appended" in topics
+    ev = next(e for e in event_bucket if e.topic == "matter.event_appended")
+    assert ev.matter_id == matter_id
+    assert ev.actor == "dengke"
+    assert ev.payload["target_file"] == act_file
+    assert ev.payload["reason"] == "misposted"
+
+
+def test_post_event_restore_happy_path(client):
+    matter_id, act_file = _create_matter_with_act(client)
+    # First invalidate
+    client.post(f"/api/matters/{matter_id}/events", json={
+        "target_file": act_file, "reason": "misposted",
+    })
+    # Then restore
+    r = client.post(f"/api/matters/{matter_id}/events", json={
+        "target_file": act_file, "reason": "restored",
+    })
+    assert r.status_code == 200, r.text
+    target = r.json()["target"]
+    assert target["invalidated"] is False
+    # audit trail kept
+    assert target["invalidated_at"] is not None
+    assert target["invalidated_reason"] == "misposted"
+    assert target["invalidated_by"] == "dengke"
+
+
+def test_post_event_creator_mismatch_403(client, db, users):
+    """非作者来失效 → 403."""
+    matter_id, act_file = _create_matter_with_act(client)
+
+    # Create liuyu + a TestClient with liuyu's session, hitting the same app.
+    from fastapi.testclient import TestClient
+    users.upsert_from_feishu(open_id="ou_2", union_id=None, name="刘昱", avatar_url="")
+    users.update_profile("ou_2", pinyin="liuyu")
+    sessions = SessionStore(db)
+    sid_liuyu = sessions.create("ou_2")
+    liuyu_client = TestClient(client.app)
+    liuyu_client.cookies.set("sid", sid_liuyu)
+
+    r = liuyu_client.post(f"/api/matters/{matter_id}/events", json={
+        "target_file": act_file, "reason": "misposted",
+    })
+    assert r.status_code == 403, r.text
+    assert r.json()["detail"]["code"] == "event_creator_mismatch"
+
+
+def test_post_event_already_invalidated_409(client):
+    matter_id, act_file = _create_matter_with_act(client)
+    # First invalidate
+    r1 = client.post(f"/api/matters/{matter_id}/events", json={
+        "target_file": act_file, "reason": "misposted",
+    })
+    assert r1.status_code == 200
+    # Second invalidate without restore in between
+    r2 = client.post(f"/api/matters/{matter_id}/events", json={
+        "target_file": act_file, "reason": "inaccurate",
+    })
+    assert r2.status_code == 409, r2.text
+    assert r2.json()["detail"]["code"] == "target_already_invalidated"
+
+
+def test_post_event_target_not_invalidated_409(client):
+    """未失效就发 restored → 409."""
+    matter_id, act_file = _create_matter_with_act(client)
+    r = client.post(f"/api/matters/{matter_id}/events", json={
+        "target_file": act_file, "reason": "restored",
+    })
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["code"] == "target_not_invalidated"
+
+
+def test_post_event_target_not_found_in_matter_404(client):
+    matter_id, _act_file = _create_matter_with_act(client)
+    r = client.post(f"/api/matters/{matter_id}/events", json={
+        "target_file": "discussions/Pivot/other-matter/001.md",  # 跨 matter
+        "reason": "misposted",
+    })
+    assert r.status_code == 404, r.text
+    assert r.json()["detail"]["code"] == "target_not_found"
+
+
+def test_post_event_matter_not_found_404(client):
+    r = client.post("/api/matters/no-such-matter/events", json={
+        "target_file": "x", "reason": "misposted",
+    })
+    assert r.status_code == 404, r.text
+    assert r.json()["detail"]["code"] == "matter_not_found"
+
+
+def test_post_event_invalid_reason_422(client):
+    matter_id, act_file = _create_matter_with_act(client)
+    r = client.post(f"/api/matters/{matter_id}/events", json={
+        "target_file": act_file, "reason": "bogus",
+    })
+    # Pydantic Literal rejection → 422 (validator层面), not 400
+    assert r.status_code == 422, r.text
+
+
+def test_post_event_full_lifecycle_invalidate_restore_invalidate(client):
+    """End-to-end: create → append act → invalidate → restore → re-invalidate."""
+    matter_id, act_file = _create_matter_with_act(client)
+
+    # Round 1: invalidate as misposted
+    r1 = client.post(f"/api/matters/{matter_id}/events", json={
+        "target_file": act_file, "reason": "misposted",
+    })
+    assert r1.status_code == 200
+    assert r1.json()["target"]["invalidated"] is True
+    assert r1.json()["target"]["invalidated_reason"] == "misposted"
+
+    # Round 2: restore
+    r2 = client.post(f"/api/matters/{matter_id}/events", json={
+        "target_file": act_file, "reason": "restored",
+    })
+    assert r2.status_code == 200
+    assert r2.json()["target"]["invalidated"] is False
+
+    # Round 3: re-invalidate as inaccurate (overwrites prior reason)
+    r3 = client.post(f"/api/matters/{matter_id}/events", json={
+        "target_file": act_file, "reason": "inaccurate",
+    })
+    assert r3.status_code == 200
+    assert r3.json()["target"]["invalidated"] is True
+    assert r3.json()["target"]["invalidated_reason"] == "inaccurate"
+
+    # Read full matter detail: timeline must contain 1 think + 1 act + 3 event entries
+    detail = client.get(f"/api/matters/{matter_id}").json()
+    assert len(detail["timeline"]) == 5
+
+
+def test_post_event_blocks_quote_to_invalidated_file(client):
+    """§5.3: invalidated 后,新 think/act 的 quote 指向它会被拒绝."""
+    matter_id, act_file = _create_matter_with_act(client)
+    # invalidate
+    client.post(f"/api/matters/{matter_id}/events", json={
+        "target_file": act_file, "reason": "misposted",
+    })
+    # try to append a new act that quotes the invalidated act
+    r = client.post(f"/api/matters/{matter_id}/files", json={
+        "type": "act",
+        "summary": "继续",
+        "body": "",
+        "quote": act_file,
+    })
+    # Existing /files endpoint maps validator errors; expect 422 with our new code
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["code"] == "quote_target_invalidated"

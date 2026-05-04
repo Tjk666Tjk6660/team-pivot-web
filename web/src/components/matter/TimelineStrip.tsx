@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { isTimelineFileItem, type TimelineItem } from "@/api";
+import { isTimelineFileItem, type TimelineFileItem, type TimelineItem } from "@/api";
 import { cn } from "@/lib/utils";
 import { relativeTime } from "@/lib/time";
 import { TYPE_VISUAL, shortFile } from "./timeline-config";
@@ -144,8 +144,18 @@ function arrowHeadPoints(arrow: ConnectorArrow): string {
   ].join(" ");
 }
 
+// Navigation strip ONLY renders file items. Non-file events (owner_change,
+// invalidation, restoration) are intentionally excluded — they don't
+// represent "a new file appearing on the timeline" and would inflate the
+// node count without adding navigability. Their content is still rendered
+// in the main file flow (OwnerChangeRow / InvalidatedBadge).
+//
+// We accept the broader `TimelineItem[]` here and filter defensively inside
+// the component, so the strip can never render a non-file node even if
+// callers pass an unfiltered list (e.g. legacy entry points, future
+// regressions). The cost is one extra .filter() call per render — trivial.
 export function TimelineStrip({
-  items,
+  items: rawItems,
   highlight,
   onJump,
 }: {
@@ -153,6 +163,7 @@ export function TimelineStrip({
   highlight: string | null;
   onJump: (file: string) => void;
 }) {
+  const items: TimelineFileItem[] = rawItems.filter(isTimelineFileItem);
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
 
@@ -230,65 +241,87 @@ export function TimelineStrip({
             );
           })}
 
-          {/* 节点 */}
+          {/* 节点 — 仅 file items */}
           {items.map((item, i) => {
             const pos = layout.positions[i];
             if (!pos) return null;
-            const itemIsFile = isTimelineFileItem(item);
-            const fileItem = itemIsFile ? item : null;
-            const actorLabel = itemIsFile ? item.creator : item.actor;
-            const cfg = fileItem ? TYPE_VISUAL[fileItem.type] : null;
-            const active = !!fileItem && highlight === fileItem.file;
-            const key = fileItem ? fileItem.file : `owner-${item.created_at}-${i}`;
+            const cfg = TYPE_VISUAL[item.type];
+            const active = highlight === item.file;
+            const isInvalidated = item.invalidated === true;
             return (
               <button
-                key={key}
+                key={item.file}
                 type="button"
-                disabled={!fileItem}
-                onClick={() => fileItem && onJump(fileItem.file)}
-                className="absolute flex flex-col items-center focus:outline-none disabled:cursor-default"
+                onClick={() => onJump(item.file)}
+                className="absolute flex flex-col items-center focus:outline-none"
                 style={{
                   left: pos.x - 56,
                   top: pos.y - DOT_SIZE / 2,
                   width: 112,
                 }}
                 title={
-                  fileItem
-                    ? `${fileItem.type} #${i + 1} · ${shortFile(fileItem.file)} · ${fileItem.summary}`
-                    : `owner_change #${i + 1}`
+                  isInvalidated
+                    ? `${item.type} #${i + 1} · ${shortFile(item.file)} · ${item.summary} · 已失效（${item.invalidated_reason ?? ""}）`
+                    : `${item.type} #${i + 1} · ${shortFile(item.file)} · ${item.summary}`
                 }
               >
                 <span
                   className={cn(
-                    "flex h-6 w-6 items-center justify-center border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-sm)] transition-transform",
-                    fileItem ? "rounded-full" : "rotate-45 rounded-[3px]",
+                    "flex h-6 w-6 items-center justify-center rounded-full border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-sm)] transition-transform",
                     active && "scale-125 shadow-[var(--shadow-lg)]",
                   )}
                 >
                   <span
                     className={cn(
-                      "block h-3.5 w-3.5",
-                      fileItem ? "rounded-full" : "rounded-[2px] bg-[var(--text-fade)]",
-                      cfg?.dot,
+                      "block h-3.5 w-3.5 rounded-full",
+                      // Invalidated files lose their type color and turn grey
+                      // — matches the InvalidatedBadge on the file card and
+                      // signals "this entry is withdrawn" at strip glance.
+                      isInvalidated
+                        ? "bg-[var(--text-fade)] opacity-60"
+                        : cfg.dot,
                     )}
                   />
                 </span>
                 <span
                   className={cn(
                     "mt-1 text-[10px] font-semibold uppercase tracking-wide",
-                    cfg?.pill ?? "text-[var(--text-mute)]",
+                    isInvalidated
+                      ? "text-[var(--text-fade)] line-through"
+                      : cfg.pill,
                   )}
                 >
                   {item.type} #{i + 1}
                 </span>
-                <span className="max-w-full truncate text-[10px] font-medium text-[var(--text-soft)]">
-                  {actorLabel}
+                <span
+                  className={cn(
+                    "max-w-full truncate text-[10px] font-medium",
+                    isInvalidated
+                      ? "text-[var(--text-fade)]"
+                      : "text-[var(--text-soft)]",
+                  )}
+                >
+                  {item.creator}
                 </span>
-                <span className="text-[10px] text-[var(--text-mute)]">
+                <span
+                  className={cn(
+                    "text-[10px]",
+                    isInvalidated
+                      ? "text-[var(--text-fade)]"
+                      : "text-[var(--text-mute)]",
+                  )}
+                >
                   {relativeTime(item.created_at)}
                 </span>
                 {item.status_change && (
-                  <span className="mt-0.5 inline-flex max-w-full items-center truncate rounded-full bg-[var(--status-project-bg)] px-1.5 py-0.5 text-[10px] text-[var(--status-project-fg)] ring-1 ring-[var(--accent-soft)]">
+                  <span
+                    className={cn(
+                      "mt-0.5 inline-flex max-w-full items-center truncate rounded-full px-1.5 py-0.5 text-[10px] ring-1",
+                      isInvalidated
+                        ? "bg-[var(--surface-alt)] text-[var(--text-fade)] ring-[var(--line)]"
+                        : "bg-[var(--status-project-bg)] text-[var(--status-project-fg)] ring-[var(--accent-soft)]",
+                    )}
+                  >
                     {item.status_change.from} → {item.status_change.to}
                   </span>
                 )}
@@ -296,7 +329,9 @@ export function TimelineStrip({
                   <span
                     className={cn(
                       "mt-0.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] ring-1",
-                      item.outcome === "finished"
+                      isInvalidated
+                        ? "bg-[var(--surface-alt)] text-[var(--text-fade)] ring-[var(--line)]"
+                        : item.outcome === "finished"
                         ? "bg-[var(--status-concluded-bg)] text-[var(--status-concluded-fg)] ring-[var(--line)]"
                         : "bg-[var(--surface-alt)] text-[var(--text-soft)] ring-[var(--line-strong)]",
                     )}

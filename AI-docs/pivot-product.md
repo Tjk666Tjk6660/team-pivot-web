@@ -321,6 +321,44 @@ matter:
 
 原因很简单：这些字段要么没有独立信息增量，要么会过早把模型推向更重的对象结构。
 
+### 5. 事件项形态（timeline 上的非文件型记录）
+
+除了文件项之外，timeline 还可以承载**事件项**——它们没有对应的 md 文件落盘，仅作为 yaml 索引上的可审计事件存在。当前两种事件项：
+
+- **owner_change**：matter 责任人转交事件。带 `type: owner_change` 字段。
+- **失效 / 恢复事件**：作者对自己已发布文档的"声明式撤回 / 恢复"。**没有 `type` 字段**，通过 `reason` 字段编码（`misposted` / `inaccurate` / `restored`）。详见 `AI-docs/invalidate-self/product-design.md`。
+
+事件项与文件项**通过 `type` 字段的存在与否自然区分**：
+- 文件项：`type ∈ {think, act, verify, result, insight}`
+- owner_change 事件项：`type == "owner_change"`
+- 失效/恢复事件项：**没有 `type`**，但有 `reason ∈ {misposted, inaccurate, restored}`
+
+失效/恢复事件项的最小形态：
+
+```yaml
+- creator: dengke
+  created_at: 2026-04-26T10:00:00+08:00
+  quote: discussions/Pivot/xxx/003_dengke_act_bbb.md   # 被撤回的目标文件
+  reason: misposted                                    # 同字段编码事件类型 + 具体原因
+  summary: "误发,撤回此文档"                            # 可选
+```
+
+事件项的影响（如失效事件→反写文件项的 `invalidated_*` 字段）由写入侧的反写函数承担，不重复声明。
+
+### 6. 文件项的反写字段（invalidated_\*）
+
+文件项除了创建时由作者声明的字段外，还有一组**由系统反写**的字段，用于记录文件被外部事件（如失效/恢复、verify 通过等）影响后的状态：
+
+- `verifications_received`（数组）：act 文件被 verify 文件覆盖后，反写此处。
+- `invalidated`（bool）：文件当前是否处于失效状态。
+- `invalidated_at`：最近一次失效的时间。
+- `invalidated_reason`：最近一次失效的理由（`misposted` / `inaccurate`）。
+- `invalidated_by`：最近一次失效的操作人 pinyin。
+
+恢复事件仅翻转 `invalidated: true → false`，**保留**其他三个字段作为审计痕迹（再次失效时被新值覆盖）。
+
+**失效不影响 matter 状态机**：即使被失效的是触发了 `executing → finished` 的 result 文件，matter 当前状态依然 finished。timeline 与状态机是两条独立事实链。详见 `AI-docs/invalidate-self/product-design.md` §5.5。
+
 ## 九、executing、paused、finished 与 cancelled 的最小规则
 
 ### 1. executing

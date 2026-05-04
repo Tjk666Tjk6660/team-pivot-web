@@ -142,6 +142,31 @@ export type TimelineFileItem = {
   // File-level relevance reason for the current user. null / missing means
   // not relevant. Populated by detail interface from relevance_events table.
   relevance_reason?: FileRelevanceReason | null;
+  // Invalidation reverse-write fields (P1). All four come together; missing
+  // means the file was never invalidated. After a restore, `invalidated`
+  // flips back to false but the other three persist as audit trail.
+  // See AI-docs/invalidate-self/product-design.md §2.1.
+  invalidated?: boolean;
+  invalidated_at?: string;
+  invalidated_reason?: InvalidationReason;
+  invalidated_by?: string;
+};
+
+export type InvalidationReason = "misposted" | "inaccurate" | "restored";
+
+export type TimelineInvalidationEventItem = {
+  // No `type` field — distinguished from file items by absence of `type`,
+  // and from owner_change events by presence of `reason` ∈ InvalidationReason.
+  // See AI-docs/invalidate-self/product-design.md §2.2.
+  created_at: string;
+  creator: string;
+  creator_display: string | null;
+  creator_avatar_url: string | null;
+  quote: string;       // target file path
+  reason: InvalidationReason;
+  summary?: string;
+  readers_count?: number;
+  readers?: Reader[];
 };
 
 export type TimelineOwnerChangeItem = {
@@ -162,10 +187,28 @@ export type TimelineOwnerChangeItem = {
   readers?: Reader[];
 };
 
-export type TimelineItem = TimelineFileItem | TimelineOwnerChangeItem;
+export type TimelineItem =
+  | TimelineFileItem
+  | TimelineOwnerChangeItem
+  | TimelineInvalidationEventItem;
 
 export function isTimelineFileItem(item: TimelineItem): item is TimelineFileItem {
-  return item.type !== "owner_change";
+  // File items carry a `type` field in the file-type whitelist. Owner_change
+  // also has `type` but equals "owner_change". Invalidation events have no
+  // `type` field at all (per design §2.2).
+  return "type" in item && item.type !== "owner_change";
+}
+
+export function isTimelineOwnerChangeItem(
+  item: TimelineItem,
+): item is TimelineOwnerChangeItem {
+  return "type" in item && item.type === "owner_change";
+}
+
+export function isTimelineInvalidationEventItem(
+  item: TimelineItem,
+): item is TimelineInvalidationEventItem {
+  return !("type" in item);
 }
 
 export type MatterSummary = {
@@ -375,6 +418,70 @@ export async function transferMatterOwner(
     throw new Error(transferMatterOwnerErrorMessage(d.detail, r.status));
   }
   return (await r.json()) as TransferMatterOwnerResponse;
+}
+
+export type PostMatterEventResponse = {
+  matter_id: string;
+  matter: { id: string; title: string; current_status: MatterStatus };
+  event: {
+    creator: string;
+    created_at: string;
+    quote: string;
+    reason: InvalidationReason;
+    summary?: string;
+  };
+  target: {
+    file: string;
+    invalidated: boolean;
+    invalidated_at: string | null;
+    invalidated_reason: InvalidationReason | null;
+    invalidated_by: string | null;
+  } | null;
+};
+
+/** Invalidate or restore a file the current user authored.
+ *
+ * Per AI-docs/invalidate-self/product-design.md:
+ *   - reason ∈ {misposted, inaccurate}: invalidate
+ *   - reason === "restored": restore (only allowed on already-invalidated files)
+ *
+ * Server enforces author-only (creator must equal target file's creator)
+ * and same-matter (quote must point to a file in this matter timeline).
+ */
+export async function postMatterEvent(
+  matterId: string,
+  body: {
+    target_file: string;
+    reason: InvalidationReason;
+    summary?: string | null;
+  },
+): Promise<PostMatterEventResponse> {
+  const r = await fetch(
+    `/api/matters/${encodeURIComponent(matterId)}/events`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!r.ok) {
+    await throwIfSessionExpired(r);
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    const detail = d.detail;
+    const code =
+      detail && typeof detail === "object" && "code" in detail
+        ? (detail as { code?: string }).code
+        : undefined;
+    const message =
+      (detail && typeof detail === "object" && "message" in detail
+        ? (detail as { message?: string }).message
+        : null) ||
+      (typeof detail === "string" ? detail : null) ||
+      r.statusText;
+    throw new Error(code ? `${code}: ${message}` : String(message));
+  }
+  return (await r.json()) as PostMatterEventResponse;
 }
 
 export async function appendMatterResult(
