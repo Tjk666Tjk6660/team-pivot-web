@@ -290,7 +290,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
         fetchWorkspaceStatus(),
         fetchDrafts(),
       ]);
-      setMatters((prev) => (sameMatters(prev, m) ? prev : m));
+      setMatters((prev) => (sameMatters(prev, m.items) ? prev : m.items));
       setWorkspace(w);
       setDrafts(d);
     } catch (e) {
@@ -304,7 +304,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const refreshMattersSilently = useCallback(async () => {
     try {
       const next = await fetchMatters();
-      setMatters((prev) => (sameMatters(prev, next) ? prev : next));
+      setMatters((prev) => (sameMatters(prev, next.items) ? prev : next.items));
     } catch {
       // swallow; resume / next event will retry
     }

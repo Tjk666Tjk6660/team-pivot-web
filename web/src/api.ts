@@ -249,21 +249,45 @@ export type MatterDetail = {
   timeline: TimelineItem[];
 };
 
-export async function fetchMatters(query?: {
-  status?: MatterStatus;
-  owner?: string;
+export type MatterScope = "all" | "relevant";
+
+export type FetchMattersQuery = {
+  status?: MatterStatus[];
+  owner?: string[];
   q?: string;
-}): Promise<MatterSummary[]> {
+  scope?: MatterScope;
+  limit?: number;
+  offset?: number;
+};
+
+export type FetchMattersResult = {
+  items: MatterSummary[];
+  total: number;
+  has_more: boolean;
+};
+
+export async function fetchMatters(
+  query?: FetchMattersQuery,
+): Promise<FetchMattersResult> {
   const params = new URLSearchParams();
-  if (query?.status) params.set("status", query.status);
-  if (query?.owner) params.set("owner", query.owner);
+  for (const s of query?.status ?? []) params.append("status", s);
+  for (const o of query?.owner ?? []) params.append("owner", o);
   if (query?.q) params.set("q", query.q);
+  if (query?.scope) params.set("scope", query.scope);
+  if (query?.limit != null) params.set("limit", String(query.limit));
+  if (query?.offset != null) params.set("offset", String(query.offset));
   const qs = params.toString() ? `?${params}` : "";
   const r = await fetch(`/api/matters${qs}`, { credentials: "include" });
   await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`/api/matters failed: ${r.status}`);
-  const body = (await r.json()) as { items: MatterSummary[] };
-  return body.items;
+  const body = (await r.json()) as Partial<FetchMattersResult> & {
+    items: MatterSummary[];
+  };
+  return {
+    items: body.items,
+    total: body.total ?? body.items.length,
+    has_more: body.has_more ?? false,
+  };
 }
 
 export async function fetchMatter(matterId: string): Promise<MatterDetail> {

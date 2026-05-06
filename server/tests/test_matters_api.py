@@ -819,7 +819,10 @@ def test_append_comment_target_not_found(client):
 def test_list_matters_empty(client):
     r = client.get("/api/matters")
     assert r.status_code == 200
-    assert r.json() == {"items": []}
+    body = r.json()
+    assert body["items"] == []
+    assert body["total"] == 0
+    assert body["has_more"] is False
 
 
 def test_list_matters_basic_and_filters(client):
@@ -839,10 +842,12 @@ def test_list_matters_basic_and_filters(client):
 
     all_r = client.get("/api/matters").json()
     assert len(all_r["items"]) == 2
+    assert all_r["total"] == 2
+    assert all_r["has_more"] is False
     titles = {m["title"] for m in all_r["items"]}
     assert titles == {"Auth", "Billing"}
 
-    # status filter
+    # status filter (single value — back-compat with older clients)
     exec_r = client.get("/api/matters?status=executing").json()
     assert len(exec_r["items"]) == 1
     assert exec_r["items"][0]["title"] == "Billing"
@@ -856,6 +861,195 @@ def test_list_matters_basic_and_filters(client):
     assert len(own_r["items"]) == 2
     empty_own = client.get("/api/matters?owner=nobody").json()
     assert empty_own["items"] == []
+    assert empty_own["total"] == 0
+
+
+def test_list_matters_multi_select_filters(client):
+    r_auth = client.post("/api/matters", json={
+        "category": "Pivot", "title": "Auth",
+        "initial_file": {"type": "think", "summary": "s1", "body": ""},
+    })
+    client.post("/api/matters", json={
+        "category": "Pivot", "title": "Billing",
+        "initial_file": {"type": "think", "summary": "s2", "body": ""},
+    })
+    r_search = client.post("/api/matters", json={
+        "category": "Pivot", "title": "Search",
+        "initial_file": {"type": "act", "summary": "s3", "body": ""},
+    })
+    # Push Auth → executing; Search → executing → finished
+    client.post(f"/api/matters/{r_auth.json()['matter_id']}/files", json={
+        "type": "act", "summary": "a",
+        "status_change": {"from": "planning", "to": "executing"},
+    })
+    client.post(f"/api/matters/{r_search.json()['matter_id']}/files", json={
+        "type": "act", "summary": "a",
+        "status_change": {"from": "planning", "to": "executing"},
+    })
+    rfin = client.post(f"/api/matters/{r_search.json()['matter_id']}/result", json={
+        "summary": "done", "outcome": "finished",
+    })
+    assert rfin.status_code == 200, rfin.text
+
+    # status multi-select: planning + executing
+    multi_status = client.get(
+        "/api/matters?status=planning&status=executing"
+    ).json()
+    assert {m["title"] for m in multi_status["items"]} == {"Auth", "Billing"}
+    assert multi_status["total"] == 2
+
+    # owner multi-select with non-existent owner mixed in still matches dengke
+    multi_owner = client.get(
+        "/api/matters?owner=dengke&owner=nobody"
+    ).json()
+    assert len(multi_owner["items"]) == 3
+
+    # q + status intersection
+    intersect = client.get(
+        "/api/matters?q=auth&status=executing"
+    ).json()
+    assert len(intersect["items"]) == 1
+    assert intersect["items"][0]["title"] == "Auth"
+
+
+def test_list_matters_owner_filter_ignores_per_file_owner(client, db, users):
+    """Owner filter must only match matter-level owner, not the per-file
+    owner of a single timeline item — regression for matter-view-improvement
+    spec §1.2."""
+    users.upsert_from_feishu(open_id="ou_2", union_id=None, name="Terry", avatar_url="")
+    users.update_profile("ou_2", pinyin="terry")
+
+    # dengke creates a matter and assigns the first think file's owner=terry
+    # at the file level. Matter-level owner stays dengke (default = creator).
+    client.post("/api/matters", json={
+        "category": "Pivot", "title": "shared",
+        "initial_file": {"type": "think", "summary": "s", "body": "", "owner": "terry"},
+    })
+
+    # Sanity: dengke (matter owner) should match
+    r_dengke = client.get("/api/matters?owner=dengke").json()
+    assert len(r_dengke["items"]) == 1
+
+    # terry is only the per-file owner — should NOT match
+    r_terry = client.get("/api/matters?owner=terry").json()
+    assert r_terry["items"] == []
+
+
+def test_list_matters_pagination(client):
+    for i in range(5):
+        client.post("/api/matters", json={
+            "category": "Pivot", "title": f"M{i}",
+            "initial_file": {"type": "think", "summary": "s", "body": ""},
+        })
+
+    page1 = client.get("/api/matters?limit=2&offset=0").json()
+    assert len(page1["items"]) == 2
+    assert page1["total"] == 5
+    assert page1["has_more"] is True
+
+    page3 = client.get("/api/matters?limit=2&offset=4").json()
+    assert len(page3["items"]) == 1
+    assert page3["has_more"] is False
+
+
+def test_list_matters_scope_relevant_includes_mentioned_matter(
+    client, db, users, tmp_path,
+):
+    """a 提及 b 后，b 的 scope=relevant 必须包含该 matter — 端到端覆盖
+    publish_matter_comment → emit(TOPIC_COMMENT_APPENDED) → relevance_writer
+    →_handle_comment_appended → insert_mention →
+    matter_ids_for_user → _is_matter_relevant_to_user 整条链路。"""
+    from server.api_tokens import ApiTokenRepo
+    from server.auth.deps import make_current_user
+    from server.notify import NoOpNotifier
+    from server.relevance_writer import install as install_relevance_writer
+
+    users.upsert_from_feishu(open_id="ou_a", union_id=None, name="A", avatar_url="")
+    users.update_profile("ou_a", pinyin="alice")
+    users.upsert_from_feishu(open_id="ou_b", union_id=None, name="B", avatar_url="")
+    users.update_profile("ou_b", pinyin="bob")
+
+    # The default `client` fixture installs the matters router only — the
+    # relevance_writer subscriber lives in app.py and is not wired into the
+    # FastAPI test app. Install it on the shared event bus so emit() actually
+    # reaches the writer.
+    install_relevance_writer(
+        workspace=client.workspace,
+        users_repo=users,
+        repo=RelevanceEventsRepo(db),
+    )
+
+    # Switch to alice (default fixture session is dengke) and create a matter
+    sessions = SessionStore(db)
+    sid_a = sessions.create("ou_a")
+    client.cookies.set("sid", sid_a)
+    r_create = client.post("/api/matters", json={
+        "category": "Pivot", "title": "shared",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+    assert r_create.status_code == 200, r_create.text
+    matter_id = r_create.json()["matter_id"]
+    target_file = r_create.json()["file"]
+
+    # alice posts a comment that @-mentions bob (open_id passed in)
+    r_cmt = client.post(f"/api/matters/{matter_id}/comments", json={
+        "target_file": target_file,
+        "body": "hey @bob look at this",
+        "mentions": ["ou_b"],
+    })
+    assert r_cmt.status_code == 200, r_cmt.text
+
+    # Verify the mention row landed in relevance_events
+    repo = RelevanceEventsRepo(db)
+    bobs_matters = repo.matter_ids_for_user("ou_b")
+    assert matter_id in bobs_matters, (
+        f"mention row missing — matter_ids_for_user(ou_b) = {bobs_matters}"
+    )
+
+    # Switch session to bob and verify list_matters?scope=relevant returns the matter
+    sid_b = sessions.create("ou_b")
+    client.cookies.set("sid", sid_b)
+    r_list = client.get("/api/matters?scope=relevant").json()
+    titles = {m["title"] for m in r_list["items"]}
+    assert "shared" in titles, (
+        f"bob's relevant scope missing the @-mentioned matter: {titles}"
+    )
+
+
+def test_list_matters_scope_relevant(client, db, users):
+    # Set up a second user (terry) and create a matter as terry — dengke
+    # is not relevant to it.
+    users.upsert_from_feishu(open_id="ou_2", union_id=None, name="Terry", avatar_url="")
+    users.update_profile("ou_2", pinyin="terry")
+
+    # dengke (sid set in fixture) creates matter A
+    client.post("/api/matters", json={
+        "category": "Pivot", "title": "A-by-dengke",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+
+    # Switch session to terry to create matter B owned by terry only
+    sessions = SessionStore(db)
+    sid_terry = sessions.create("ou_2")
+    client.cookies.set("sid", sid_terry)
+    client.post("/api/matters", json={
+        "category": "Pivot", "title": "B-by-terry",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+
+    # Back to dengke
+    sid_dengke = sessions.create("ou_1")
+    client.cookies.set("sid", sid_dengke)
+
+    all_r = client.get("/api/matters").json()
+    assert len(all_r["items"]) == 2
+
+    relevant = client.get("/api/matters?scope=relevant").json()
+    titles = {m["title"] for m in relevant["items"]}
+    # Self-creation gap: dengke's own matter has no relevance_events row
+    # (compute_relevance excludes ``creator == me``), so the timeline-scan
+    # fallback in _is_matter_relevant_to_user must still pick it up.
+    assert titles == {"A-by-dengke"}
 
 
 # ---------- full lifecycle + reviewed ----------

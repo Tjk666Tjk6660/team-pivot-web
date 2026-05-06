@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from server.auth.deps import require_profile
@@ -155,9 +155,12 @@ def build_router(
 
     @router.get("/matters")
     def list_matters(
-        status: str | None = None,
-        owner: str | None = None,
+        status: list[str] = Query(default_factory=list),
+        owner: list[str] = Query(default_factory=list),
         q: str | None = None,
+        scope: str = Query(default="all", pattern="^(all|relevant)$"),
+        limit: int = Query(default=200, ge=1, le=1000),
+        offset: int = Query(default=0, ge=0),
         user: User = Depends(current_user),
     ):
         # Per-user overlays: unread counts + favorites. Keyed by category/slug
@@ -168,18 +171,33 @@ def build_router(
             user.open_id, read_states, relevance_repo,
         )
         favorite_keys = favorites.all_for_user(user.open_id)
+        # For scope=relevant: relevance_events covers owner_assigned / reply_*
+        # / verify_* / in_my_matter / in_my_owned_matter / mention. But
+        # relevance.compute_relevance has a self-exclusion (creator == me
+        # writes no row) so a matter populated only by me is missing from
+        # the table. _is_matter_relevant_to_user falls back to scanning the
+        # timeline / comments to catch that case.
+        relevant_set = (
+            relevance_repo.matter_ids_for_user(user.open_id)
+            if scope == "relevant" else set()
+        )
 
-        items = []
+        me = user.pinyin
+        items: list[dict] = []
         for path in _list_index_files(workspace.index_dir):
             data = read_matter_index(path)
             if data is None:
                 continue
             summary = _summarize_matter(data, users, contacts)
-            if status and summary.get("current_status") != status:
+            if status and summary.get("current_status") not in status:
                 continue
-            if owner and not _matter_has_owner(data, owner):
+            if owner and not any(_matter_has_owner(data, o) for o in owner):
                 continue
             if q and q.lower() not in (summary.get("title") or "").lower():
+                continue
+            if scope == "relevant" and not _is_matter_relevant_to_user(
+                data, me, relevant_set,
+            ):
                 continue
             category = _matter_category(data)
             key = f"{category}/{summary['id']}" if category else summary["id"]
@@ -199,7 +217,13 @@ def build_router(
             summary["last_activity_at"] = _matter_last_activity_at(data)
             items.append(summary)
         items.sort(key=lambda m: m.get("last_activity_at") or "", reverse=True)
-        return {"items": items}
+        total = len(items)
+        page = items[offset : offset + limit]
+        return {
+            "items": page,
+            "total": total,
+            "has_more": offset + len(page) < total,
+        }
 
     @router.get("/matters/{matter_id}")
     def get_matter(matter_id: str, user: User = Depends(current_user)):
@@ -720,14 +744,49 @@ def _summarize_matter(
     return out
 
 
-def _matter_has_owner(data: dict, owner: str) -> bool:
-    matter_owner = _effective_matter_owner(data)
-    if matter_owner == owner:
+def _is_matter_relevant_to_user(
+    data: dict,
+    me: str | None,
+    relevant_matter_ids: set[str],
+) -> bool:
+    """Spec §2.1: matter is "relevant to me" if any of:
+      1. matter-level owner is me
+      2. I'm tagged via relevance_events (owner_assigned / reply_* / verify_* /
+         in_my_matter / in_my_owned_matter / mention) — covers being @-ed and
+         most participation cases
+      3. I created any timeline file or comment in the matter
+
+    Branch 3 exists to backfill the self-exclusion gap in relevance.py:
+    compute_relevance returns False when ``creator == me``, so a matter
+    populated only by me has no relevance_events rows. Scanning the timeline
+    catches that case.
+    """
+    if not me:
+        return False
+    matter_id = str((data.get("matter") or {}).get("id") or "")
+    if matter_id and matter_id in relevant_matter_ids:
+        return True
+    if _effective_matter_owner(data) == me:
         return True
     for item in data.get("timeline") or []:
-        if item.get("owner") == owner:
+        # owner_change events: actor / to_owner are pinyin-typed signals too,
+        # but a transfer to me is already covered by branch 1 once the index
+        # is updated; we only check creator/comment authorship here.
+        if item.get("creator") == me:
             return True
+        for c in item.get("comments") or []:
+            if c.get("author") == me:
+                return True
     return False
+
+
+def _matter_has_owner(data: dict, owner: str) -> bool:
+    """Owner filter compares against the *matter-level* owner only — the
+    "current owner" of the matter per spec §1.2 of the matter-view-improvement
+    plan. The previous implementation also matched any per-file owner inside
+    the timeline, which over-included matters where someone briefly authored
+    one file but isn't the matter's owner."""
+    return _effective_matter_owner(data) == owner
 
 
 def _matter_category(data: dict) -> str | None:

@@ -258,6 +258,20 @@ class RelevanceEventsRepo:
             (r["filename"], r["event_at"], r["actor_pinyin"]) for r in rows
         }
 
+    def matter_ids_for_user(self, user_open_id: str) -> set[str]:
+        """Distinct matter_ids where the user has any relevance row (read or
+        unread, kind=file or kind=mention). Used by GET /api/matters?scope=
+        relevant: combined with a timeline scan in matters._is_matter_relevant_to_user
+        to also catch matters where compute_relevance's self-exclusion left
+        no row (creator == me)."""
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT matter_id FROM relevance_events"
+                " WHERE user_open_id = ?",
+                (user_open_id,),
+            ).fetchall()
+        return {r["matter_id"] for r in rows}
+
     def file_reasons_for_matter(
         self, user_open_id: str, matter_id: str,
     ) -> dict[str, str]:
