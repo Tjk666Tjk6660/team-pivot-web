@@ -141,9 +141,24 @@ def main() -> int:
             lines.append(f"=== rendered card · template={template} ===")
             lines.append(f"# {title}")
             lines.append("")
+            # 渲染所有元素 — markdown / hr / note 都展示出来,
+            # 让预览更接近飞书实际渲染的视觉效果(hr 显示成 ──── 分割线,
+            # note 显示成 [小灰字]:... 提示)。
             for el in card.get("body", {}).get("elements", []):
-                if el.get("tag") == "markdown":
+                tag = el.get("tag")
+                if tag == "markdown":
                     lines.append(el.get("content", ""))
+                elif tag == "hr":
+                    lines.append("")
+                    lines.append("──────────────────────────")
+                    lines.append("")
+                elif tag == "note":
+                    parts2 = []
+                    for sub in el.get("elements") or []:
+                        if sub.get("tag") in ("plain_text", "lark_md"):
+                            parts2.append(sub.get("content", ""))
+                    if parts2:
+                        lines.append(f"_{' '.join(parts2)}_")
 
     text = "\n".join(lines) + "\n"
     print(text)

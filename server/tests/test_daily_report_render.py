@@ -75,10 +75,21 @@ def _facts():
 
 
 def _markdown_from(card: dict) -> str:
+    """把卡片所有可见文本元素拼成一个字符串供测试 assert in 检查。
+    新版卡片是 multi-element(markdown / note / hr 多块),需要把所有
+    markdown 和 note 内容串起来,加 \\n 分隔。hr 不出文字。"""
+    parts: list[str] = []
     for el in card["body"]["elements"]:
-        if el.get("tag") == "markdown":
-            return el["content"]
-    raise AssertionError(f"no markdown element in card: {card}")
+        tag = el.get("tag")
+        if tag == "markdown":
+            parts.append(el.get("content", ""))
+        elif tag == "note":
+            for sub in el.get("elements") or []:
+                if sub.get("tag") in ("plain_text", "lark_md"):
+                    parts.append(sub.get("content", ""))
+    if not parts:
+        raise AssertionError(f"no markdown/note element in card: {card}")
+    return "\n".join(parts)
 
 
 # --------------------------------------------------------------------------- #
@@ -128,11 +139,12 @@ def test_no_activity_card_uses_wathet_template():
 
 def test_ai_card_renders_window_no_stats():
     """v0.7(2026-05-01): 不再渲染"📈 团队总览"统计行 —— 老板不爱看僵硬
-    的统计数字。真正有价值的"X 人 / Y 个事项"等业务数字由 narrative
-    收尾段自己写。"""
+    的统计数字。
+    v0.20(2026-05-06): 时间窗口移到 note 元素(小灰字),"覆盖窗口" 字面
+    词省略,只保留 📅 + 时间区间。"""
     nar = CompanyNarrative(status="ai", summary="x", tone="steady")
     md = _markdown_from(build_company_card(_facts(), nar))
-    assert "覆盖窗口" in md
+    assert "📅" in md
     assert "2026-04-28 09:00" in md
     assert "2026-04-29 09:00" in md
     # 统计行已删除
@@ -169,9 +181,11 @@ def test_disclaimer_always_present():
 # --------------------------------------------------------------------------- #
 
 
-def test_company_summary_direction_header_bolded_with_emoji():
-    """方向段开头"第X是 Y。"渲染成 **emoji Y** 单独一行。
-    Y 不要求以"方向"结尾(LLM 实际可能写"第二是 enclaws 与 OPC 底座")。"""
+def test_company_summary_direction_header_renders_with_color_emoji_bold():
+    """方向段开头"第X是 Y。"渲染成 "**<emoji> Y**"(2026-05-06 v2:
+    彩色 emoji + bold,代替之前的 ##h2,因为飞书 markdown heading 支持
+    度不稳定。彩色 emoji 同时承担"分类"视觉信号:Pivot=🔵 / enclaws=🟠 /
+    外部=🟢)。"""
     summary = (
         "今天团队主要在 Pivot 与 enclaws 两个方向上推进。\n"
         "\n"
@@ -182,14 +196,15 @@ def test_company_summary_direction_header_bolded_with_emoji():
     )
     nar = CompanyNarrative(status="ai", summary=summary, tone="active")
     md = _markdown_from(build_company_card(_facts(), nar))
-    assert "**1️⃣ Pivot 产品方向**" in md
-    # "第一是" 序号文字被 emoji 替代,叙事不再有冗余的"第一是"前缀
+    # bold + 蓝色圆点(Pivot 产品分类)
+    assert "**🔵 Pivot 产品方向**" in md
+    # "第一是" 序号文字不再出现
     assert "第一是 Pivot" not in md
 
 
 def test_company_summary_direction_header_without_方向_suffix():
-    """方向名不以"方向"结尾也要被识别为方向段标题(LLM 实际可能这样写)。
-    开场点名(prompt 强约束)+ 方向名带 enclaws/OPC 这种英文专有名混搭。"""
+    """方向名不以"方向"结尾也要被识别为方向段标题。
+    enclaws/OPC 关键词触发橙色 🟠 emoji。"""
     summary = (
         "今天团队主要在 Pivot 产品 与 enclaws 与 OPC 项目底座 两个方向上推进。\n"
         "\n"
@@ -200,18 +215,31 @@ def test_company_summary_direction_header_without_方向_suffix():
     )
     nar = CompanyNarrative(status="ai", summary=summary, tone="active")
     md = _markdown_from(build_company_card(_facts(), nar))
-    # 方向标题正确提取,不带"方向"后缀
-    assert "**2️⃣ enclaws 与 OPC 项目底座**" in md
-    # "第二是" 文字被 emoji 替代,不再出现
+    # bold + 橙色(enclaws/OPC 分类),不带"方向"后缀
+    assert "**🟠 enclaws 与 OPC 项目底座**" in md
     assert "第二是 enclaws" not in md
-    # 子段头独立一行 + bold
-    assert "**OPC 演示与方案项集中闭环：**" in md
+    # 子段头用 ▸ 三角箭头 + bold(去掉行尾 ":")
+    assert "**▸ OPC 演示与方案项集中闭环**" in md
     # 事项 bullet 化
     assert "- A 完成 X。" in md
 
 
-def test_company_summary_subsection_with_4plus_items_bulleted_and_bolded():
-    """子段标题(全角 : 结尾)整行加 bold,后多行(≥2)事项逐行加 "- " 前缀。"""
+def test_company_summary_direction_emoji_picks_external_for_客户交付():
+    """外部客户交付方向用绿色 🟢 emoji。"""
+    summary = (
+        "今天团队主要在外部客户交付方向上推进。\n"
+        "\n"
+        "第一是外部客户交付方向。物料定稿：\n"
+        "A 完成 X。\n"
+        "B 完成 Y。\n"
+    )
+    nar = CompanyNarrative(status="ai", summary=summary, tone="active")
+    md = _markdown_from(build_company_card(_facts(), nar))
+    assert "**🟢 外部客户交付方向**" in md
+
+
+def test_company_summary_subsection_renders_with_arrow_bold():
+    """子段标题用 ▸ + bold,去掉行尾 :,后多行(≥2)事项逐行加 "- " 前缀。"""
     summary = (
         "第一是 Pivot 产品方向。多项老需求集中闭环：\n"
         "A 完成 X。\n"
@@ -221,18 +249,19 @@ def test_company_summary_subsection_with_4plus_items_bulleted_and_bolded():
     )
     nar = CompanyNarrative(status="ai", summary=summary, tone="active")
     md = _markdown_from(build_company_card(_facts(), nar))
-    # 子段头 bold
-    assert "**多项老需求集中闭环：**" in md
+    # 子段头 ▸ + bold,无 :
+    assert "**▸ 多项老需求集中闭环**" in md
+    assert "**▸ 多项老需求集中闭环：**" not in md
     # 事项 bullet 化
     assert "- A 完成 X。" in md
     assert "- B 完成 Y。" in md
     assert "- D 完成 W。" in md
 
 
-def test_company_summary_only_fullwidth_colon_triggers_bullet():
-    """v0.16(2026-05-06): 子段头**只识别全角 ":"**(U+FF1A)。半角 :
-    和 —— 都不再触发 bullet 化(配合 prompt 已统一要求全角)。"""
-    # 全角:触发
+def test_company_summary_both_fullwidth_and_halfwidth_colon_trigger_subsection():
+    """子段头识别全角 ":" 与半角 ":"——LLM 实测两种都偶发输出,渲染层
+    都识别才 robust。但 —— 不识别(prompt 已弃用)。"""
+    # 全角 ":" 触发
     summary_full = (
         "第一是 Pivot 方向。\n"
         "\n"
@@ -243,25 +272,24 @@ def test_company_summary_only_fullwidth_colon_triggers_bullet():
     )
     nar = CompanyNarrative(status="ai", summary=summary_full, tone="active")
     md = _markdown_from(build_company_card(_facts(), nar))
-    assert "**执行中与待推进的有：**" in md
+    assert "**▸ 执行中与待推进的有**" in md
     assert "- A 推进 X。" in md
-    assert "- B 推进 Y。" in md
-    assert "- C 推进 Z。" in md
 
-    # 半角:不再触发
+    # 半角 ":" 同样触发
     summary_half = (
         "第一是 Pivot 方向。\n"
         "\n"
-        "Sub-section:\n"
-        "A push X。\n"
-        "B push Y。\n"
+        "进入实施或待验收的有:\n"
+        "A 推进 X。\n"
+        "B 推进 Y。\n"
+        "C 推进 Z。\n"
     )
     nar = CompanyNarrative(status="ai", summary=summary_half, tone="active")
     md = _markdown_from(build_company_card(_facts(), nar))
-    assert "- A push X。" not in md
-    assert "**Sub-section:**" not in md
+    assert "**▸ 进入实施或待验收的有**" in md
+    assert "- A 推进 X。" in md
 
-    # —— 不再触发(prompt 已统一改全角,LLM 老习惯产出 —— 时降级为普通文本)
+    # —— 不触发(prompt 已统一改 ":")
     summary_dash = (
         "第一是 Pivot 方向。多项闭环 ——\n"
         "A 完成 X。\n"
@@ -270,20 +298,106 @@ def test_company_summary_only_fullwidth_colon_triggers_bullet():
     nar = CompanyNarrative(status="ai", summary=summary_dash, tone="active")
     md = _markdown_from(build_company_card(_facts(), nar))
     assert "- A 完成 X。" not in md
-    assert "**多项闭环 ——**" not in md
+    assert "**▸ 多项闭环**" not in md
 
 
-def test_company_summary_single_item_after_subsection_not_bulleted_but_bolded():
-    """子段下只有一行(≤3 matter 串接子段)不加 -,但子段头本身仍 bold。"""
+def test_company_summary_inline_subsection_with_semicolons_gets_split():
+    """LLM 偶尔把多 matter 串成一行 "X 的有:A;B;C。" 形式(违反 prompt 的
+    "≥4 matter 每行一个"规则),渲染层要兜底拆成 ▸ 子段头 + bullet list。"""
+    summary = (
+        "**🔵 Pivot 产品方向**\n"
+        "\n"
+        "实施推进与待验收的有：yezaiyong正修复MCP字段；"
+        "terry.tao明确视图spec后zhangbo接手；lishuai交付Owner机制验证未过。\n"
+    )
+    nar = CompanyNarrative(status="ai", summary=summary, tone="active")
+    md = _markdown_from(build_company_card(_facts(), nar))
+    # 子段头被识别 + ▸ 化
+    assert "**▸ 实施推进与待验收的有**" in md
+    # 三个 matter 各自成 bullet
+    assert "- yezaiyong正修复MCP字段" in md
+    assert "- terry.tao明确视图spec后zhangbo接手" in md
+    assert "- lishuai交付Owner机制验证未过。" in md
+
+
+def test_company_summary_inline_subsection_too_short_not_split():
+    """≤2 项分号串接不当作子段(避免误伤"项目X:配置项A;配置项B"这种句子)。"""
+    summary = (
+        "**🔵 Pivot 方向**\n"
+        "\n"
+        "项目A：备注X；备注Y。\n"     # 只有 2 项,不拆
+    )
+    nar = CompanyNarrative(status="ai", summary=summary, tone="active")
+    md = _markdown_from(build_company_card(_facts(), nar))
+    # 原句保留
+    assert "项目A：备注X；备注Y。" in md
+    # 不被强行拆成 bullet
+    assert "- 备注X" not in md
+
+
+def test_company_summary_subsection_header_breaks_list_collection():
+    """LLM 偶尔在 list 末尾紧跟下一个子段头(无空行间隔)时,后续子段头
+    不能被吞进当前 list 当 item。_collect_block 遇到子段头要主动停。"""
+    summary = (
+        "第一是 Pivot 方向。已完成的有：\n"
+        "A 完成 X。\n"
+        "B 完成 Y。\n"
+        "执行中或待验证的有：\n"          # <- 紧跟前一项,无空行
+        "C 推进 Z。\n"
+        "D 卡 8 天待修。\n"
+    )
+    nar = CompanyNarrative(status="ai", summary=summary, tone="active")
+    md = _markdown_from(build_company_card(_facts(), nar))
+    # 两个子段头都被识别为 ▸
+    assert "**▸ 已完成的有**" in md
+    assert "**▸ 执行中或待验证的有**" in md
+    # 第二段开头的子段头不能被当成 list item
+    assert "- 执行中或待验证的有" not in md
+    # 各项归到正确的 list
+    assert "- A 完成 X。" in md
+    assert "- C 推进 Z。" in md
+
+
+def test_company_summary_single_item_after_subsection_not_bulleted_but_arrow():
+    """子段下只有一行(≤3 matter 串接子段)不加 -,但子段头本身仍 ▸。"""
     summary = (
         "第一是 enclaws 方向。三项交付完毕：\n"
         "A 完成 X; B 完成 Y; C 完成 Z。\n"
     )
     nar = CompanyNarrative(status="ai", summary=summary, tone="active")
     md = _markdown_from(build_company_card(_facts(), nar))
-    assert "**三项交付完毕：**" in md      # 头加粗
-    assert "- A 完成 X" not in md          # 单行不 bullet
+    assert "**▸ 三项交付完毕**" in md       # ▸ 头
+    assert "- A 完成 X" not in md           # 单行不 bullet
     assert "A 完成 X; B 完成 Y; C 完成 Z" in md
+
+
+def test_company_card_inline_visual_hierarchy_in_single_markdown():
+    """v0.21(2026-05-06):飞书 schema 2.0 拒绝 note / hr 元素(200861 错误),
+    改回单 markdown blob 用 markdown 内部语法做视觉层次:
+    - "_..._" italic 模拟小灰字辅助文本
+    - "---" markdown 水平线模拟段间分隔
+    - 彩色 emoji + bold + bullet list 做层次
+    """
+    summary = (
+        "今天团队主要在 Pivot 方向推进。\n"
+        "\n"
+        "第一是 Pivot 产品方向。多项闭环：\n"
+        "A 完成 X。\n"
+        "B 完成 Y。\n"
+    )
+    nar = CompanyNarrative(status="ai", summary=summary, tone="active")
+    card = build_company_card(_facts(), nar)
+    # 单 markdown element(不再用 hr / note element)
+    elements = card["body"]["elements"]
+    md_elements = [e for e in elements if e.get("tag") == "markdown"]
+    assert len(md_elements) == 1
+    assert all(e.get("tag") == "markdown" for e in elements)   # 全部都是 markdown
+    md = md_elements[0]["content"]
+    # 内部用 italic 时间窗口 + 水平线
+    assert "_📅" in md
+    assert "---" in md
+    # italic footer
+    assert "_本日报由 AI" in md
 
 
 def test_company_summary_closing_paragraph_unchanged():

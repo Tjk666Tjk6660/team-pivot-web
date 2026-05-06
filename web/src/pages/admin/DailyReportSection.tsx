@@ -963,7 +963,7 @@ function RunRow({
     setCancelling(true);
     try {
       await cancelDailyReportRun(run.id);
-      toast.success(`已标记 run_id=${run.id} 失败`);
+      toast.success(`已中止 run_id=${run.id}`);
       onCancelled();
     } catch (err) {
       if (err instanceof AdminRequiredError) onAdminLost();
@@ -1064,9 +1064,9 @@ function RunRow({
               color: "var(--warn-600, #B43E3E)",
               borderColor: "var(--line)",
             }}
-            title="把卡住的 running run 标为 failed(后台线程仍可能在跑,但 UI/状态会立即解锁)"
+            title="中止当前运行(把卡住的 running run 标为 failed;后台线程仍可能在跑,但 UI/状态会立即解锁)"
           >
-            {cancelling ? "处理中…" : "标记失败"}
+            {cancelling ? "处理中…" : "中止"}
           </div>
         )}
         <ChevronRight
@@ -1458,14 +1458,14 @@ function ManualTriggerCard({
                 // cancel 后 polling 自然会拿到 status=failed + finished_at,
                 // 但这里也直接停掉,UI 立即解锁。
                 setPollingRunId(null);
-                toast.success(`已标记 run_id=${id} 失败(后台线程仍可能在跑)`);
+                toast.success(`已中止 run_id=${id}(后台线程仍可能在跑)`);
               } catch (e) {
                 if (e instanceof AdminRequiredError) onAdminLost();
                 else toast.error(e instanceof Error ? e.message : String(e));
               }
             }}
           >
-            标记失败
+            中止
           </Button>
         )}
         <Button
