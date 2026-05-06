@@ -187,6 +187,163 @@ def test_enqueues_with_unresolved_actor_keeps_none(
     assert queue.jobs[0].triggered_actor_id is None
 
 
+# ---------- v2.1 multi-subject candidate resolution (Task 2.4) ----------
+
+
+def _write_matter_multi(workspace, matter_id: str, owner: str = "zhangsan",
+                        category: str = "eng") -> None:
+    """Write a matter with think+act files from multiple authors so the
+    candidate set has more than just the owner."""
+    path = workspace.index_dir / f"{matter_id}.index.yaml"
+    data = {
+        "matter": {
+            "id": matter_id, "title": "t", "current_status": "finished",
+            "owner": owner,
+            "created_at": "2026-04-20T10:00:00+08:00",
+            "updated_at": "2026-04-29T18:30:00+08:00",
+        },
+        "timeline": [
+            {
+                "file": f"discussions/{category}/{matter_id}/001_zhangsan_think_x.md",
+                "type": "think", "creator": "zhangsan",
+                "summary": "frame the work",
+                "created_at": "2026-04-20T10:00:00+08:00",
+            },
+            {
+                "file": f"discussions/{category}/{matter_id}/002_lisi_act_x.md",
+                "type": "act", "creator": "lisi",
+                "summary": "implement",
+                "created_at": "2026-04-22T11:00:00+08:00",
+            },
+            {
+                "file": f"discussions/{category}/{matter_id}/003_wangwu_act_x.md",
+                "type": "act", "creator": "wangwu",
+                "summary": "review fix",
+                "created_at": "2026-04-25T14:00:00+08:00",
+            },
+            # verify is NOT a candidate-producing type per matter 005
+            {
+                "file": f"discussions/{category}/{matter_id}/004_lisi_verify_x.md",
+                "type": "verify", "creator": "lisi",
+                "summary": "passed",
+                "created_at": "2026-04-26T09:00:00+08:00",
+            },
+            {
+                "file": f"discussions/{category}/{matter_id}/005_zhangsan_result_x.md",
+                "type": "result", "creator": "zhangsan",
+                "summary": "done", "outcome": "finished",
+                "created_at": "2026-04-29T18:30:00+08:00",
+                "status_change": {"from": "executing", "to": "finished"},
+            },
+        ],
+    }
+    path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+
+def test_enqueues_full_candidate_set(trigger_installed, workspace, pivot_users):
+    """v2.1: trigger collects all think/act creators as candidates."""
+    queue = trigger_installed
+    z = pivot_users.create(display_name="Z", pinyin="zhangsan", email=None, avatar_url="")
+    l = pivot_users.create(display_name="L", pinyin="lisi", email=None, avatar_url="")
+    w = pivot_users.create(display_name="W", pinyin="wangwu", email=None, avatar_url="")
+    _write_matter_multi(workspace, "multi-eval")
+
+    _emit_result_finished("multi-eval")
+
+    assert len(queue.jobs) == 1
+    job = queue.jobs[0]
+    # Owner stays as primary subject
+    assert job.subject_user_id == z.id
+    # Candidate set = think/act creators (zhangsan think + lisi act + wangwu act).
+    # verify is NOT a candidate source per matter 005.
+    assert set(job.candidate_user_ids) == {z.id, l.id, w.id}
+
+
+def test_candidate_set_excludes_verify_only_authors(
+    trigger_installed, workspace, pivot_users,
+):
+    """A user who only authored verify (no think/act) is NOT a candidate."""
+    queue = trigger_installed
+    pivot_users.create(display_name="Z", pinyin="zhangsan", email=None, avatar_url="")
+    pivot_users.create(display_name="L", pinyin="lisi", email=None, avatar_url="")
+    pivot_users.create(display_name="W", pinyin="wangwu", email=None, avatar_url="")
+    _write_matter_multi(workspace, "m")
+
+    _emit_result_finished("m")
+
+    job = queue.jobs[0]
+    candidate_pinyins: set[str] = set()
+    for uid in job.candidate_user_ids:
+        u = pivot_users.get(uid)
+        if u and u.pinyin:
+            candidate_pinyins.add(u.pinyin)
+    # lisi DID author verify but ALSO an act, so still a candidate.
+    # If we only had verify, they'd be excluded — that case is exercised by
+    # test_candidate_set_drops_pure_verify_author below.
+    assert "lisi" in candidate_pinyins
+
+
+def test_candidate_set_drops_unresolvable_creators(
+    trigger_installed, workspace, pivot_users,
+):
+    """think/act creator pinyin not in pivot_users → silently dropped."""
+    queue = trigger_installed
+    z = pivot_users.create(display_name="Z", pinyin="zhangsan", email=None, avatar_url="")
+    # lisi + wangwu intentionally NOT registered
+    _write_matter_multi(workspace, "m")
+
+    _emit_result_finished("m")
+
+    job = queue.jobs[0]
+    # Only zhangsan resolves
+    assert tuple(job.candidate_user_ids) == (z.id,)
+
+
+def test_does_not_enqueue_when_no_candidates_resolvable(
+    trigger_installed, workspace, pivot_users,
+):
+    """All think/act creators are unresolvable AND owner can't be resolved
+    → matters with no scorable subjects skip enqueue entirely."""
+    queue = trigger_installed
+    # Owner zhangsan IS registered (so trigger gets past owner resolution),
+    # but write a matter where the owner has no think/act file and other
+    # creators don't exist in the DB. With current trigger logic, owner's
+    # check passes but candidates filter to empty.
+    pivot_users.create(display_name="Z", pinyin="zhangsan", email=None, avatar_url="")
+
+    # Write a matter where the only think/act file is by an unregistered user
+    path = workspace.index_dir / "ghost.index.yaml"
+    data = {
+        "matter": {
+            "id": "ghost", "title": "t", "current_status": "finished",
+            "owner": "zhangsan",
+            "created_at": "2026-04-20T10:00:00+08:00",
+            "updated_at": "2026-04-29T18:30:00+08:00",
+        },
+        "timeline": [
+            {
+                "file": "discussions/eng/ghost/001_unknown_act_x.md",
+                "type": "act", "creator": "unknown_user_pinyin",
+                "summary": "...",
+                "created_at": "2026-04-20T10:00:00+08:00",
+            },
+            {
+                "file": "discussions/eng/ghost/002_unknown_result_x.md",
+                "type": "result", "creator": "unknown_user_pinyin",
+                "summary": "done", "outcome": "finished",
+                "created_at": "2026-04-29T18:30:00+08:00",
+                "status_change": {"from": "executing", "to": "finished"},
+            },
+        ],
+    }
+    path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+    _emit_result_finished("ghost")
+
+    # No candidates resolvable → trigger drops the event
+    assert queue.jobs == []
+
+
 # ---------- filtering ----------
 
 

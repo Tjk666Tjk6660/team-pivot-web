@@ -46,6 +46,7 @@ from server.scoring.trigger import (
     KEY_MODEL,
     KEY_TIMEOUT_SECONDS,
     KEY_VISIBILITY,
+    resolve_candidates,
 )
 from server.settings import SettingsRepo
 from server.workspace import Workspace
@@ -172,19 +173,53 @@ def build_router(
         if run is None:
             raise HTTPException(404, "run_not_found")
         summary = _run_summary(run, store, workspace, pivot_users)
-        score_payload = None
-        evidence_payload: list[dict] = []
-        got = store.get_score(run.run_id)
-        if got is not None:
-            score, evidence = got
-            score_payload = _score_to_dict(score)
-            evidence_payload = [
-                _evidence_to_dict(e, pivot_users) for e in evidence
-            ]
+
+        # v2.1: read all subject rows for the run (Phase 2 worker writes N).
+        # Phase 1 / single-subject runs return a 1-element list. Build per-
+        # subject score+evidence groups for the multi-row UI.
+        all_pairs = store.get_scores(run.run_id)
+        subject_scores = [
+            {
+                "score": _score_to_dict(score),
+                "evidence": [
+                    _evidence_to_dict(e, pivot_users) for e in evidence
+                ],
+                "subject_display": _resolve_subject_display(
+                    score.subject_user_id, pivot_users,
+                ),
+                "subject_avatar_url": _resolve_subject_avatar(
+                    score.subject_user_id, pivot_users,
+                ),
+            }
+            for score, evidence in all_pairs
+        ]
+
+        # Back-compat: surface the primary subject's score / evidence at the
+        # top level so existing single-subject UI keeps working without
+        # reading subject_scores.
+        primary = next(
+            (s for s in subject_scores
+             if s["score"]["subject_user_id"] == run.subject_user_id),
+            subject_scores[0] if subject_scores else None,
+        )
+
+        # v2.2: surface skipped subjects (AI judged "evidence insufficient
+        # → all dimensions null"). Translate pinyin → display_name where
+        # we can; preserve raw pinyin for unresolved (deleted) users.
+        skipped_subjects_payload = [
+            {
+                "pinyin": pinyin,
+                "display": _pinyin_to_display(pinyin, pivot_users),
+            }
+            for pinyin in run.skipped_subjects
+        ]
+
         return {
             "run": summary,
-            "score": score_payload,
-            "evidence": evidence_payload,
+            "score": primary["score"] if primary else None,
+            "evidence": primary["evidence"] if primary else [],
+            "subject_scores": subject_scores,
+            "skipped_subjects": skipped_subjects_payload,
         }
 
     @router.post("/matters/{matter_id}/rerun")
@@ -228,6 +263,10 @@ def build_router(
                 },
             )
 
+        # v2.1 (Task 2.4): resolve candidate set so admin rerun produces a
+        # multi-subject run (otherwise worker falls back to {owner} and we
+        # silently regress to Phase 1 single-row scoring on rerun).
+        candidate_ids = resolve_candidates(index, resolver)
         # admin_user is already a PivotUser — its id is the audit trail value
         job = ScoringJob(
             matter_id=matter_id,
@@ -235,11 +274,12 @@ def build_router(
             subject_user_id=owner.id,
             triggered_by="admin:rerun",
             triggered_actor_id=admin_user.id,
+            candidate_user_ids=tuple(candidate_ids),
         )
         queue.enqueue(job)
         log.info(
-            "scoring admin rerun enqueued matter=%s subject=%s admin=%s",
-            matter_id, owner.id, admin_user.id,
+            "scoring admin rerun enqueued matter=%s subject=%s candidates=%d admin=%s",
+            matter_id, owner.id, len(candidate_ids), admin_user.id,
         )
         return RerunResponse(
             ok=True,
@@ -464,6 +504,10 @@ def _run_summary(
         "started_at": run.started_at,
         "finished_at": run.finished_at,
         "timeline_hash": run.timeline_hash,
+        # v2.1 (Phase 2): 1 = single-subject (Phase 1 owner-only) — single
+        # row in matter_scores; 2 = multi-subject — N rows. Frontend uses
+        # this to decide whether to render single-card or multi-row layout.
+        "schema_version": run.schema_version,
         "score": score_brief,
     }
 
@@ -499,11 +543,16 @@ def _score_to_dict(score: MatterScore) -> dict:
 def _evidence_to_dict(
     e: MatterScoreEvidence, pivot_users: PivotUserRepo,
 ) -> dict:
-    author_display = None
+    comment_author_display = None
     if e.source_comment_author_id:
         u = pivot_users.get(e.source_comment_author_id)
         if u is not None:
-            author_display = u.display_name
+            comment_author_display = u.display_name
+    annotation_author_display = None
+    if e.source_annotation_author_id:
+        u = pivot_users.get(e.source_annotation_author_id)
+        if u is not None:
+            annotation_author_display = u.display_name
     return {
         "id": e.id,
         "dimension": e.dimension,
@@ -514,11 +563,37 @@ def _evidence_to_dict(
         "source_file_type": e.source_file_type,
         "source_comment_created_at": e.source_comment_created_at,
         "source_comment_author_id": e.source_comment_author_id,
-        "source_comment_author_display": author_display,
+        "source_comment_author_display": comment_author_display,
+        # v2.1: annotation evidence parallel to comment fields
+        "source_annotation_created_at": e.source_annotation_created_at,
+        "source_annotation_author_id": e.source_annotation_author_id,
+        "source_annotation_author_display": annotation_author_display,
+        # v2.1: 005 决策链 attribution (frontend renders 中文 label)
+        "attribution_basis": e.attribution_basis,
         "weight_applied": e.weight_applied,
         "quote": e.quote,
         "explanation": e.explanation,
     }
+
+
+def _resolve_subject_display(user_id: str, pivot_users: PivotUserRepo) -> str | None:
+    u = pivot_users.get(user_id)
+    return u.display_name if u else None
+
+
+def _resolve_subject_avatar(user_id: str, pivot_users: PivotUserRepo) -> str | None:
+    u = pivot_users.get(user_id)
+    return u.avatar_url if u else None
+
+
+def _pinyin_to_display(pinyin: str, pivot_users: PivotUserRepo) -> str | None:
+    """v2.2: translate pinyin → display_name for skipped_subjects rendering.
+
+    Returns None when the pinyin doesn't resolve (user deleted / pinyin
+    renamed since the run); frontend falls back to the raw pinyin string.
+    """
+    u = pivot_users.get_by_pinyin(pinyin)
+    return u.display_name if u else None
 
 
 def _weight_to_dict(

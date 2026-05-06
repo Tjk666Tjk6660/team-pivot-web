@@ -321,8 +321,12 @@ def _evidence(**kwargs) -> EvidenceWrite:
     return EvidenceWrite(**base)
 
 
-def _score(**kwargs) -> ScoreWrite:
+def _score(*, subject_user_id: str | None = None, **kwargs) -> ScoreWrite:
+    """v2.1: subject_user_id required on ScoreWrite. Default test fixture
+    leaves it as a placeholder; tests that need a specific resolvable id
+    pass `subject_user_id=owner.id`."""
     base: dict = {
+        "subject_user_id": subject_user_id or "_placeholder_user_id",
         "overall": 4.2,
         "confidence": "high",
         "rationale": "...",
@@ -400,9 +404,223 @@ def test_write_results_rejects_invalid_weight(store, owner):
         store.write_results(run_id, _score(), [_evidence(weight_applied=10.0)])
 
 
+def test_write_results_persists_annotation_evidence(store, owner):
+    """v2.1: source_kind=annotation evidence round-trips with author + created_at."""
+    run_id = store.start_run(_job(owner.id), timeline_hash="h", model="m")
+    store.transition_running(run_id)
+    e = _evidence(
+        source_kind="annotation",
+        source_filename="002_liuyu_act_xx.md",
+        source_file_type="act",
+        source_annotation_created_at="2026-04-22T14:00:00+08:00",
+        source_annotation_author_id=owner.id,
+        attribution_basis="file_creator",
+    )
+    store.write_results(run_id, _score(), [e])
+
+    got = store.get_score(run_id)
+    assert got is not None
+    _, evidence = got
+    assert len(evidence) == 1
+    row = evidence[0]
+    assert row.source_kind == "annotation"
+    assert row.source_annotation_created_at == "2026-04-22T14:00:00+08:00"
+    assert row.source_annotation_author_id == owner.id
+    assert row.attribution_basis == "file_creator"
+    # Comment fields should remain NULL on annotation evidence
+    assert row.source_comment_created_at is None
+    assert row.source_comment_author_id is None
+
+
+def test_write_results_rejects_annotation_without_created_at(store, owner):
+    """v2.1: annotation evidence must carry created_at (analogous to comment)."""
+    run_id = store.start_run(_job(owner.id), timeline_hash="h", model="m")
+    e = _evidence(
+        source_kind="annotation",
+        source_annotation_created_at=None,
+    )
+    with pytest.raises(ValueError, match="annotation"):
+        store.write_results(run_id, _score(), [e])
+
+
+def test_write_results_persists_attribution_basis_for_all_kinds(store, owner):
+    """All five attribution_basis enum values round-trip."""
+    run_id = store.start_run(_job(owner.id), timeline_hash="h", model="m")
+    store.transition_running(run_id)
+    bases = [
+        "file_creator",
+        "explicit_mention",
+        "at_target",
+        "owner_change_reason",
+        "verify_outcome",
+    ]
+    evidences = [
+        _evidence(
+            dimension="delivery" if i == 0 else "accountability" if i == 1 else "judgment" if i == 2 else "collaboration" if i == 3 else "process",
+            attribution_basis=basis,
+            quote=f"quote-{i}", explanation=f"exp-{i}",
+        )
+        for i, basis in enumerate(bases)
+    ]
+    store.write_results(run_id, _score(), evidences)
+    got = store.get_score(run_id)
+    assert got is not None
+    _, rows = got
+    assert {r.attribution_basis for r in rows} == set(bases)
+
+
+def test_write_results_rejects_invalid_attribution_basis(store, owner):
+    run_id = store.start_run(_job(owner.id), timeline_hash="h", model="m")
+    with pytest.raises(ValueError, match="attribution_basis"):
+        store.write_results(
+            run_id, _score(),
+            [_evidence(attribution_basis="made_up_value")],  # type: ignore[arg-type]
+        )
+
+
+def test_write_results_attribution_basis_optional(store, owner):
+    """attribution_basis is nullable (back-compat with old runs)."""
+    run_id = store.start_run(_job(owner.id), timeline_hash="h", model="m")
+    store.transition_running(run_id)
+    store.write_results(
+        run_id, _score(),
+        [_evidence(attribution_basis=None)],
+    )
+    got = store.get_score(run_id)
+    assert got is not None
+    _, rows = got
+    assert rows[0].attribution_basis is None
+
+
+def test_start_run_default_schema_version_is_phase_1(store, owner):
+    """Phase 1 worker still produces v1 runs by default."""
+    run_id = store.start_run(_job(owner.id), timeline_hash="h", model="m")
+    run = store.get_run(run_id)
+    assert run is not None
+    assert run.schema_version == 1
+
+
+def test_start_run_explicit_schema_version_2(store, owner):
+    """Phase 2 worker (Task 2.4) will pass schema_version=2 explicitly."""
+    run_id = store.start_run(
+        _job(owner.id), timeline_hash="h", model="m", schema_version=2,
+    )
+    run = store.get_run(run_id)
+    assert run is not None
+    assert run.schema_version == 2
+
+
+def test_set_skipped_subjects_round_trips(store, owner):
+    """v2.2: AI's skipped_subjects list persists + reads back on the run row."""
+    run_id = store.start_run(_job(owner.id), timeline_hash="h", model="m")
+    # Default (never set) is empty tuple
+    run = store.get_run(run_id)
+    assert run.skipped_subjects == ()
+
+    # Worker calls set_skipped_subjects after parse — store as JSON
+    store.set_skipped_subjects(run_id, ["lishuai", "zhangsan"])
+    run = store.get_run(run_id)
+    assert run.skipped_subjects == ("lishuai", "zhangsan")
+
+
+def test_set_skipped_subjects_empty_explicit(store, owner):
+    """Empty list explicitly set distinguishes "AI scored everyone" from
+    legacy / unwritten state."""
+    run_id = store.start_run(_job(owner.id), timeline_hash="h", model="m")
+    store.set_skipped_subjects(run_id, [])
+    run = store.get_run(run_id)
+    assert run.skipped_subjects == ()
+
+
+def test_db_migration_adds_v2_1_columns_to_legacy_db(tmp_path):
+    """Simulate a Phase 1 DB (no schema_version, no annotation cols on
+    evidence) and verify Database.__init__ migrates it cleanly + the store
+    operates against the migrated tables."""
+    db_path = tmp_path / "legacy.db"
+    legacy_conn = sqlite3.connect(db_path)
+    # Mimic the pre-v2.1 SCHEMA shape — only the columns that existed before
+    # the migration. PivotUserRepo / scoring tables both pre-existing.
+    legacy_conn.executescript("""
+        CREATE TABLE matter_scoring_runs (
+            run_id TEXT PRIMARY KEY,
+            matter_id TEXT NOT NULL,
+            matter_category TEXT NOT NULL,
+            subject_user_id TEXT NOT NULL,
+            triggered_by TEXT NOT NULL,
+            triggered_actor_id TEXT,
+            status TEXT NOT NULL,
+            error TEXT,
+            model TEXT,
+            prompt_tokens INTEGER,
+            completion_tokens INTEGER,
+            started_at REAL NOT NULL,
+            finished_at REAL,
+            timeline_hash TEXT NOT NULL
+        );
+        CREATE TABLE matter_score_evidence (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            matter_id TEXT NOT NULL,
+            subject_user_id TEXT NOT NULL,
+            dimension TEXT NOT NULL,
+            polarity TEXT NOT NULL,
+            confidence TEXT NOT NULL,
+            source_kind TEXT NOT NULL,
+            source_filename TEXT NOT NULL,
+            source_file_type TEXT NOT NULL,
+            source_comment_created_at TEXT,
+            source_comment_author_id TEXT,
+            weight_applied REAL NOT NULL DEFAULT 1.0,
+            quote TEXT NOT NULL,
+            explanation TEXT NOT NULL
+        );
+    """)
+    legacy_conn.commit()
+    legacy_conn.close()
+
+    # Database constructor runs SCHEMA + _migrate; should ALTER missing cols
+    db = Database(db_path)
+    with db.connect() as conn:
+        run_cols = {row[1] for row in conn.execute("PRAGMA table_info(matter_scoring_runs)")}
+        ev_cols = {row[1] for row in conn.execute("PRAGMA table_info(matter_score_evidence)")}
+
+    assert "schema_version" in run_cols, "schema_version not added by migration"
+    assert "source_annotation_created_at" in ev_cols
+    assert "source_annotation_author_id" in ev_cols
+    assert "attribution_basis" in ev_cols
+
+    # Migrated DB must be functional — write + read evidence with new fields
+    users = PivotUserRepo(db)
+    u = users.create(display_name="X", pinyin="x", email=None, avatar_url="")
+    store = ScoringStore(db)
+    run_id = store.start_run(
+        ScoringJob(
+            matter_id="m", matter_category="x", subject_user_id=u.id,
+            triggered_by="auto",
+        ),
+        timeline_hash="h", model="m",
+    )
+    store.transition_running(run_id)
+    store.write_results(
+        run_id, _score(),
+        [_evidence(
+            source_kind="annotation",
+            source_annotation_created_at="2026-04-22T14:00:00+08:00",
+            source_annotation_author_id=u.id,
+            attribution_basis="file_creator",
+        )],
+    )
+    got = store.get_score(run_id)
+    assert got is not None
+    _, rows = got
+    assert rows[0].attribution_basis == "file_creator"
+
+
 def test_apply_human_override(store, owner):
     run_id = store.start_run(_job(owner.id), timeline_hash="h", model="m")
-    store.write_results(run_id, _score(), [_evidence()])
+    # Override updates by (run_id, subject_user_id) — score must be written
+    # under owner's id so the override targets the right row.
+    store.write_results(run_id, _score(subject_user_id=owner.id), [_evidence()])
     store.apply_human_override(
         run_id, owner.id, overall=3.5, note="too generous", by_user_id=owner.id,
     )

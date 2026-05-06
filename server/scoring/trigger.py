@@ -125,18 +125,79 @@ def _handle(
         actor = resolver.resolve(event.actor)
         actor_id = actor.id if actor else None
 
+    # v2.1 (Phase 2 / Task 2.4): resolve all think/act file creators as
+    # candidates. Owner is always included if they have any think/act file.
+    # Unresolvable creators (deleted users / unregistered pinyin) are dropped
+    # silently — we score whoever we can identify.
+    candidate_ids = resolve_candidates(index, resolver)
+    # Defensive: ensure owner is in the candidate set (common case — owner
+    # has at least one think/act). If not (e.g. matter built entirely of
+    # files from another user via owner_change), the run still scores those
+    # other candidates; matter.owner just doesn't get a row.
+    if owner.id not in candidate_ids:
+        log.info(
+            "scoring trigger: matter.owner has no think/act file matter=%s "
+            "candidates=%d",
+            event.matter_id, len(candidate_ids),
+        )
+
+    if not candidate_ids:
+        log.info(
+            "scoring trigger skipped: no resolvable candidates matter=%s",
+            event.matter_id,
+        )
+        return
+
     job = ScoringJob(
         matter_id=event.matter_id,
         matter_category=matter_category,
         subject_user_id=owner.id,
         triggered_by="auto",
         triggered_actor_id=actor_id,
+        candidate_user_ids=tuple(candidate_ids),
     )
     queue.enqueue(job)
     log.info(
-        "scoring trigger enqueued matter=%s subject_user_id=%s actor=%s",
-        event.matter_id, owner.id, event.actor,
+        "scoring trigger enqueued matter=%s primary=%s candidates=%d actor=%s",
+        event.matter_id, owner.id, len(candidate_ids), event.actor,
     )
+
+
+def resolve_candidates(index: dict, resolver: PinyinResolver) -> list[str]:
+    """Return ordered list of pivot_user.id for all unique think/act creators
+    in the timeline. Order matches first-appearance — useful for stable
+    debugging output. Drops unresolvable pinyins silently (creator left the
+    org, pinyin renamed, etc.).
+
+    Public so admin rerun (and future MCP rerun) can build the same
+    candidate set the auto-trigger does. Phase 1 callers that just want the
+    owner can skip this and pass an empty `candidate_user_ids` — worker
+    falls back to {matter.owner} in that case.
+    """
+    seen_pinyin: set[str] = set()
+    seen_user_ids: list[str] = []
+    seen_user_id_set: set[str] = set()
+    for item in (index.get("timeline") or []):
+        ftype = item.get("type")
+        if ftype not in ("think", "act"):
+            continue
+        creator = (item.get("creator") or "").strip()
+        if not creator or creator in seen_pinyin:
+            continue
+        seen_pinyin.add(creator)
+        u = resolver.resolve(creator)
+        if u is None:
+            log.debug(
+                "scoring trigger: dropping unresolvable creator pinyin=%s",
+                creator,
+            )
+            continue
+        if u.id in seen_user_id_set:
+            # Two pinyins resolving to same user (pinyin rename) — keep first
+            continue
+        seen_user_id_set.add(u.id)
+        seen_user_ids.append(u.id)
+    return seen_user_ids
 
 
 def _derive_category(index: dict) -> str | None:

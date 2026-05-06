@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { Eye, Loader2, RotateCw, Settings2 } from "lucide-react";
+import { Eye, Loader2, RotateCw, Settings2, Users2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   AdminRequiredError,
   fetchScoringRunDetail,
   triggerScoringRerun,
   type ScoringRunDetail,
+  type ScoringSubjectScore,
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import { ScoreConfidenceBadge } from "./ScoreConfidenceBadge";
@@ -29,9 +30,11 @@ export function MatterScoresView({
 }: Props) {
   const [detail, setDetail] = useState<ScoringRunDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  // v2.1 (Phase 2): track which candidate's drawer is open by subject_user_id.
+  // Phase 1 single-subject runs effectively have only one possible value here.
+  const [evidenceFor, setEvidenceFor] = useState<string | null>(null);
+  const [overrideFor, setOverrideFor] = useState<string | null>(null);
   const [metaOpen, setMetaOpen] = useState(false);
-  const [overrideOpen, setOverrideOpen] = useState(false);
   const [rerunning, setRerunning] = useState(false);
 
   const load = () => {
@@ -70,6 +73,13 @@ export function MatterScoresView({
       setRerunning(false);
     }
   };
+
+  const evidenceSubject = detail?.subject_scores.find(
+    (s) => s.score.subject_user_id === evidenceFor,
+  );
+  const overrideSubject = detail?.subject_scores.find(
+    (s) => s.score.subject_user_id === overrideFor,
+  );
 
   return (
     <>
@@ -117,12 +127,12 @@ export function MatterScoresView({
                 rerunning={rerunning}
                 onRerun={onRerun}
                 onShowMeta={() => setMetaOpen(true)}
-                onShowOverride={() => setOverrideOpen(true)}
               />
-              {detail.score ? (
-                <ScoreCard
+              {detail.subject_scores.length > 0 ? (
+                <SubjectScoresList
                   detail={detail}
-                  onShowEvidence={() => setEvidenceOpen(true)}
+                  onShowEvidence={(subjectId) => setEvidenceFor(subjectId)}
+                  onShowOverride={(subjectId) => setOverrideFor(subjectId)}
                 />
               ) : detail.run.status === "success" ? (
                 <EmptyScoreNotice
@@ -130,7 +140,7 @@ export function MatterScoresView({
                 />
               ) : detail.run.status === "queued" ||
                 detail.run.status === "running" ? (
-                <EmptyScoreNotice message="评分生成中…（约 1-2 分钟）" />
+                <EmptyScoreNotice message="评分生成中…（约 1-3 分钟）" />
               ) : detail.run.status === "skipped" ? (
                 <EmptyScoreNotice
                   message={`run 跳过（${detail.run.error || "未知原因"}）`}
@@ -146,17 +156,17 @@ export function MatterScoresView({
         </div>
       </aside>
 
-      {evidenceOpen && detail?.score && (
+      {evidenceSubject && detail && (
         <EvidenceDialog
           matterId={detail.run.matter_id}
           matterTitle={detail.run.matter_title}
-          subjectDisplay={detail.run.subject_display}
-          overall={detail.score.overall}
-          confidence={detail.score.confidence}
-          rationale={detail.score.rationale}
-          dimensions={detail.score.dimensions}
-          evidence={detail.evidence}
-          onClose={() => setEvidenceOpen(false)}
+          subjectDisplay={evidenceSubject.subject_display}
+          overall={evidenceSubject.score.overall}
+          confidence={evidenceSubject.score.confidence}
+          rationale={evidenceSubject.score.rationale}
+          dimensions={evidenceSubject.score.dimensions}
+          evidence={evidenceSubject.evidence}
+          onClose={() => setEvidenceFor(null)}
         />
       )}
 
@@ -167,19 +177,33 @@ export function MatterScoresView({
         />
       )}
 
-      {overrideOpen && detail?.score && (
+      {overrideSubject && detail && (
         <OverrideDialog
           runId={detail.run.run_id}
-          currentOverall={detail.score.overall}
-          currentOverride={detail.score.human_override}
-          subjectDisplay={detail.run.subject_display}
-          onClose={() => setOverrideOpen(false)}
+          currentOverall={overrideSubject.score.overall}
+          currentOverride={overrideSubject.score.human_override}
+          subjectDisplay={overrideSubject.subject_display}
+          onClose={() => setOverrideFor(null)}
           onSaved={(updated) => {
-            // Patch the local detail so UI reflects override without refetch
-            setDetail((prev) =>
-              prev ? { ...prev, score: updated } : prev,
-            );
-            setOverrideOpen(false);
+            // Patch the local detail so UI reflects override without refetch.
+            // Replace the matching subject_scores entry; also update top-level
+            // score field if this was the primary subject.
+            setDetail((prev) => {
+              if (!prev) return prev;
+              const updatedSubjects = prev.subject_scores.map((s) =>
+                s.score.subject_user_id === overrideSubject.score.subject_user_id
+                  ? { ...s, score: updated }
+                  : s,
+              );
+              const isPrimary =
+                prev.run.subject_user_id === overrideSubject.score.subject_user_id;
+              return {
+                ...prev,
+                subject_scores: updatedSubjects,
+                score: isPrimary ? updated : prev.score,
+              };
+            });
+            setOverrideFor(null);
           }}
           onAdminLost={onAdminLost}
         />
@@ -193,16 +217,13 @@ function RunHeader({
   rerunning,
   onRerun,
   onShowMeta,
-  onShowOverride,
 }: {
   detail: ScoringRunDetail;
   rerunning: boolean;
   onRerun: () => void;
   onShowMeta: () => void;
-  onShowOverride: () => void;
 }) {
   const r = detail.run;
-  const hasScore = detail.score !== null;
   return (
     <div className="rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-3 space-y-2">
       <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-[var(--text-mute)]">
@@ -244,38 +265,109 @@ function RunHeader({
           <Settings2 className="mr-1 h-3.5 w-3.5" />
           元信息
         </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={onShowOverride}
-          disabled={!hasScore}
-          title={
-            hasScore
-              ? "人工修正总分（保留 AI 原始打分作为审计）"
-              : "无 score 行可修正（run 失败 / 跳过）"
-          }
-        >
-          ✏ 人工修正
-        </Button>
       </div>
     </div>
   );
 }
 
-function ScoreCard({
+/** v2.1 (Phase 2): renders one ScoreCard per scored candidate. Phase 1 runs
+ *  with a single subject collapse to a 1-card list with no group header. */
+function SubjectScoresList({
   detail,
   onShowEvidence,
+  onShowOverride,
 }: {
   detail: ScoringRunDetail;
-  onShowEvidence: () => void;
+  onShowEvidence: (subjectUserId: string) => void;
+  onShowOverride: (subjectUserId: string) => void;
 }) {
-  const { run, score, evidence } = detail;
-  if (!score) return null;
+  const scoredCount = detail.subject_scores.length;
+  const skippedCount = detail.skipped_subjects.length;
+  const totalCandidates = scoredCount + skippedCount;
+  // Show the candidate-set context when more than one person was actually
+  // considered (scored or skipped) — avoids noise on Phase 1 single-subject runs.
+  const showCandidateContext = totalCandidates > 1;
+  return (
+    <div className="space-y-3">
+      {showCandidateContext && (
+        <div className="rounded-[var(--r-sm)] bg-[var(--surface-alt)] px-3 py-2 text-xs text-[var(--text-soft)]">
+          <div className="flex items-center gap-1.5 font-semibold">
+            <Users2 className="h-3.5 w-3.5" />
+            评分候选 {totalCandidates} 人 · 出分 {scoredCount} 人
+            {skippedCount > 0 && ` · 证据不足跳过 ${skippedCount} 人`}
+          </div>
+          <p className="mt-0.5 text-[var(--text-mute)]">
+            候选人 = timeline 里出现过 think / act 的作者，每人独立打分。证据归因依据五条线索：文件作者、正文点名、@ 提及、转交原因、验收动作。
+          </p>
+        </div>
+      )}
+      {detail.subject_scores.map((sub) => (
+        <SubjectScoreCard
+          key={sub.score.subject_user_id}
+          sub={sub}
+          isPrimary={sub.score.subject_user_id === detail.run.subject_user_id}
+          showPrimaryBadge={showCandidateContext}
+          onShowEvidence={() => onShowEvidence(sub.score.subject_user_id)}
+          onShowOverride={() => onShowOverride(sub.score.subject_user_id)}
+        />
+      ))}
+      {skippedCount > 0 && <SkippedSubjectsPanel detail={detail} />}
+    </div>
+  );
+}
 
+/** v2.2: AI-skipped candidates panel — shows "李帅、张三" instead of leaving
+ *  them silently absent. Helps admin distinguish "AI thought about X but
+ *  found no evidence" from "X never made it into the candidate set". */
+function SkippedSubjectsPanel({ detail }: { detail: ScoringRunDetail }) {
+  return (
+    <div className="rounded-[var(--r-md)] border border-dashed border-[var(--line)] bg-[var(--surface-alt)] px-4 py-3">
+      <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text-soft)]">
+        <Users2 className="h-3.5 w-3.5" />
+        AI 跳过的候选（证据不足，全维度均无信号）
+      </div>
+      <ul className="mt-2 space-y-1 text-sm">
+        {detail.skipped_subjects.map((s) => (
+          <li
+            key={s.pinyin}
+            className="flex items-center gap-2 text-[var(--text-soft)]"
+          >
+            <span className="rounded-full bg-[var(--surface)] px-2 py-0.5 text-xs">
+              {s.display ?? s.pinyin}
+            </span>
+            {s.display && s.display !== s.pinyin && (
+              <span className="font-mono text-[10.5px] text-[var(--text-mute)]">
+                {s.pinyin}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-[11px] text-[var(--text-mute)]">
+        想给这些人也评分？让他们在该 matter 里有更多动作（写 act / 被评论 /
+        被 verify），然后用"重新生成"重跑。
+      </p>
+    </div>
+  );
+}
+
+function SubjectScoreCard({
+  sub,
+  isPrimary,
+  showPrimaryBadge,
+  onShowEvidence,
+  onShowOverride,
+}: {
+  sub: ScoringSubjectScore;
+  isPrimary: boolean;
+  showPrimaryBadge: boolean;
+  onShowEvidence: () => void;
+  onShowOverride: () => void;
+}) {
+  const { score, evidence, subject_display, subject_avatar_url } = sub;
   // When admin manually overrode, treat the override as the current /
   // displayed total. AI's original number is shown as a secondary annotation
-  // for transparency. Confidence label keeps its AI-context meaning either
-  // way (it's a property of the AI evaluation, not the override).
+  // for transparency.
   const isOverridden =
     score.human_override !== null && score.human_override.overall !== null;
   const effectiveOverall = isOverridden
@@ -285,9 +377,9 @@ function ScoreCard({
   return (
     <div className="rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] p-4 space-y-3">
       <div className="flex items-center gap-3">
-        {run.subject_avatar_url ? (
+        {subject_avatar_url ? (
           <img
-            src={run.subject_avatar_url}
+            src={subject_avatar_url}
             alt=""
             className="h-10 w-10 rounded-full"
           />
@@ -297,11 +389,14 @@ function ScoreCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h3 className="text-sm font-semibold">
-              {run.subject_display ?? "(未知)"}
+              {subject_display ?? "(未知)"}
             </h3>
-            {run.subject_status && run.subject_status !== "active" && (
-              <span className="rounded bg-[var(--warn-bg)] px-1.5 text-[10px] text-[var(--warn-600)]">
-                {run.subject_status === "deleted" ? "已离职" : run.subject_status}
+            {showPrimaryBadge && isPrimary && (
+              <span
+                className="rounded bg-[var(--accent-bg)] px-1.5 text-[10px] font-medium text-[var(--accent)]"
+                title="matter.owner —— run 主候选"
+              >
+                负责人
               </span>
             )}
           </div>
@@ -333,7 +428,10 @@ function ScoreCard({
         <DimensionBars dimensions={score.dimensions} />
       </div>
 
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <Button size="sm" variant="outline" onClick={onShowOverride}>
+          ✏ 人工修正
+        </Button>
         <Button size="sm" onClick={onShowEvidence}>
           <Eye className="mr-1 h-3.5 w-3.5" />
           查看证据 ({evidence.length})

@@ -1,7 +1,11 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
 import { Link } from "react-router-dom";
-import type { ScoringDimensions, ScoringEvidenceItem } from "@/api";
+import type {
+  ScoringAttributionBasis,
+  ScoringDimensions,
+  ScoringEvidenceItem,
+} from "@/api";
 import { ScoreConfidenceBadge } from "./ScoreConfidenceBadge";
 
 const DIM_LABELS: Record<keyof ScoringDimensions, string> = {
@@ -10,6 +14,23 @@ const DIM_LABELS: Record<keyof ScoringDimensions, string> = {
   judgment: "判断质量",
   collaboration: "协作贡献",
   process: "过程规范",
+};
+
+// v2.1: 005 决策链 attribution_basis enum 中文映射 — 5 选 1 (verify_outcome
+// 是 v2.1 新增覆盖隐式归因路径)。
+const ATTRIBUTION_LABELS: Record<ScoringAttributionBasis, string> = {
+  file_creator: "文件作者",
+  explicit_mention: "文本点名",
+  at_target: "@ 提及",
+  owner_change_reason: "转交原因",
+  verify_outcome: "验收动作",
+};
+
+// v2.1: source_kind 三类（v2.1 新增 annotation 强语义评价）。
+const SOURCE_KIND_LABELS: Record<ScoringEvidenceItem["source_kind"], string> = {
+  file: "文件",
+  comment: "评论",
+  annotation: "评价",
 };
 
 const DIM_ORDER: (keyof ScoringDimensions)[] = [
@@ -199,8 +220,18 @@ function EvidenceCard({
   onJump: () => void;
 }) {
   const polarity = POLARITY_GLYPH[ev.polarity] ?? { icon: "·", color: "var(--text-mute)" };
-  const isComment = ev.source_kind === "comment";
   const isHighWeight = ev.weight_applied !== 1.0;
+  const sourceKindLabel = SOURCE_KIND_LABELS[ev.source_kind] ?? ev.source_kind;
+  const attributionLabel = ev.attribution_basis
+    ? ATTRIBUTION_LABELS[ev.attribution_basis]
+    : null;
+
+  // v2.1: comment + annotation each carry their own author/created_at;
+  // unify the byline display so the card body stays compact.
+  const authorDisplay = ev.source_comment_author_display
+    ?? ev.source_annotation_author_display;
+  const inlineCreatedAt = ev.source_comment_created_at
+    ?? ev.source_annotation_created_at;
 
   // Build a link to the matter detail with #file=<basename> hash.
   const jumpUrl = `/m/${encodeURIComponent(matterId)}#file=${encodeURIComponent(ev.source_filename)}`;
@@ -217,19 +248,31 @@ function EvidenceCard({
             weight {ev.weight_applied.toFixed(1)}x
           </span>
         )}
-        <span className="text-[var(--text-mute)]">
-          {isComment ? "评论" : ev.source_file_type + " 文件"}
+        {/* v2.1: 来源类型 + 归因依据 二段标签（旧后端 attribution_basis=null
+            时只显示来源类型，向后兼容）。 */}
+        <span
+          className="rounded bg-[var(--surface)] px-1.5 text-[10px] text-[var(--text-soft)]"
+          title="来源类型"
+        >
+          {sourceKindLabel}
+          {ev.source_kind === "file" && ` · ${ev.source_file_type}`}
         </span>
+        {attributionLabel && (
+          <span
+            className="rounded bg-[var(--surface)] px-1.5 text-[10px] text-[var(--text-soft)]"
+            title="归因依据"
+          >
+            {attributionLabel}
+          </span>
+        )}
       </div>
       <div className="font-mono text-[10.5px] text-[var(--text-mute)] truncate">
         {ev.source_filename}
-        {isComment && ev.source_comment_author_display && (
-          <span className="ml-2">
-            · 作者 {ev.source_comment_author_display}
-          </span>
+        {authorDisplay && (
+          <span className="ml-2">· 作者 {authorDisplay}</span>
         )}
-        {isComment && ev.source_comment_created_at && (
-          <span className="ml-2">· {ev.source_comment_created_at}</span>
+        {inlineCreatedAt && (
+          <span className="ml-2">· {inlineCreatedAt}</span>
         )}
       </div>
       <div className="rounded bg-[var(--surface)] px-2 py-1 text-[var(--text)] italic">

@@ -87,7 +87,7 @@ def _good_output(**overrides):
 
 
 def test_parse_valid_output(index_data):
-    out = parse_and_validate(_good_output(), index_data, expected_subject="zhangsan")
+    out = parse_and_validate(_good_output(), index_data, candidate_subjects={"zhangsan"})
     assert len(out.scores) == 1
     s = out.scores[0]
     assert s.subject_pinyin == "zhangsan"
@@ -99,13 +99,13 @@ def test_parse_valid_output(index_data):
 
 def test_parse_strips_markdown_fence(index_data):
     raw = "```json\n" + _good_output() + "\n```"
-    out = parse_and_validate(raw, index_data, expected_subject="zhangsan")
+    out = parse_and_validate(raw, index_data, candidate_subjects={"zhangsan"})
     assert len(out.scores) == 1
 
 
 def test_parse_strips_plain_fence(index_data):
     raw = "```\n" + _good_output() + "\n```"
-    out = parse_and_validate(raw, index_data, expected_subject="zhangsan")
+    out = parse_and_validate(raw, index_data, candidate_subjects={"zhangsan"})
     assert len(out.scores) == 1
 
 
@@ -114,7 +114,7 @@ def test_parse_empty_scores_with_skipped(index_data):
     out = parse_and_validate(
         json.dumps({"scores": [], "skipped_subjects": ["zhangsan"]}),
         index_data,
-        expected_subject="zhangsan",
+        candidate_subjects={"zhangsan"},
     )
     assert out.scores == []
     assert out.skipped_subjects == ["zhangsan"]
@@ -129,7 +129,7 @@ def test_parse_accepts_full_path_filename(index_data):
         "discussions/eng/auth-redesign/002_lisi_verify_xx.md"
     )
     out = parse_and_validate(
-        json.dumps(parsed_dict), index_data, expected_subject="zhangsan",
+        json.dumps(parsed_dict), index_data, candidate_subjects={"zhangsan"},
     )
     assert out.scores[0].evidence[0].source_filename.endswith("002_lisi_verify_xx.md")
 
@@ -139,12 +139,12 @@ def test_parse_accepts_full_path_filename(index_data):
 
 def test_parse_empty_string(index_data):
     with pytest.raises(SchemaError, match="empty"):
-        parse_and_validate("", index_data, expected_subject="zhangsan")
+        parse_and_validate("", index_data, candidate_subjects={"zhangsan"})
 
 
 def test_parse_invalid_json(index_data):
     with pytest.raises(SchemaError, match="json_invalid|pydantic_invalid"):
-        parse_and_validate("not json at all", index_data, expected_subject="zhangsan")
+        parse_and_validate("not json at all", index_data, candidate_subjects={"zhangsan"})
 
 
 def test_parse_missing_subject_pinyin_field(index_data):
@@ -155,21 +155,40 @@ def test_parse_missing_subject_pinyin_field(index_data):
         }],
     })
     with pytest.raises(SchemaError, match="pydantic_invalid"):
-        parse_and_validate(bad, index_data, expected_subject="zhangsan")
+        parse_and_validate(bad, index_data, candidate_subjects={"zhangsan"})
 
 
 # ---------- subject must == owner ----------
 
 
-def test_parse_rejects_wrong_subject(index_data):
-    """AI scoring lisi instead of zhangsan → reject."""
+def test_parse_rejects_subject_not_in_candidates(index_data):
+    """AI scores lisi but only zhangsan is a candidate → reject."""
     bad = _good_output()
     bad_dict = json.loads(bad)
     bad_dict["scores"][0]["subject_pinyin"] = "lisi"
-    with pytest.raises(SchemaError, match="subject_not_owner"):
+    with pytest.raises(SchemaError, match="subject_not_in_candidates"):
         parse_and_validate(
-            json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
         )
+
+
+def test_parse_accepts_subject_in_multi_candidate_set(index_data):
+    """Phase 2: AI scores lisi when both zhangsan and lisi are candidates → ok."""
+    bad = _good_output()
+    bad_dict = json.loads(bad)
+    bad_dict["scores"][0]["subject_pinyin"] = "lisi"
+    out = parse_and_validate(
+        json.dumps(bad_dict),
+        index_data,
+        candidate_subjects={"zhangsan", "lisi"},
+    )
+    assert out.scores[0].subject_pinyin == "lisi"
+
+
+def test_parse_rejects_empty_candidate_set(index_data):
+    """Empty candidate set is a programmer error — refuse to validate."""
+    with pytest.raises(SchemaError, match="candidate_subjects cannot be empty"):
+        parse_and_validate(_good_output(), index_data, candidate_subjects=set())
 
 
 # ---------- evidence anti-fabrication ----------
@@ -180,7 +199,7 @@ def test_parse_rejects_fabricated_filename(index_data):
     bad_dict["scores"][0]["evidence"][0]["source_filename"] = "999_fake.md"
     with pytest.raises(SchemaError, match="fabricated_source_filename"):
         parse_and_validate(
-            json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
         )
 
 
@@ -194,7 +213,7 @@ def test_parse_rejects_dimension_without_evidence(index_data):
     # evidence list still doesn't contain a judgment entry
     with pytest.raises(SchemaError, match="judgment.*no evidence"):
         parse_and_validate(
-            json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
         )
 
 
@@ -203,7 +222,7 @@ def test_parse_rejects_dimension_score_out_of_range(index_data):
     bad_dict["scores"][0]["dimensions"]["delivery"] = 6.0
     with pytest.raises(SchemaError, match="out of"):
         parse_and_validate(
-            json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
         )
 
 
@@ -212,7 +231,7 @@ def test_parse_rejects_unknown_dimension_key(index_data):
     bad_dict["scores"][0]["dimensions"]["bogus_dim"] = 3.0
     with pytest.raises(SchemaError, match="unknown dimension"):
         parse_and_validate(
-            json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
         )
 
 
@@ -224,7 +243,7 @@ def test_parse_accepts_all_null_dimensions_with_evidence(index_data):
     for k in DIMENSIONS:
         bad_dict["scores"][0]["dimensions"][k] = None
     out = parse_and_validate(
-        json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
     )
     assert all(out.scores[0].dimensions[k] is None for k in DIMENSIONS)
 
@@ -241,7 +260,7 @@ def test_parse_rejects_comment_without_created_at(index_data):
     })
     with pytest.raises(SchemaError, match="created_at"):
         parse_and_validate(
-            json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
         )
 
 
@@ -254,7 +273,7 @@ def test_parse_rejects_comment_without_author(index_data):
     })
     with pytest.raises(SchemaError, match="author"):
         parse_and_validate(
-            json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
         )
 
 
@@ -266,7 +285,7 @@ def test_parse_accepts_complete_comment_evidence(index_data):
         "source_comment_author": "lisi",
     })
     out = parse_and_validate(
-        json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
     )
     assert out.scores[0].evidence[0].source_kind == "comment"
 
@@ -280,7 +299,7 @@ def test_parse_infers_file_when_source_kind_missing(index_data):
     bad_dict = json.loads(_good_output())
     del bad_dict["scores"][0]["evidence"][0]["source_kind"]
     out = parse_and_validate(
-        json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
     )
     assert out.scores[0].evidence[0].source_kind == "file"
 
@@ -294,7 +313,7 @@ def test_parse_infers_comment_when_comment_meta_present(index_data):
     })
     bad_dict["scores"][0]["evidence"][0].pop("source_kind", None)
     out = parse_and_validate(
-        json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
     )
     assert out.scores[0].evidence[0].source_kind == "comment"
 
@@ -308,7 +327,7 @@ def test_parse_explicit_source_kind_overrides_inference(index_data):
     bad_dict = json.loads(_good_output())
     bad_dict["scores"][0]["evidence"][0]["source_kind"] = "file"
     out = parse_and_validate(
-        json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
     )
     assert out.scores[0].evidence[0].source_kind == "file"
 
@@ -327,7 +346,7 @@ def test_parse_inferred_comment_still_validates_completeness(index_data):
     # created_at.
     with pytest.raises(SchemaError, match="created_at"):
         parse_and_validate(
-            json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
         )
 
 
@@ -339,7 +358,7 @@ def test_parse_rejects_invalid_polarity(index_data):
     bad_dict["scores"][0]["evidence"][0]["polarity"] = "ambivalent"
     with pytest.raises(SchemaError, match="pydantic_invalid"):
         parse_and_validate(
-            json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
         )
 
 
@@ -348,18 +367,32 @@ def test_parse_rejects_overall_out_of_range(index_data):
     bad_dict["scores"][0]["overall"] = 7.5
     with pytest.raises(SchemaError, match="pydantic_invalid"):
         parse_and_validate(
-            json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
         )
 
 
-def test_parse_rejects_more_than_one_score(index_data):
-    """Decision A: scores list must have at most 1 entry."""
+def test_parse_accepts_multiple_scores_for_distinct_subjects(index_data):
+    """Phase 2 (v2.1): scores list can have N entries when N candidates."""
+    second = _good_score(subject_pinyin="lisi")
     two = json.dumps({
-        "scores": [_good_score(), _good_score()],
+        "scores": [_good_score(), second],
         "skipped_subjects": [],
     })
-    with pytest.raises(SchemaError, match="pydantic_invalid"):
-        parse_and_validate(two, index_data, expected_subject="zhangsan")
+    out = parse_and_validate(
+        two, index_data, candidate_subjects={"zhangsan", "lisi"},
+    )
+    assert len(out.scores) == 2
+    assert {s.subject_pinyin for s in out.scores} == {"zhangsan", "lisi"}
+
+
+def test_parse_rejects_duplicate_subject_in_scores(index_data):
+    """Same subject must not appear twice — AI should collapse evidence."""
+    two = json.dumps({
+        "scores": [_good_score(), _good_score()],  # both zhangsan
+        "skipped_subjects": [],
+    })
+    with pytest.raises(SchemaError, match="duplicate_subject"):
+        parse_and_validate(two, index_data, candidate_subjects={"zhangsan"})
 
 
 def test_parse_rejects_evidence_without_quote(index_data):
@@ -367,7 +400,7 @@ def test_parse_rejects_evidence_without_quote(index_data):
     bad_dict["scores"][0]["evidence"][0]["quote"] = ""
     with pytest.raises(SchemaError, match="pydantic_invalid"):
         parse_and_validate(
-            json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
         )
 
 
@@ -376,7 +409,7 @@ def test_parse_rejects_weight_out_of_range(index_data):
     bad_dict["scores"][0]["evidence"][0]["weight_applied"] = 99.0
     with pytest.raises(SchemaError, match="pydantic_invalid"):
         parse_and_validate(
-            json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
         )
 
 
@@ -401,33 +434,38 @@ def test_parse_rejects_self_comment_evidence(index_data):
     })
     with pytest.raises(SelfEvaluationError, match="self-evaluation"):
         parse_and_validate(
-            json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
         )
 
 
-def test_parse_rejects_self_positive_file_evidence(index_data):
-    """Positive evidence on a file authored by subject → reject (self-promotion)."""
+def test_parse_accepts_self_authored_file_evidence_positive(index_data):
+    """v2.2: subject's own think / act file as POSITIVE evidence is allowed.
+
+    The file is a work product, not a self-comment. AI may legitimately cite
+    a subject's act as positive delivery evidence (especially when paired
+    with a verify pass). Earlier revisions over-extended 005's "评价者 ==
+    文件作者 → 跳过" rule to the file itself; reverted because real runs
+    consistently failed with `self-evaluation rejected: positive evidence on
+    file '...' authored by '...'` even though the AI's reasoning was sound.
+    """
     bad_dict = json.loads(_good_output())
     bad_dict["scores"][0]["evidence"][0].update({
         "source_kind": "file",
         "source_filename": "001_zhangsan_act_xx.md",
         "source_file_type": "act",
-        "source_file_creator": "zhangsan",  # ← subject 自己写的 act 文件
+        "source_file_creator": "zhangsan",  # ← subject's own act
         "polarity": "positive",
     })
-    with pytest.raises(SelfEvaluationError, match="self-evaluation"):
-        parse_and_validate(
-            json.dumps(bad_dict), index_data, expected_subject="zhangsan",
-        )
+    out = parse_and_validate(
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+    )
+    assert out.scores[0].evidence[0].source_file_creator == "zhangsan"
+    assert out.scores[0].evidence[0].polarity == "positive"
 
 
-def test_parse_accepts_self_negative_file_evidence(index_data):
-    """Negative evidence on subject's own file is allowed — the signal comes
-    from structural mismatch (think contradicted by later verify), not from
-    the subject praising themselves."""
+def test_parse_accepts_self_authored_file_evidence_negative(index_data):
+    """Negative evidence on subject's own file also allowed (always was)."""
     bad_dict = json.loads(_good_output())
-    # Replace the first evidence entry with a self-authored negative one
-    # pointing at judgment, and align dimensions so judgment is the only scored dim.
     bad_dict["scores"][0]["evidence"] = [
         _good_evidence(
             source_kind="file",
@@ -446,7 +484,7 @@ def test_parse_accepts_self_negative_file_evidence(index_data):
         "process": None,
     }
     out = parse_and_validate(
-        json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
     )
     assert out.scores[0].dimensions["judgment"] == 2.0
 
@@ -458,7 +496,7 @@ def test_parse_accepts_evidence_without_source_file_creator(index_data):
     # _good_output already omits source_file_creator — verify the happy path
     assert "source_file_creator" not in bad_dict["scores"][0]["evidence"][0]
     out = parse_and_validate(
-        json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
     )
     assert len(out.scores) == 1
     # Field defaulted to None
@@ -476,7 +514,7 @@ def test_parse_accepts_other_authored_file_evidence(index_data):
         "polarity": "positive",
     })
     out = parse_and_validate(
-        json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
     )
     assert out.scores[0].evidence[0].source_file_creator == "lisi"
 
@@ -492,6 +530,148 @@ def test_parse_accepts_other_authored_comment_evidence(index_data):
         "source_comment_author": "lisi",  # ← lisi 评 zhangsan 的工作
     })
     out = parse_and_validate(
-        json.dumps(bad_dict), index_data, expected_subject="zhangsan",
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
     )
     assert out.scores[0].evidence[0].source_comment_author == "lisi"
+
+
+# ---------- v2.1: annotation source_kind ----------
+
+
+def test_parse_accepts_annotation_evidence(index_data):
+    """v2.1: source_kind=annotation with full metadata is a valid path."""
+    bad_dict = json.loads(_good_output())
+    bad_dict["scores"][0]["evidence"][0].update({
+        "source_kind": "annotation",
+        "source_filename": "001_zhangsan_act_xx.md",
+        "source_file_type": "act",
+        "source_annotation_created_at": "2026-04-22T14:00:00+08:00",
+        "source_annotation_author": "dengke",
+        "attribution_basis": "file_creator",
+    })
+    out = parse_and_validate(
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+    )
+    e = out.scores[0].evidence[0]
+    assert e.source_kind == "annotation"
+    assert e.source_annotation_author == "dengke"
+    assert e.attribution_basis == "file_creator"
+
+
+def test_parse_rejects_annotation_without_created_at(index_data):
+    """v2.1: annotation evidence must carry created_at (analogous to comment)."""
+    bad_dict = json.loads(_good_output())
+    bad_dict["scores"][0]["evidence"][0].update({
+        "source_kind": "annotation",
+        "source_annotation_created_at": None,
+        "source_annotation_author": "dengke",
+    })
+    with pytest.raises(SchemaError, match="annotation.*created_at"):
+        parse_and_validate(
+            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+        )
+
+
+def test_parse_rejects_annotation_without_author(index_data):
+    """v2.1: annotation evidence must carry author."""
+    bad_dict = json.loads(_good_output())
+    bad_dict["scores"][0]["evidence"][0].update({
+        "source_kind": "annotation",
+        "source_annotation_created_at": "2026-04-22T14:00:00+08:00",
+        "source_annotation_author": None,
+    })
+    with pytest.raises(SchemaError, match="annotation.*author"):
+        parse_and_validate(
+            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+        )
+
+
+def test_parse_rejects_self_annotation(index_data):
+    """v2.1: annotation by subject on any file → rejected (any polarity).
+
+    Mirror of the comment self-eval rule. Even subject's *negative*
+    annotation on their own file is rejected — this is by design, since
+    annotation is a conscious evaluative statement (unlike negative file
+    evidence that derives from structural mismatch)."""
+    bad_dict = json.loads(_good_output())
+    bad_dict["scores"][0]["evidence"][0].update({
+        "source_kind": "annotation",
+        "source_filename": "001_zhangsan_act_xx.md",
+        "source_file_type": "act",
+        "source_annotation_created_at": "2026-04-22T14:00:00+08:00",
+        "source_annotation_author": "zhangsan",  # ← subject 自己写的 annotation
+    })
+    with pytest.raises(SelfEvaluationError, match="self-evaluation.*annotation"):
+        parse_and_validate(
+            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+        )
+
+
+def test_parse_rejects_self_annotation_negative(index_data):
+    """Self-annotation rejection is polarity-agnostic (unlike file-evidence)."""
+    bad_dict = json.loads(_good_output())
+    bad_dict["scores"][0]["evidence"][0].update({
+        "source_kind": "annotation",
+        "polarity": "negative",
+        "source_annotation_created_at": "2026-04-22T14:00:00+08:00",
+        "source_annotation_author": "zhangsan",
+    })
+    with pytest.raises(SelfEvaluationError, match="annotation.*zhangsan"):
+        parse_and_validate(
+            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+        )
+
+
+def test_parse_infers_annotation_from_metadata(index_data):
+    """source_kind missing + annotation fields present → infer 'annotation'."""
+    bad_dict = json.loads(_good_output())
+    bad_dict["scores"][0]["evidence"][0].update({
+        "source_annotation_created_at": "2026-04-22T14:00:00+08:00",
+        "source_annotation_author": "dengke",
+    })
+    bad_dict["scores"][0]["evidence"][0].pop("source_kind", None)
+    out = parse_and_validate(
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+    )
+    assert out.scores[0].evidence[0].source_kind == "annotation"
+
+
+# ---------- v2.1: attribution_basis ----------
+
+
+def test_parse_accepts_attribution_basis_values(index_data):
+    """All five attribution_basis enum values pass."""
+    for basis in (
+        "file_creator",
+        "explicit_mention",
+        "at_target",
+        "owner_change_reason",
+        "verify_outcome",
+    ):
+        bad_dict = json.loads(_good_output())
+        bad_dict["scores"][0]["evidence"][0]["attribution_basis"] = basis
+        out = parse_and_validate(
+            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+        )
+        assert out.scores[0].evidence[0].attribution_basis == basis
+
+
+def test_parse_accepts_evidence_without_attribution_basis(index_data):
+    """Backward compat: attribution_basis is optional. Older runs / models
+    without it must still parse. Phase 2 prompt encourages but does not
+    schema-require it (yet — store layer will eventually enforce)."""
+    bad_dict = json.loads(_good_output())
+    assert "attribution_basis" not in bad_dict["scores"][0]["evidence"][0]
+    out = parse_and_validate(
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+    )
+    assert out.scores[0].evidence[0].attribution_basis is None
+
+
+def test_parse_rejects_unknown_attribution_basis(index_data):
+    bad_dict = json.loads(_good_output())
+    bad_dict["scores"][0]["evidence"][0]["attribution_basis"] = "made_up"
+    with pytest.raises(SchemaError, match="pydantic_invalid"):
+        parse_and_validate(
+            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+        )

@@ -13,6 +13,19 @@ Design notes:
 
 PR1 范围 (本模块)：基础 CRUD + 幂等 + sweep。
 PR2/3 会再加：从 schema.py 的 ScoringOutput 适配到 ScoreWrite/EvidenceWrite 的胶水。
+
+Phase 2（v2.1）演进：
+- matter_scoring_runs 增加 `schema_version`（v1 = Phase 1 owner-only / 单行；
+  v2 = Phase 2 multi-subject），让前端按版本号选择渲染逻辑
+- matter_score_evidence 增加 `source_annotation_*` + `attribution_basis` 三列
+  覆盖 v2.1 的 annotation 强语义证据 + 005 §决策链 attribution 数据
+- 字段分两层（matter 003 §4 / 007 §1.3）：
+    用户原始输入：source_filename / source_file_type / source_*_author_id /
+                  source_*_created_at / quote
+    AI 派生解释：dimension / polarity / confidence / attribution_basis /
+                  weight_applied / explanation
+  下游消费者（admin override / audit / 前端展示）必须分两栏，不能让派生分
+  冒充原始输入。
 """
 from __future__ import annotations
 
@@ -45,19 +58,44 @@ Polarity = Literal["positive", "negative", "neutral"]
 Dimension = Literal[
     "delivery", "accountability", "collaboration", "judgment", "process",
 ]
-SourceKind = Literal["file", "comment"]
+# v2.1: annotation joins file/comment as a third evidence source kind.
+SourceKind = Literal["file", "comment", "annotation"]
+# v2.1: how this evidence got attributed to the subject (005 决策链 +
+# verify_outcome). Optional column; older runs (Phase 1) leave it NULL.
+AttributionBasis = Literal[
+    "file_creator",
+    "explicit_mention",
+    "at_target",
+    "owner_change_reason",
+    "verify_outcome",
+]
+
+# Phase 2 worker (Task 2.4) stamps new runs with version 2; the schema column
+# default is also 2 for forward-compat. Existing Phase 1 runs migrated to 1.
+RUN_SCHEMA_VERSION_PHASE_1 = 1
+RUN_SCHEMA_VERSION_PHASE_2 = 2
 
 
 @dataclass(frozen=True)
 class ScoringJob:
     """Input to start_run / mark_skipped. Identifies what to score and why.
 
-    Constructed by trigger.py (PR3) and admin rerun endpoint (PR4)."""
+    Constructed by trigger.py (PR3) and admin rerun endpoint (PR4).
+
+    v2.1 (Phase 2): `subject_user_id` is the run's PRIMARY subject — kept as
+    matter.owner.id for backward-compat single-row queries (`get_score`, admin
+    "score for this owner" UI). `candidate_user_ids` is the full set of
+    candidates the AI is allowed to score (think/act file creators per matter
+    005); when this is non-empty the worker passes the corresponding pinyin set
+    to parse_and_validate, enabling multi-subject scores per run. Phase 1
+    callers leave it as `(subject_user_id,)`.
+    """
     matter_id: str
     matter_category: str
     subject_user_id: str
     triggered_by: TriggeredBy
     triggered_actor_id: str | None = None
+    candidate_user_ids: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -76,6 +114,15 @@ class ScoringRun:
     started_at: float
     finished_at: float | None
     timeline_hash: str
+    # v2.1: 1 = Phase 1 owner-only / single-row; 2 = Phase 2 multi-subject.
+    # Frontend uses this to decide whether to expect a single MatterScore row
+    # or N rows for the run.
+    schema_version: int = RUN_SCHEMA_VERSION_PHASE_1
+    # v2.2: pinyin list of subjects the AI explicitly skipped (insufficient
+    # evidence → all dimensions null). Surfaced in admin UI so an empty
+    # subject_scores doesn't look like "the system silently ignored this
+    # person" — it was a deliberate AI decision.
+    skipped_subjects: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -84,7 +131,13 @@ class ScoreWrite:
 
     Caller (AI runner) is responsible for resolving pinyin → user_id and
     flattening the pydantic ScoringOutput into this dataclass before calling.
+
+    v2.1 (Phase 2): `subject_user_id` is required and may differ from the
+    run's primary subject — under multi-subject mode the run row carries the
+    matter.owner as `run.subject_user_id`, but each scored candidate gets its
+    own MatterScore row with its own `score.subject_user_id`.
     """
+    subject_user_id: str
     overall: float
     confidence: Confidence
     rationale: str
@@ -97,6 +150,17 @@ class ScoreWrite:
 
 @dataclass(frozen=True)
 class EvidenceWrite:
+    """Evidence row payload — split into two layers:
+
+    User original input (immutable, sourced from timeline / annotation):
+        source_filename, source_file_type, source_comment_*, source_annotation_*,
+        quote
+    AI-derived interpretation (computed by AI):
+        dimension, polarity, confidence, attribution_basis, weight_applied,
+        explanation
+
+    Don't blur the line in admin UI / audit — see store.py module docstring.
+    """
     dimension: Dimension
     polarity: Polarity
     confidence: Confidence
@@ -107,6 +171,12 @@ class EvidenceWrite:
     explanation: str
     source_comment_created_at: str | None = None
     source_comment_author_id: str | None = None
+    # v2.1 annotation evidence (parallel to comment fields):
+    source_annotation_created_at: str | None = None
+    source_annotation_author_id: str | None = None
+    # v2.1 attribution: how this evidence got hooked to the subject. Optional;
+    # old runs and older AI outputs may leave it NULL.
+    attribution_basis: AttributionBasis | None = None
     weight_applied: float = 1.0
 
 
@@ -131,6 +201,7 @@ class MatterScore:
 
 @dataclass(frozen=True)
 class MatterScoreEvidence:
+    """Read-side mirror of EvidenceWrite + DB id. Same two-layer split."""
     id: int
     run_id: str
     matter_id: str
@@ -143,6 +214,9 @@ class MatterScoreEvidence:
     source_file_type: str
     source_comment_created_at: str | None
     source_comment_author_id: str | None
+    source_annotation_created_at: str | None  # v2.1
+    source_annotation_author_id: str | None   # v2.1
+    attribution_basis: str | None             # v2.1
     weight_applied: float
     quote: str
     explanation: str
@@ -173,7 +247,14 @@ _VALID_POLARITY: frozenset[str] = frozenset(
 _VALID_DIMENSIONS: frozenset[str] = frozenset(
     {"delivery", "accountability", "collaboration", "judgment", "process"}
 )
-_VALID_SOURCE_KINDS: frozenset[str] = frozenset({"file", "comment"})
+_VALID_SOURCE_KINDS: frozenset[str] = frozenset({"file", "comment", "annotation"})
+_VALID_ATTRIBUTION_BASIS: frozenset[str] = frozenset({
+    "file_creator",
+    "explicit_mention",
+    "at_target",
+    "owner_change_reason",
+    "verify_outcome",
+})
 
 _DEFAULT_ORPHAN_TIMEOUT_SECONDS = 600  # 10 min
 
@@ -190,6 +271,7 @@ class ScoringStore:
         *,
         timeline_hash: str,
         model: str,
+        schema_version: int = RUN_SCHEMA_VERSION_PHASE_1,
     ) -> str:
         """Create a new run in 'queued' state and return run_id.
 
@@ -199,6 +281,9 @@ class ScoringStore:
         Raises sqlite3.IntegrityError if the partial-unique idempotency index
         already covers (matter_id, timeline_hash) with a queued/running/success
         row — caller (worker) should treat this as 'duplicate, skip'.
+
+        schema_version defaults to 1 (Phase 1 owner-only). Phase 2 worker
+        (Task 2.4) bumps this to 2 when emitting multi-subject runs.
         """
         _validate_triggered_by(job.triggered_by)
         run_id = _new_run_id()
@@ -208,12 +293,13 @@ class ScoringStore:
                 "INSERT INTO matter_scoring_runs"
                 " (run_id, matter_id, matter_category, subject_user_id,"
                 "  triggered_by, triggered_actor_id, status, model,"
-                "  started_at, timeline_hash)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "  started_at, timeline_hash, schema_version)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     run_id, job.matter_id, job.matter_category,
                     job.subject_user_id, job.triggered_by,
                     job.triggered_actor_id, "queued", model, now, timeline_hash,
+                    schema_version,
                 ),
             )
         return run_id
@@ -225,6 +311,25 @@ class ScoringStore:
                 "UPDATE matter_scoring_runs SET status='running'"
                 " WHERE run_id=? AND status IN ('queued','running')",
                 (run_id,),
+            )
+
+    def set_skipped_subjects(
+        self, run_id: str, skipped: Sequence[str],
+    ) -> None:
+        """v2.2: persist AI-decided skipped pinyin list onto the run row.
+
+        Worker calls this once after AI returns parsed output but before
+        finish_run. Stored as JSON array (sqlite TEXT). Empty list also
+        written explicitly so consumers can distinguish "AI said skip = []"
+        from "this is a legacy run that didn't capture skipped".
+        """
+        import json as _j
+        payload = _j.dumps(list(skipped), ensure_ascii=False)
+        with self._db.connect() as conn:
+            conn.execute(
+                "UPDATE matter_scoring_runs SET skipped_subjects=?"
+                " WHERE run_id=?",
+                (payload, run_id),
             )
 
     def finish_run(
@@ -256,6 +361,7 @@ class ScoringStore:
         timeline_hash: str,
         reason: str,
         model: str | None = None,
+        schema_version: int = RUN_SCHEMA_VERSION_PHASE_1,
     ) -> str:
         """Record a 'we got the trigger but didn't run AI' row for observability.
 
@@ -270,13 +376,13 @@ class ScoringStore:
                 "INSERT INTO matter_scoring_runs"
                 " (run_id, matter_id, matter_category, subject_user_id,"
                 "  triggered_by, triggered_actor_id, status, error, model,"
-                "  started_at, finished_at, timeline_hash)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "  started_at, finished_at, timeline_hash, schema_version)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     run_id, job.matter_id, job.matter_category,
                     job.subject_user_id, job.triggered_by,
                     job.triggered_actor_id, "skipped", reason, model,
-                    now, now, timeline_hash,
+                    now, now, timeline_hash, schema_version,
                 ),
             )
         return run_id
@@ -417,18 +523,23 @@ class ScoringStore:
         score: ScoreWrite,
         evidence: Sequence[EvidenceWrite],
     ) -> None:
-        """Insert score row + evidence rows in one transaction.
+        """Insert one subject's score row + evidence rows in one transaction.
 
-        Caller MUST also call finish_run(run_id, 'success') after this returns
-        cleanly. We don't fold them together because the caller may want to
-        record AI token usage at finish_run time.
+        v2.1 (Phase 2): a single run can call this multiple times — once per
+        scored candidate. The score's subject_user_id (which may or may not
+        match run.subject_user_id) determines which subject row is written.
+        Evidence rows carry the same subject_user_id as the score they back.
+
+        Caller MUST also call finish_run(run_id, 'success') after the LAST
+        write_results returns cleanly. We don't fold them together because
+        the caller may want to record AI token usage + write multiple subjects
+        before finishing.
 
         Raises:
             ValueError: invalid enum value (confidence/polarity/dimension/etc.)
             ValueError: run not found, or not in 'queued'/'running' status
-            ValueError: evidence empty (each non-null dimension needs ≥1
-                        evidence — caller's schema.py is the primary check;
-                        this is a defense-in-depth)
+            ValueError: subject_user_id collision (already wrote this subject
+                        under this run — caller logic bug)
         """
         _validate_confidence(score.confidence)
         for e in evidence:
@@ -436,7 +547,7 @@ class ScoringStore:
 
         with self._db.connect() as conn:
             run_row = conn.execute(
-                "SELECT matter_id, subject_user_id, status"
+                "SELECT matter_id, status"
                 " FROM matter_scoring_runs WHERE run_id=?",
                 (run_id,),
             ).fetchone()
@@ -448,7 +559,7 @@ class ScoringStore:
                     "cannot write results"
                 )
             matter_id = run_row["matter_id"]
-            subject_user_id = run_row["subject_user_id"]
+            subject_user_id = score.subject_user_id
 
             conn.execute(
                 "INSERT INTO matter_scores"
@@ -468,14 +579,18 @@ class ScoringStore:
                 " (run_id, matter_id, subject_user_id, dimension, polarity,"
                 "  confidence, source_kind, source_filename, source_file_type,"
                 "  source_comment_created_at, source_comment_author_id,"
+                "  source_annotation_created_at, source_annotation_author_id,"
+                "  attribution_basis,"
                 "  weight_applied, quote, explanation)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 [
                     (
                         run_id, matter_id, subject_user_id,
                         e.dimension, e.polarity, e.confidence,
                         e.source_kind, e.source_filename, e.source_file_type,
                         e.source_comment_created_at, e.source_comment_author_id,
+                        e.source_annotation_created_at, e.source_annotation_author_id,
+                        e.attribution_basis,
                         e.weight_applied, e.quote, e.explanation,
                     )
                     for e in evidence
@@ -485,22 +600,70 @@ class ScoringStore:
     def get_score(
         self, run_id: str,
     ) -> tuple[MatterScore, list[MatterScoreEvidence]] | None:
+        """Return ONE score row + its evidence for backward-compat callers.
+
+        Preference order: matter.owner (run.subject_user_id) first, then any
+        other candidate by subject_user_id ascending. Multi-subject runs where
+        the owner has no think/act file (and therefore no score row) still
+        surface another candidate's score so admin UI doesn't show a blank.
+        Use get_scores() to read all candidates.
+        """
         with self._db.connect() as conn:
             score_row = conn.execute(
-                "SELECT * FROM matter_scores WHERE run_id=?",
+                "SELECT s.* FROM matter_scores s"
+                " JOIN matter_scoring_runs r ON r.run_id = s.run_id"
+                " WHERE s.run_id=?"
+                " ORDER BY (s.subject_user_id = r.subject_user_id) DESC,"
+                "   s.subject_user_id ASC"
+                " LIMIT 1",
                 (run_id,),
             ).fetchone()
             if score_row is None:
                 return None
+            subject = score_row["subject_user_id"]
             evidence_rows = conn.execute(
-                "SELECT * FROM matter_score_evidence WHERE run_id=?"
+                "SELECT * FROM matter_score_evidence"
+                " WHERE run_id=? AND subject_user_id=?"
                 " ORDER BY id ASC",
-                (run_id,),
+                (run_id, subject),
             ).fetchall()
         return (
             _row_to_score(score_row),
             [_row_to_evidence(r) for r in evidence_rows],
         )
+
+    def get_scores(
+        self, run_id: str,
+    ) -> list[tuple[MatterScore, list[MatterScoreEvidence]]]:
+        """v2.1 multi-subject: return ALL score rows for the run, each with
+        its own evidence list. Empty list if the run hasn't written results
+        yet (or AI explicitly skipped). Order: matter.owner first if present,
+        then by subject_user_id ascending for stability."""
+        with self._db.connect() as conn:
+            score_rows = conn.execute(
+                "SELECT s.*,"
+                "  (s.subject_user_id = r.subject_user_id) AS is_primary"
+                " FROM matter_scores s"
+                " JOIN matter_scoring_runs r ON r.run_id = s.run_id"
+                " WHERE s.run_id=?"
+                " ORDER BY is_primary DESC, s.subject_user_id ASC",
+                (run_id,),
+            ).fetchall()
+            if not score_rows:
+                return []
+            evidence_rows = conn.execute(
+                "SELECT * FROM matter_score_evidence WHERE run_id=?"
+                " ORDER BY id ASC",
+                (run_id,),
+            ).fetchall()
+        # Bucket evidence by subject_user_id
+        by_subject: dict[str, list[MatterScoreEvidence]] = {}
+        for r in evidence_rows:
+            by_subject.setdefault(r["subject_user_id"], []).append(_row_to_evidence(r))
+        return [
+            (_row_to_score(s), by_subject.get(s["subject_user_id"], []))
+            for s in score_rows
+        ]
 
     def apply_human_override(
         self,
@@ -634,6 +797,14 @@ def _validate_evidence(e: EvidenceWrite) -> None:
         raise ValueError(
             "comment-kind evidence requires source_comment_created_at"
         )
+    if e.source_kind == "annotation" and not e.source_annotation_created_at:
+        raise ValueError(
+            "annotation-kind evidence requires source_annotation_created_at"
+        )
+    if e.attribution_basis is not None and e.attribution_basis not in _VALID_ATTRIBUTION_BASIS:
+        raise ValueError(
+            f"invalid attribution_basis: {e.attribution_basis!r}"
+        )
     if not 0.1 <= e.weight_applied <= 5.0:
         raise ValueError(
             f"weight_applied must be in [0.1, 5.0], got {e.weight_applied}"
@@ -641,6 +812,19 @@ def _validate_evidence(e: EvidenceWrite) -> None:
 
 
 def _row_to_run(row: sqlite3.Row) -> ScoringRun:
+    # schema_version may be NULL on legacy migrated rows pre-v2.1; treat as 1.
+    keys = row.keys()
+    raw_sv = row["schema_version"] if "schema_version" in keys else None
+    schema_version = int(raw_sv) if raw_sv is not None else RUN_SCHEMA_VERSION_PHASE_1
+    skipped: tuple[str, ...] = ()
+    if "skipped_subjects" in keys and row["skipped_subjects"]:
+        try:
+            import json as _j
+            parsed = _j.loads(row["skipped_subjects"])
+            if isinstance(parsed, list):
+                skipped = tuple(str(p) for p in parsed)
+        except (ValueError, TypeError):
+            pass  # corrupt JSON — treat as empty
     return ScoringRun(
         run_id=row["run_id"],
         matter_id=row["matter_id"],
@@ -656,6 +840,8 @@ def _row_to_run(row: sqlite3.Row) -> ScoringRun:
         started_at=row["started_at"],
         finished_at=row["finished_at"],
         timeline_hash=row["timeline_hash"],
+        schema_version=schema_version,
+        skipped_subjects=skipped,
     )
 
 
@@ -680,6 +866,7 @@ def _row_to_score(row: sqlite3.Row) -> MatterScore:
 
 
 def _row_to_evidence(row: sqlite3.Row) -> MatterScoreEvidence:
+    keys = row.keys()
     return MatterScoreEvidence(
         id=row["id"],
         run_id=row["run_id"],
@@ -693,6 +880,20 @@ def _row_to_evidence(row: sqlite3.Row) -> MatterScoreEvidence:
         source_file_type=row["source_file_type"],
         source_comment_created_at=row["source_comment_created_at"],
         source_comment_author_id=row["source_comment_author_id"],
+        # v2.1 columns; NULL on rows written before the migration.
+        source_annotation_created_at=(
+            row["source_annotation_created_at"]
+            if "source_annotation_created_at" in keys
+            else None
+        ),
+        source_annotation_author_id=(
+            row["source_annotation_author_id"]
+            if "source_annotation_author_id" in keys
+            else None
+        ),
+        attribution_basis=(
+            row["attribution_basis"] if "attribution_basis" in keys else None
+        ),
         weight_applied=row["weight_applied"],
         quote=row["quote"],
         explanation=row["explanation"],

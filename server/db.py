@@ -234,7 +234,18 @@ CREATE TABLE IF NOT EXISTS matter_scoring_runs (
     completion_tokens   INTEGER,
     started_at          REAL NOT NULL,
     finished_at         REAL,
-    timeline_hash       TEXT NOT NULL
+    timeline_hash       TEXT NOT NULL,
+    -- v2.1 (Phase 2): 1 = Phase 1 owner-only / single-row scoring;
+    -- 2 = Phase 2 multi-subject. Frontend reads this to choose render mode.
+    -- Default 1 means freshly inserted rows from the Phase 1 worker keep
+    -- the legacy semantics; Phase 2 worker (Task 2.4) passes 2 explicitly.
+    schema_version      INTEGER NOT NULL DEFAULT 1,
+    -- v2.2: AI's skipped_subjects array (pinyin list, JSON-encoded).
+    -- Candidates the AI considered but judged "evidence insufficient → all
+    -- dimensions null → don't score". Surfaced in admin UI so the operator
+    -- knows the AI saw that person and made an explicit decision, not a
+    -- silent omission. NULL on legacy runs / runs that didn't capture this.
+    skipped_subjects    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_scoring_runs_matter
     ON matter_scoring_runs(matter_id, started_at DESC);
@@ -271,14 +282,23 @@ CREATE TABLE IF NOT EXISTS matter_score_evidence (
     run_id                      TEXT NOT NULL,
     matter_id                   TEXT NOT NULL,
     subject_user_id             TEXT NOT NULL,
+    -- AI-derived interpretation (matter 003 §4 / 007 §1.3 boundary):
     dimension                   TEXT NOT NULL,
     polarity                    TEXT NOT NULL,
     confidence                  TEXT NOT NULL,
-    source_kind                 TEXT NOT NULL,
+    -- User original input (sourced from timeline / annotation YAML):
+    source_kind                 TEXT NOT NULL,  -- 'file' | 'comment' | 'annotation' (v2.1)
     source_filename             TEXT NOT NULL,
     source_file_type            TEXT NOT NULL,
     source_comment_created_at   TEXT,
     source_comment_author_id    TEXT,
+    source_annotation_created_at  TEXT,         -- v2.1: annotation evidence
+    source_annotation_author_id   TEXT,         -- v2.1: annotation evidence
+    -- v2.1 attribution: which 005 决策链 path put this evidence onto the
+    -- subject. NULL on legacy rows. Enum values:
+    --   'file_creator' | 'explicit_mention' | 'at_target' |
+    --   'owner_change_reason' | 'verify_outcome'
+    attribution_basis           TEXT,
     weight_applied              REAL NOT NULL DEFAULT 1.0,
     quote                       TEXT NOT NULL,
     explanation                 TEXT NOT NULL
@@ -449,6 +469,37 @@ def _migrate(conn) -> None:
         " ON matter_scoring_runs(matter_id, timeline_hash)"
         " WHERE status IN ('queued','running')"
     )
+    # Scoring v0.3.1 -> v2.1: add schema_version to runs and three new
+    # columns to evidence (annotation source + attribution_basis). Old DBs
+    # still have the original CREATE TABLE shape — ALTER on missing cols.
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(matter_scoring_runs)")}
+    if "schema_version" not in cols:
+        # Default 1 = legacy Phase 1 (owner-only). New rows from the Phase 1
+        # worker still write 1; Phase 2 worker bumps to 2.
+        conn.execute(
+            "ALTER TABLE matter_scoring_runs"
+            " ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1"
+        )
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(matter_score_evidence)")}
+    if "source_annotation_created_at" not in cols:
+        conn.execute(
+            "ALTER TABLE matter_score_evidence"
+            " ADD COLUMN source_annotation_created_at TEXT"
+        )
+    if "source_annotation_author_id" not in cols:
+        conn.execute(
+            "ALTER TABLE matter_score_evidence"
+            " ADD COLUMN source_annotation_author_id TEXT"
+        )
+    if "attribution_basis" not in cols:
+        conn.execute(
+            "ALTER TABLE matter_score_evidence ADD COLUMN attribution_basis TEXT"
+        )
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(matter_scoring_runs)")}
+    if "skipped_subjects" not in cols:
+        conn.execute(
+            "ALTER TABLE matter_scoring_runs ADD COLUMN skipped_subjects TEXT"
+        )
     cols = {row[1] for row in conn.execute("PRAGMA table_info(pivot_user)")}
     if "role" in cols:
         # Legacy databases may still have CHECK(role IN ('admin','member')).
