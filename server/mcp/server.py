@@ -86,7 +86,7 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
                 name="list_matters",
                 description=(
                     "List matters visible to the current user. Supports "
-                    "status/owner/q filters. "
+                    "status/owner/q/filter filters. "
                     "Common user phrasings: \"看一下所有 matter\", \"列一下 "
                     "matter 列表\", \"看看 pivot 下面有哪些帖子\", \"最近有什么 "
                     "matter\", \"谁在做什么\", \"有哪些进行中的 matter\", "
@@ -96,7 +96,12 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
                     "URL), use `get_matter` / `resolve_context` instead. "
                     "Filters: `status` accepts planning/executing/paused/"
                     "finished/reviewed/cancelled; `owner` accepts pinyin "
-                    "(e.g. 'dengke'); `q` does fuzzy title search."
+                    "(e.g. 'dengke'); `q` does fuzzy title search; "
+                    "`filter='mine'` keeps only matters with red unread > 0 "
+                    "(\"我的待办\" / \"我有未读吗\" / \"看看跟我相关的\" / "
+                    "\"what's pending for me\" / \"matters with my unread\"). "
+                    "Note: `filter='mine'` is NOT \"matters I created/own\" — "
+                    "it tracks unread relevance, not authorship."
                 ),
                 inputSchema=ListMattersIn.model_json_schema(),
             ),
