@@ -468,6 +468,10 @@ def tool_create_matter(
             "body": input_.mentions.say,
             "mentions": input_.mentions.targets,
         }]
+    if input_.visibility is not None:
+        api_body["visibility"] = input_.visibility.model_dump()
+    if input_.new_category_visibility is not None:
+        api_body["new_category_visibility"] = input_.new_category_visibility.model_dump()
 
     resp = client.post_matter(api_body)
 

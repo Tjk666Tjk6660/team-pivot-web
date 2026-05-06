@@ -597,6 +597,108 @@ def test_create_matter_mentions_empty_say_rejected():
         )
 
 
+def test_create_matter_visibility_passthrough():
+    """Restricted visibility object lands in the api body verbatim."""
+    client = MagicMock(spec=MatterApiClient)
+    client.post_matter.return_value = {
+        "matter": {"id": "m1", "title": "T"},
+        "matter_id": "m1",
+        "initial_timeline_item": {"file": "001.md"},
+        "file": "001.md",
+    }
+    out = tool_create_matter(
+        {
+            "category": "Pivot", "title": "T", "type": "think",
+            "summary": "s", "body": "b",
+            "visibility": {
+                "mode": "restricted", "roles": ["dev"], "user_ids": ["u1"],
+            },
+        },
+        client,
+        "https://pivot.enclaws.ai",
+    )
+    sent_body = client.post_matter.call_args[0][0]
+    assert sent_body["visibility"] == {
+        "mode": "restricted", "roles": ["dev"], "user_ids": ["u1"],
+    }
+    assert "new_category_visibility" not in sent_body
+    assert out["ok"] is True
+
+
+def test_create_matter_new_category_visibility_passthrough():
+    """Both visibility and new_category_visibility ride along when both set."""
+    client = MagicMock(spec=MatterApiClient)
+    client.post_matter.return_value = {
+        "matter": {"id": "m1", "title": "T"},
+        "matter_id": "m1",
+        "initial_timeline_item": {"file": "001.md"},
+        "file": "001.md",
+    }
+    tool_create_matter(
+        {
+            "category": "NewCat", "title": "T", "type": "think",
+            "summary": "s", "body": "b",
+            "visibility": {
+                "mode": "restricted", "roles": ["dev"], "user_ids": [],
+            },
+            "new_category_visibility": {
+                "mode": "restricted", "authorized_roles": ["dev"],
+            },
+        },
+        client,
+        "https://pivot.enclaws.ai",
+    )
+    sent_body = client.post_matter.call_args[0][0]
+    assert sent_body["new_category_visibility"] == {
+        "mode": "restricted", "authorized_roles": ["dev"],
+    }
+
+
+def test_create_matter_omits_visibility_keys_when_unset():
+    """No visibility key is sent when caller doesn't set it — backend defaults to public."""
+    client = MagicMock(spec=MatterApiClient)
+    client.post_matter.return_value = {
+        "matter": {"id": "m1", "title": "T"},
+        "matter_id": "m1",
+        "initial_timeline_item": {"file": "001.md"},
+        "file": "001.md",
+    }
+    tool_create_matter(
+        {
+            "category": "Pivot", "title": "T", "type": "think",
+            "summary": "s", "body": "b",
+        },
+        client,
+        "https://pivot.enclaws.ai",
+    )
+    sent_body = client.post_matter.call_args[0][0]
+    assert "visibility" not in sent_body
+    assert "new_category_visibility" not in sent_body
+
+
+def test_create_matter_surfaces_missing_category_visibility_422():
+    """Backend's missing_category_visibility flows through as `errors` payload."""
+    client = MagicMock(spec=MatterApiClient)
+    client.post_matter.return_value = {
+        "__validation_errors__": {
+            "detail": {"code": "missing_category_visibility"},
+        },
+    }
+    out = tool_create_matter(
+        {
+            "category": "NewCat", "title": "T", "type": "think",
+            "summary": "s", "body": "b",
+            "visibility": {
+                "mode": "restricted", "roles": ["dev"], "user_ids": [],
+            },
+        },
+        client,
+        "https://pivot.enclaws.ai",
+    )
+    assert "errors" in out
+    assert out["errors"]["detail"]["code"] == "missing_category_visibility"
+
+
 def test_create_file_mentions_translate_to_top_level_comments():
     """For create_file the comments list is at the request body root, not nested."""
     client = MagicMock(spec=MatterApiClient)
