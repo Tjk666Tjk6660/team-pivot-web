@@ -31,7 +31,7 @@ verify / result / insight）组成。
 【8 个能力 + 用户该说什么】
 - resolve_context — 解析 Pivot 链接（"看一下这个帖子 <粘贴 URL>"）
 - list_matters — 列 matter（"看一下所有 matter" / "列一下 xxx 的 matter" / \
-"最近有什么 matter"）
+"最近有什么 matter" / "我的待办" / "看看跟我相关的"）
 - get_matter — 看某条 matter 的 timeline（"看下「X」这条 matter" / \
 "X matter 的进度"）
 - read_files — 读文件正文（"展开这条 think 的具体内容" / \
