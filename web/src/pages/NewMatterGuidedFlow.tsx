@@ -664,10 +664,10 @@ export function NewMatterGuidedFlow({
           body_source: "ai",
           ...(data.mentions.open_ids.length > 0
             ? {
-                comments: [
+                mentions: [
                   {
                     body: data.mentions.comments.trim(),
-                    mentions: data.mentions.open_ids,
+                    targets: data.mentions.open_ids,
                   },
                 ],
               }

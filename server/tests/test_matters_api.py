@@ -529,21 +529,21 @@ def test_append_comment_ok(client, event_bucket, users):
     matter_id = r.json()["matter_id"]
     target = r.json()["initial_timeline_item"]["file"]
 
-    r2 = client.post(f"/api/matters/{matter_id}/comments", json={
+    r2 = client.post(f"/api/matters/{matter_id}/mentions", json={
         "target_file": target,
         "body": "同意",
-        "mentions": ["ou_2"],
+        "targets": ["ou_2"],
     })
     assert r2.status_code == 200, r2.text
 
     detail = client.get(f"/api/matters/{matter_id}").json()
-    comments = detail["timeline"][0]["comments"]
-    assert len(comments) == 1
-    assert comments[0]["body"] == "同意"
-    assert comments[0]["mentions"] == [mentioned_user_id]
-    assert comments[0]["author"] == "dengke"
+    mentions = detail["timeline"][0]["mentions"]
+    assert len(mentions) == 1
+    assert mentions[0]["body"] == "同意"
+    assert mentions[0]["targets"] == [mentioned_user_id]
+    assert mentions[0]["author"] == "dengke"
 
-    assert any(e.topic == "matter.comment_appended" for e in event_bucket)
+    assert any(e.topic == "matter.mention_appended" for e in event_bucket)
 
 
 def test_comment_mentions_resolve_open_id_to_pinyin(client, users):
@@ -561,17 +561,17 @@ def test_comment_mentions_resolve_open_id_to_pinyin(client, users):
     matter_id = r.json()["matter_id"]
     target = r.json()["initial_timeline_item"]["file"]
 
-    r2 = client.post(f"/api/matters/{matter_id}/comments", json={
+    r2 = client.post(f"/api/matters/{matter_id}/mentions", json={
         "target_file": target,
         "body": "请确认",
-        "mentions": ["ou_2"],
+        "targets": ["ou_2"],
     })
     assert r2.status_code == 200, r2.text
 
     # 直读磁盘 yaml，避免 GET 渲染层做了二次解析掩盖真实写入形态
     from server.matter_index import read_matter_index, matter_index_path
     raw = read_matter_index(matter_index_path(client.workspace.index_dir, matter_id))
-    on_disk_mentions = raw["timeline"][0]["comments"][0]["mentions"]
+    on_disk_mentions = raw["timeline"][0]["mentions"][0]["targets"]
     assert on_disk_mentions == [mentioned_user_id], on_disk_mentions
 
 
@@ -585,16 +585,16 @@ def test_comment_mentions_keep_open_id_for_unregistered(client):
     target = r.json()["initial_timeline_item"]["file"]
 
     unregistered = "ou_unregistered_0000000000000001"
-    r2 = client.post(f"/api/matters/{matter_id}/comments", json={
+    r2 = client.post(f"/api/matters/{matter_id}/mentions", json={
         "target_file": target,
         "body": "FYI",
-        "mentions": [unregistered],
+        "targets": [unregistered],
     })
     assert r2.status_code == 200, r2.text
 
     from server.matter_index import read_matter_index, matter_index_path
     raw = read_matter_index(matter_index_path(client.workspace.index_dir, matter_id))
-    on_disk_mentions = raw["timeline"][0]["comments"][0]["mentions"]
+    on_disk_mentions = raw["timeline"][0]["mentions"][0]["targets"]
     assert on_disk_mentions == [unregistered], on_disk_mentions
 
 
@@ -615,16 +615,16 @@ def test_comment_mcp_pinyin_input_renders_chinese_name(client, db):
     matter_id = r.json()["matter_id"]
     target = r.json()["initial_timeline_item"]["file"]
 
-    r2 = client.post(f"/api/matters/{matter_id}/comments", json={
+    r2 = client.post(f"/api/matters/{matter_id}/mentions", json={
         "target_file": target,
         "body": "测试圈人",
-        "mentions": ["zhangbo"],
+        "targets": ["zhangbo"],
     })
     assert r2.status_code == 200, r2.text
 
     detail = client.get(f"/api/matters/{matter_id}").json()
-    cm = detail["timeline"][0]["comments"][0]
-    assert cm["mentions_display"] == ["张菠"], cm
+    cm = detail["timeline"][0]["mentions"][0]
+    assert cm["targets_display"] == ["张菠"], cm
 
 
 def test_create_matter_mcp_pinyin_input_renders_chinese_name(client, db):
@@ -637,15 +637,15 @@ def test_create_matter_mcp_pinyin_input_renders_chinese_name(client, db):
         "category": "Pivot", "title": "T",
         "initial_file": {
             "type": "think", "summary": "s", "body": "",
-            "comments": [{"body": "@ 张菠", "mentions": ["zhangbo"]}],
+            "mentions": [{"body": "@ 张菠", "targets": ["zhangbo"]}],
         },
     })
     assert r.status_code == 200, r.text
     matter_id = r.json()["matter_id"]
 
     detail = client.get(f"/api/matters/{matter_id}").json()
-    cm = detail["timeline"][0]["comments"][0]
-    assert cm["mentions_display"] == ["张菠"], cm
+    cm = detail["timeline"][0]["mentions"][0]
+    assert cm["targets_display"] == ["张菠"], cm
 
 
 def test_append_file_mcp_pinyin_input_renders_chinese_name(client, db):
@@ -663,17 +663,17 @@ def test_append_file_mcp_pinyin_input_renders_chinese_name(client, db):
     r2 = client.post(f"/api/matters/{matter_id}/files", json={
         "type": "act", "summary": "go",
         "status_change": {"from": "planning", "to": "executing"},
-        "comments": [{"body": "@ 张菠", "mentions": ["zhangbo"]}],
+        "mentions": [{"body": "@ 张菠", "targets": ["zhangbo"]}],
     })
     assert r2.status_code == 200, r2.text
 
     detail = client.get(f"/api/matters/{matter_id}").json()
-    cm = detail["timeline"][1]["comments"][0]
-    assert cm["mentions_display"] == ["张菠"], cm
+    cm = detail["timeline"][1]["mentions"][0]
+    assert cm["targets_display"] == ["张菠"], cm
 
 
-def test_append_file_comments_mentions_resolved(client, users):
-    """append_file 路径里 comments[].mentions 同样要走 open_id → pinyin 转换。"""
+def test_append_file_mentions_targets_resolved(client, users):
+    """append_file 路径里 mentions[].targets 同样要走 open_id → pinyin 转换。"""
     users.upsert_from_feishu(open_id="ou_3", union_id=None, name="唐昆", avatar_url="")
     users.update_profile("ou_3", pinyin="tangkun")
     mentioned_user_id = _seed_pivot_user_with_feishu(
@@ -689,14 +689,14 @@ def test_append_file_comments_mentions_resolved(client, users):
     r2 = client.post(f"/api/matters/{matter_id}/files", json={
         "type": "act", "summary": "go",
         "status_change": {"from": "planning", "to": "executing"},
-        "comments": [{"body": "请看一下", "mentions": ["ou_3"]}],
+        "mentions": [{"body": "请看一下", "targets": ["ou_3"]}],
     })
     assert r2.status_code == 200, r2.text
 
     from server.matter_index import read_matter_index, matter_index_path
     raw = read_matter_index(matter_index_path(client.workspace.index_dir, matter_id))
     appended = raw["timeline"][1]
-    assert appended["comments"][0]["mentions"] == [mentioned_user_id]
+    assert appended["mentions"][0]["targets"] == [mentioned_user_id]
 
 
 def test_create_matter_resolves_owner_open_id_to_pinyin(client, users):
@@ -819,14 +819,15 @@ def test_verifications_received_verified_by_uses_pinyin(client, users):
     assert received[0]["verified_by"] == "liuyu", received[0]
 
 
-def test_append_file_comments_have_author(client):
-    """嵌入评论(随 POST /files 一起提交)写入 index 时必须带 author=发文者pinyin，
-    与独立 POST /comments 路径一致。回归 2026-04-26 报告的 author 缺失 bug。"""
+def test_append_file_mentions_have_author(client):
+    """嵌入提醒（随 POST /files 一起提交）写入 index 时必须带 author=发文者
+    pinyin，与独立 POST /mentions 路径一致。回归 2026-04-26 报告的 author
+    缺失 bug。"""
     r = client.post("/api/matters", json={
         "category": "Pivot", "title": "T",
         "initial_file": {
             "type": "act", "summary": "s", "body": "",
-            "comments": [{"body": "顺便说一句"}],
+            "mentions": [{"body": "顺便说一句"}],
         },
     })
     assert r.status_code == 200, r.text
@@ -835,29 +836,62 @@ def test_append_file_comments_have_author(client):
     r2 = client.post(f"/api/matters/{matter_id}/files", json={
         "type": "act", "summary": "go",
         "status_change": {"from": "planning", "to": "executing"},
-        "comments": [{"body": "请跟进"}],
+        "mentions": [{"body": "请跟进"}],
     })
     assert r2.status_code == 200, r2.text
 
     from server.matter_index import read_matter_index, matter_index_path
     raw = read_matter_index(matter_index_path(client.workspace.index_dir, matter_id))
-    assert raw["timeline"][0]["comments"][0]["author"] == "dengke"
-    assert raw["timeline"][1]["comments"][0]["author"] == "dengke"
+    assert raw["timeline"][0]["mentions"][0]["author"] == "dengke"
+    assert raw["timeline"][1]["mentions"][0]["author"] == "dengke"
 
 
-def test_append_comment_target_not_found(client):
+def test_append_mention_target_not_found(client):
     r = client.post("/api/matters", json={
         "category": "Pivot", "title": "T",
         "initial_file": {"type": "think", "summary": "s", "body": ""},
     })
     matter_id = r.json()["matter_id"]
 
-    r2 = client.post(f"/api/matters/{matter_id}/comments", json={
+    r2 = client.post(f"/api/matters/{matter_id}/mentions", json={
         "target_file": "discussions/Pivot/does-not-exist.md",
         "body": "x",
     })
     assert r2.status_code == 404
-    assert r2.json()["detail"]["code"] == "comment_target_not_found"
+    assert r2.json()["detail"]["code"] == "mention_target_not_found"
+
+
+def test_post_mentions_rejects_legacy_comments_field(client):
+    """Legacy clients sending `mentions` (the old inner @ key) at the body's
+    top level — instead of the renamed `targets` — must get a 422. Pydantic
+    extra=forbid surfaces the bad key explicitly so old MCP / web clients
+    fail loud rather than silently dropping their @-targets."""
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+    target = r.json()["initial_timeline_item"]["file"]
+
+    r2 = client.post(f"/api/matters/{matter_id}/mentions", json={
+        "target_file": target,
+        "body": "x",
+        "mentions": ["ou_2"],  # legacy key — should be `targets`
+    })
+    assert r2.status_code == 422, r2.text
+
+
+def test_create_matter_rejects_legacy_comments_field(client):
+    """Same 422 guarantee for the embedded list on initial_file: the legacy
+    name `comments` is no longer accepted; clients must use `mentions`."""
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {
+            "type": "think", "summary": "s", "body": "",
+            "comments": [{"body": "x"}],  # legacy outer key
+        },
+    })
+    assert r.status_code == 422, r.text
 
 
 # ---------- GET /api/matters (list + filters) ----------
@@ -999,10 +1033,10 @@ def test_notifier_is_called_on_append_and_status_change(db, users, tmp_path):
         "type": "act", "summary": "go",
         "status_change": {"from": "planning", "to": "executing"},
     })
-    c.post(f"/api/matters/{matter_id}/comments", json={
+    c.post(f"/api/matters/{matter_id}/mentions", json={
         "target_file": r.json()["initial_timeline_item"]["file"],
         "body": "请看一下",
-        "mentions": ["ou_test0000000000000001"],
+        "targets": ["ou_test0000000000000001"],
     })
 
     topics = [t for t, _ in calls]
@@ -1065,8 +1099,8 @@ def test_create_and_append_propagate_bundled_mentions_to_notifier(db, users, tmp
         "category": "Pivot", "title": "M",
         "initial_file": {
             "type": "think", "summary": "s", "body": "",
-            "comments": [
-                {"body": "请关注一下", "mentions": ["ou_alice000000000000", "ou_bob00000000000000"]},
+            "mentions": [
+                {"body": "请关注一下", "targets": ["ou_alice000000000000", "ou_bob00000000000000"]},
             ],
         },
     })
@@ -1086,8 +1120,8 @@ def test_create_and_append_propagate_bundled_mentions_to_notifier(db, users, tmp
     r2 = c.post(f"/api/matters/{matter_id}/files", json={
         "type": "act", "summary": "go",
         "status_change": {"from": "planning", "to": "executing"},
-        "comments": [
-            {"body": "你来跟一下进度", "mentions": ["ou_carol00000000000000"]},
+        "mentions": [
+            {"body": "你来跟一下进度", "targets": ["ou_carol00000000000000"]},
         ],
     })
     assert r2.status_code == 200, r2.text
@@ -1154,10 +1188,10 @@ def test_mcp_name_mentions_resolve_to_open_ids_for_notifier(db, users, tmp_path)
 
     # Case 1: AI passes Chinese name → notifier gets resolved open_id
     calls.clear()
-    r2 = c.post(f"/api/matters/{matter_id}/comments", json={
+    r2 = c.post(f"/api/matters/{matter_id}/mentions", json={
         "target_file": target_file,
         "body": "请 review 这条",
-        "mentions": ["邓柯"],
+        "targets": ["邓柯"],
     })
     assert r2.status_code == 200, r2.text
     sm = next(kw for t, kw in calls if t == "standalone_mention")
@@ -1165,26 +1199,26 @@ def test_mcp_name_mentions_resolve_to_open_ids_for_notifier(db, users, tmp_path)
 
     # Case 2: Web path (real open_id) unchanged
     calls.clear()
-    c.post(f"/api/matters/{matter_id}/comments", json={
-        "target_file": target_file, "body": "y", "mentions": ["ou_dengke"],
+    c.post(f"/api/matters/{matter_id}/mentions", json={
+        "target_file": target_file, "body": "y", "targets": ["ou_dengke"],
     })
     sm2 = next(kw for t, kw in calls if t == "standalone_mention")
     assert sm2["mention_open_ids"] == ["ou_dengke"]
 
-    # Case 3: Unresolvable name → notifier NOT called for this comment
+    # Case 3: Unresolvable name → notifier NOT called for this mention
     calls.clear()
-    r5 = c.post(f"/api/matters/{matter_id}/comments", json={
+    r5 = c.post(f"/api/matters/{matter_id}/mentions", json={
         "target_file": target_file, "body": "hi",
-        "mentions": ["不存在的人"],
+        "targets": ["不存在的人"],
     })
     assert r5.status_code == 200
     assert not any(t == "standalone_mention" for t, _ in calls)
 
     # Case 4: Mixed — one resolves, one doesn't → notifier gets only resolved
     calls.clear()
-    c.post(f"/api/matters/{matter_id}/comments", json={
+    c.post(f"/api/matters/{matter_id}/mentions", json={
         "target_file": target_file, "body": "mixed",
-        "mentions": ["邓柯", "不存在的人"],
+        "targets": ["邓柯", "不存在的人"],
     })
     sm5 = next(kw for t, kw in calls if t == "standalone_mention")
     assert sm5["mention_open_ids"] == ["ou_dengke"]
@@ -1192,9 +1226,9 @@ def test_mcp_name_mentions_resolve_to_open_ids_for_notifier(db, users, tmp_path)
     # Case 5: AI passes pinyin (e.g. 'dengke' for 邓柯) → resolved
     # via pivot_user.pinyin exact match.
     calls.clear()
-    c.post(f"/api/matters/{matter_id}/comments", json={
+    c.post(f"/api/matters/{matter_id}/mentions", json={
         "target_file": target_file, "body": "ping by pinyin",
-        "mentions": ["dengke"],
+        "targets": ["dengke"],
     })
     sm6 = next(kw for t, kw in calls if t == "standalone_mention")
     assert sm6["mention_open_ids"] == ["ou_dengke"]
@@ -1248,10 +1282,10 @@ def test_comment_with_ambiguous_pinyin_returns_422_with_candidates(db, users, tm
     target_file = r.json()["initial_timeline_item"]["file"]
 
     calls.clear()
-    r2 = c.post(f"/api/matters/{matter_id}/comments", json={
+    r2 = c.post(f"/api/matters/{matter_id}/mentions", json={
         "target_file": target_file,
         "body": "请 review",
-        "mentions": ["zhangbo"],
+        "targets": ["zhangbo"],
     })
 
     # 422 + structured ambiguities: { code, ambiguities: [{input, candidates}] }
@@ -1271,12 +1305,12 @@ def test_comment_with_ambiguous_pinyin_returns_422_with_candidates(db, users, tm
     # No notifier dispatch
     assert not any(t == "standalone_mention" for t, _ in calls)
 
-    # No comment written: re-fetching the matter should still show the original
-    # timeline item with no comments attached.
+    # No mention written: re-fetching the matter should still show the original
+    # timeline item with no mentions attached.
     r3 = c.get(f"/api/matters/{matter_id}")
     assert r3.status_code == 200
     timeline = r3.json()["timeline"]
-    assert all(not (t.get("comments") or []) for t in timeline), timeline
+    assert all(not (t.get("mentions") or []) for t in timeline), timeline
 
 
 def test_comment_route_does_not_pass_unknown_kwargs_to_notifier(db, users, tmp_path):
@@ -1347,11 +1381,11 @@ def test_comment_route_does_not_pass_unknown_kwargs_to_notifier(db, users, tmp_p
     matter_id = r.json()["matter_id"]
     target_file = r.json()["initial_timeline_item"]["file"]
 
-    # Standalone comment with mention — used to TypeError on post_excerpt arg.
-    r2 = c.post(f"/api/matters/{matter_id}/comments", json={
+    # Standalone mention with target — used to TypeError on post_excerpt arg.
+    r2 = c.post(f"/api/matters/{matter_id}/mentions", json={
         "target_file": target_file,
         "body": "请关注一下",
-        "mentions": ["ou_x000000000000000000"],
+        "targets": ["ou_x000000000000000000"],
     })
     assert r2.status_code == 200, r2.text
     assert "standalone_mention" in notifier.calls

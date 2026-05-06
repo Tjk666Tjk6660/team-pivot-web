@@ -14,7 +14,7 @@ import {
   X,
 } from "lucide-react";
 import {
-  appendMatterComment,
+  appendMatterMention,
   appendMatterFile,
   appendMatterResult,
   fetchMatter,
@@ -136,7 +136,7 @@ function sameDetail(
     }
     if (
       x.file !== y.file ||
-      x.comments.length !== y.comments.length ||
+      x.mentions.length !== y.mentions.length ||
       (x.status_change?.to ?? null) !== (y.status_change?.to ?? null)
     ) {
       return false;
@@ -863,19 +863,19 @@ export function MatterDetailPane() {
     return true;
   };
 
-  const submitComment = async (
+  const submitMention = async (
     targetFile: string,
     body: string,
-    mentions?: string[],
+    targets?: string[],
   ) => {
     if (!matter_id) return;
     try {
-      await appendMatterComment(matter_id, {
+      await appendMatterMention(matter_id, {
         target_file: targetFile,
         body,
-        mentions: mentions && mentions.length > 0 ? mentions : undefined,
+        targets: targets && targets.length > 0 ? targets : undefined,
       });
-      toast.success("已追加评论");
+      toast.success("已追加提醒");
       await afterWrite();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -1114,8 +1114,8 @@ export function MatterDetailPane() {
                       : null
                   }
                   onCreate={requestCreate}
-                  onAddComment={(body, mentions) =>
-                    submitComment(item.file, body, mentions)
+                  onAddComment={(body, targets) =>
+                    submitMention(item.file, body, targets)
                   }
                   onJump={onJump}
                   registerRef={(el) => {

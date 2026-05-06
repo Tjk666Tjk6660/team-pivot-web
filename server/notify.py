@@ -116,9 +116,11 @@ class Notifier(Protocol):
         author_name: str,
         mention_open_ids: list[str],
         mention_comments: str,
-        # Extra recipients who are NOT in the visible @-tag list but should
-        # still get a private DM — used for "comment on your own file" so the
-        # file's author/owner is told about activity even when not @-ed.
+        # Stakeholder recipients who are NOT in the visible @-tag list but
+        # should still get a private DM — file.creator + matter.owner +
+        # matter.creator (resolved upstream by publish_matter_mention).
+        # Kept named ``dm_extra_open_ids`` so older notify mocks/integrations
+        # don't break; semantically these are inline-stakeholder DMs.
         dm_extra_open_ids: list[str] | None = None,
     ) -> None: ...
 
@@ -333,10 +335,11 @@ class FeishuNotifier:
             )
             self._broadcast(card, event=f"mention slug={slug} file={target_filename}")
         if dm_extra_open_ids:
-            # File author/owner: not in the broadcast card's <at> tags, so
-            # they wouldn't get any push from the group ping. DM them directly
-            # with a card that explains their file is being discussed.
-            dm = build_comment_on_your_file_dm_card(
+            # Inline stakeholders (file.creator + matter.owner + matter.creator):
+            # not in the broadcast card's <at> tags, so they would otherwise
+            # miss the activity. DM them directly with a card that explains
+            # the mention landed on a file they care about.
+            dm = build_mention_on_your_file_dm_card(
                 author_name=author_name,
                 thread_title=thread_title,
                 target_filename=target_filename,
@@ -345,7 +348,7 @@ class FeishuNotifier:
             )
             self._dm_many(
                 dm_extra_open_ids, dm,
-                event=f"comment_on_your_file slug={slug} file={target_filename}",
+                event=f"mention_stakeholder slug={slug} file={target_filename}",
             )
 
     def notify_status_change(
@@ -674,22 +677,22 @@ def build_standalone_mention_card(
     mention_comments: str,
     post_url: str,
 ) -> dict:
-    """Standalone mention 群卡片（邮件式评论体）。
+    """Standalone mention 群卡片（邮件式提醒体）。
 
-    评论行布局：
-      **评论**：<橙色主评论人> <at><at>… 说：<br>{comment}
+    提醒行布局：
+      **提醒**：<橙色发起人> <at><at>… 说：<br>{message}
 
     每个 <at id="ou_xxx"></at> 的 content 留空，由飞书自动拉取最新中文名 + 头像，
     并触发被 @ 人的红点 + 推送（schema 2.0 markdown tag 行为）。
 
-    元信息块固定顺序：时间 → 项目 → 主题 → 被评文件。被评人不在卡片上显式出现，
+    元信息块固定顺序：时间 → 项目 → 主题 → 涉及文件。被提及人不在卡片上显式出现，
     读者要看是谁的帖子可以看 target_filename（含作者 pinyin）或点按钮跳进 Web。
     """
     from datetime import datetime
 
     at_tags = " ".join(f'<at id="{oid}"></at>' for oid in mention_open_ids)
-    comment_line = (
-        f"**评论**：<font color='orange'>**{author_name}**</font> "
+    mention_line = (
+        f"**提醒**：<font color='orange'>**{author_name}**</font> "
         f"{at_tags} 说：<br>{_oneline(mention_comments)}"
     )
 
@@ -697,20 +700,20 @@ def build_standalone_mention_card(
         f"**时间**：{datetime.now().strftime('%Y-%m-%d %H:%M')}",
         f"**项目**：{category}",
         f"**主题**：{thread_title}",
-        f"**被评文件**：{target_filename}",
+        f"**涉及文件**：{target_filename}",
     ]
     info_block = "<br>".join(info_rows)
 
     return _card_shell(
         header=f"📣 提及：{thread_title}",
         template="orange",
-        markdown="\n\n".join([comment_line, info_block]),
+        markdown="\n\n".join([mention_line, info_block]),
         button_text="查看该帖子",
         thread_url=post_url,
     )
 
 
-def build_comment_on_your_file_dm_card(
+def build_mention_on_your_file_dm_card(
     *,
     author_name: str,
     thread_title: str,
@@ -718,21 +721,23 @@ def build_comment_on_your_file_dm_card(
     comments: str | None,
     post_url: str,
 ) -> dict:
-    """DM card for the file author when someone comments on their file.
+    """DM card for inline stakeholders (file.creator / matter.owner /
+    matter.creator) when someone leaves a mention on a file they care about.
 
     Distinct wording from build_mention_dm_card ("@了你") because the
-    recipient was NOT @-ed — they're being told because the comment lives
-    on a file they created or own.
+    recipient was NOT explicitly @-ed — they're being told because they
+    have a stakeholder relationship to the file or matter. Wording stays
+    role-neutral so the same card works for all three stakeholder roles.
     """
     lines = [
-        f"**{author_name}** 在你的文件「{target_filename}」上发了评论",
+        f"**{author_name}** 在「{target_filename}」上留下了提醒",
         f"**主题**：{thread_title}",
     ]
     clean_comments = _oneline(comments)
     if clean_comments:
         lines.append(f"**内容**：{clean_comments}")
     return _card_shell(
-        header="有人评论了你的文件",
+        header="有人在你关注的文件留下提醒",
         template="orange",
         markdown="<br>".join(lines),
         button_text="去查看",

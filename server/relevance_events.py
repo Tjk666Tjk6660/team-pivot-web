@@ -8,6 +8,11 @@ from server.db import Database
 
 KIND_FILE = "file"
 KIND_MENTION = "mention"
+# Stored value preserved across the comments → mentions rename: the DB
+# already has many historical rows with reason='comment_mention', and
+# rewriting them all would be a migration with no behavioral payoff.
+# Semantically this is now "inline mention" (留言 + 圈人), not the
+# pre-rename "comment with @-mention".
 REASON_COMMENT_MENTION = "comment_mention"
 REASON_MATTER_OWNER_CHANGED = "matter_owner_changed"
 

@@ -93,11 +93,12 @@ def _convert_item(
         and window.since <= file_dt < window.until
     )
 
-    # Comments: filter to in-window only (comments can land much later than
+    # Mentions: filter to in-window only (mentions can land much later than
     # the file's own created_at, e.g. someone @-mentioning today on a 3-day-
-    # old proposal).
+    # old proposal). Reader normalizes legacy `comments[].mentions` shape to
+    # `mentions[].targets`, so we always read the post-rename shape here.
     comments_in: list[MatterEventComment] = []
-    for c in item.get("comments") or []:
+    for c in item.get("mentions") or []:
         c_dt = _parse_iso(c.get("created_at"))
         if c_dt is None:
             continue
@@ -106,7 +107,7 @@ def _convert_item(
                 created_at=c_dt,
                 author=str(c.get("author") or ""),
                 body=str(c.get("body") or ""),
-                mentions=tuple(str(m) for m in (c.get("mentions") or [])),
+                mentions=tuple(str(m) for m in (c.get("targets") or [])),
             ))
 
     # Skip items that contribute neither a fresh file nor an in-window comment.

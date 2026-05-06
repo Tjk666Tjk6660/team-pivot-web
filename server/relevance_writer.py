@@ -9,9 +9,11 @@ Three paths:
   - file-level (kind='file'): on TOPIC_FILE_APPENDED, read the matter index,
     locate the just-appended item, and run compute_relevance against every
     registered user. INSERT OR IGNORE rows for hits.
-  - mention-level (kind='mention'): on TOPIC_COMMENT_APPENDED, walk
-    `payload.mentions` (raw open_ids), resolve each to a registered user,
-    skip self-mentions and unregistered contacts, INSERT OR IGNORE rows.
+  - mention-level (kind='mention'): on TOPIC_MENTION_APPENDED, walk
+    `payload.target_open_ids` (explicit @-targets) ∪
+    `payload.stakeholder_open_ids` (file.creator + matter.owner +
+    matter.creator), resolve each to a registered user, skip self-mentions
+    and unregistered contacts, INSERT OR IGNORE rows.
   - matter-event (kind='mention', filename=''): on
     TOPIC_MATTER_OWNER_CHANGED, write a row for {matter_creator,
     from_owner, to_owner} so each sees a "与我相关" red dot on the matter.
@@ -29,9 +31,9 @@ from typing import Callable
 
 from server.events import (
     Event,
-    TOPIC_COMMENT_APPENDED,
     TOPIC_FILE_APPENDED,
     TOPIC_MATTER_OWNER_CHANGED,
+    TOPIC_MENTION_APPENDED,
     subscribe,
 )
 from server.external_bindings import ExternalBindingRepo
@@ -60,8 +62,8 @@ def install(
         try:
             if event.topic == TOPIC_FILE_APPENDED:
                 _handle_file_appended(workspace, users_repo, repo, event)
-            elif event.topic == TOPIC_COMMENT_APPENDED:
-                _handle_comment_appended(users_repo, bindings, repo, event)
+            elif event.topic == TOPIC_MENTION_APPENDED:
+                _handle_mention_appended(users_repo, bindings, repo, event)
             elif event.topic == TOPIC_MATTER_OWNER_CHANGED:
                 _handle_matter_owner_changed(users_repo, bindings, repo, event)
         except Exception:
@@ -129,7 +131,7 @@ def _handle_file_appended(
     )
 
 
-def _handle_comment_appended(
+def _handle_mention_appended(
     users_repo: PivotUserRepo,
     bindings: ExternalBindingRepo | None,
     repo: RelevanceEventsRepo,
@@ -137,13 +139,13 @@ def _handle_comment_appended(
 ) -> None:
     payload = event.payload or {}
     target_file = payload.get("target_file") or ""
-    mentions = list(payload.get("mentions") or [])
-    # File author/owner are added by publish_matter_comment so the file's
-    # creator gets a red dot for activity on their own work even when not
-    # explicitly @-ed. Pre-resolved to open_ids upstream — no contacts
-    # lookup needed here.
-    file_author_open_ids = list(payload.get("file_author_open_ids") or [])
-    recipients = mentions + file_author_open_ids
+    target_open_ids = list(payload.get("target_open_ids") or [])
+    # Stakeholders (file.creator + matter.owner + matter.creator) are
+    # resolved by publish_matter_mention so they receive a red dot even
+    # when not explicitly @-ed. Pre-resolved to open_ids upstream — no
+    # contacts lookup needed here.
+    stakeholder_open_ids = list(payload.get("stakeholder_open_ids") or [])
+    recipients = target_open_ids + stakeholder_open_ids
     if not target_file or not recipients:
         return
 

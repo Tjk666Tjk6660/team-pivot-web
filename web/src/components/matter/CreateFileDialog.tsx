@@ -389,13 +389,13 @@ export function CreateFileForm({
     };
     if (isVerify) body.verifications = form.verifications;
     if (isResult) body.outcome = form.outcome;
-    // 圈人 + 留言:matter 没有"顶级 mention"概念,挂在 comments[0] 上
-    // (server CommentIn 接 mentions: list[str])。零服务端改动。
+    // 圈人 + 留言:matter 没有"顶级 mention"概念,挂在 mentions[0] 上
+    // (server MentionIn 接 targets: list[str])。
     if (form.mentions.open_ids.length > 0) {
-      body.comments = [
+      body.mentions = [
         {
           body: form.mentions.comments.trim(),
-          mentions: form.mentions.open_ids,
+          targets: form.mentions.open_ids,
         },
       ];
     }

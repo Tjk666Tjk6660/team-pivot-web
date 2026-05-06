@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Callable, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from server.acl_cache import rebuild_acl_cache
 from server.auth.deps import require_profile
@@ -42,8 +42,8 @@ from server.publish import (
     MatterNotFoundError,
     PublishError,
     publish_matter_append,
-    publish_matter_comment,
     publish_matter_create,
+    publish_matter_mention,
     publish_matter_owner_change,
 )
 from server.read_state import ReadStateRepo
@@ -55,9 +55,48 @@ from server.visibility_store import read_category_visibility, write_matter_visib
 # ---------- Request bodies ----------
 
 
-class CommentIn(BaseModel):
+def _reject_legacy_comment_keys(data):
+    """Reject the pre-rename key names (`comments` outer, `mentions` inner
+    on a body that has been renamed to use `targets`). Surfaces a precise
+    422 instead of silently dropping the field, so old clients (or stale
+    test fixtures) fail loudly during the transition.
+
+    Used by the body models below as a pre-validation hook; pydantic's
+    `extra="forbid"` is too coarse — it would also reject legitimate
+    pass-through keys like `status_change` on `initial_file`.
+    """
+    if not isinstance(data, dict):
+        return data
+    if "comments" in data:
+        raise ValueError(
+            "field 'comments' has been renamed to 'mentions'; "
+            "submit mentions: list of {body, targets}"
+        )
+    return data
+
+
+def _reject_legacy_mention_inner_key(data):
+    """Inner-key version: a mention entry must use `targets`, not the old
+    `mentions` (which is what the inner @-target list was called before
+    the rename)."""
+    if not isinstance(data, dict):
+        return data
+    if "mentions" in data:
+        raise ValueError(
+            "field 'mentions' inside a mention entry has been renamed to "
+            "'targets'"
+        )
+    return data
+
+
+class MentionIn(BaseModel):
     body: str = Field(min_length=1, max_length=2000)
-    mentions: list[str] | None = None
+    targets: list[str] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_legacy_inner_key(cls, data):
+        return _reject_legacy_mention_inner_key(data)
 
 
 class InitialFileIn(BaseModel):
@@ -65,8 +104,13 @@ class InitialFileIn(BaseModel):
     summary: str = Field(min_length=1, max_length=500)
     body: str = Field(default="", max_length=50000)
     owner: str | None = Field(default=None, max_length=50)
-    comments: list[CommentIn] | None = None
+    mentions: list[MentionIn] | None = None
     body_source: Literal["ai", "manual"] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_legacy_comments(cls, data):
+        return _reject_legacy_comment_keys(data)
 
 
 class NewMatterBody(BaseModel):
@@ -94,7 +138,7 @@ class NewFileBody(BaseModel):
     owner: str | None = Field(default=None, max_length=50)
     quote: str | None = Field(default=None, max_length=500)
     refer: list[str] | None = None
-    comments: list[CommentIn] | None = None
+    mentions: list[MentionIn] | None = None
     # Type-specific fields are accepted as loose dicts so the matter_validator
     # can produce precise error codes per interface.md.
     verifications: list[dict] | None = None
@@ -102,18 +146,35 @@ class NewFileBody(BaseModel):
     status_change: dict | None = None
     body_source: Literal["ai", "manual"] | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _no_legacy_comments(cls, data):
+        return _reject_legacy_comment_keys(data)
+
 
 class NewResultBody(BaseModel):
     summary: str = Field(min_length=1, max_length=500)
     body: str = Field(default="", max_length=50000)
     outcome: str = Field(min_length=1, max_length=20)
-    comments: list[CommentIn] | None = None
+    mentions: list[MentionIn] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_legacy_comments(cls, data):
+        return _reject_legacy_comment_keys(data)
 
 
-class CommentBody(BaseModel):
+class MentionBody(BaseModel):
     target_file: str = Field(min_length=1, max_length=500)
     body: str = Field(min_length=1, max_length=2000)
-    mentions: list[str] | None = None
+    targets: list[str] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_legacy_inner_key(cls, data):
+        # MentionBody's `targets` field is the same shape as MentionIn — apply
+        # the same legacy-key rejection so old clients fail loudly.
+        return _reject_legacy_mention_inner_key(data)
 
 
 class FavoriteToggleBody(BaseModel):
@@ -378,7 +439,7 @@ def build_router(
             "summary": body.initial_file.summary,
             "body": body.initial_file.body,
             "owner": body.initial_file.owner,
-            "comments": _comments_to_dict(body.initial_file.comments),
+            "mentions": _mentions_to_dict(body.initial_file.mentions),
         }
         if body.initial_file.body_source is not None:
             initial["body_source"] = body.initial_file.body_source
@@ -597,7 +658,7 @@ def build_router(
             "body": body.body,
             "outcome": body.outcome,
             "status_change": status_change,
-            "comments": _comments_to_dict(body.comments),
+            "mentions": _mentions_to_dict(body.mentions),
         }
         _preflight(data, item_preview)
 
@@ -626,10 +687,10 @@ def build_router(
             raise HTTPException(status_code=400, detail=str(e)) from e
         return {"item": result["item"], "matter": result["matter"]}
 
-    @router.post("/matters/{matter_id}/comments")
-    def append_comment_route(
+    @router.post("/matters/{matter_id}/mentions")
+    def append_mention_route(
         matter_id: str,
-        body: CommentBody,
+        body: MentionBody,
         user: PivotUser = Depends(current_user),
     ):
         require_profile(user)
@@ -639,12 +700,12 @@ def build_router(
         if not _can_write_matter(data, user, db, workspace):
             raise HTTPException(status_code=403, detail={"code": "matter_write_forbidden"})
         try:
-            result = publish_matter_comment(
+            result = publish_matter_mention(
                 workspace, user,
                 matter_id=matter_id,
                 target_file=body.target_file,
                 body=body.body,
-                mentions=body.mentions,
+                targets=body.targets,
                 notifier=notifier,
                 users=pivot_users,
                 pivot_users=pivot_users,
@@ -656,7 +717,7 @@ def build_router(
             # matter_index.append_comment raises ValueError on missing target
             raise HTTPException(
                 status_code=404,
-                detail={"code": "comment_target_not_found", "message": str(e)},
+                detail={"code": "mention_target_not_found", "message": str(e)},
             ) from e
         except AmbiguousMentionError as e:
             # 422 + structured candidate list lets MCP clients show "你想 @
@@ -708,8 +769,8 @@ def _body_to_item_preview(body: NewFileBody, *, user: PivotUser) -> dict:
         out["quote"] = body.quote
     if body.refer is not None:
         out["refer"] = list(body.refer)
-    if body.comments is not None:
-        out["comments"] = _comments_to_dict(body.comments)
+    if body.mentions is not None:
+        out["mentions"] = _mentions_to_dict(body.mentions)
     if body.verifications is not None:
         out["verifications"] = list(body.verifications)
     if body.outcome is not None:
@@ -721,12 +782,12 @@ def _body_to_item_preview(body: NewFileBody, *, user: PivotUser) -> dict:
     return out
 
 
-def _comments_to_dict(comments: list[CommentIn] | None) -> list[dict] | None:
-    if comments is None:
+def _mentions_to_dict(mentions: list[MentionIn] | None) -> list[dict] | None:
+    if mentions is None:
         return None
     return [
-        {"body": c.body, **({"mentions": list(c.mentions)} if c.mentions else {})}
-        for c in comments
+        {"body": m.body, **({"targets": list(m.targets)} if m.targets else {})}
+        for m in mentions
     ]
 
 
@@ -960,19 +1021,19 @@ def _matter_category(data: dict) -> str | None:
 
 
 def _matter_last_activity_at(data: dict) -> str:
-    """Latest ISO timestamp across matter.updated_at + every comment.created_at.
+    """Latest ISO timestamp across matter.updated_at + every mention.created_at.
 
-    matter.updated_at only moves on file appends; comments deliberately do
-    not bump it (pivot-product.md treats comments as discussion, not
+    matter.updated_at only moves on file appends; mentions deliberately do
+    not bump it (pivot-product.md treats mentions as discussion, not
     matter progress). Using this derived field for list sort lets a matter
-    that just got a new comment / @-mention float to the top, while
-    leaving the on-disk index schema untouched.
+    that just got a new mention float to the top, while leaving the
+    on-disk index schema untouched.
     """
     matter = data.get("matter") or {}
     latest = str(matter.get("updated_at") or "")
     for item in data.get("timeline") or []:
-        for c in item.get("comments") or []:
-            ca = str(c.get("created_at") or "")
+        for m in item.get("mentions") or []:
+            ca = str(m.get("created_at") or "")
             if ca > latest:
                 latest = ca
     return latest
@@ -1026,7 +1087,7 @@ def _render_item(
     resolver: DisplayResolver,
 ) -> dict:
     # Owner_change events have a different shape — no file / body / creator /
-    # comments / readers. Branch early so the file-type defaults below don't
+    # mentions / readers. Branch early so the file-type defaults below don't
     # pollute event entries.
     if item.get("type") == "owner_change":
         return _render_owner_change_item(item, resolver)
@@ -1034,7 +1095,7 @@ def _render_item(
     # Per pivot-interface.md: every timeline entry carries `expanded: false` and `body`.
     out.setdefault("quote", None)
     out.setdefault("refer", [])
-    out.setdefault("comments", [])
+    out.setdefault("mentions", [])
     out.setdefault("status_change", None)
     out["expanded"] = False
     out["body"] = _read_item_body(workspace, item.get("file") or "")
@@ -1047,26 +1108,26 @@ def _render_item(
     out["owner_display"] = resolve_id(owner, resolver)
     out["owner_avatar_url"] = resolve_avatar_url(owner, resolver)
     out["owner_view"] = author_view(owner, resolver)
-    # Comments: resolve author_display + mentions_display.
-    resolved_comments = []
-    for c in out.get("comments") or []:
-        cc = dict(c)
-        author = cc.get("author")
+    # Mentions: resolve author_display + targets_display.
+    resolved_mentions = []
+    for m in out.get("mentions") or []:
+        mm = dict(m)
+        author = mm.get("author")
         if author:
-            cc["author_display"] = resolve_id(author, resolver)
-            cc["author_view"] = author_view(author, resolver)
-        if cc.get("mentions"):
-            cc["mentions_display"] = [
-                resolve_id(m, resolver) for m in cc["mentions"]
+            mm["author_display"] = resolve_id(author, resolver)
+            mm["author_view"] = author_view(author, resolver)
+        if mm.get("targets"):
+            mm["targets_display"] = [
+                resolve_id(t, resolver) for t in mm["targets"]
             ]
-            cc["mentions_view"] = [
-                author_view(m, resolver) for m in cc["mentions"]
+            mm["targets_view"] = [
+                author_view(t, resolver) for t in mm["targets"]
             ]
-        # Also resolve @ids inside the comment body text.
-        if cc.get("body"):
-            cc["body"] = resolve_text(cc["body"], resolver)
-        resolved_comments.append(cc)
-    out["comments"] = resolved_comments
+        # Also resolve @ids inside the mention body text.
+        if mm.get("body"):
+            mm["body"] = resolve_text(mm["body"], resolver)
+        resolved_mentions.append(mm)
+    out["mentions"] = resolved_mentions
     return out
 
 
@@ -1183,7 +1244,7 @@ def _inject_relevance(
     relevance_repo: RelevanceEventsRepo,
 ) -> None:
     """Attach `relevance_reason` to each timeline item and
-    `mention_unread_for_me` to each comment, based on the current user's
+    `mention_unread_for_me` to each mention, based on the current user's
     relevance_events rows for this matter. Two SQL reads regardless of
     timeline length: one for file reasons, one for unread mention keys.
     """
@@ -1197,10 +1258,12 @@ def _inject_relevance(
         basename = rel.rsplit("/", 1)[-1]
         item["relevance_reason"] = file_reasons.get(basename)
 
-        for comment in item.get("comments") or []:
+        for mention in item.get("mentions") or []:
             key = (
                 basename,
-                str(comment.get("created_at") or ""),
-                str(comment.get("author") or ""),
+                str(mention.get("created_at") or ""),
+                str(mention.get("author") or ""),
             )
-            comment["mention_unread_for_me"] = key in unread_mention_keys
+            # Field name `mention_unread_for_me` is intentionally preserved —
+            # see design §3.5 (renaming it would touch the entire frontend).
+            mention["mention_unread_for_me"] = key in unread_mention_keys

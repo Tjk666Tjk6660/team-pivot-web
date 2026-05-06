@@ -508,9 +508,9 @@ function FilterToggle({
 }
 
 // Sort key: last_activity_at when the backend provides it (max of
-// matter.updated_at and the latest comment.created_at), falling back to
+// matter.updated_at and the latest mention.created_at), falling back to
 // matter.updated_at for older backends. This is what makes a matter that
-// just received a new comment / @-mention float to the top — comments
+// just received a new mention float to the top — mentions
 // don't bump matter.updated_at on their own.
 function activityKey(m: MatterSummary): string {
   return m.last_activity_at || m.updated_at || "";

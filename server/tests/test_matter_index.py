@@ -220,10 +220,13 @@ def test_reviewed_rejects_any_new_file(tmp_path):
     assert exc.value.result.code == "type_not_allowed"
 
 
-# ---------- comments ----------
+# ---------- mentions (writer always emits the new shape) ----------
 
 
-def test_append_comment_on_existing_file(tmp_path):
+def test_append_mention_on_existing_file_writes_new_shape(tmp_path):
+    """Writer accepts a comment dict that uses the legacy inner key
+    ``mentions`` and persists it as the new ``targets`` shape under the
+    new outer ``mentions`` field."""
     path = _bootstrap(tmp_path)
     target = "discussions/auth-redesign/001_dengke_think_aaa.md"
     append_comment(
@@ -233,16 +236,37 @@ def test_append_comment_on_existing_file(tmp_path):
         now_iso="2026-04-23T10:05:00+08:00",
     )
     data = read_matter_index(path)
-    comments = data["timeline"][0]["comments"]
-    assert len(comments) == 1
-    assert comments[0]["body"] == "同意"
-    assert comments[0]["mentions"] == ["liuyu"]
-    assert comments[0]["created_at"] == "2026-04-23T10:05:00+08:00"
-    # matter.updated_at unchanged — comments don't bump progress
+    mentions = data["timeline"][0]["mentions"]
+    assert len(mentions) == 1
+    assert mentions[0]["body"] == "同意"
+    assert mentions[0]["targets"] == ["liuyu"]
+    assert mentions[0]["created_at"] == "2026-04-23T10:05:00+08:00"
+    # matter.updated_at unchanged — mentions don't bump progress
     assert data["matter"]["updated_at"] == "2026-04-23T10:00:00+08:00"
+    # On disk should be the new key, not the legacy `comments`.
+    raw = path.read_text(encoding="utf-8")
+    assert "comments:" not in raw
+    assert "mentions:" in raw
+    assert "targets:" in raw
 
 
-def test_append_comment_target_not_found(tmp_path):
+def test_append_mention_accepts_new_shape_input(tmp_path):
+    """Writer also accepts a comment dict already in the new shape
+    ({body, targets}) — no double rename."""
+    path = _bootstrap(tmp_path)
+    target = "discussions/auth-redesign/001_dengke_think_aaa.md"
+    append_comment(
+        path,
+        target_file=target,
+        comment={"body": "ok", "targets": ["liuyu"]},
+        now_iso="2026-04-23T10:05:00+08:00",
+    )
+    data = read_matter_index(path)
+    mentions = data["timeline"][0]["mentions"]
+    assert mentions[0]["targets"] == ["liuyu"]
+
+
+def test_append_mention_target_not_found(tmp_path):
     path = _bootstrap(tmp_path)
     with pytest.raises(ValueError):
         append_comment(
@@ -251,6 +275,156 @@ def test_append_comment_target_not_found(tmp_path):
             comment={"body": "x"},
             now_iso="2026-04-23T10:05:00+08:00",
         )
+
+
+# ---------- reader compatibility: legacy YAML normalisation ----------
+
+
+def _write_yaml(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+
+
+def test_reader_normalises_legacy_comments_to_mentions(tmp_path):
+    """A YAML file written before the rename contains
+    ``timeline[i].comments[j].{body, mentions}``. The reader must
+    surface it as ``timeline[i].mentions[j].{body, targets}`` so that
+    every downstream consumer only ever sees the new shape."""
+    path = matter_index_path(tmp_path / "index", "legacy")
+    _write_yaml(path, {
+        "version": 1,
+        "matter": {
+            "id": "legacy",
+            "title": "L",
+            "current_status": "planning",
+            "created_at": "2026-04-23T10:00:00+08:00",
+            "updated_at": "2026-04-23T10:00:00+08:00",
+        },
+        "timeline": [{
+            "file": "discussions/legacy/001_a_think_x.md",
+            "creator": "alice",
+            "owner": "alice",
+            "type": "think",
+            "summary": "x",
+            "comments": [
+                {"created_at": "2026-04-23T10:05:00+08:00",
+                 "body": "@you",
+                 "mentions": ["bob"]},
+                {"created_at": "2026-04-23T10:06:00+08:00",
+                 "body": "+1",
+                 "mentions": []},
+            ],
+        }],
+    })
+    data = read_matter_index(path)
+    item = data["timeline"][0]
+    assert "comments" not in item
+    assert len(item["mentions"]) == 2
+    first, second = item["mentions"]
+    assert first["body"] == "@you"
+    assert "mentions" not in first  # inner key renamed
+    assert first["targets"] == ["bob"]
+    assert second["targets"] == []
+
+
+def test_reader_passes_through_new_shape_unchanged(tmp_path):
+    """A YAML already written in the new shape goes through the reader
+    untouched."""
+    path = matter_index_path(tmp_path / "index", "modern")
+    _write_yaml(path, {
+        "version": 1,
+        "matter": {
+            "id": "modern",
+            "title": "M",
+            "current_status": "planning",
+            "created_at": "2026-04-23T10:00:00+08:00",
+            "updated_at": "2026-04-23T10:00:00+08:00",
+        },
+        "timeline": [{
+            "file": "discussions/modern/001_a_think_x.md",
+            "creator": "alice",
+            "owner": "alice",
+            "type": "think",
+            "summary": "x",
+            "mentions": [
+                {"created_at": "2026-04-23T10:05:00+08:00",
+                 "body": "ok",
+                 "targets": ["bob"]},
+            ],
+        }],
+    })
+    data = read_matter_index(path)
+    item = data["timeline"][0]
+    assert item["mentions"][0]["targets"] == ["bob"]
+    assert "comments" not in item
+
+
+def test_reader_does_not_overwrite_existing_mentions(tmp_path):
+    """If both the legacy and new keys are present (shouldn't happen but
+    defensive), the new one wins — the normaliser must not clobber it."""
+    path = matter_index_path(tmp_path / "index", "both")
+    _write_yaml(path, {
+        "version": 1,
+        "matter": {
+            "id": "both",
+            "title": "B",
+            "current_status": "planning",
+            "created_at": "2026-04-23T10:00:00+08:00",
+            "updated_at": "2026-04-23T10:00:00+08:00",
+        },
+        "timeline": [{
+            "file": "discussions/both/001_a_think_x.md",
+            "creator": "alice",
+            "owner": "alice",
+            "type": "think",
+            "summary": "x",
+            "comments": [{"body": "old"}],
+            "mentions": [{"body": "new", "targets": ["bob"]}],
+        }],
+    })
+    data = read_matter_index(path)
+    assert data["timeline"][0]["mentions"][0]["body"] == "new"
+
+
+def test_reader_then_write_upgrades_legacy_yaml_in_place(tmp_path):
+    """Read a legacy file, append something via the public API, and the
+    file on disk is now in the new shape — including the formerly-legacy
+    pre-existing item."""
+    path = matter_index_path(tmp_path / "index", "upgrade")
+    _write_yaml(path, {
+        "version": 1,
+        "matter": {
+            "id": "upgrade",
+            "title": "U",
+            "current_status": "planning",
+            "created_at": "2026-04-23T10:00:00+08:00",
+            "updated_at": "2026-04-23T10:00:00+08:00",
+        },
+        "timeline": [{
+            "file": "discussions/upgrade/001_a_think_x.md",
+            "creator": "alice",
+            "owner": "alice",
+            "type": "think",
+            "summary": "x",
+            "comments": [{"body": "legacy", "mentions": ["bob"]}],
+        }],
+    })
+    append_comment(
+        path,
+        target_file="discussions/upgrade/001_a_think_x.md",
+        comment={"body": "new", "mentions": ["carol"]},
+        now_iso="2026-04-23T11:00:00+08:00",
+    )
+    raw = path.read_text(encoding="utf-8")
+    assert "comments:" not in raw
+    assert raw.count("mentions:") >= 1
+    data = read_matter_index(path)
+    bodies = [m["body"] for m in data["timeline"][0]["mentions"]]
+    assert bodies == ["legacy", "new"]
+    assert data["timeline"][0]["mentions"][1]["targets"] == ["carol"]
 
 
 # ---------- atomic write + roundtrip ----------

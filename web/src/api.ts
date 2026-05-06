@@ -122,24 +122,26 @@ export type AuthorView = {
   status: "active" | "suspended" | "deleted" | "unknown";
 };
 
-export type TimelineComment = {
+export type TimelineMention = {
   author: string;
   author_display?: string;
   author_view?: AuthorView | null;
   created_at: string;
   body: string;
-  mentions?: string[];
-  mentions_display?: string[];
-  mentions_view?: (AuthorView | null)[];
-  // True when the current user is mentioned in this comment AND has not
+  targets?: string[];
+  targets_display?: string[];
+  targets_view?: (AuthorView | null)[];
+  // True when the current user is one of the mention's targets AND has not
   // marked the host file as read (via POST /matters/{id}/files/{f}/read).
   // Detail interface populates this; missing for old backends or for users
-  // not in the mentions list.
+  // not in the targets list. Field name is intentionally preserved across
+  // the comments → mentions rename (design §3.5) — renaming would touch
+  // the entire frontend without behavior change.
   mention_unread_for_me?: boolean;
 };
 
-// File-level relevance reasons. Comment-level @ mentions are tracked
-// separately via TimelineComment.mention_unread_for_me, not by this enum.
+// File-level relevance reasons. Mention-level @-targets are tracked
+// separately via TimelineMention.mention_unread_for_me, not by this enum.
 export type FileRelevanceReason =
   | "owner_assigned"
   | "reply_to_my_file"
@@ -171,7 +173,7 @@ export type TimelineFileItem = {
   summary: string;
   quote: string | null;
   refer: string[];
-  comments: TimelineComment[];
+  mentions: TimelineMention[];
   status_change: StatusChange | null;
   expanded: boolean;
   body: string;
@@ -371,7 +373,7 @@ export type InitialFileIn = {
   summary: string;
   body?: string;
   owner?: string | null;
-  comments?: { body: string; mentions?: string[] }[];
+  mentions?: { body: string; targets?: string[] }[];
   body_source?: "ai" | "manual";
 };
 
@@ -543,7 +545,7 @@ export type NewFileIn = {
   owner?: string | null;
   quote?: string | null;
   refer?: string[];
-  comments?: { body: string; mentions?: string[] }[];
+  mentions?: { body: string; targets?: string[] }[];
   verifications?: Verification[];
   outcome?: Outcome;
   status_change?: StatusChange;
@@ -647,7 +649,7 @@ export async function appendMatterResult(
     summary: string;
     body?: string;
     outcome: Outcome;
-    comments?: { body: string; mentions?: string[] }[];
+    mentions?: { body: string; targets?: string[] }[];
   },
 ): Promise<AppendFileResponse> {
   const r = await fetch(
@@ -720,12 +722,12 @@ export async function setMatterFavorite(
   return await r.json();
 }
 
-export async function appendMatterComment(
+export async function appendMatterMention(
   matterId: string,
-  body: { target_file: string; body: string; mentions?: string[] },
+  body: { target_file: string; body: string; targets?: string[] },
 ): Promise<{ item: TimelineItem }> {
   const r = await fetch(
-    `/api/matters/${encodeURIComponent(matterId)}/comments`,
+    `/api/matters/${encodeURIComponent(matterId)}/mentions`,
     {
       method: "POST",
       credentials: "include",
@@ -738,7 +740,7 @@ export async function appendMatterComment(
     const d = await r.json().catch(() => ({ detail: r.statusText }));
     const detail = typeof d.detail === "string"
       ? d.detail
-      : d.detail?.message || d.detail?.code || `append comment failed: ${r.status}`;
+      : d.detail?.message || d.detail?.code || `append mention failed: ${r.status}`;
     throw new Error(detail);
   }
   return (await r.json()) as { item: TimelineItem };

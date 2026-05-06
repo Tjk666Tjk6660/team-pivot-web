@@ -298,13 +298,13 @@ def test_standalone_mention_card_structure():
     assert '<at id="ou_ccc"></at>' in md
     assert "user_id=" not in md  # 旧 schema 1.0 写法必须全部清除
 
-    # 2. 评论行：**评论**：<橙色邓柯> @标签 说：<br> comment
-    assert "**评论**：" in md
+    # 2. 提醒行：**提醒**：<橙色邓柯> @标签 说：<br> message
+    assert "**提醒**：" in md
     assert "<font color='orange'>**邓柯**</font>" in md
     assert "说：" in md
     assert "我觉得Daisy文档里面提的问题都挺不错" in md
 
-    # 3. 评论行结构：主评论人 → @ 标签 → 说：→ <br> → comment
+    # 3. 提醒行结构：发起人 → @ 标签 → 说：→ <br> → message
     i_author = md.index("<font color='orange'>**邓柯**</font>")
     i_ats = md.index('<at id="ou_aaa"></at>')
     i_say = md.index("说：")
@@ -316,18 +316,20 @@ def test_standalone_mention_card_structure():
     assert "进行了回复" not in md
     assert "并提及" not in md
 
-    # 5. 元信息块 4 个字段齐全且顺序正确：时间 → 项目 → 主题 → 被评文件
+    # 5. 元信息块 4 个字段齐全且顺序正确：时间 → 项目 → 主题 → 涉及文件
     i_time = md.index("**时间**：")
     i_proj = md.index("**项目**：enclaws")
     i_topic = md.index("**主题**：EnClaws 内容营销推广方案")
-    i_file = md.index("**被评文件**：003_daisy_reply_bac194.md")
+    i_file = md.index("**涉及文件**：003_daisy_reply_bac194.md")
     assert i_time < i_proj < i_topic < i_file
 
     # 6. 已去掉的字段/短语
     assert "提及了以上成员" not in md
-    assert "**说明**：" not in md   # 合并进评论行
-    assert "**帖子**：" not in md   # 改叫"被评文件"
+    assert "**说明**：" not in md   # 合并进提醒行
+    assert "**帖子**：" not in md   # 改叫"涉及文件"
     assert "**相关内容**：" not in md  # post_excerpt 段已废弃
+    assert "**评论**：" not in md   # 重命名为"提醒"
+    assert "**被评文件**：" not in md  # 重命名为"涉及文件"
 
     # 7. 按钮保持 post 级深链
     button = card["body"]["elements"][-1]

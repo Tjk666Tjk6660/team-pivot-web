@@ -10,12 +10,12 @@ from __future__ import annotations
 from server.api.matters_events import _make_sse_event
 from server.events import (
     Event,
-    TOPIC_COMMENT_APPENDED,
     TOPIC_FILE_APPENDED,
     TOPIC_MATTER_CREATED,
+    TOPIC_MATTER_VISIBILITY_CHANGED,
+    TOPIC_MENTION_APPENDED,
     TOPIC_RESULT_CREATED,
     TOPIC_STATUS_CHANGED,
-    TOPIC_MATTER_VISIBILITY_CHANGED,
 )
 
 
@@ -43,15 +43,15 @@ def test_make_sse_event_maps_file_appended_to_updated():
     assert sse["data"]["reason"] == "file_appended"
 
 
-def test_make_sse_event_maps_comment_appended_to_updated():
-    """Comment events take the same wire shape as file events — frontend
+def test_make_sse_event_maps_mention_appended_to_updated():
+    """Mention events take the same wire shape as file events — frontend
     handler treats them identically (both trigger matters-list refetch),
     so unread_count differences must come from the inbox computation, not
     from a divergent SSE payload."""
-    sse = _make_sse_event(_evt(TOPIC_COMMENT_APPENDED))
+    sse = _make_sse_event(_evt(TOPIC_MENTION_APPENDED))
     assert sse is not None
     assert sse["event"] == "matter.updated"
-    assert sse["data"]["reason"] == "comment_appended"
+    assert sse["data"]["reason"] == "mention_appended"
 
 
 def test_make_sse_event_maps_visibility_changed_to_updated():

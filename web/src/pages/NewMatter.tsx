@@ -464,13 +464,13 @@ function NewMatterClassicForm({
           body_source: sourceForBackend,
           // Match CreateFileDialog's encoding: matter has no top-level
           // mention concept, so the @-mentioned recipients ride on the
-          // first comment alongside the user-typed sentence.
+          // first mention alongside the user-typed sentence.
           ...(mentions.open_ids.length > 0
             ? {
-                comments: [
+                mentions: [
                   {
                     body: mentions.comments.trim(),
-                    mentions: mentions.open_ids,
+                    targets: mentions.open_ids,
                   },
                 ],
               }
