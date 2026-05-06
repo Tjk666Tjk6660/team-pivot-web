@@ -101,7 +101,13 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
                     "relevant to you (\"我的待办\" / \"我有未读吗\" / \"看看跟我相关的\" / "
                     "\"what's pending for me\" / \"matters with my unread\"). "
                     "Note: `filter='mine'` is NOT \"matters I created/own\" — "
-                    "it tracks unread relevance, not authorship."
+                    "it tracks unread relevance, not authorship. "
+                    "PROTOCOL: when relaying the result to the user, ALWAYS "
+                    "include each matter's `summary` field alongside title / "
+                    "status / file_count — the summary is the latest timeline "
+                    "file's one-line takeaway and is what lets the user judge "
+                    "relevance without opening each matter. Dropping it makes "
+                    "the list useless."
                 ),
                 inputSchema=ListMattersIn.model_json_schema(),
             ),
