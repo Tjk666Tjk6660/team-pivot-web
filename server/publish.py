@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
@@ -42,7 +42,6 @@ from server.threads import (
 )
 from server.external_bindings import ExternalBindingRepo
 from server.pivot_users import PivotUser, PivotUserRepo
-from server.users import User, UserRepo
 from server.workspace import Workspace
 
 
@@ -60,7 +59,7 @@ class MatterAlreadyExistsError(PublishError):
 
 def publish_proposal(
     workspace: Workspace,
-    user: User,
+    user: PivotUser,
     *,
     category: str,
     title: str,
@@ -119,7 +118,7 @@ def publish_proposal(
 
 def publish_reply(
     workspace: Workspace,
-    user: User,
+    user: PivotUser,
     *,
     category: str,
     slug: str,
@@ -184,7 +183,7 @@ def publish_reply(
 
 def add_standalone_mention(
     workspace: Workspace,
-    user: User,
+    user: PivotUser,
     *,
     category: str,
     slug: str,
@@ -293,32 +292,20 @@ def _lookup_pivot_user_candidates(
 
 
 def _resolve_mentions_for_index(
-    open_ids: list[str] | None,
-    users: UserRepo | None,
+    refs: list[str] | None,
+    pivot_users: PivotUserRepo | None,
+    bindings: ExternalBindingRepo | None,
 ) -> list[str] | None:
-    """Convert frontend-supplied open_ids into the form the matter index stores.
+    """Convert mention refs into the canonical matter-index form.
 
-    Registered Pivot users (have pinyin) → pinyin, matching creator/owner.
-    Un-registered contacts (only known via Feishu open_id) → keep open_id.
-    Returns None if input is None/empty so callers can drop the field cleanly.
-
-    Note: Per design §7.1.1 the storage contract for new content is
-    pivot_user.id (ULID), and ``_normalize_mentions_to_pivot_user_ids``
-    below is the forward-looking equivalent. This pinyin-keyed helper is
-    kept while publish.py is still threaded through the legacy
-    ``UserRepo``; once auth + publish.py settle on PivotUser, the
-    pinyin-conversion branch is deleted.
+    Resolved users are stored as ``pivot_user.id``. Unresolved legacy/contact
+    refs are preserved so older indexes and read-side fallbacks still work.
     """
-    if not open_ids:
+    if not refs:
         return None
-    out: list[str] = []
-    for oid in open_ids:
-        u = users.get_by_any_id(oid) if users else None
-        if u and u.pinyin:
-            out.append(u.pinyin)
-        else:
-            out.append(oid)
-    return out
+    if pivot_users is None or bindings is None:
+        return [str(ref) for ref in refs if ref]
+    return _normalize_mentions_to_pivot_user_ids(refs, pivot_users, bindings)
 
 
 def _normalize_mentions_to_pivot_user_ids(
@@ -399,7 +386,6 @@ def _ulids_to_feishu_open_ids(
 
 def _resolve_comments_mentions(
     comments: list[dict] | None,
-    users: UserRepo | None,
     pivot_users: PivotUserRepo | None,
     bindings: ExternalBindingRepo | None,
     *,
@@ -425,7 +411,9 @@ def _resolve_comments_mentions(
             open_ids = _resolve_mention_strings_to_open_ids(
                 cc["mentions"], pivot_users, bindings,
             )
-            cc["mentions"] = _resolve_mentions_for_index(open_ids, users)
+            cc["mentions"] = _resolve_mentions_for_index(
+                open_ids, pivot_users, bindings,
+            )
         out.append(cc)
     return out
 
@@ -540,17 +528,18 @@ def _resolve_file_author_recipients(
     matter_data: dict,
     target_file: str,
     *,
-    actor: User,
-    users: UserRepo | None,
+    actor: PivotUser,
+    pivot_users: PivotUserRepo | None,
+    bindings: ExternalBindingRepo | None,
     already_notified: list[str],
 ) -> list[str]:
-    """Find the open_ids that should be DMed/relevance-rowed because the
+    """Find recipients that should be DMed/relevance-rowed because the
     comment is on *their* file — i.e. the targeted timeline item's creator
-    and owner. Skips: the actor (self), unregistered identifiers (no User
-    row to map to an open_id), and anyone already in ``already_notified``
-    (the explicit @-mention list — they're handled separately).
+    and owner. Skips: the actor (self), unregistered identifiers, and anyone
+    already in ``already_notified`` (the explicit @-mention list — they're
+    handled separately).
     Result is order-stable + deduped."""
-    if users is None or not target_file:
+    if pivot_users is None or not target_file:
         return []
     item = _find_timeline_item(matter_data, target_file)
     if item is None:
@@ -560,13 +549,14 @@ def _resolve_file_author_recipients(
     for pinyin in (item.get("creator"), item.get("owner")):
         if not pinyin:
             continue
-        u = users.get_by_any_id(str(pinyin))
-        if u is None or not u.open_id:
+        u = pivot_users.get_by_any_id(str(pinyin))
+        if u is None:
             continue
-        if u.open_id == actor.open_id or u.open_id in seen:
+        recipient_id = _get_feishu_open_id_for_user(u.id, bindings) or u.id
+        if u.id == actor.id or recipient_id in seen:
             continue
-        candidates.append(u.open_id)
-        seen.add(u.open_id)
+        candidates.append(recipient_id)
+        seen.add(recipient_id)
     return candidates
 
 
@@ -582,7 +572,7 @@ def _find_timeline_item(matter_data: dict, target_file: str) -> dict | None:
     return None
 
 
-def _resolve_owner_name(owner: str | None, users: UserRepo | None) -> str | None:
+def _resolve_owner_name(owner: str | None, users: PivotUserRepo | None) -> str | None:
     if not owner:
         return None
     u = users.get_by_any_id(owner) if users else None
@@ -594,13 +584,18 @@ def _resolve_owner_name(owner: str | None, users: UserRepo | None) -> str | None
 def _resolve_pivot_owner_for_index(
     value: str | None,
     pivot_users: PivotUserRepo | None,
+    bindings: ExternalBindingRepo | None = None,
 ) -> str | None:
-    """Resolve a submitted pivot_user id or pinyin to index pinyin."""
+    """Resolve a submitted pivot_user id / pinyin / bound external id to pinyin."""
     if not value:
         return None
     if pivot_users is None:
         return None
     user = pivot_users.get(value) or pivot_users.get_by_pinyin(value)
+    if user is None and bindings is not None:
+        binding = bindings.lookup_any_provider(value)
+        if binding is not None:
+            user = pivot_users.get(binding.pivot_user_id)
     if user is None or user.status != "active" or not user.pinyin:
         return None
     return user.pinyin
@@ -665,14 +660,14 @@ def _ensure_h1(body: str, title: str) -> str:
 
 def publish_matter_create(
     workspace: Workspace,
-    user: User,
+    user: PivotUser,
     *,
     category: str,
     title: str,
     initial_item: dict,
     matter_owner_open_id: str | None = None,
     notifier: Notifier | None = None,
-    users: UserRepo | None = None,
+    users: PivotUserRepo | None = None,
     pivot_users: PivotUserRepo | None = None,
     bindings: ExternalBindingRepo | None = None,
     file_reads: FileReadRepo | None = None,
@@ -737,7 +732,7 @@ def publish_matter_create(
     item_input = dict(initial_item)
     if item_input.get("comments"):
         item_input["comments"] = _resolve_comments_mentions(
-            item_input["comments"], users, pivot_users, bindings, author=user.pinyin,
+            item_input["comments"], pivot_users, bindings, author=user.pinyin,
         )
 
     # Frontend (CreateFileDialog) bundles 圈人 + 留言 into comments[0] because
@@ -765,6 +760,7 @@ def publish_matter_create(
         creator=user.pinyin,
         now_iso=now,
         pivot_users=pivot_users,
+        bindings=bindings,
     )
 
     log.info(
@@ -836,12 +832,12 @@ def publish_matter_create(
 
 def publish_matter_append(
     workspace: Workspace,
-    user: User,
+    user: PivotUser,
     *,
     matter_id: str,
     item_body: dict,
     notifier: Notifier | None = None,
-    users: UserRepo | None = None,
+    users: PivotUserRepo | None = None,
     pivot_users: PivotUserRepo | None = None,
     bindings: ExternalBindingRepo | None = None,
     file_reads: FileReadRepo | None = None,
@@ -882,7 +878,7 @@ def publish_matter_append(
     item_input = dict(item_body)
     if item_input.get("comments"):
         item_input["comments"] = _resolve_comments_mentions(
-            item_input["comments"], users, pivot_users, bindings, author=user.pinyin,
+            item_input["comments"], pivot_users, bindings, author=user.pinyin,
         )
 
     # Same mention bundling extraction as publish_matter_create — frontend
@@ -901,6 +897,7 @@ def publish_matter_append(
         creator=user.pinyin,
         now_iso=now,
         pivot_users=pivot_users,
+        bindings=bindings,
     )
 
     md_body = item_body.get("body") or ""
@@ -972,14 +969,14 @@ def publish_matter_append(
 
 def publish_matter_comment(
     workspace: Workspace,
-    user: User,
+    user: PivotUser,
     *,
     matter_id: str,
     target_file: str,
     body: str,
     mentions: list[str] | None = None,
     notifier: Notifier | None = None,
-    users: UserRepo | None = None,
+    users: PivotUserRepo | None = None,
     pivot_users: PivotUserRepo | None = None,
     bindings: ExternalBindingRepo | None = None,
 ) -> dict:
@@ -1008,7 +1005,7 @@ def publish_matter_comment(
     # standalone-mention card only highlights @-ed users. Without this, the
     # file's author is completely silent about activity on their own work.
     file_author_open_ids = _resolve_file_author_recipients(
-        data, target_file, actor=user, users=users,
+        data, target_file, actor=user, pivot_users=pivot_users, bindings=bindings,
         already_notified=notify_open_ids,
     )
 
@@ -1024,7 +1021,9 @@ def publish_matter_comment(
     # _resolve_mentions_for_index 内部 users.get_by_any_id 仅命中 pinyin 而不会
     # 查 contacts，导致未注册联系人的拼音被原样落盘 → 渲染兜底成拼音。先解析
     # 为真 open_id 后再分流，保证 index 形态恒为 pinyin / open_id。
-    resolved_mentions = _resolve_mentions_for_index(notify_open_ids, users)
+    resolved_mentions = _resolve_mentions_for_index(
+        notify_open_ids, pivot_users, bindings,
+    )
     if resolved_mentions:
         comment["mentions"] = resolved_mentions
 
@@ -1054,7 +1053,10 @@ def publish_matter_comment(
     )
 
     # Notifier: reuse the standalone-mention path so @-recipients get a DM.
-    if notifier is not None and (notify_open_ids or file_author_open_ids):
+    dm_extra_open_ids = [
+        ref for ref in file_author_open_ids if ref.startswith(("ou_", "on_"))
+    ]
+    if notifier is not None and (notify_open_ids or dm_extra_open_ids):
         matter_meta = data.get("matter") or {}
         matter_title = matter_meta.get("title") or matter_id
         category = _derive_category_from_timeline(data) or "matters"
@@ -1065,7 +1067,7 @@ def publish_matter_comment(
             author_name=user.name,
             mention_open_ids=notify_open_ids,
             mention_comments=body,
-            dm_extra_open_ids=file_author_open_ids or None,
+            dm_extra_open_ids=dm_extra_open_ids or None,
         )
 
     return {"matter_id": matter_id, "target_file": target_file, "at": now}
@@ -1073,14 +1075,14 @@ def publish_matter_comment(
 
 def publish_matter_owner_change(
     workspace: Workspace,
-    user: User,
+    user: PivotUser,
     *,
     matter_id: str,
     to_owner_open_id: str,
     reason: str,
     status_change: dict | None = None,
     notifier: Notifier | None = None,
-    users: UserRepo | None = None,
+    users: PivotUserRepo | None = None,
     pivot_users: PivotUserRepo | None = None,
     bindings: ExternalBindingRepo | None = None,
 ) -> dict:
@@ -1183,7 +1185,9 @@ def publish_matter_owner_change(
 
 
 def _resolve_owner_for_index(
-    value: str | None, pivot_users: PivotUserRepo | None
+    value: str | None,
+    pivot_users: PivotUserRepo | None,
+    bindings: ExternalBindingRepo | None = None,
 ) -> str | None:
     """Resolve a frontend-submitted owner identifier into the on-disk index
     form. Frontend (`OwnerPicker`) submits the chosen contact's `open_id`
@@ -1197,7 +1201,7 @@ def _resolve_owner_for_index(
     the bare `ou_xxxxxxxxxxxxxxxx` open_id into the matter index, which
     propagates further into `verifications_received.verified_by` (derived
     from the verify file's owner in `matter_index._reverse_write_verifications`)."""
-    return _resolve_pivot_owner_for_index(value, pivot_users)
+    return _resolve_pivot_owner_for_index(value, pivot_users, bindings) or value
 
 
 def _effective_matter_owner(matter_data: dict) -> str | None:
@@ -1230,10 +1234,12 @@ def _build_timeline_item(
     creator: str,
     now_iso: str,
     pivot_users: PivotUserRepo | None = None,
+    bindings: ExternalBindingRepo | None = None,
 ) -> dict:
     raw_owner = body.get("owner")
     resolved_owner = (
-        _resolve_owner_for_index(raw_owner, pivot_users) if raw_owner else None
+        _resolve_owner_for_index(raw_owner, pivot_users, bindings)
+        if raw_owner else None
     )
     item: dict = {
         "file": file_rel,

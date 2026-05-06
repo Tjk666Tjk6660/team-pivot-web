@@ -22,7 +22,6 @@ from server.db import Database
 from server.matter_index import matter_index_path, read_matter_index
 from server.pivot_users import PivotUser
 from server.settings import SettingsRepo
-from server.users import User
 from server.visibility_scopes import VisibilityScope
 from server.visibility_store import read_category_visibility
 from server.workspace import Workspace
@@ -132,7 +131,7 @@ def build_router(
     # silently downgrades to an empty starting block on a missing path, so callers
     # like NewMatter can use a placeholder matter_id to generate ad-hoc summaries.
 
-    def _matter_thread_key(matter_id: str, user: User) -> str:
+    def _matter_thread_key(matter_id: str, user: PivotUser) -> str:
         data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
         if data is None or not _can_read_matter(data, user, db, workspace):
             raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
@@ -146,7 +145,7 @@ def build_router(
     @router.get("/api/ai/matters/{matter_id}/conversation")
     def get_matter_conversation(
         matter_id: str,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         key = _matter_thread_key(matter_id, user)
         messages, reply_target = conversations.get(user.open_id, key)
@@ -159,7 +158,7 @@ def build_router(
     def save_matter_conversation(
         matter_id: str,
         body: ConversationSave,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         key = _matter_thread_key(matter_id, user)
         conversations.save(
@@ -172,7 +171,7 @@ def build_router(
     @router.delete("/api/ai/matters/{matter_id}/conversation")
     def clear_matter_conversation(
         matter_id: str,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         key = _matter_thread_key(matter_id, user)
         conversations.delete(user.open_id, key)
@@ -182,7 +181,7 @@ def build_router(
     async def chat_matter(
         matter_id: str,
         body: ChatRequest,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         # No existence check: build_starting_post_block silently downgrades to
         # an empty starting block on missing/invalid paths, so callers like
@@ -339,7 +338,7 @@ def build_router(
 
 def _visible_matter_ids(
     workspace: Workspace,
-    user: User,
+    user: PivotUser,
     db: Database | None,
 ) -> set[str]:
     out: set[str] = set()
@@ -357,7 +356,7 @@ def _visible_matter_ids(
 
 def _can_read_matter(
     data: dict,
-    user: User,
+    user: PivotUser,
     db: Database | None,
     workspace: Workspace,
 ) -> bool:
@@ -390,7 +389,7 @@ def _matter_category(data: dict) -> str | None:
     return None
 
 
-def _identifiers_for_user(user: User) -> list[str]:
+def _identifiers_for_user(user: PivotUser) -> list[str]:
     values = [
         getattr(user, "id", None),
         getattr(user, "open_id", None),
@@ -400,7 +399,7 @@ def _identifiers_for_user(user: User) -> list[str]:
     return [str(v) for v in values if v]
 
 
-def _roles_for_user(user: User, db: Database | None) -> list[str]:
+def _roles_for_user(user: PivotUser, db: Database | None) -> list[str]:
     roles = getattr(user, "roles", None)
     if isinstance(roles, list):
         return [str(role) for role in roles]

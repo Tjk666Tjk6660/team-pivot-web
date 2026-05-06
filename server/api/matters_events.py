@@ -35,7 +35,7 @@ from server.events import (
     subscribe,
 )
 from server.matter_index import matter_index_path, read_matter_index
-from server.users import User
+from server.pivot_users import PivotUser
 from server.visibility_scopes import VisibilityScope
 from server.visibility_store import read_category_visibility
 from server.workspace import Workspace
@@ -124,7 +124,7 @@ def build_router(
     @router.get("/matters/events")
     async def stream_matter_events(
         request: Request,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ) -> StreamingResponse:
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=_QUEUE_MAXLEN)
@@ -197,7 +197,7 @@ def _offer_nowait(queue: asyncio.Queue[dict[str, Any]], item: dict[str, Any]) ->
 
 def _can_read_event(
     item: dict[str, Any],
-    user: User,
+    user: PivotUser,
     workspace: Workspace | None,
     db: Database | None,
 ) -> bool:
@@ -214,7 +214,7 @@ def _can_read_event(
 
 def _can_read_matter(
     data: dict,
-    user: User,
+    user: PivotUser,
     workspace: Workspace,
     db: Database | None,
 ) -> bool:
@@ -247,7 +247,7 @@ def _matter_category(data: dict) -> str | None:
     return None
 
 
-def _identifiers_for_user(user: User) -> list[str]:
+def _identifiers_for_user(user: PivotUser) -> list[str]:
     values = [
         getattr(user, "id", None),
         getattr(user, "open_id", None),
@@ -257,7 +257,7 @@ def _identifiers_for_user(user: User) -> list[str]:
     return [str(v) for v in values if v]
 
 
-def _roles_for_user(user: User, db: Database | None) -> list[str]:
+def _roles_for_user(user: PivotUser, db: Database | None) -> list[str]:
     roles = getattr(user, "roles", None)
     if isinstance(roles, list):
         return [str(role) for role in roles]

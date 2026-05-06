@@ -34,13 +34,14 @@ from server.events import (
     TOPIC_MATTER_OWNER_CHANGED,
     subscribe,
 )
+from server.external_bindings import ExternalBindingRepo
 from server.matter_index import matter_index_path, read_matter_index
+from server.pivot_users import PivotUser, PivotUserRepo
 from server.relevance import compute_relevance
 from server.relevance_events import (
     REASON_MATTER_OWNER_CHANGED,
     RelevanceEventsRepo,
 )
-from server.users import UserRepo
 from server.workspace import Workspace
 
 log = logging.getLogger(__name__)
@@ -49,7 +50,8 @@ log = logging.getLogger(__name__)
 def install(
     *,
     workspace: Workspace,
-    users_repo: UserRepo,
+    users_repo: PivotUserRepo,
+    bindings: ExternalBindingRepo | None = None,
     repo: RelevanceEventsRepo,
 ) -> Callable[[], None]:
     """Subscribe to the event bus. Returns an unsubscribe callable."""
@@ -59,9 +61,9 @@ def install(
             if event.topic == TOPIC_FILE_APPENDED:
                 _handle_file_appended(workspace, users_repo, repo, event)
             elif event.topic == TOPIC_COMMENT_APPENDED:
-                _handle_comment_appended(users_repo, repo, event)
+                _handle_comment_appended(users_repo, bindings, repo, event)
             elif event.topic == TOPIC_MATTER_OWNER_CHANGED:
-                _handle_matter_owner_changed(users_repo, repo, event)
+                _handle_matter_owner_changed(users_repo, bindings, repo, event)
         except Exception:
             log.exception(
                 "relevance_writer failed topic=%s matter=%s",
@@ -76,7 +78,7 @@ def install(
 
 def _handle_file_appended(
     workspace: Workspace,
-    users_repo: UserRepo,
+    users_repo: PivotUserRepo,
     repo: RelevanceEventsRepo,
     event: Event,
 ) -> None:
@@ -128,7 +130,8 @@ def _handle_file_appended(
 
 
 def _handle_comment_appended(
-    users_repo: UserRepo,
+    users_repo: PivotUserRepo,
+    bindings: ExternalBindingRepo | None,
     repo: RelevanceEventsRepo,
     event: Event,
 ) -> None:
@@ -149,7 +152,7 @@ def _handle_comment_appended(
 
     inserted = 0
     for recipient_id in recipients:
-        target = users_repo.get_by_any_id(str(recipient_id))
+        target = _resolve_user_ref(str(recipient_id), users_repo, bindings)
         if target is None:
             # unregistered contact — skip (they can't log in to see the red
             # dot anyway; DM still goes out via notify.py)
@@ -173,7 +176,8 @@ def _handle_comment_appended(
 
 
 def _handle_matter_owner_changed(
-    users_repo: UserRepo,
+    users_repo: PivotUserRepo,
+    bindings: ExternalBindingRepo | None,
     repo: RelevanceEventsRepo,
     event: Event,
 ) -> None:
@@ -190,7 +194,7 @@ def _handle_matter_owner_changed(
     seen_open_ids: set[str] = set()
     inserted = 0
     for pinyin in candidates:
-        target = users_repo.get_by_any_id(pinyin)
+        target = _resolve_user_ref(pinyin, users_repo, bindings)
         if target is None or not target.open_id:
             # Unregistered (legacy index, raw open_id, or contact-only owner).
             # No open_id to receive a red dot anyway.
@@ -220,3 +224,17 @@ def _find_item_by_file(matter_data: dict, file_rel: str) -> dict | None:
         if it.get("file") == file_rel:
             return it
     return None
+
+
+def _resolve_user_ref(
+    ref: str,
+    users_repo: PivotUserRepo,
+    bindings: ExternalBindingRepo | None,
+) -> PivotUser | None:
+    target = users_repo.get_by_any_id(ref)
+    if target is not None:
+        return target
+    if bindings is None:
+        return None
+    binding = bindings.lookup_any_provider(ref)
+    return users_repo.get(binding.pivot_user_id) if binding is not None else None

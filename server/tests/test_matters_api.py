@@ -78,14 +78,17 @@ def client(db, users, tmp_path):
     users.update_profile("ou_1", pinyin="dengke")
     pivot_users = PivotUserRepo(db)
     bindings = ExternalBindingRepo(db)
+    current_pivot_user_id = _seed_pivot_user_with_feishu(
+        db, pinyin="dengke", display_name="閭撴煰", open_id="ou_1",
+    )
     sessions = SessionStore(db)
-    sid = sessions.create("ou_1")
-    current_user = make_current_user(sessions, users, ApiTokenRepo(db))
+    sid = sessions.create(current_pivot_user_id)
+    current_user = make_current_user(sessions, pivot_users, ApiTokenRepo(db))
 
     app = FastAPI()
     app.include_router(
         build_router(
-            workspace, users, pivot_users, bindings, NoOpNotifier(),
+            workspace, pivot_users, bindings, NoOpNotifier(),
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
             RelevanceEventsRepo(db), DisplayResolver(pivot_users, bindings), current_user,
         )
@@ -515,6 +518,9 @@ def test_result_cancelled_path(client):
 def test_append_comment_ok(client, event_bucket, users):
     users.upsert_from_feishu(open_id="ou_2", union_id=None, name="刘昱", avatar_url="")
     users.update_profile("ou_2", pinyin="liuyu")
+    mentioned_user_id = _seed_pivot_user_with_feishu(
+        users._db, pinyin="liuyu", display_name="liuyu", open_id="ou_2",
+    )
 
     r = client.post("/api/matters", json={
         "category": "Pivot", "title": "T",
@@ -534,7 +540,7 @@ def test_append_comment_ok(client, event_bucket, users):
     comments = detail["timeline"][0]["comments"]
     assert len(comments) == 1
     assert comments[0]["body"] == "同意"
-    assert comments[0]["mentions"] == ["liuyu"]
+    assert comments[0]["mentions"] == [mentioned_user_id]
     assert comments[0]["author"] == "dengke"
 
     assert any(e.topic == "matter.comment_appended" for e in event_bucket)
@@ -544,6 +550,9 @@ def test_comment_mentions_resolve_open_id_to_pinyin(client, users):
     """注册用户的 open_id 写入 index 时转换为 pinyin，与 creator/owner 同格式。"""
     users.upsert_from_feishu(open_id="ou_2", union_id=None, name="刘昱", avatar_url="")
     users.update_profile("ou_2", pinyin="liuyu")
+    mentioned_user_id = _seed_pivot_user_with_feishu(
+        users._db, pinyin="liuyu", display_name="liuyu", open_id="ou_2",
+    )
 
     r = client.post("/api/matters", json={
         "category": "Pivot", "title": "T",
@@ -563,7 +572,7 @@ def test_comment_mentions_resolve_open_id_to_pinyin(client, users):
     from server.matter_index import read_matter_index, matter_index_path
     raw = read_matter_index(matter_index_path(client.workspace.index_dir, matter_id))
     on_disk_mentions = raw["timeline"][0]["comments"][0]["mentions"]
-    assert on_disk_mentions == ["liuyu"], on_disk_mentions
+    assert on_disk_mentions == [mentioned_user_id], on_disk_mentions
 
 
 def test_comment_mentions_keep_open_id_for_unregistered(client):
@@ -667,6 +676,9 @@ def test_append_file_comments_mentions_resolved(client, users):
     """append_file 路径里 comments[].mentions 同样要走 open_id → pinyin 转换。"""
     users.upsert_from_feishu(open_id="ou_3", union_id=None, name="唐昆", avatar_url="")
     users.update_profile("ou_3", pinyin="tangkun")
+    mentioned_user_id = _seed_pivot_user_with_feishu(
+        users._db, pinyin="tangkun", display_name="tangkun", open_id="ou_3",
+    )
 
     r = client.post("/api/matters", json={
         "category": "Pivot", "title": "T",
@@ -684,7 +696,7 @@ def test_append_file_comments_mentions_resolved(client, users):
     from server.matter_index import read_matter_index, matter_index_path
     raw = read_matter_index(matter_index_path(client.workspace.index_dir, matter_id))
     appended = raw["timeline"][1]
-    assert appended["comments"][0]["mentions"] == ["tangkun"]
+    assert appended["comments"][0]["mentions"] == [mentioned_user_id]
 
 
 def test_create_matter_resolves_owner_open_id_to_pinyin(client, users):
@@ -693,6 +705,9 @@ def test_create_matter_resolves_owner_open_id_to_pinyin(client, users):
     回归 2026-04-27 报告的 owner=ou_xxx 落盘 bug。"""
     users.upsert_from_feishu(open_id="ou_2", union_id=None, name="刘昱", avatar_url="")
     users.update_profile("ou_2", pinyin="liuyu")
+    _seed_pivot_user_with_feishu(
+        users._db, pinyin="liuyu", display_name="liuyu", open_id="ou_2",
+    )
 
     r = client.post("/api/matters", json={
         "category": "Pivot", "title": "T",
@@ -738,6 +753,9 @@ def test_append_file_resolves_owner_open_id_to_pinyin(client, users):
     没有这一步,前端 OwnerPicker 选别人 → owner 落 ou_xxx。"""
     users.upsert_from_feishu(open_id="ou_2", union_id=None, name="刘昱", avatar_url="")
     users.update_profile("ou_2", pinyin="liuyu")
+    _seed_pivot_user_with_feishu(
+        users._db, pinyin="liuyu", display_name="liuyu", open_id="ou_2",
+    )
 
     r = client.post("/api/matters", json={
         "category": "Pivot", "title": "T",
@@ -763,6 +781,9 @@ def test_verifications_received_verified_by_uses_pinyin(client, users):
     也是 pinyin。这是 owner 修复的衍生效果。"""
     users.upsert_from_feishu(open_id="ou_2", union_id=None, name="刘昱", avatar_url="")
     users.update_profile("ou_2", pinyin="liuyu")
+    _seed_pivot_user_with_feishu(
+        users._db, pinyin="liuyu", display_name="liuyu", open_id="ou_2",
+    )
 
     # 1) 建 matter,初始 act 触发 planning → executing
     r = client.post("/api/matters", json={
@@ -961,7 +982,7 @@ def test_notifier_is_called_on_append_and_status_change(db, users, tmp_path):
     app = FastAPI()
     app.include_router(
         build_router(
-            workspace, users, PivotUserRepo(db), ExternalBindingRepo(db), RecordingNotifier(),
+            workspace, PivotUserRepo(db), ExternalBindingRepo(db), RecordingNotifier(),
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
             RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db)), current_user,
         )
@@ -1018,17 +1039,22 @@ def test_create_and_append_propagate_bundled_mentions_to_notifier(db, users, tmp
     workspace = _WorkspaceStub(tmp_path)
     users.upsert_from_feishu(open_id="ou_1", union_id=None, name="邓柯", avatar_url="")
     users.update_profile("ou_1", pinyin="dengke")
+    pivot_users = PivotUserRepo(db)
+    bindings = ExternalBindingRepo(db)
+    current_pivot_user_id = _seed_pivot_user_with_feishu(
+        db, pinyin="dengke", display_name="dengke", open_id="ou_1",
+    )
     sessions = SessionStore(db)
-    sid = sessions.create("ou_1")
-    current_user = make_current_user(sessions, users, ApiTokenRepo(db))
+    sid = sessions.create(current_pivot_user_id)
+    current_user = make_current_user(sessions, pivot_users, ApiTokenRepo(db))
 
     from fastapi import FastAPI
     app = FastAPI()
     app.include_router(
         build_router(
-            workspace, users, PivotUserRepo(db), ExternalBindingRepo(db), RecordingNotifier(),
+            workspace, pivot_users, bindings, RecordingNotifier(),
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
-            RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db)), current_user,
+            RelevanceEventsRepo(db), DisplayResolver(pivot_users, bindings), current_user,
         )
     )
     c = TestClient(app)
@@ -1111,7 +1137,7 @@ def test_mcp_name_mentions_resolve_to_open_ids_for_notifier(db, users, tmp_path)
     app = FastAPI()
     app.include_router(
         build_router(
-            workspace, users, pivot_users, bindings, RecordingNotifier(),
+            workspace, pivot_users, bindings, RecordingNotifier(),
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
             RelevanceEventsRepo(db), DisplayResolver(pivot_users, bindings), current_user,
         )
@@ -1206,7 +1232,7 @@ def test_comment_with_ambiguous_pinyin_returns_422_with_candidates(db, users, tm
     app = FastAPI()
     app.include_router(
         build_router(
-            workspace, users, pivot_users, bindings, RecordingNotifier(),
+            workspace, pivot_users, bindings, RecordingNotifier(),
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
             RelevanceEventsRepo(db), DisplayResolver(pivot_users, bindings), current_user,
         )
@@ -1306,7 +1332,7 @@ def test_comment_route_does_not_pass_unknown_kwargs_to_notifier(db, users, tmp_p
     bindings = ExternalBindingRepo(db)
     app.include_router(
         build_router(
-            workspace, users, pivot_users, bindings, notifier,
+            workspace, pivot_users, bindings, notifier,
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
             RelevanceEventsRepo(db), DisplayResolver(pivot_users, bindings), current_user,
         )

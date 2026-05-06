@@ -186,6 +186,39 @@ class PivotUserRepo:
             ).fetchone()
         return _row_to_user(row) if row else None
 
+    def get_by_any_id(self, value: str) -> PivotUser | None:
+        """Compatibility lookup for migrated call sites.
+
+        Accepts canonical pivot_user.id plus the user-facing identifiers
+        that matter indexes may still carry: pinyin and email. Feishu open_id
+        / union_id resolution lives in ExternalBindingRepo because those ids
+        are no longer columns on the user table.
+        """
+        if not value:
+            return None
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM pivot_user"
+                " WHERE id=? OR pinyin=? COLLATE NOCASE OR email=? COLLATE NOCASE",
+                (value, value, value),
+            ).fetchone()
+        return _row_to_user(row) if row else None
+
+    def all(self) -> list[PivotUser]:
+        """Return all active/non-deleted users for relevance scans.
+
+        Mirrors the legacy UserRepo.all() shape while excluding deleted users
+        that should no longer receive unread/relevance rows.
+        """
+        return self.list_for_admin(include_deleted=False)
+
+    def list_all(self) -> list[PivotUser]:
+        """Compatibility alias used by daily-report style enumerations."""
+        return sorted(
+            self.list_for_admin(include_deleted=False),
+            key=lambda u: u.display_name.lower(),
+        )
+
     def get_legacy_display(self, ref: str) -> tuple[str, str] | None:
         """Read-only fallback for rows that still exist only in legacy users."""
         try:

@@ -38,7 +38,7 @@ from server.mcp.tools import (
     tool_read_files,
     tool_resolve_context,
 )
-from server.users import UserRepo
+from server.pivot_users import PivotUserRepo
 
 log = logging.getLogger(__name__)
 
@@ -266,7 +266,7 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
 
 def build_mcp_app(
     tokens: ApiTokenRepo,
-    users: UserRepo,
+    users: PivotUserRepo,
     api_base_url: str,
     web_base_url: str,
 ) -> Starlette:

@@ -8,7 +8,7 @@ from typing import Callable
 
 from fastapi import APIRouter, Depends
 
-from server.users import User
+from server.pivot_users import PivotUser
 from server.workspace_runtime import WorkspaceRuntime
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -45,7 +45,7 @@ def build_router(
     router = APIRouter(prefix="/api/app")
 
     @router.get("/home")
-    def get_home(_: User = Depends(current_user)):
+    def get_home(_: PivotUser = Depends(current_user)):
         releases = load_recent_releases()
         return {
             "app": {

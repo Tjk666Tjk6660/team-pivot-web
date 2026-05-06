@@ -11,8 +11,8 @@ from server.inbox import (
     latest_post_filename,
 )
 from server.mentions import DisplayResolver, author_view, resolve_id
+from server.pivot_users import PivotUser
 from server.read_state import ReadStateRepo
-from server.users import User, UserRepo
 from server.workspace import Workspace
 
 log = logging.getLogger(__name__)
@@ -20,7 +20,6 @@ log = logging.getLogger(__name__)
 
 def build_router(
     workspace: Workspace,
-    users: UserRepo,
     read_states: ReadStateRepo,
     resolver: DisplayResolver,
     current_user: Callable,
@@ -28,7 +27,7 @@ def build_router(
     router = APIRouter(prefix="/api")
 
     @router.get("/inbox")
-    def inbox(user: User = Depends(current_user)):
+    def inbox(user: PivotUser = Depends(current_user)):
         items = compute_inbox(
             workspace.discussions_dir,
             workspace.index_dir,
@@ -83,7 +82,7 @@ def build_router(
     @router.post("/threads/{category}/{slug}/read")
     def mark_read(
         category: str, slug: str,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         tdir = workspace.discussions_dir / category / slug
         if not tdir.is_dir():

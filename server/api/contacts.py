@@ -5,8 +5,7 @@ from typing import Callable
 
 from fastapi import APIRouter, Depends
 
-from server.pivot_users import PivotUserRepo
-from server.users import User
+from server.pivot_users import PivotUser, PivotUserRepo
 
 log = logging.getLogger(__name__)
 
@@ -20,7 +19,7 @@ def build_router(
     @router.get("/contacts")
     def list_contacts(
         q: str = "", limit: int = 20,
-        _: User = Depends(current_user),
+        _: PivotUser = Depends(current_user),
     ):
         """圈人候选源：返回 active 且绑了飞书的 pivot_user。
 

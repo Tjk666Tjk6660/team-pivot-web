@@ -15,7 +15,6 @@ from server.markdown_styles import (
 from server.pivot_users import PivotUser
 from server.settings import SettingsRepo
 from server.user_preferences import UserPreferenceRepo
-from server.users import User
 
 
 class UserMarkdownStyleIn(BaseModel):
@@ -36,7 +35,7 @@ def build_router(
     router = APIRouter()
 
     @router.get("/api/markdown/styles")
-    def get_markdown_styles(user: User = Depends(current_user_dep)):
+    def get_markdown_styles(user: PivotUser = Depends(current_user_dep)):
         system_style = system_default_style(settings)
         user_style = user_prefs.get(user.open_id, KEY_USER_MARKDOWN_STYLE)
         user_style = user_style if is_markdown_style_id(user_style) else None
@@ -54,7 +53,7 @@ def build_router(
     @router.put("/api/me/markdown-style")
     def update_user_markdown_style(
         body: UserMarkdownStyleIn,
-        user: User = Depends(current_user_dep),
+        user: PivotUser = Depends(current_user_dep),
     ):
         if not is_markdown_style_id(body.style):
             raise HTTPException(status_code=400, detail="invalid_markdown_style")
