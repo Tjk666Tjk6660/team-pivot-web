@@ -8,10 +8,10 @@ log = logging.getLogger(__name__)
 
 from server.file_reads import FileReadRepo
 from server.events import (
-    TOPIC_COMMENT_APPENDED,
     TOPIC_FILE_APPENDED,
     TOPIC_MATTER_CREATED,
     TOPIC_MATTER_OWNER_CHANGED,
+    TOPIC_MENTION_APPENDED,
     TOPIC_RESULT_CREATED,
     TOPIC_STATUS_CHANGED,
     emit,
@@ -384,37 +384,37 @@ def _ulids_to_feishu_open_ids(
     return out
 
 
-def _resolve_comments_mentions(
-    comments: list[dict] | None,
+def _resolve_mention_targets(
+    mentions: list[dict] | None,
     pivot_users: PivotUserRepo | None,
     bindings: ExternalBindingRepo | None,
     *,
     author: str,
 ) -> list[dict] | None:
-    """Normalize a comments[] payload for index storage:
-    - inject `author` (the file's creator — embedded comments are always
-      authored by the same user posting the file; CommentIn schema does not
+    """Normalize a mentions[] payload for index storage:
+    - inject `author` (the file's creator — embedded mentions are always
+      authored by the same user posting the file; MentionIn schema does not
       accept author from clients);
-    - resolve each comment's mentions[] via _resolve_mentions_for_index.
+    - resolve each mention's targets[] via _resolve_mentions_for_index.
     Returns a new list; does not mutate input.
 
     MCP clients may send display_name / pinyin instead of open_id; we
     funnel through ``_resolve_mention_strings_to_open_ids`` so the index
     always stores pinyin (registered) or open_id (unregistered)."""
-    if not comments:
-        return comments
+    if not mentions:
+        return mentions
     out: list[dict] = []
-    for c in comments:
-        cc = dict(c)
-        cc["author"] = author
-        if cc.get("mentions"):
+    for m in mentions:
+        mm = dict(m)
+        mm["author"] = author
+        if mm.get("targets"):
             open_ids = _resolve_mention_strings_to_open_ids(
-                cc["mentions"], pivot_users, bindings,
+                mm["targets"], pivot_users, bindings,
             )
-            cc["mentions"] = _resolve_mentions_for_index(
+            mm["targets"] = _resolve_mentions_for_index(
                 open_ids, pivot_users, bindings,
             )
-        out.append(cc)
+        out.append(mm)
     return out
 
 
@@ -497,23 +497,25 @@ def _resolve_mention_strings_to_open_ids(
 
 
 def _extract_notify_mentions(
-    comments: list[dict] | None,
+    mentions: list[dict] | None,
 ) -> tuple[list[str] | None, str | None]:
-    """Pull raw 圈人 open_ids + 留言 out of the bundled comments[0] payload.
+    """Pull raw 圈人 open_ids + 留言 out of the bundled mentions[0] payload.
 
-    Frontend (CreateFileDialog) folds @-mentions into the file's first comment
-    because the matter file API does not have dedicated top-level mention
-    fields (see CreateFileDialog.tsx 圈人 + 留言 hack). The Feishu notifier,
-    however, needs the *raw* open_ids to fill `<at id="…">` markdown tags
-    (schema 2.0) and to deliver per-recipient DMs.
+    Frontend (CreateFileDialog) folds @-mentions into the file's first
+    mention entry because the matter file API does not have dedicated
+    top-level mention fields (see CreateFileDialog.tsx 圈人 + 留言 hack).
+    The Feishu notifier, however, needs the *raw* open_ids to fill
+    ``<at id="…">`` markdown tags (schema 2.0) and to deliver per-recipient
+    DMs.
 
-    This helper teases that data back out before _resolve_comments_mentions
-    rewrites open_ids to pinyin for index storage. Safe to call with None / [].
+    This helper teases that data back out before ``_resolve_mention_targets``
+    rewrites open_ids to pinyin for index storage. Safe to call with
+    None / [].
     """
-    if not comments:
+    if not mentions:
         return None, None
-    first = comments[0] or {}
-    raw = first.get("mentions")
+    first = mentions[0] or {}
+    raw = first.get("targets")
     if not isinstance(raw, list) or not raw:
         return None, None
     open_ids = [str(x) for x in raw if x]
@@ -524,36 +526,60 @@ def _extract_notify_mentions(
     return open_ids, (text or None)
 
 
-def _resolve_file_author_recipients(
+def _resolve_inline_stakeholders(
     matter_data: dict,
     target_file: str,
     *,
     actor: PivotUser,
     pivot_users: PivotUserRepo | None,
     bindings: ExternalBindingRepo | None,
-    already_notified: list[str],
+    already_notified: list[str] | None = None,
 ) -> list[str]:
-    """Find recipients that should be DMed/relevance-rowed because the
-    comment is on *their* file — i.e. the targeted timeline item's creator
-    and owner. Skips: the actor (self), unregistered identifiers, and anyone
-    already in ``already_notified`` (the explicit @-mention list — they're
-    handled separately).
-    Result is order-stable + deduped."""
-    if pivot_users is None or not target_file:
+    """Stakeholders that should hear about a mention/annotation on a file
+    even when not explicitly @-ed. Per V2 design, this is the union of
+    three roles: the *file's* creator (whose work is being commented on),
+    the *matter's* owner (responsible for the whole matter), and the
+    *matter's* creator (who originally raised it).
+
+    file.owner is intentionally excluded — file.creator already covers
+    "this is your file", and file.owner usually defaults to file.creator
+    anyway. Matter-level roles are the V2 fix for the previous "notification
+    blind spot" where the matter owner / creator stayed silent on inline
+    discussion.
+
+    Behavior:
+      - Order-stable + deduped on resolved recipient id.
+      - Drops the actor (self): if the actor is also matter.owner or
+        matter.creator, they don't DM themselves.
+      - Drops any id already in ``already_notified`` (the explicit @-target
+        list — those are handled separately).
+      - Missing roles degrade gracefully: a matter with no owner set, a
+        creator that's a legacy/unregistered user, etc. just get skipped.
+        We never refuse to write a mention because a stakeholder failed
+        to resolve.
+    """
+    if pivot_users is None:
         return []
-    item = _find_timeline_item(matter_data, target_file)
-    if item is None:
-        return []
+    file_creator: str | None = None
+    if target_file:
+        item = _find_timeline_item(matter_data, target_file)
+        if item is not None:
+            file_creator = item.get("creator")
+    matter_owner = _effective_matter_owner(matter_data)
+    matter_creator = _matter_creator_pinyin(matter_data)
     candidates: list[str] = []
     seen: set[str] = set(already_notified or [])
-    for pinyin in (item.get("creator"), item.get("owner")):
-        if not pinyin:
+    for ref in (file_creator, matter_owner, matter_creator):
+        if not ref:
             continue
-        u = pivot_users.get_by_any_id(str(pinyin))
+        u = pivot_users.get_by_any_id(str(ref))
         if u is None:
+            # Unregistered / legacy identifier — no Pivot user to ping.
+            continue
+        if u.id == actor.id:
             continue
         recipient_id = _get_feishu_open_id_for_user(u.id, bindings) or u.id
-        if u.id == actor.id or recipient_id in seen:
+        if recipient_id in seen:
             continue
         candidates.append(recipient_id)
         seen.add(recipient_id)
@@ -681,7 +707,7 @@ def publish_matter_create(
         summary: str  (required)
         body: str  (Markdown body of the MD file)
         owner: str  (optional; defaults to creator)
-        comments: list[dict]  (optional)
+        mentions: list[dict]  (optional)
 
     `matter_owner_open_id` (matter-level owner, distinct from item-level
     initial_item.owner) is resolved through the same _resolve_owner_for_index
@@ -725,29 +751,29 @@ def publish_matter_create(
         md_fm["body_source"] = initial_item["body_source"]
     md_path = thread_dir / filename
 
-    # Resolve comments[].mentions from open_id → pinyin (or keep open_id when
-    # the mentioned person isn't a registered Pivot user). The notifier still
-    # receives raw open_ids elsewhere; only the on-disk matter index stores the
+    # Resolve mentions[].targets from open_id → pinyin (or keep open_id when
+    # the @-target isn't a registered Pivot user). The notifier still receives
+    # raw open_ids elsewhere; only the on-disk matter index stores the
     # resolved form.
     item_input = dict(initial_item)
-    if item_input.get("comments"):
-        item_input["comments"] = _resolve_comments_mentions(
-            item_input["comments"], pivot_users, bindings, author=user.pinyin,
+    if item_input.get("mentions"):
+        item_input["mentions"] = _resolve_mention_targets(
+            item_input["mentions"], pivot_users, bindings, author=user.pinyin,
         )
 
-    # Frontend (CreateFileDialog) bundles 圈人 + 留言 into comments[0] because
+    # Frontend (CreateFileDialog) bundles 圈人 + 留言 into mentions[0] because
     # matter has no top-level mention field. Extract raw open_ids + 留言 from
     # the original (un-resolved) initial_item so the Feishu notifier can fire
     # both the group card's <at> tags and the per-recipient DM. Without this,
     # mentions silently fail to notify.
     notify_mention_open_ids, notify_mention_comments = _extract_notify_mentions(
-        initial_item.get("comments")
+        initial_item.get("mentions")
     )
     owner_notify_open_id = (
         _get_feishu_open_id_for_user(matter_owner_open_id, bindings)
         if matter_owner_open_id else None
     ) or _get_feishu_open_id_for_user(user.open_id, bindings)
-    # Resolve before write (see publish_matter_comment for rationale): an
+    # Resolve before write (see publish_matter_mention for rationale): an
     # ambiguous @ aborts the create with a 422 + candidate list rather than
     # leaving a half-written matter on disk.
     notify_mention_resolved = _resolve_mention_strings_to_open_ids(
@@ -851,7 +877,7 @@ def publish_matter_append(
         owner: str  (optional; defaults to creator)
         quote: str  (optional)
         refer: list[str]  (optional)
-        comments: list[dict]  (optional)
+        mentions: list[dict]  (optional)
         verifications: list[dict]  (verify only)
         outcome: str  (result only)
         status_change: {from, to}  (optional; validator enforces trigger rules)
@@ -876,17 +902,17 @@ def publish_matter_append(
     file_rel = f"discussions/{category}/{matter_id}/{filename}"
 
     item_input = dict(item_body)
-    if item_input.get("comments"):
-        item_input["comments"] = _resolve_comments_mentions(
-            item_input["comments"], pivot_users, bindings, author=user.pinyin,
+    if item_input.get("mentions"):
+        item_input["mentions"] = _resolve_mention_targets(
+            item_input["mentions"], pivot_users, bindings, author=user.pinyin,
         )
 
     # Same mention bundling extraction as publish_matter_create — frontend
-    # ships 圈人留言 in comments[0] and we need raw open_ids for the notifier.
+    # ships 圈人留言 in mentions[0] and we need raw open_ids for the notifier.
     notify_mention_open_ids, notify_mention_comments = _extract_notify_mentions(
-        item_body.get("comments")
+        item_body.get("mentions")
     )
-    # Resolve before write — see publish_matter_comment for rationale.
+    # Resolve before write — see publish_matter_mention for rationale.
     notify_mention_resolved = _resolve_mention_strings_to_open_ids(
         notify_mention_open_ids, pivot_users, bindings,
     )
@@ -967,96 +993,100 @@ def publish_matter_append(
     }
 
 
-def publish_matter_comment(
+def publish_matter_mention(
     workspace: Workspace,
     user: PivotUser,
     *,
     matter_id: str,
     target_file: str,
     body: str,
-    mentions: list[str] | None = None,
+    targets: list[str] | None = None,
     notifier: Notifier | None = None,
     users: PivotUserRepo | None = None,
     pivot_users: PivotUserRepo | None = None,
     bindings: ExternalBindingRepo | None = None,
 ) -> dict:
-    """Append a comment to a specific timeline item in a matter."""
+    """Append a mention (留言 + @ 一些人) to a specific timeline item in a matter."""
     if not user.pinyin:
         raise PublishError("profile setup required")
     if not (body or "").strip():
-        raise PublishError("comment body required")
+        raise PublishError("mention body required")
 
     index_path = matter_index_path(workspace.index_dir, matter_id)
     data = read_matter_index(index_path)
     if data is None:
         raise MatterNotFoundError(matter_id)
 
-    # Resolve @-mentions BEFORE any disk write — if a name/pinyin matches
+    # Resolve @-targets BEFORE any disk write — if a name/pinyin matches
     # multiple users (e.g. 张博 / 张菠 both → "zhangbo"), we raise
     # AmbiguousMentionError here so the route returns 422 with the candidate
-    # list and no half-written comment lingers in the matter index.
+    # list and no half-written mention lingers in the matter index.
     notify_open_ids = _resolve_mention_strings_to_open_ids(
-        list(mentions) if mentions else None, pivot_users, bindings,
+        list(targets) if targets else None, pivot_users, bindings,
     )
 
-    # File author / owner deserve a notification when someone comments on
-    # their file, even if they weren't explicitly @-ed: the relevance system
-    # only fires on explicit mentions (see relevance_writer), and the
-    # standalone-mention card only highlights @-ed users. Without this, the
-    # file's author is completely silent about activity on their own work.
-    file_author_open_ids = _resolve_file_author_recipients(
+    # Inline stakeholders (file.creator + matter.owner + matter.creator)
+    # deserve a notification when someone leaves a mention, even when not
+    # explicitly @-ed — otherwise the matter owner / creator stays silent
+    # on inline discussion they're meant to oversee. Computed here so the
+    # emitted payload carries pre-resolved recipient ids for both the
+    # relevance writer and the notifier downstream.
+    stakeholder_open_ids = _resolve_inline_stakeholders(
         data, target_file, actor=user, pivot_users=pivot_users, bindings=bindings,
         already_notified=notify_open_ids,
     )
 
     now = _now_iso()
-    comment = {
+    mention = {
         "body": body,
         "author": user.pinyin,
     }
-    # mentions 入 index 时把已注册用户的 open_id 转成 pinyin，与 creator/owner
+    # targets 入 index 时把已注册用户的 open_id 转成 pinyin，与 creator/owner
     # 同格式；未注册联系人保留 open_id（无 pinyin 可用）。通知发送一侧仍用原始
     # open_ids（见下方 notifier 调用），不受影响。
-    # 注意喂的是 notify_open_ids 而不是 mentions：MCP 客户端可以传 name/pinyin，
+    # 注意喂的是 notify_open_ids 而不是 targets：MCP 客户端可以传 name/pinyin，
     # _resolve_mentions_for_index 内部 users.get_by_any_id 仅命中 pinyin 而不会
     # 查 contacts，导致未注册联系人的拼音被原样落盘 → 渲染兜底成拼音。先解析
     # 为真 open_id 后再分流，保证 index 形态恒为 pinyin / open_id。
-    resolved_mentions = _resolve_mentions_for_index(
+    resolved_targets = _resolve_mentions_for_index(
         notify_open_ids, pivot_users, bindings,
     )
-    if resolved_mentions:
-        comment["mentions"] = resolved_mentions
+    if resolved_targets:
+        mention["targets"] = resolved_targets
 
     with workspace.write_session(
-        message=f"chore: comment on {matter_id}",
+        message=f"chore: mention on {matter_id}",
         author_name=user.name,
         author_email=f"{user.pinyin}@pivot.local",
     ):
         matter_append_comment(
             index_path,
             target_file=target_file,
-            comment=comment,
+            comment=mention,
             now_iso=now,
         )
 
     emit(
-        TOPIC_COMMENT_APPENDED,
+        TOPIC_MENTION_APPENDED,
         matter_id=matter_id,
         actor=user.pinyin,
         at=now,
         payload={
             "target_file": target_file,
             "body": body,
-            "mentions": mentions or [],
-            "file_author_open_ids": file_author_open_ids,
+            "target_open_ids": notify_open_ids or [],
+            "stakeholder_open_ids": stakeholder_open_ids,
         },
     )
 
-    # Notifier: reuse the standalone-mention path so @-recipients get a DM.
-    dm_extra_open_ids = [
-        ref for ref in file_author_open_ids if ref.startswith(("ou_", "on_"))
+    # Notifier: stakeholders get DM-only (they're the silent matter
+    # overseers, not @-tagged). @-targets get the normal group-mention
+    # card + DM. Filter to feishu open_ids only — non-feishu refs (legacy
+    # contacts) can't receive a DM but still get a relevance row above.
+    dm_stakeholder_open_ids = [
+        ref for ref in stakeholder_open_ids if ref.startswith(("ou_", "on_"))
     ]
-    if notifier is not None and (notify_open_ids or dm_extra_open_ids):
+    if notifier is not None and (notify_open_ids or dm_stakeholder_open_ids):
         matter_meta = data.get("matter") or {}
         matter_title = matter_meta.get("title") or matter_id
         category = _derive_category_from_timeline(data) or "matters"
@@ -1067,7 +1097,7 @@ def publish_matter_comment(
             author_name=user.name,
             mention_open_ids=notify_open_ids,
             mention_comments=body,
-            dm_extra_open_ids=dm_extra_open_ids or None,
+            dm_extra_open_ids=dm_stakeholder_open_ids or None,
         )
 
     return {"matter_id": matter_id, "target_file": target_file, "at": now}
@@ -1249,7 +1279,7 @@ def _build_timeline_item(
         "type": body.get("type"),
         "summary": body.get("summary") or "",
     }
-    for key in ("quote", "refer", "verifications", "outcome", "comments", "status_change"):
+    for key in ("quote", "refer", "verifications", "outcome", "mentions", "status_change"):
         if body.get(key) is not None:
             item[key] = body[key]
     return item

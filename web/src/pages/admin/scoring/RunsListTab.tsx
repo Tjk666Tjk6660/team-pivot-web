@@ -1,23 +1,15 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Loader2, RotateCw, Search } from "lucide-react";
-import { toast, Toaster } from "sonner";
+import { Loader2, RotateCw, Search } from "lucide-react";
+import { toast } from "sonner";
 import {
   AdminRequiredError,
-  fetchMe,
   fetchScoringRuns,
   triggerScoringRerun,
-  type Me,
   type ScoringRunSummary,
 } from "@/api";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScoreConfidenceBadge } from "@/components/scoring/ScoreConfidenceBadge";
@@ -34,103 +26,11 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "running", label: "运行中" },
 ];
 
-export function AdminScoringPage() {
-  const [me, setMe] = useState<Me | null | undefined>(undefined);
+const onAdminLost = () => {
+  toast.error("管理员权限已失效，请刷新或重新登录");
+};
 
-  useEffect(() => {
-    fetchMe().then(setMe).catch(() => setMe(null));
-  }, []);
-
-  // 角色丢失提示 — 不再有密码 modal，给个 toast 让上层路由处理。
-  const onAdminLost = () => {
-    toast.error("管理员权限已失效，请刷新或重新登录");
-  };
-
-  const isAdmin = !!me?.roles?.includes("admin") && me.status === "active";
-
-  return (
-    <div className="min-h-screen" style={{ background: "var(--bg)" }}>
-      <Toaster position="top-center" richColors />
-      <header
-        className="px-6 py-4 backdrop-blur"
-        style={{
-          borderBottom: "1px solid var(--line)",
-          background: "rgba(255, 253, 248, 0.94)",
-        }}
-      >
-        <div className="mx-auto flex max-w-7xl items-center gap-4">
-          <Button
-            asChild
-            variant="ghost"
-            size="sm"
-            className="h-8 rounded-md hover:bg-[var(--surface-alt)]"
-            style={{ color: "var(--text-soft)" }}
-          >
-            <Link to="/admin">
-              <ArrowLeft className="h-4 w-4" /> 返回管理员
-            </Link>
-          </Button>
-          <div className="min-w-0">
-            <h1
-              className="text-[16px] font-semibold"
-              style={{
-                fontFamily: "var(--font-serif)",
-                letterSpacing: "var(--letter-tight)",
-                color: "var(--text)",
-              }}
-            >
-              评分管理
-            </h1>
-            <p
-              className="mt-0.5 text-[11.5px] font-meta"
-              style={{ color: "var(--text-mute)" }}
-            >
-              跨 matter 浏览所有评分任务 · 重跑 · 查看证据
-            </p>
-          </div>
-        </div>
-      </header>
-
-      {me === undefined ? (
-        <main className="mx-auto max-w-3xl px-6 py-12">
-          <p style={{ color: "var(--text-mute)" }}>加载中…</p>
-        </main>
-      ) : !isAdmin ? (
-        <RoleDeniedNotice me={me} />
-      ) : (
-        <main className="mx-auto max-w-7xl px-6 py-6">
-          <RunsTable onAdminLost={onAdminLost} />
-        </main>
-      )}
-    </div>
-  );
-}
-
-function RoleDeniedNotice({ me }: { me: Me | null }) {
-  return (
-    <main className="mx-auto max-w-2xl px-6 py-16">
-      <Card className="overflow-hidden border-[var(--line)] shadow-[var(--shadow-sm)]">
-        <CardHeader>
-          <CardTitle className="text-[20px]">需要管理员权限</CardTitle>
-          <CardDescription>
-            {me === null
-              ? "你尚未登录。请先登录后再访问评分管理。"
-              : me.status !== "active"
-                ? "账号当前不处于活跃状态，无法访问评分管理。"
-                : "这个页面仅管理员可访问。"}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button asChild>
-            <Link to="/">返回首页</Link>
-          </Button>
-        </CardContent>
-      </Card>
-    </main>
-  );
-}
-
-function RunsTable({ onAdminLost }: { onAdminLost: () => void }) {
+export function RunsListTab() {
   const [items, setItems] = useState<ScoringRunSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -140,7 +40,6 @@ function RunsTable({ onAdminLost }: { onAdminLost: () => void }) {
   const [matterFilterDraft, setMatterFilterDraft] = useState("");
   const [offset, setOffset] = useState(0);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
-  const [activeMatterId, setActiveMatterId] = useState<string | null>(null);
   const [pollKey, setPollKey] = useState(0);
 
   const load = async () => {
@@ -185,7 +84,6 @@ function RunsTable({ onAdminLost }: { onAdminLost: () => void }) {
     try {
       const r = await triggerScoringRerun(matterId);
       toast.success(r.message);
-      // Trigger immediate refresh
       setPollKey((k) => k + 1);
     } catch (e) {
       if (e instanceof AdminRequiredError) {
@@ -200,6 +98,9 @@ function RunsTable({ onAdminLost }: { onAdminLost: () => void }) {
     setMatterFilter(matterFilterDraft.trim());
     setOffset(0);
   };
+
+  const noFilter = !statusFilter && !matterFilter;
+  const showOnboarding = !loading && items.length === 0 && noFilter && total === 0;
 
   return (
     <Card>
@@ -258,12 +159,14 @@ function RunsTable({ onAdminLost }: { onAdminLost: () => void }) {
           </div>
         </div>
 
-        {/* Table */}
+        {/* Table / empty */}
         {loading && items.length === 0 ? (
           <div className="flex items-center justify-center gap-2 px-4 py-8 text-sm text-[var(--text-mute)]">
             <Loader2 className="h-4 w-4 animate-spin" />
             加载中…
           </div>
+        ) : showOnboarding ? (
+          <EmptyOnboarding />
         ) : items.length === 0 ? (
           <div className="px-4 py-12 text-center text-sm text-[var(--text-mute)]">
             没有匹配的评分任务
@@ -286,10 +189,7 @@ function RunsTable({ onAdminLost }: { onAdminLost: () => void }) {
                 <RunRow
                   key={r.run_id}
                   run={r}
-                  onView={() => {
-                    setActiveRunId(r.run_id);
-                    setActiveMatterId(r.matter_id);
-                  }}
+                  onView={() => setActiveRunId(r.run_id)}
                   onRerun={() => onRerun(r.matter_id)}
                 />
               ))}
@@ -326,19 +226,29 @@ function RunsTable({ onAdminLost }: { onAdminLost: () => void }) {
       {activeRunId && (
         <MatterScoresView
           runId={activeRunId}
-          onClose={() => {
-            setActiveRunId(null);
-            setActiveMatterId(null);
-          }}
+          onClose={() => setActiveRunId(null)}
           onAdminLost={onAdminLost}
-          onRerunRequested={() => {
-            // Drawer triggered a rerun — refresh the underlying list
-            setPollKey((k) => k + 1);
-          }}
+          onRerunRequested={() => setPollKey((k) => k + 1)}
         />
       )}
-      {activeMatterId === null /* lint silencer */ && null}
     </Card>
+  );
+}
+
+/** Shown when there are zero runs in the system AND no filter is set —
+ *  helps a fresh admin understand why the list is empty + nudges them to
+ *  the settings tab if scoring isn't enabled yet. */
+function EmptyOnboarding() {
+  return (
+    <div className="flex flex-col items-center gap-3 px-4 py-12 text-center text-sm">
+      <p className="text-[var(--text-mute)]">还没有评分任务</p>
+      <p className="text-xs text-[var(--text-mute)] max-w-md">
+        Matter 进入 finished 状态后会自动入队评分。如果功能尚未启用，请先到「设置」开启。
+      </p>
+      <Button asChild variant="outline" size="sm">
+        <Link to="settings">前往设置</Link>
+      </Button>
+    </div>
   );
 }
 

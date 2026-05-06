@@ -26,7 +26,7 @@ _ITEM_KEY_ORDER = (
     "verifications",
     "verifications_received",
     "outcome",
-    "comments",
+    "mentions",
     "status_change",
 )
 
@@ -105,7 +105,43 @@ def read_matter_index(path: Path) -> dict | None:
         return None
     if not isinstance(data, dict):
         return None
+    _normalize_legacy_comment_keys(data)
     return data
+
+
+def _normalize_legacy_comment_keys(data: dict) -> None:
+    """Rewrite legacy `comments` / inner `mentions` keys into the new
+    `mentions` / `targets` shape, in place.
+
+    Old YAML written before the comments → mentions rename has:
+        timeline[i].comments[j].body
+        timeline[i].comments[j].mentions  # who was @-ed
+
+    New YAML uses:
+        timeline[i].mentions[j].body
+        timeline[i].mentions[j].targets
+
+    This is the single compatibility point for the rename — all downstream
+    code (renderers, scanners, validators, AI prompt) sees only the new
+    shape, regardless of which generation wrote the file. Future writebacks
+    naturally upgrade the file because the writer always emits the new
+    keys; once historical YAML has all been touched once we can drop this
+    normalizer entirely.
+    """
+    timeline = data.get("timeline")
+    if not isinstance(timeline, list):
+        return
+    for item in timeline:
+        if not isinstance(item, dict):
+            continue
+        if "mentions" not in item and "comments" in item:
+            item["mentions"] = item.pop("comments")
+        inner = item.get("mentions")
+        if not isinstance(inner, list):
+            continue
+        for entry in inner:
+            if isinstance(entry, dict) and "targets" not in entry and "mentions" in entry:
+                entry["targets"] = entry.pop("mentions")
 
 
 def snapshot(path: Path) -> dict | None:
@@ -265,11 +301,16 @@ def append_comment(
     comment: dict[str, Any],
     now_iso: str,
 ) -> None:
-    """Append a comment to the comments[] of a specific timeline item.
+    """Append a mention to the mentions[] of a specific timeline item.
 
-    Mentions and standalone-mention-as-comment semantics are handled here.
-    Does NOT bump matter.updated_at — comments are discussion material,
-    not matter progress.
+    The function name is preserved for compatibility with Phase-2 callers
+    that haven't been renamed yet; on disk the field is `mentions[]` with
+    inner `targets`. Does NOT bump matter.updated_at — mentions are
+    discussion material, not matter progress.
+
+    Accepts ``comment`` dicts written in either the legacy shape
+    (``{body, mentions: [...]}``) or the new shape (``{body, targets: [...]}``);
+    both are normalised to the new shape before append.
     """
     p = Path(path)
     data = read_matter_index(p)
@@ -279,7 +320,7 @@ def append_comment(
         if entry.get("file") == target_file:
             c = dict(comment)
             c.setdefault("created_at", now_iso)
-            entry.setdefault("comments", []).append(_canonical_comment(c))
+            entry.setdefault("mentions", []).append(_canonical_mention(c))
             _atomic_write_yaml(p, data)
             return
     raise ValueError(f"target_file not found in timeline: {target_file!r}")
@@ -294,6 +335,11 @@ def _normalize_item(item: dict[str, Any], *, now_iso: str) -> dict[str, Any]:
     Branches at type level: file-type entries get the file-type key order
     + creator→owner fallback; event-type entries (owner_change) get their
     own key order and skip the file-only fallbacks (they have no creator).
+
+    Callers may submit items with the legacy ``comments`` field name;
+    they are coerced to the new ``mentions`` field (and inner
+    ``mentions`` → ``targets``) here so the on-disk shape is always the
+    new one regardless of how the caller named its fields.
     """
     out = dict(item)
     out.setdefault("created_at", now_iso)
@@ -302,14 +348,20 @@ def _normalize_item(item: dict[str, Any], *, now_iso: str) -> dict[str, Any]:
     creator = out.get("creator")
     if creator and not out.get("owner"):
         out["owner"] = creator
-    # Normalize nested comments
-    if out.get("comments"):
-        out["comments"] = [_canonical_comment(c) for c in out["comments"]]
+    if "mentions" not in out and "comments" in out:
+        out["mentions"] = out.pop("comments")
+    if out.get("mentions"):
+        out["mentions"] = [_canonical_mention(c) for c in out["mentions"]]
     return _reorder(out, _ITEM_KEY_ORDER)
 
 
-def _canonical_comment(c: dict[str, Any]) -> dict[str, Any]:
-    return _reorder(dict(c), ("created_at", "body", "mentions"))
+def _canonical_mention(c: dict[str, Any]) -> dict[str, Any]:
+    """Order keys + rename legacy inner ``mentions`` → ``targets`` so mentions
+    persisted to disk are always in the new shape."""
+    out = dict(c)
+    if "targets" not in out and "mentions" in out:
+        out["targets"] = out.pop("mentions")
+    return _reorder(out, ("created_at", "body", "targets"))
 
 
 def _reorder(d: dict[str, Any], key_order: tuple[str, ...]) -> dict[str, Any]:

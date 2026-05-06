@@ -16,7 +16,9 @@ import { AdminInvites } from "@/pages/admin/AdminInvites";
 import { AdminLayout } from "@/pages/admin/AdminLayout";
 import { AdminMarkdown } from "@/pages/admin/AdminMarkdown";
 import { AdminRoles } from "@/pages/admin/AdminRoles";
-import { AdminScoringPage } from "@/pages/admin/AdminScoringPage";
+import { AdminScoring } from "@/pages/admin/AdminScoring";
+import { RunsListTab as AdminScoringRunsTab } from "@/pages/admin/scoring/RunsListTab";
+import { SettingsTab as AdminScoringSettingsTab } from "@/pages/admin/scoring/SettingsTab";
 import { AdminUsers } from "@/pages/admin/AdminUsers";
 import { AdminWorkspace } from "@/pages/admin/AdminWorkspace";
 import { MatterDetailEmpty, MatterDetailPane } from "@/pages/MatterDetailPane";
@@ -91,7 +93,10 @@ export function App() {
             <Route path="markdown" element={<AdminMarkdown />} />
             <Route path="daily-report" element={<AdminDailyReport />} />
             <Route path="ai" element={<AdminAI />} />
-            <Route path="scoring" element={<AdminScoringPage />} />
+            <Route path="scoring" element={<AdminScoring />}>
+              <Route index element={<AdminScoringRunsTab />} />
+              <Route path="settings" element={<AdminScoringSettingsTab />} />
+            </Route>
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

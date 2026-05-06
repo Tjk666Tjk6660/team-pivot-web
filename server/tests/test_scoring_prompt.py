@@ -36,12 +36,12 @@ def index_data():
                     {"verify_file": "discussions/eng/auth-redesign/002_lisi_verify_xx.md",
                      "judgement": "passed", "verified_by": "lisi"},
                 ],
-                "comments": [
+                "mentions": [
                     {
                         "author": "ceo",
                         "body": "这个交付质量很高",
                         "created_at": "2026-04-29T18:00:00+08:00",
-                        "mentions": ["zhangsan_open_id"],
+                        "targets": ["zhangsan_open_id"],
                     },
                     {
                         "author": "wangwu",

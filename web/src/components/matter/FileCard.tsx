@@ -95,7 +95,7 @@ export function FileCard({
   matterStatus: MatterStatus;
   activeType: DocType | null;
   onCreate: (type: DocType, quote: string) => void;
-  onAddComment: (body: string, mentions?: string[]) => Promise<void>;
+  onAddComment: (body: string, targets?: string[]) => Promise<void>;
   onJump: (file: string) => void;
   registerRef?: (el: HTMLDivElement | null) => void;
   highlighted?: boolean;
@@ -199,13 +199,13 @@ export function FileCard({
   //
   // Visibility is detected by absolute pixel height (>= MIN_VISIBLE_PX),
   // not the original `intersectionRatio >= 0.5`. The ratio approach
-  // breaks for tall cards (long body, many comments, big readers row):
+  // breaks for tall cards (long body, many mentions, big readers row):
   // if the card is taller than the viewport, the maximum ratio is
   // viewport / card and never crosses 0.5, so the observer's callback
   // never qualifies as "visible" and triggerMark never fires.
   // Multi-threshold subscription guarantees callbacks at multiple
   // scroll positions so we don't miss the moment height crosses the cut.
-  // Visibility is also mirrored to isVisibleRef so the comment-update
+  // Visibility is also mirrored to isVisibleRef so the mention-update
   // effect below can decide whether to fire when SSE delivers a new
   // mention while the card sits statically on screen.
   useEffect(() => {
@@ -242,17 +242,17 @@ export function FileCard({
   }, [canExpand, item.body, item.file, me.open_id]);
 
   // When the parent re-fetches the matter detail (typically because SSE
-  // pushed a `matter.updated` event), item.comments swaps in place. If the
-  // new comments contain an unread @ to me AND this card is currently in
+  // pushed a `matter.updated` event), item.mentions swaps in place. If the
+  // new mentions contain an unread @ to me AND this card is currently in
   // viewport, fire triggerMark — otherwise the IntersectionObserver, which
   // only fires on threshold crossings, would leave the new red dot
   // dangling until the user scrolls or navigates away.
   useEffect(() => {
     if (!isVisibleRef.current) return;
-    if (!item.comments.some((c) => c.mention_unread_for_me)) return;
+    if (!item.mentions.some((c) => c.mention_unread_for_me)) return;
     triggerMark();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.comments]);
+  }, [item.mentions]);
 
   return (
     <article
@@ -423,7 +423,7 @@ export function FileCard({
         </>
       )}
 
-      {/* comments (read-only; "添加评论" was removed — use the @ 提及 button at the top to leave a note instead) */}
+      {/* mentions (read-only; "添加评论" was removed — use the @ 提及 button at the top to leave a note instead) */}
       <CommentsBlock item={item} />
 
       <ReadersRow readers={readers} />
@@ -459,14 +459,14 @@ export function FileCard({
 }
 
 // 对应 master ThreadDetailPane.PostMentionPopover 的形态:点开按钮弹一个 popover,
-// 选人 + 留一句话,提交后调 onSubmit(body, open_ids)。本质走的是
-// appendMatterComment 通道——matter 的"提及"实现就是给文件追加一条带 mentions
-// 的评论。
+// 选人 + 留一句话,提交后调 onSubmit(body, targets)。本质走的是
+// appendMatterMention 通道——matter 的"提及"实现就是给文件追加一条 mention
+// (留言 + 圈人)。
 function MentionPopover({
   onSubmit,
   align = "left",
 }: {
-  onSubmit: (body: string, mentions: string[]) => Promise<void>;
+  onSubmit: (body: string, targets: string[]) => Promise<void>;
   align?: "left" | "right";
 }) {
   const [open, setOpen] = useState(false);
@@ -516,7 +516,7 @@ function MentionPopover({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        title="圈人留言（追加为本文件的一条带 mention 的评论）"
+        title="圈人留言（追加为本文件的一条 mention）"
         className="inline-flex items-center rounded-[var(--r-sm)] border border-[var(--accent-soft)] bg-[var(--surface)] px-2 py-1 text-[11px] font-semibold text-[var(--accent)] hover:bg-[var(--accent-bg)]"
       >
         @ 提及
@@ -621,15 +621,15 @@ function JudgementChip({ judgement }: { judgement: Judgement }) {
 }
 
 function CommentsBlock({ item }: { item: TimelineFileItem }) {
-  if (item.comments.length === 0) return null;
+  if (item.mentions.length === 0) return null;
 
   return (
     <div className="mt-3">
       <ul className="space-y-2">
-        {item.comments.map((c, i) => {
+        {item.mentions.map((c, i) => {
           const author =
             ((c.author_display || c.author) ?? "").trim() || "未知用户";
-          const mentionNames = c.mentions_display ?? c.mentions ?? [];
+          const targetNames = c.targets_display ?? c.targets ?? [];
           const body = c.body?.trim();
           return (
             <li
@@ -637,7 +637,7 @@ function CommentsBlock({ item }: { item: TimelineFileItem }) {
               className="rounded-[var(--r-sm)] border border-[var(--line)] bg-[var(--surface-alt)] px-3 py-2 text-[12.5px] leading-6 text-[var(--text-soft)]"
             >
               <span className="inline-flex items-center rounded-full border border-[var(--line)] bg-[var(--surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-soft)]">
-                评论{i + 1}
+                提及{i + 1}
               </span>
               <span
                 className="ml-1 text-[var(--text-fade)]"
@@ -652,8 +652,8 @@ function CommentsBlock({ item }: { item: TimelineFileItem }) {
               >
                 {author}
               </span>
-              {mentionNames.map((name, mi) => {
-                const view = c.mentions_view?.[mi];
+              {targetNames.map((name, mi) => {
+                const view = c.targets_view?.[mi];
                 return (
                   <span
                     key={mi}
@@ -670,7 +670,7 @@ function CommentsBlock({ item }: { item: TimelineFileItem }) {
                 <span className="ml-0.5">{body}</span>
               ) : (
                 <span className="ml-0.5 text-[var(--text-fade)]">
-                  未填写评论内容
+                  未填写提及内容
                 </span>
               )}
             </li>

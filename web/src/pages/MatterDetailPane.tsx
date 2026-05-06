@@ -14,7 +14,7 @@ import {
   X,
 } from "lucide-react";
 import {
-  appendMatterComment,
+  appendMatterMention,
   appendMatterFile,
   appendMatterResult,
   fetchMatter,
@@ -136,7 +136,7 @@ function sameDetail(
     }
     if (
       x.file !== y.file ||
-      x.comments.length !== y.comments.length ||
+      x.mentions.length !== y.mentions.length ||
       (x.status_change?.to ?? null) !== (y.status_change?.to ?? null)
     ) {
       return false;
@@ -484,7 +484,7 @@ export function MatterDetailPane() {
     });
   }, [pendingCreate]);
 
-  // 从 /admin/scoring 的 EvidenceDialog 跳过来时, URL 形如 /m/X#file=001_xx.md。
+  // 从评分管理页 (/admin/scoring) 的 EvidenceDialog 跳过来时, URL 形如 /m/X#file=001_xx.md。
   // 数据加载完后按 basename 找到对应 timeline 文件,调 onJump 滚动+高亮,
   // 然后清掉 hash 避免后续渲染重复触发。
   useEffect(() => {
@@ -863,19 +863,19 @@ export function MatterDetailPane() {
     return true;
   };
 
-  const submitComment = async (
+  const submitMention = async (
     targetFile: string,
     body: string,
-    mentions?: string[],
+    targets?: string[],
   ) => {
     if (!matter_id) return;
     try {
-      await appendMatterComment(matter_id, {
+      await appendMatterMention(matter_id, {
         target_file: targetFile,
         body,
-        mentions: mentions && mentions.length > 0 ? mentions : undefined,
+        targets: targets && targets.length > 0 ? targets : undefined,
       });
-      toast.success("已追加评论");
+      toast.success("已追加提醒");
       await afterWrite();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -1114,8 +1114,8 @@ export function MatterDetailPane() {
                       : null
                   }
                   onCreate={requestCreate}
-                  onAddComment={(body, mentions) =>
-                    submitComment(item.file, body, mentions)
+                  onAddComment={(body, targets) =>
+                    submitMention(item.file, body, targets)
                   }
                   onJump={onJump}
                   registerRef={(el) => {
@@ -1461,6 +1461,7 @@ export function MatterDetailPane() {
             value={visibilityDraft}
             onChange={setVisibilityDraft}
             disabled={visibilitySaving}
+            requiredUserId={sessionOpenId || undefined}
           />
           <DialogFooter>
             <Button

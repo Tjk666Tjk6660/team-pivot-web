@@ -23,6 +23,8 @@ type Props = {
   onChange: (value: VisibilityScope) => void;
   disabled?: boolean;
   allowUsers?: boolean;
+  /** Always included in restricted scope; cannot be removed in this picker. */
+  requiredUserId?: string;
   allowedRoles?: string[];
   publicLabel?: string;
   restrictedLabel?: string;
@@ -37,6 +39,7 @@ export function VisibilityScopePicker({
   onChange,
   disabled,
   allowUsers = true,
+  requiredUserId,
   allowedRoles,
   publicLabel = "全部用户",
   restrictedLabel = "指定范围",
@@ -50,10 +53,19 @@ export function VisibilityScopePicker({
 
   useEffect(() => {
     if (!open) return;
-    setDraft(allowUsers ? value : { ...value, user_ids: [] });
+    const base = allowUsers ? value : { ...value, user_ids: [] };
+    const next: VisibilityScope = {
+      ...base,
+      mode: "restricted",
+      user_ids: allowUsers ? [...base.user_ids] : [],
+    };
+    if (allowUsers && requiredUserId && !next.user_ids.includes(requiredUserId)) {
+      next.user_ids.push(requiredUserId);
+    }
+    setDraft(next);
     setActiveRole(null);
     void fetchVisibilityOptions(category).then(setOptions);
-  }, [allowUsers, category, open, value]);
+  }, [allowUsers, category, open, requiredUserId, value]);
 
   const allowedRoleSet = useMemo(
     () => allowedRoles ? new Set(allowedRoles) : null,
@@ -113,6 +125,7 @@ export function VisibilityScopePicker({
     });
   };
   const toggleUser = (id: string) => {
+    if (requiredUserId && id === requiredUserId) return;
     const user_ids = draft.user_ids.includes(id)
       ? draft.user_ids.filter((item) => item !== id)
       : [...draft.user_ids, id];
@@ -120,12 +133,16 @@ export function VisibilityScopePicker({
   };
 
   const confirmDraft = () => {
+    const lockedUsers = allowUsers ? [...draft.user_ids] : [];
+    if (allowUsers && requiredUserId && !lockedUsers.includes(requiredUserId)) {
+      lockedUsers.push(requiredUserId);
+    }
     const next: VisibilityScope =
-      draft.roles.length || (allowUsers && draft.user_ids.length)
+      draft.roles.length || lockedUsers.length
         ? {
             ...draft,
             mode: "restricted",
-            user_ids: allowUsers ? draft.user_ids : [],
+            user_ids: lockedUsers,
           }
         : PUBLIC_SCOPE;
     onChange(next);
@@ -210,7 +227,11 @@ export function VisibilityScopePicker({
                   <div key={item.id} className="flex items-center gap-2 rounded-[var(--r-sm)] px-2 py-2 hover:bg-[var(--surface-alt)]">
                     <input
                       type="checkbox"
-                      checked={draft.user_ids.includes(item.id)}
+                      checked={
+                        draft.user_ids.includes(item.id) ||
+                        (requiredUserId ? item.id === requiredUserId : false)
+                      }
+                      disabled={!!requiredUserId && item.id === requiredUserId}
                       onChange={() => toggleUser(item.id)}
                     />
                     <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--surface-alt)] text-xs font-semibold text-[var(--text-soft)]">
@@ -244,7 +265,11 @@ export function VisibilityScopePicker({
                     <SelectedPill
                       key={id}
                       label={user?.display_name ?? id}
-                      onRemove={() => toggleUser(id)}
+                      onRemove={
+                        requiredUserId && id === requiredUserId
+                          ? undefined
+                          : () => toggleUser(id)
+                      }
                     />
                   );
                 })}
@@ -279,7 +304,7 @@ function SelectedPill({
   onRemove,
 }: {
   label: string;
-  onRemove: () => void;
+  onRemove?: () => void;
 }) {
   return (
     <div className={cn(
@@ -287,9 +312,11 @@ function SelectedPill({
       "border border-[var(--line)] bg-[var(--surface-alt)] px-3 py-2 text-sm",
     )}>
       <span className="truncate">{label}</span>
-      <button type="button" onClick={onRemove} className="text-[var(--text-mute)]">
-        <X className="h-3.5 w-3.5" />
-      </button>
+      {onRemove && (
+        <button type="button" onClick={onRemove} className="text-[var(--text-mute)]">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      )}
     </div>
   );
 }

@@ -664,10 +664,10 @@ export function NewMatterGuidedFlow({
           body_source: "ai",
           ...(data.mentions.open_ids.length > 0
             ? {
-                comments: [
+                mentions: [
                   {
                     body: data.mentions.comments.trim(),
-                    mentions: data.mentions.open_ids,
+                    targets: data.mentions.open_ids,
                   },
                 ],
               }
@@ -825,6 +825,7 @@ export function NewMatterGuidedFlow({
                       onChange={(next) => setData((d) => ({ ...d, matterVisibility: next }))}
                       disabled={submitting || revising}
                       allowedRoles={categoryAllowedRoles}
+                      requiredUserId={me.open_id}
                     />
                   </div>
                 </div>

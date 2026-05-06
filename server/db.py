@@ -293,6 +293,37 @@ CREATE TABLE IF NOT EXISTS scoring_commenter_weights (
     updated_at      REAL NOT NULL,
     updated_by      TEXT NOT NULL
 );
+-- =========================================================================
+-- git push outbox (方案 A · Write Pipeline)
+--
+-- 写盘和 git push 解耦：write_session 完成本地 commit 后，往本表 enqueue 一行
+-- pending；后台 GitWorker 串行消费，把若干 pending 合并为一次 push。
+--
+-- 设计要点：
+--   * 表的存在 = "本地有 commit 等待推送"。Worker 拿到 N 条 pending → 一次
+--     git push 解决全部 → 一并 mark_succeeded。多次 enqueue 只产生一次 push。
+--   * tenant_id 为 SaaS 接口位（§9.1 #1），单租户期固定 'default'。
+--   * status='in_flight' 用于 worker 在执行 push 期间的可见状态，崩溃恢复时
+--     由 sweep_in_flight 回滚到 'pending'，下次自然重试。
+--   * partial index 仅覆盖 pending/in_flight，让 worker poll 走索引 + 不让
+--     succeeded 历史无限堆积影响查询；succeeded 行可由后续 vacuum 清理。
+-- =========================================================================
+CREATE TABLE IF NOT EXISTS git_push_outbox (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id       TEXT NOT NULL DEFAULT 'default',
+    enqueued_at     REAL NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending', 'in_flight', 'succeeded', 'failed')),
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at REAL,
+    last_error      TEXT,
+    succeeded_at    REAL,
+    -- 触发该入队的提交摘要，仅用于审计/调试，不参与 push 逻辑
+    reason          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_git_push_outbox_pending
+    ON git_push_outbox(tenant_id, status, enqueued_at)
+    WHERE status IN ('pending', 'in_flight');
 """
 
 

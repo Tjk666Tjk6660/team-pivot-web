@@ -13,9 +13,9 @@ import pytest
 import yaml
 
 from server.events import (
-    TOPIC_COMMENT_APPENDED,
     TOPIC_FILE_APPENDED,
     TOPIC_MATTER_OWNER_CHANGED,
+    TOPIC_MENTION_APPENDED,
     clear_subscribers,
     emit,
 )
@@ -251,7 +251,7 @@ def test_file_appended_payload_without_file_is_ignored(
 # ---------- mention-level writes ----------
 
 
-def test_comment_appended_writes_mention_for_each_target(
+def test_mention_appended_writes_row_for_each_target(
     workspace, users, relevance_repo, writer_installed,
 ):
     alice_id = _register_user(users, pinyin="alice")
@@ -259,13 +259,14 @@ def test_comment_appended_writes_mention_for_each_target(
     _register_user(users, pinyin="bob")  # actor
 
     emit(
-        TOPIC_COMMENT_APPENDED,
+        TOPIC_MENTION_APPENDED,
         matter_id="m-x", actor="bob",
         at="2026-04-28T12:00:00+08:00",
         payload={
             "target_file": "discussions/cat/m-x/01.md",
             "body": "看下这条 @alice @charlie",
-            "mentions": [alice_id, charlie_id],
+            "target_open_ids": [alice_id, charlie_id],
+            "stakeholder_open_ids": [],
         },
     )
 
@@ -273,39 +274,41 @@ def test_comment_appended_writes_mention_for_each_target(
     assert relevance_repo.unread_breakdown_per_matter(charlie_id) == {"m-x": (0, 1)}
 
 
-def test_comment_appended_self_mention_skipped(
+def test_mention_appended_self_target_skipped(
     workspace, users, relevance_repo, writer_installed,
 ):
     bob_id = _register_user(users, pinyin="bob")
 
     emit(
-        TOPIC_COMMENT_APPENDED,
+        TOPIC_MENTION_APPENDED,
         matter_id="m-x", actor="bob",
         at="2026-04-28T12:00:00+08:00",
         payload={
             "target_file": "discussions/cat/m-x/01.md",
             "body": "@bob 自己 @ 自己",
-            "mentions": [bob_id],
+            "target_open_ids": [bob_id],
+            "stakeholder_open_ids": [],
         },
     )
 
     assert relevance_repo.unread_breakdown_per_matter(bob_id) == {}
 
 
-def test_comment_appended_unregistered_contact_skipped(
+def test_mention_appended_unregistered_contact_skipped(
     workspace, users, relevance_repo, writer_installed,
 ):
-    """mention 是个未注册的 open_id,users.get_by_any_id 返回 None,跳过。"""
+    """target 是个未注册的 open_id,users.get_by_any_id 返回 None,跳过。"""
     _register_user(users, pinyin="bob")  # actor
 
     emit(
-        TOPIC_COMMENT_APPENDED,
+        TOPIC_MENTION_APPENDED,
         matter_id="m-x", actor="bob",
         at="2026-04-28T12:00:00+08:00",
         payload={
             "target_file": "discussions/cat/m-x/01.md",
             "body": "@外部联系人",
-            "mentions": ["ou_external_unregistered"],
+            "target_open_ids": ["ou_external_unregistered"],
+            "stakeholder_open_ids": [],
         },
     )
 
@@ -315,20 +318,22 @@ def test_comment_appended_unregistered_contact_skipped(
     assert n == 0
 
 
-def test_comment_appended_multiple_comments_accumulate(
+def test_mention_appended_multiple_writes_accumulate(
     workspace, users, relevance_repo, writer_installed,
 ):
-    """同一文件多次 @ 同一人,每条 comment_at 不同 → 各自落表,red 累加。"""
+    """同一文件多次 @ 同一人,每条 event_at 不同 → 各自落表,red 累加。"""
     alice_id = _register_user(users, pinyin="alice")
     _register_user(users, pinyin="bob")
 
     base = {
         "target_file": "discussions/cat/m-x/01.md",
-        "body": "@alice", "mentions": [alice_id],
+        "body": "@alice",
+        "target_open_ids": [alice_id],
+        "stakeholder_open_ids": [],
     }
     for i in range(5):
         emit(
-            TOPIC_COMMENT_APPENDED,
+            TOPIC_MENTION_APPENDED,
             matter_id="m-x", actor="bob",
             at=f"2026-04-28T12:0{i}:00+08:00",
             payload=base,
@@ -337,25 +342,55 @@ def test_comment_appended_multiple_comments_accumulate(
     assert relevance_repo.unread_breakdown_per_matter(alice_id) == {"m-x": (0, 5)}
 
 
-def test_comment_appended_no_mentions_writes_nothing(
+def test_mention_appended_no_targets_no_stakeholders_writes_nothing(
     workspace, users, relevance_repo, writer_installed,
 ):
     _register_user(users, pinyin="alice")
 
     emit(
-        TOPIC_COMMENT_APPENDED,
+        TOPIC_MENTION_APPENDED,
         matter_id="m-x", actor="bob",
         at="2026-04-28T12:00:00+08:00",
         payload={
             "target_file": "discussions/cat/m-x/01.md",
             "body": "纯讨论,没 @ 任何人",
-            "mentions": [],
+            "target_open_ids": [],
+            "stakeholder_open_ids": [],
         },
     )
 
     with relevance_repo._db.connect() as conn:
         n = conn.execute("SELECT COUNT(*) FROM relevance_events").fetchone()[0]
     assert n == 0
+
+
+def test_mention_appended_stakeholders_get_rows_without_explicit_targets(
+    workspace, users, relevance_repo, writer_installed,
+):
+    """V2 行为变化:留言不 @ 任何人时,stakeholder_open_ids 里的
+    file.creator + matter.owner + matter.creator 都应收到红点。
+    publish_matter_mention 在上游已自排除 actor + 解析三角色,这里只
+    验证 writer 把 stakeholder_open_ids 一视同仁地写表。"""
+    alice_id = _register_user(users, pinyin="alice")  # matter.owner
+    charlie_id = _register_user(users, pinyin="charlie")  # matter.creator
+    _register_user(users, pinyin="bob")  # actor
+
+    emit(
+        TOPIC_MENTION_APPENDED,
+        matter_id="m-x", actor="bob",
+        at="2026-04-28T12:00:00+08:00",
+        payload={
+            "target_file": "discussions/cat/m-x/01.md",
+            "body": "顺手提一下,没 @ 任何人",
+            "target_open_ids": [],
+            "stakeholder_open_ids": [alice_id, charlie_id],
+        },
+    )
+
+    assert relevance_repo.unread_breakdown_per_matter(alice_id) == {"m-x": (0, 1)}
+    assert relevance_repo.unread_breakdown_per_matter(charlie_id) == {"m-x": (0, 1)}
+    # bob (actor) 自己不写
+    assert relevance_repo.unread_breakdown_per_matter("ou_bob") == {}
 
 
 # ---------- error swallowing ----------
@@ -369,10 +404,14 @@ def test_writer_does_not_propagate_exceptions_to_emit(
     # Construct an event whose payload would cause an attribute access
     # crash if we didn't guard. emit() should swallow.
     emit(
-        TOPIC_COMMENT_APPENDED,
+        TOPIC_MENTION_APPENDED,
         matter_id="m-x", actor="bob",
         at="2026-04-28T12:00:00+08:00",
-        payload={"target_file": "x", "mentions": [None]},  # type: ignore[list-item]
+        payload={
+            "target_file": "x",
+            "target_open_ids": [None],  # type: ignore[list-item]
+            "stakeholder_open_ids": [],
+        },
     )
     # No assertion needed — the test passes if emit() didn't throw.
 
@@ -392,12 +431,14 @@ def test_unsubscribe_stops_writes(
     )
 
     emit(
-        TOPIC_COMMENT_APPENDED,
+        TOPIC_MENTION_APPENDED,
         matter_id="m-x", actor="bob",
         at="2026-04-28T12:00:00+08:00",
         payload={
             "target_file": "discussions/cat/m-x/01.md",
-            "body": "@alice", "mentions": [alice_id],
+            "body": "@alice",
+            "target_open_ids": [alice_id],
+            "stakeholder_open_ids": [],
         },
     )
     assert relevance_repo.unread_breakdown_per_matter(alice_id) == {"m-x": (0, 1)}
@@ -405,12 +446,14 @@ def test_unsubscribe_stops_writes(
     unsub()
 
     emit(
-        TOPIC_COMMENT_APPENDED,
+        TOPIC_MENTION_APPENDED,
         matter_id="m-x", actor="bob",
         at="2026-04-28T12:01:00+08:00",
         payload={
             "target_file": "discussions/cat/m-x/01.md",
-            "body": "@alice 第二次", "mentions": [alice_id],
+            "body": "@alice 第二次",
+            "target_open_ids": [alice_id],
+            "stakeholder_open_ids": [],
         },
     )
     # 仍然只有第一条,unsubscribe 之后没有新行

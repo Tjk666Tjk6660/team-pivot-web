@@ -368,7 +368,11 @@ def _render_file_item(
         for bl in body_block.splitlines():
             lines.append(f"    {bl}")
 
-    comments = item.get("comments") or []
+    # Reader normalizes legacy `comments[]` to `mentions[]`. Prompt label
+    # "comments:" + helper name preserved on purpose: the scoring prompt's
+    # output wording is deferred to a follow-up (see plan §5) so old
+    # scoring runs stay diff-stable until the rewrite ships.
+    comments = item.get("mentions") or []
     if comments:
         lines.append("  comments:")
         for c in comments:
@@ -399,7 +403,7 @@ def _render_comment(c: dict, weight_map: WeightMap) -> str:
     author = str(c.get("author") or "")
     body = str(c.get("body") or "")
     created_at = str(c.get("created_at") or "")
-    mentions = c.get("mentions") or []
+    mentions = c.get("targets") or []
     author_tag = _annotate_actor(author, weight_map)
     mentions_part = (
         f" → mentions=[{','.join(str(m) for m in mentions)}]" if mentions else ""

@@ -122,24 +122,26 @@ export type AuthorView = {
   status: "active" | "suspended" | "deleted" | "unknown";
 };
 
-export type TimelineComment = {
+export type TimelineMention = {
   author: string;
   author_display?: string;
   author_view?: AuthorView | null;
   created_at: string;
   body: string;
-  mentions?: string[];
-  mentions_display?: string[];
-  mentions_view?: (AuthorView | null)[];
-  // True when the current user is mentioned in this comment AND has not
+  targets?: string[];
+  targets_display?: string[];
+  targets_view?: (AuthorView | null)[];
+  // True when the current user is one of the mention's targets AND has not
   // marked the host file as read (via POST /matters/{id}/files/{f}/read).
   // Detail interface populates this; missing for old backends or for users
-  // not in the mentions list.
+  // not in the targets list. Field name is intentionally preserved across
+  // the comments → mentions rename (design §3.5) — renaming would touch
+  // the entire frontend without behavior change.
   mention_unread_for_me?: boolean;
 };
 
-// File-level relevance reasons. Comment-level @ mentions are tracked
-// separately via TimelineComment.mention_unread_for_me, not by this enum.
+// File-level relevance reasons. Mention-level @-targets are tracked
+// separately via TimelineMention.mention_unread_for_me, not by this enum.
 export type FileRelevanceReason =
   | "owner_assigned"
   | "reply_to_my_file"
@@ -171,7 +173,7 @@ export type TimelineFileItem = {
   summary: string;
   quote: string | null;
   refer: string[];
-  comments: TimelineComment[];
+  mentions: TimelineMention[];
   status_change: StatusChange | null;
   expanded: boolean;
   body: string;
@@ -371,7 +373,7 @@ export type InitialFileIn = {
   summary: string;
   body?: string;
   owner?: string | null;
-  comments?: { body: string; mentions?: string[] }[];
+  mentions?: { body: string; targets?: string[] }[];
   body_source?: "ai" | "manual";
 };
 
@@ -543,7 +545,7 @@ export type NewFileIn = {
   owner?: string | null;
   quote?: string | null;
   refer?: string[];
-  comments?: { body: string; mentions?: string[] }[];
+  mentions?: { body: string; targets?: string[] }[];
   verifications?: Verification[];
   outcome?: Outcome;
   status_change?: StatusChange;
@@ -647,7 +649,7 @@ export async function appendMatterResult(
     summary: string;
     body?: string;
     outcome: Outcome;
-    comments?: { body: string; mentions?: string[] }[];
+    mentions?: { body: string; targets?: string[] }[];
   },
 ): Promise<AppendFileResponse> {
   const r = await fetch(
@@ -720,12 +722,12 @@ export async function setMatterFavorite(
   return await r.json();
 }
 
-export async function appendMatterComment(
+export async function appendMatterMention(
   matterId: string,
-  body: { target_file: string; body: string; mentions?: string[] },
+  body: { target_file: string; body: string; targets?: string[] },
 ): Promise<{ item: TimelineItem }> {
   const r = await fetch(
-    `/api/matters/${encodeURIComponent(matterId)}/comments`,
+    `/api/matters/${encodeURIComponent(matterId)}/mentions`,
     {
       method: "POST",
       credentials: "include",
@@ -738,7 +740,7 @@ export async function appendMatterComment(
     const d = await r.json().catch(() => ({ detail: r.statusText }));
     const detail = typeof d.detail === "string"
       ? d.detail
-      : d.detail?.message || d.detail?.code || `append comment failed: ${r.status}`;
+      : d.detail?.message || d.detail?.code || `append mention failed: ${r.status}`;
     throw new Error(detail);
   }
   return (await r.json()) as { item: TimelineItem };
@@ -1265,6 +1267,26 @@ export async function clearAIConversation(matter_id: string): Promise<void> {
   );
 }
 
+// 方案 B 错误归一化：所有 AI 失败都会归到这一份 detail，前端用 code 决定走哪个
+// 兜底 UI（auth → 提示联系管理员；retryable=true → 给"重试"按钮；其余仅气泡）。
+export type AIErrorDetail = {
+  code: string;
+  retryable: boolean;
+  message: string;
+  status: number | null;
+};
+
+/** Thrown by `streamAIChat` when the backend emits an `error` event. The
+ * `.detail` carries the structured payload so callers can render branded
+ * retry UI without parsing message strings. Falls back to `Error` semantics
+ * when the backend only sent a legacy `error: <string>` field (older 部署). */
+export class AIChatError extends Error {
+  constructor(public readonly detail: AIErrorDetail) {
+    super(detail.message);
+    this.name = "AIChatError";
+  }
+}
+
 export type AIStreamEvent =
   | { kind: "delta"; delta: string }
   | { kind: "tool_start"; id: string; name: string; arguments: Record<string, unknown> }
@@ -1273,11 +1295,15 @@ export type AIStreamEvent =
       id: string;
       name: string;
       output_summary: { size: number; head: string };
-    };
+    }
+  // 方案 B：服务端在上游静默 ≥ heartbeat_interval_s 时下发；前端据此把 AIPane
+  // 切到"AI 响应较慢…" 状态。since_last_token_ms 是上游连续静默时长。
+  | { kind: "heartbeat"; since_last_token_ms: number };
 
 /**
- * Streams AI chat events. Yields structured events (text deltas and
- * tool_call lifecycle). Throws on error.
+ * Streams AI chat events. Yields structured events (text deltas, tool_call
+ * lifecycle, and heartbeats). Throws on error — preferring `AIChatError`
+ * with structured `detail`; falls back to plain `Error` on older backends.
  * Usage: for await (const ev of streamAIChat(...)) { ... }
  */
 export async function* streamAIChat(
@@ -1342,6 +1368,10 @@ export async function* streamAIChat(
         const msg = JSON.parse(data) as {
           delta?: string;
           error?: string;
+          // 方案 B：服务端结构化错误。旧后端仍只下发 `error: <string>`，新后端
+          // 同时下发 `error_detail: {...}`；都向后兼容。
+          error_detail?: Partial<AIErrorDetail>;
+          heartbeat?: { since_last_token_ms?: number };
           tool_call_start?: {
             id: string;
             name: string;
@@ -1353,12 +1383,27 @@ export async function* streamAIChat(
             output_summary: { size: number; head: string };
           };
         };
-        if (msg.error) throw new Error(msg.error);
+        if (msg.error) {
+          const detail: AIErrorDetail = {
+            code: msg.error_detail?.code ?? "unknown",
+            retryable: msg.error_detail?.retryable ?? true,
+            message: msg.error_detail?.message ?? msg.error,
+            status: msg.error_detail?.status ?? null,
+          };
+          throw new AIChatError(detail);
+        }
         if (msg.delta) yield { kind: "delta", delta: msg.delta };
+        if (msg.heartbeat) {
+          yield {
+            kind: "heartbeat",
+            since_last_token_ms: msg.heartbeat.since_last_token_ms ?? 0,
+          };
+        }
         if (msg.tool_call_start)
           yield { kind: "tool_start", ...msg.tool_call_start };
         if (msg.tool_call_end) yield { kind: "tool_end", ...msg.tool_call_end };
       } catch (e) {
+        if (e instanceof AIChatError) throw e;
         if (e instanceof Error && e.message !== "") throw e;
       }
     }

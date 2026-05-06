@@ -1,6 +1,6 @@
 """Full-history scanner for relevance_events.
 
-Scans every matter index + timeline + comments and ensures that every
+Scans every matter index + timeline + mentions and ensures that every
 relevance row that *should* exist for any registered user does exist.
 Each candidate row is checked first via Repo.exists; missing rows get
 INSERTed individually. The explicit SELECT-then-INSERT (vs. INSERT OR
@@ -140,24 +140,28 @@ def scan_all(
                         skipped += 1
 
             # ---- mention-level rows ----
-            for comment in item.get("comments") or []:
-                comment_at = str(comment.get("created_at") or "")
-                comment_author = str(comment.get("author") or "")
-                if not comment_at or not comment_author:
+            # Reader (matter_index.read_matter_index) normalizes the legacy
+            # `comments[].mentions` shape to `mentions[].targets` for us, so
+            # the scanner only sees the post-rename shape regardless of
+            # which generation wrote the YAML on disk.
+            for mention in item.get("mentions") or []:
+                mention_at = str(mention.get("created_at") or "")
+                mention_author = str(mention.get("author") or "")
+                if not mention_at or not mention_author:
                     continue
-                for mention_id in comment.get("mentions") or []:
-                    target = _resolve_user_ref(str(mention_id), users_repo, bindings)
+                for target_id in mention.get("targets") or []:
+                    target = _resolve_user_ref(str(target_id), users_repo, bindings)
                     if target is None:
                         continue
-                    if target.pinyin and target.pinyin == comment_author:
+                    if target.pinyin and target.pinyin == mention_author:
                         continue  # self-exclusion
                     if repo.exists(
                         pivot_user_id=target.open_id,
                         matter_id=matter_id,
                         filename=filename,
                         kind=KIND_MENTION,
-                        event_at=comment_at,
-                        actor_pinyin=comment_author,
+                        event_at=mention_at,
+                        actor_pinyin=mention_author,
                     ):
                         skipped += 1
                         continue
@@ -165,8 +169,8 @@ def scan_all(
                         target.open_id,
                         matter_id,
                         filename,
-                        comment_at=comment_at,
-                        actor_pinyin=comment_author,
+                        comment_at=mention_at,
+                        actor_pinyin=mention_author,
                         read_at=insert_read_at,
                     ):
                         inserted += 1

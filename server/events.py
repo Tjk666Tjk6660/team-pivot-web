@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 # Topic names (string constants rather than an Enum so subscribers can match by str)
 TOPIC_MATTER_CREATED = "matter.created"
 TOPIC_FILE_APPENDED = "matter.file_appended"
-TOPIC_COMMENT_APPENDED = "matter.comment_appended"
+TOPIC_MENTION_APPENDED = "matter.mention_appended"
 TOPIC_STATUS_CHANGED = "matter.status_changed"
 TOPIC_RESULT_CREATED = "matter.result_created"
 TOPIC_MATTER_OWNER_CHANGED = "matter.owner_changed"
