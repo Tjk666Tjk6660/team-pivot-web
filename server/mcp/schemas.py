@@ -55,6 +55,11 @@ class MatterListItem(BaseModel):
     current_status: str
     updated_at: str
     file_count: int | None = None
+    owner: str | None = None
+    summary: str | None = Field(
+        default=None,
+        description="Latest timeline file's summary — lets the AI judge relevance without an extra get_matter call per item.",
+    )
 
 
 class ListMattersOut(BaseModel):
@@ -92,6 +97,10 @@ class TimelineItem(BaseModel):
     reason: str | None = Field(
         default=None,
         description="For type=owner_change, the required human reason for the transfer.",
+    )
+    comments: list[dict] | None = Field(
+        default=None,
+        description="Comments attached to this file (each with author_display, body, mentions_display). Surfaces discussion the AI would otherwise miss.",
     )
 
 

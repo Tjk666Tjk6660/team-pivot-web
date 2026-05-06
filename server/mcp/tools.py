@@ -287,6 +287,8 @@ def tool_list_matters(payload: dict, client: MatterApiClient) -> dict:
             current_status=it.get("current_status", ""),
             updated_at=it.get("updated_at", ""),
             file_count=it.get("file_count"),
+            owner=it.get("owner"),
+            summary=it.get("last_summary"),
         )
         for it in raw_items
     ]

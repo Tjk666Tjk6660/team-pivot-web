@@ -101,6 +101,23 @@ def test_list_matters_no_filters():
     )
 
 
+def test_list_matters_surfaces_owner_and_summary():
+    # Backend returns owner + last_summary; without these in the schema the AI
+    # has to call get_matter per item just to judge relevance — N+1 fan-out.
+    client = MagicMock(spec=MatterApiClient)
+    client.list_matters.return_value = [
+        {
+            "id": "auth", "title": "Auth Redesign",
+            "current_status": "executing",
+            "updated_at": "2026-04-23T10:00:00+08:00", "file_count": 5,
+            "owner": "zhouhang", "last_summary": "梳理重定向死循环",
+        },
+    ]
+    out = tool_list_matters({}, client)
+    assert out["items"][0]["owner"] == "zhouhang"
+    assert out["items"][0]["summary"] == "梳理重定向死循环"
+
+
 from server.mcp.tools import tool_get_matter, tool_read_files
 
 
@@ -117,6 +134,36 @@ def test_get_matter_strips_bodies():
     out = tool_get_matter({"matter_id": "a"}, client)
     assert "body" not in out["timeline"][0]
     assert out["timeline"][0]["file"] == "001.md"
+
+
+def test_get_matter_preserves_comments():
+    # Backend renders comments[] with author_display / mentions_display per
+    # item; the MCP schema must declare it or pydantic silently drops them
+    # (extra='ignore' default), and the AI loses every conversational reply.
+    client = MagicMock(spec=MatterApiClient)
+    client.get_matter.return_value = {
+        "matter": {"id": "a", "title": "T", "current_status": "x", "updated_at": ""},
+        "timeline": [
+            {
+                "file": "001.md", "type": "think", "summary": "s1",
+                "created_at": "", "creator": "u", "owner": "u",
+                "comments": [
+                    {
+                        "author": "v", "author_display": "Victor",
+                        "body": "解析已加",
+                        "mentions": ["u"], "mentions_display": ["User"],
+                        "created_at": "2026-04-23T10:00:00+08:00",
+                    },
+                ],
+            },
+        ],
+    }
+    out = tool_get_matter({"matter_id": "a"}, client)
+    comments = out["timeline"][0]["comments"]
+    assert len(comments) == 1
+    assert comments[0]["author_display"] == "Victor"
+    assert comments[0]["body"] == "解析已加"
+    assert comments[0]["mentions_display"] == ["User"]
 
 
 def test_get_matter_accepts_owner_change_event():
