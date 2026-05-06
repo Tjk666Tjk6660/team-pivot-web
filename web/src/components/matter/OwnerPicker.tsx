@@ -10,15 +10,15 @@ import { cn } from "@/lib/utils";
 export function OwnerPicker({
   value,
   onChange,
-  sessionOpenId,
+  sessionPivotUserId,
   sessionName,
   displayName,
   placeholder = "选择执行人",
   dropdownMode = "portal",
 }: {
   value: string;
-  onChange: (openId: string, displayName: string) => void;
-  sessionOpenId: string;
+  onChange: (pivotUserId: string, displayName: string) => void;
+  sessionPivotUserId: string;
   sessionName: string;
   displayName?: string;
   placeholder?: string;
@@ -106,13 +106,13 @@ export function OwnerPicker({
 
   const label = (() => {
     if (!value) return placeholder;
-    if (value === sessionOpenId) return `${sessionName}（= 你）`;
+    if (value === sessionPivotUserId) return `${sessionName}（= 你）`;
     if (displayName) return displayName;
     return value;
   })();
 
   const pickSelf = () => {
-    onChange(sessionOpenId, sessionName);
+    onChange(sessionPivotUserId, sessionName);
     setOpen(false);
   };
 
@@ -146,7 +146,7 @@ export function OwnerPicker({
             loading={loading}
             results={results}
             value={value}
-            sessionOpenId={sessionOpenId}
+            sessionPivotUserId={sessionPivotUserId}
             sessionName={sessionName}
             pickSelf={pickSelf}
             pickContact={pickUser}
@@ -171,7 +171,7 @@ export function OwnerPicker({
             loading={loading}
             results={results}
             value={value}
-            sessionOpenId={sessionOpenId}
+            sessionPivotUserId={sessionPivotUserId}
             sessionName={sessionName}
             pickSelf={pickSelf}
             pickContact={pickUser}
@@ -190,7 +190,7 @@ function OwnerPickerMenuContent({
   loading,
   results,
   value,
-  sessionOpenId,
+  sessionPivotUserId,
   sessionName,
   pickSelf,
   pickContact,
@@ -201,7 +201,7 @@ function OwnerPickerMenuContent({
   loading: boolean;
   results: PivotUserOption[];
   value: string;
-  sessionOpenId: string;
+  sessionPivotUserId: string;
   sessionName: string;
   pickSelf: () => void;
   pickContact: (contact: PivotUserOption) => void;
@@ -235,14 +235,14 @@ function OwnerPickerMenuContent({
           onClick={pickSelf}
           className={cn(
             "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--surface-alt)]",
-            value === sessionOpenId && "bg-[var(--accent-bg)]",
+            value === sessionPivotUserId && "bg-[var(--accent-bg)]",
           )}
         >
           <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--accent-bg)] text-[10px] font-semibold text-[var(--accent)]">
             你
           </span>
           <span className="text-[var(--text)]">{sessionName}</span>
-          {value === sessionOpenId && (
+          {value === sessionPivotUserId && (
             <span className="ml-auto text-xs text-[var(--accent)]">✓</span>
           )}
         </button>

@@ -405,7 +405,7 @@ export type NewMatterResponse = {
 export async function createMatter(body: {
   category: string;
   title: string;
-  owner_open_id?: string;
+  owner_pivot_user_id?: string;
   visibility?: VisibilityScope;
   new_category_visibility?: CategoryVisibilityScope;
   initial_file: InitialFileIn;

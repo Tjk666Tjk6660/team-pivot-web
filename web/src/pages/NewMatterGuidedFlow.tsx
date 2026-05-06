@@ -43,7 +43,7 @@ export type ClassicBridgeSnapshot = {
   title: string;
   category: string;
   docType: DocType;
-  matterOwner: { openId: string; name: string };
+  matterOwner: { pivotUserId: string; name: string };
   mentions: MentionBlock;
   categoryVisibility: CategoryVisibilityScope;
   matterVisibility: VisibilityScope;
@@ -117,7 +117,7 @@ type StepData = {
   docType: DocType;
   category: string;
   title: string;
-  matterOwner: { openId: string; name: string };
+  matterOwner: { pivotUserId: string; name: string };
   mentions: MentionBlock;
   categoryVisibility: CategoryVisibilityScope;
   matterVisibility: VisibilityScope;
@@ -130,7 +130,7 @@ const initialData = (me: Me): StepData => ({
   docType: "think",
   category: "",
   title: "",
-  matterOwner: { openId: me.open_id, name: me.name },
+  matterOwner: { pivotUserId: me.id, name: me.name },
   mentions: emptyMention(),
   categoryVisibility: PUBLIC_CATEGORY_VISIBILITY,
   matterVisibility: PUBLIC_VISIBILITY,
@@ -276,7 +276,7 @@ export function NewMatterGuidedFlow({
     matter_payload: {
       doc_type: data.docType,
       summary: data.summary.trim(),
-      matter_owner: data.matterOwner.openId,
+      matter_owner: data.matterOwner.pivotUserId,
       matter_owner_display: data.matterOwner.name,
       owner: me.open_id,
       owner_display: me.name,
@@ -302,7 +302,7 @@ export function NewMatterGuidedFlow({
       data.docType,
       data.category,
       data.title,
-      data.matterOwner.openId,
+      data.matterOwner.pivotUserId,
       data.matterOwner.name,
       data.mentions.open_ids.length,
       data.mentions.comments,
@@ -411,13 +411,13 @@ export function NewMatterGuidedFlow({
     recordUserAndAdvance(`标题：${trimmed}`, "owner");
   };
 
-  const submitOwner = (owner: { openId: string; name: string }) => {
+  const submitOwner = (owner: { pivotUserId: string; name: string }) => {
     setData((d) => ({ ...d, matterOwner: owner }));
-    recordUserAndAdvance(`责任人：${owner.name || owner.openId || "我"}`, "mentions");
+    recordUserAndAdvance(`责任人：${owner.name || owner.pivotUserId || "我"}`, "mentions");
   };
 
   const skipOwner = () => {
-    const self = { openId: me.open_id, name: me.name };
+    const self = { pivotUserId: me.id, name: me.name };
     setData((d) => ({ ...d, matterOwner: self }));
     recordUserAndAdvance("责任人：默认我自己", "mentions");
   };
@@ -647,10 +647,7 @@ export function NewMatterGuidedFlow({
       const r = await createMatter({
         category: data.category.trim(),
         title: data.title.trim(),
-        owner_open_id:
-          data.matterOwner.openId && data.matterOwner.openId !== me.open_id
-            ? data.matterOwner.openId
-            : undefined,
+        owner_pivot_user_id: data.matterOwner.pivotUserId || me.id,
         visibility: data.matterVisibility,
         new_category_visibility: isNewCategory
           ? data.categoryVisibility
@@ -988,7 +985,7 @@ function buildDraftPrompt(d: StepData, existingBody?: string): string {
     `- 类型：${d.docType}（think = 判断/方案，act = 推进一项行动）`,
     `- 种类：${d.category}`,
     `- 标题（用户已选）：${d.title}`,
-    `- Matter 责任人：${d.matterOwner.name || d.matterOwner.openId || "默认当前用户"}`,
+    `- Matter 责任人：${d.matterOwner.name || d.matterOwner.pivotUserId || "默认当前用户"}`,
     `- 用户想讨论的话题：${d.topic || (existingBody?.slice(0, 80) ?? "")}`,
   ];
   if (d.mentions.open_ids.length > 0) {
@@ -1036,7 +1033,7 @@ function buildBridgeBubbles(b: ClassicBridgeSnapshot): Bubble[] {
         `标题：${b.title}`,
         `种类：${b.category}`,
         `类型：${b.docType}`,
-        `责任人：${b.matterOwner.name || b.matterOwner.openId || "默认我自己"}`,
+        `责任人：${b.matterOwner.name || b.matterOwner.pivotUserId || "默认我自己"}`,
         b.mentions.open_ids.length > 0
           ? `圈了 ${b.mentions.open_ids.length} 人 · ${b.mentions.comments.trim()}`
           : "暂不圈人",
@@ -1303,18 +1300,18 @@ function OwnerStep({
   onSubmit,
   onSkip,
 }: {
-  value: { openId: string; name: string };
+  value: { pivotUserId: string; name: string };
   me: Me;
-  onSubmit: (v: { openId: string; name: string }) => void;
+  onSubmit: (v: { pivotUserId: string; name: string }) => void;
   onSkip: () => void;
 }) {
   const [local, setLocal] = useState(value);
   return (
     <div className="space-y-2">
       <OwnerPicker
-        value={local.openId}
-        onChange={(openId, name) => setLocal({ openId, name })}
-        sessionOpenId={me.open_id}
+        value={local.pivotUserId}
+        onChange={(pivotUserId, name) => setLocal({ pivotUserId, name })}
+        sessionPivotUserId={me.id}
         sessionName={me.name}
         displayName={local.name}
         dropdownMode="inline"
@@ -1332,7 +1329,7 @@ function OwnerStep({
           type="button"
           className="rounded-[var(--r-md)]"
           onClick={() => onSubmit(local)}
-          disabled={!local.openId}
+          disabled={!local.pivotUserId}
         >
           继续 →
         </Button>
@@ -1476,11 +1473,11 @@ function PreviewPanel({
       <PreviewRow label="标题" filled={reached("owner") && !!data.title}>
         {data.title || <Empty />}
       </PreviewRow>
-      <PreviewRow label="责任人" filled={reached("mentions") && !!data.matterOwner.openId}>
+      <PreviewRow label="责任人" filled={reached("mentions") && !!data.matterOwner.pivotUserId}>
         {!reached("mentions") ? (
           <Empty />
         ) : (
-          <span>{data.matterOwner.name || data.matterOwner.openId || "我"}</span>
+          <span>{data.matterOwner.name || data.matterOwner.pivotUserId || "我"}</span>
         )}
       </PreviewRow>
       <PreviewRow

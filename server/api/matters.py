@@ -124,9 +124,9 @@ class NewMatterBody(BaseModel):
     )
     title: str = Field(min_length=1, max_length=200)
     # Optional matter-level owner (distinct from initial_file.owner which is
-    # the file-level owner of the first think/act). Defaults to the creator
-    # when absent / equal to the creator's open_id.
-    owner_open_id: str | None = Field(default=None, max_length=50)
+    # the file-level owner of the first think/act). Carries pivot_user.id;
+    # defaults to the creator when absent / equal to creator's pivot_user_id.
+    owner_pivot_user_id: str | None = Field(default=None, max_length=50)
     visibility: dict | None = None
     new_category_visibility: dict | None = None
     initial_file: InitialFileIn
@@ -511,7 +511,7 @@ def build_router(
                 category=body.category,
                 title=body.title,
                 initial_item=initial,
-                matter_owner_open_id=body.owner_open_id,
+                matter_owner_pivot_user_id=body.owner_pivot_user_id,
                 notifier=notifier,
                 users=pivot_users,
                 pivot_users=pivot_users,
@@ -534,16 +534,16 @@ def build_router(
                 detail={"code": "ambiguous_mention", "ambiguities": e.ambiguities},
             ) from e
         except PublishError as e:
-            # publish_matter_create raises "matter owner not found: …" when the
-            # supplied owner_open_id can't be resolved. Translate to 422 with
-            # the canonical owner_unknown code.
+            # publish_matter_create raises "matter owner not found: …" when
+            # the supplied owner_pivot_user_id can't be resolved. Translate to
+            # 422 with the canonical owner_unknown code.
             msg = str(e)
             if msg.startswith("matter owner not found"):
                 raise HTTPException(
                     status_code=422,
                     detail={
                         "code": "owner_unknown",
-                        "field": "owner_open_id",
+                        "field": "owner_pivot_user_id",
                         "message": msg,
                     },
                 ) from e
@@ -577,7 +577,7 @@ def build_router(
             result = publish_matter_owner_change(
                 workspace, user,
                 matter_id=matter_id,
-                to_owner_open_id=body.to_owner,
+                to_owner_pivot_user_id=body.to_owner,
                 reason=body.reason,
                 status_change=sc_dict,
                 notifier=notifier,

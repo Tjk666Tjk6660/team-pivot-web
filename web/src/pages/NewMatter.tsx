@@ -147,9 +147,9 @@ function NewMatterClassicForm({
     body_source: initialSnapshot?.body ? "ai" : "manual",
     ...(initialSnapshot?.body ? { body_source_snapshot: initialSnapshot.body } : {}),
   });
-  const [matterOwner, setMatterOwner] = useState<{ openId: string; name: string }>(
+  const [matterOwner, setMatterOwner] = useState<{ pivotUserId: string; name: string }>(
     () => initialSnapshot?.matterOwner ?? ({
-      openId: me.open_id,
+      pivotUserId: me.id,
       name: me.name,
     }),
   );
@@ -189,7 +189,17 @@ function NewMatterClassicForm({
             : cats,
         );
 
-        if (initialSnapshot) return;
+        if (initialSnapshot) {
+          // Snapshot from guided flow may have empty category (user skipped
+          // that step). Without backfill the dropdown visually shows cats[0]
+          // but state stays "" → submit fails with 422 category-min-length.
+          if (!initialSnapshot.category && cats.length > 0) {
+            setCategory((current) => current || cats[0]);
+          } else if (cats.length === 0) {
+            setCategoryMode("create");
+          }
+          return;
+        }
 
         const proposalDrafts = drafts.filter(
           (d) => d.type === "proposal" && !d.thread_key,
@@ -215,14 +225,14 @@ function NewMatterClassicForm({
           const payload = (candidate.matter_payload ?? {}) as Record<string, unknown>;
           const dt = String(payload.doc_type ?? "");
           if (dt === "act" || dt === "think") setInitialType(dt);
-          const matterOwnerOpenId = String(payload.matter_owner ?? "");
-          if (matterOwnerOpenId) {
+          const matterOwnerPivotUserId = String(payload.matter_owner ?? "");
+          if (matterOwnerPivotUserId) {
             const matterOwnerName = String(payload.matter_owner_display ?? "");
             setMatterOwner({
-              openId: matterOwnerOpenId,
+              pivotUserId: matterOwnerPivotUserId,
               name:
                 matterOwnerName ||
-                (matterOwnerOpenId === me.open_id ? me.name : ""),
+                (matterOwnerPivotUserId === me.id ? me.name : ""),
             });
           }
           const ow = String(payload.owner ?? "");
@@ -332,7 +342,7 @@ function NewMatterClassicForm({
       body_md: body,
       matter_payload: {
         doc_type: initialType,
-        matter_owner: matterOwner.openId,
+        matter_owner: matterOwner.pivotUserId,
         matter_owner_display: matterOwner.name,
         ...(owner ? { owner, owner_display: ownerDisplayName } : {}),
         body_source: bodyState.body_source,
@@ -349,7 +359,7 @@ function NewMatterClassicForm({
     deps: [
       draftLoaded, isDirty, stage,
       title, category, body, initialType,
-      matterOwner.openId, matterOwner.name, owner, ownerDisplayName,
+      matterOwner.pivotUserId, matterOwner.name, owner, ownerDisplayName,
       bodyState.body_source, bodyState.body_source_snapshot,
       mentions.open_ids.length, mentions.comments,
       categoryVisibility.mode, categoryVisibility.authorized_roles.join("|"),
@@ -447,10 +457,7 @@ function NewMatterClassicForm({
       const r = await createMatter({
         category: category.trim(),
         title: title.trim(),
-        owner_open_id:
-          matterOwner.openId && matterOwner.openId !== me.open_id
-            ? matterOwner.openId
-            : undefined,
+        owner_pivot_user_id: matterOwner.pivotUserId || me.id,
         visibility,
         new_category_visibility:
           isNewCategory
@@ -753,11 +760,11 @@ function NewMatterClassicForm({
                 <div className="grid gap-2">
                   <Label>责任人</Label>
                   <OwnerPicker
-                    value={matterOwner.openId}
-                    onChange={(openId, name) => {
-                      setMatterOwner({ openId, name });
+                    value={matterOwner.pivotUserId}
+                    onChange={(pivotUserId, name) => {
+                      setMatterOwner({ pivotUserId, name });
                     }}
-                    sessionOpenId={me.open_id}
+                    sessionPivotUserId={me.id}
                     sessionName={me.name}
                     displayName={matterOwner.name}
                   />
@@ -812,11 +819,11 @@ function NewMatterClassicForm({
                       <Label>Owner（执行人 · 默认你自己）</Label>
                       <OwnerPicker
                         value={owner}
-                        onChange={(openId, name) => {
-                          setOwner(openId);
+                        onChange={(pivotUserId, name) => {
+                          setOwner(pivotUserId);
                           setOwnerDisplayName(name);
                         }}
-                        sessionOpenId={me.open_id}
+                        sessionPivotUserId={me.id}
                         sessionName={me.name}
                         displayName={ownerDisplayName}
                       />

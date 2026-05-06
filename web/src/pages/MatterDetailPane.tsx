@@ -1200,7 +1200,7 @@ export function MatterDetailPane() {
                         }
                   }
                   matterStatus={matter.current_status}
-                  sessionOpenId={sessionOpenId}
+                  sessionPivotUserId={sessionOpenId}
                   sessionName={sessionName || sessionOpenId}
                   timeline={timeline}
                   initial={pendingInitial ?? undefined}
@@ -1390,7 +1390,7 @@ export function MatterDetailPane() {
         <TransferOwnerDialog
           open={transferOpen}
           matter={data.matter}
-          sessionOpenId={sessionOpenId}
+          sessionPivotUserId={sessionOpenId}
           sessionName={sessionName}
           onClose={() => setTransferOpen(false)}
           onTransferred={(result) => {

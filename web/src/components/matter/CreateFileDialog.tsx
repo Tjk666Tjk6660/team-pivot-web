@@ -75,7 +75,7 @@ export type FormSnapshot = {
 
 function initialFormState(
   ctx: CreateFormContext,
-  sessionOpenId: string,
+  sessionPivotUserId: string,
   sessionName: string,
   actFiles: TimelineFileItem[],
   initial?: Partial<FormSnapshot>,
@@ -99,7 +99,7 @@ function initialFormState(
   return {
     summary: initial?.summary ?? "",
     body: initial?.body ?? "",
-    owner: initial?.owner ?? sessionOpenId,
+    owner: initial?.owner ?? sessionPivotUserId,
     ownerDisplayName: initial?.ownerDisplayName ?? sessionName,
     refer: initial?.refer ?? [],
     verifications: initial?.verifications ?? defaultVerifications,
@@ -115,7 +115,7 @@ function initialFormState(
 export function CreateFileForm({
   context,
   matterStatus,
-  sessionOpenId,
+  sessionPivotUserId,
   sessionName,
   timeline,
   onCancel,
@@ -132,7 +132,7 @@ export function CreateFileForm({
 }: {
   context: CreateFormContext;
   matterStatus: MatterStatus;
-  sessionOpenId: string;
+  sessionPivotUserId: string;
   sessionName: string;
   timeline: TimelineItem[];
   onCancel?: () => void;
@@ -166,7 +166,7 @@ export function CreateFileForm({
     [timeline],
   );
   const [form, setForm] = useState<FormState>(() =>
-    initialFormState(context, sessionOpenId, sessionName, actFiles, initial),
+    initialFormState(context, sessionPivotUserId, sessionName, actFiles, initial),
   );
   const [stage, setStage] = useState<"idle" | "generating" | "publishing">("idle");
   const [bodyEditorFullscreen, setBodyEditorFullscreen] = useState(false);
@@ -477,10 +477,10 @@ export function CreateFileForm({
         >
           <OwnerPicker
             value={form.owner}
-            onChange={(openId, name) =>
-              setForm((p) => ({ ...p, owner: openId, ownerDisplayName: name }))
+            onChange={(pivotUserId, name) =>
+              setForm((p) => ({ ...p, owner: pivotUserId, ownerDisplayName: name }))
             }
-            sessionOpenId={sessionOpenId}
+            sessionPivotUserId={sessionPivotUserId}
             sessionName={sessionName}
             displayName={form.ownerDisplayName}
           />
@@ -659,7 +659,7 @@ export function CreateFileForm({
 export function CreateFileDialog({
   open,
   matterStatus,
-  sessionOpenId,
+  sessionPivotUserId,
   sessionName,
   timeline,
   onClose,
@@ -667,7 +667,7 @@ export function CreateFileDialog({
 }: {
   open: boolean;
   matterStatus: MatterStatus;
-  sessionOpenId: string;
+  sessionPivotUserId: string;
   sessionName: string;
   timeline: TimelineItem[];
   onClose: () => void;
@@ -686,7 +686,7 @@ export function CreateFileDialog({
           <CreateFileForm
             context={{ kind: "page", type: "insight" }}
             matterStatus={matterStatus}
-            sessionOpenId={sessionOpenId}
+            sessionPivotUserId={sessionPivotUserId}
             sessionName={sessionName}
             timeline={timeline}
             onCancel={onClose}

@@ -22,14 +22,14 @@ import { OwnerChip } from "./OwnerChip";
 export function TransferOwnerDialog({
   open,
   matter,
-  sessionOpenId,
+  sessionPivotUserId,
   sessionName,
   onClose,
   onTransferred,
 }: {
   open: boolean;
   matter: MatterMeta;
-  sessionOpenId: string;
+  sessionPivotUserId: string;
   sessionName: string;
   onClose: () => void;
   onTransferred: (result: TransferMatterOwnerResponse) => void;
@@ -96,11 +96,11 @@ export function TransferOwnerDialog({
             </div>
             <OwnerPicker
               value={toOwner}
-              onChange={(openId, displayName) => {
-                setToOwner(openId);
+              onChange={(pivotUserId, displayName) => {
+                setToOwner(pivotUserId);
                 setToOwnerName(displayName);
               }}
-              sessionOpenId={sessionOpenId}
+              sessionPivotUserId={sessionPivotUserId}
               sessionName={sessionName}
               displayName={toOwnerName}
               placeholder="选择新的负责人"
