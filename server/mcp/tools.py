@@ -328,6 +328,8 @@ def tool_list_matters(payload: dict, client: MatterApiClient) -> dict:
         owner=input_.owner,
         q=input_.q,
     )
+    if input_.filter == "mine":
+        raw_items = [it for it in raw_items if _red_unread(it) > 0]
     items = [
         MatterListItem(
             id=it.get("id", ""),
@@ -341,6 +343,18 @@ def tool_list_matters(payload: dict, client: MatterApiClient) -> dict:
         for it in raw_items
     ]
     return ListMattersOut(items=items).model_dump(mode="json")
+
+
+def _red_unread(item: dict) -> int:
+    """Coerce backend's red_unread_count to a non-negative int; treat
+    missing / None / non-numeric as 0 so 'mine' never silently includes
+    a matter we can't confirm is relevant."""
+    value = item.get("red_unread_count")
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value if value > 0 else 0
+    return 0
 
 
 MAX_FILES_PER_READ = 5

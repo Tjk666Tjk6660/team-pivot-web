@@ -1075,3 +1075,76 @@ def test_list_matters_in_filter_accepts_mine():
 def test_list_matters_in_filter_rejects_unknown_value():
     with pytest.raises(Exception):  # pydantic ValidationError
         ListMattersIn.model_validate({"filter": "foo"})
+
+
+def _matter_dict(
+    *,
+    matter_id: str = "m1",
+    title: str = "T",
+    current_status: str = "executing",
+    red_unread_count: int | None = 0,
+) -> dict:
+    """Helper for raw backend matter rows."""
+    return {
+        "id": matter_id,
+        "title": title,
+        "current_status": current_status,
+        "updated_at": "2026-05-06T10:00:00+08:00",
+        "file_count": 1,
+        "owner": "yzy",
+        "last_summary": "s",
+        "red_unread_count": red_unread_count,
+    }
+
+
+def test_list_matters_filter_all_returns_everything():
+    client = MagicMock(spec=MatterApiClient)
+    client.list_matters.return_value = [
+        _matter_dict(matter_id="m1", red_unread_count=0),
+        _matter_dict(matter_id="m2", red_unread_count=3),
+    ]
+    out = tool_list_matters({"filter": "all"}, client)
+    assert [it["id"] for it in out["items"]] == ["m1", "m2"]
+
+
+def test_list_matters_filter_mine_keeps_only_red_unread_positive():
+    client = MagicMock(spec=MatterApiClient)
+    client.list_matters.return_value = [
+        _matter_dict(matter_id="m1", red_unread_count=0),
+        _matter_dict(matter_id="m2", red_unread_count=3),
+        _matter_dict(matter_id="m3", red_unread_count=1),
+    ]
+    out = tool_list_matters({"filter": "mine"}, client)
+    assert [it["id"] for it in out["items"]] == ["m2", "m3"]
+
+
+def test_list_matters_filter_mine_treats_missing_or_null_as_zero():
+    """Defensive: old indexes may not have red_unread_count; treat as 0
+    so we never silently include an item that may or may not be relevant."""
+    client = MagicMock(spec=MatterApiClient)
+    raw_no_field = _matter_dict(matter_id="m1", red_unread_count=2)
+    raw_no_field.pop("red_unread_count")
+    client.list_matters.return_value = [
+        raw_no_field,
+        _matter_dict(matter_id="m2", red_unread_count=None),
+        _matter_dict(matter_id="m3", red_unread_count=2),
+    ]
+    out = tool_list_matters({"filter": "mine"}, client)
+    assert [it["id"] for it in out["items"]] == ["m3"]
+
+
+def test_list_matters_filter_mine_combines_with_status_via_backend():
+    """status is forwarded to the backend; the MCP layer only adds the mine
+    filter on top of the already-narrowed result. Both must hold."""
+    client = MagicMock(spec=MatterApiClient)
+    client.list_matters.return_value = [
+        _matter_dict(matter_id="m1", current_status="executing", red_unread_count=0),
+        _matter_dict(matter_id="m2", current_status="executing", red_unread_count=4),
+    ]
+    out = tool_list_matters(
+        {"filter": "mine", "status": "executing"}, client,
+    )
+    client.list_matters.assert_called_once_with(
+        status="executing", owner=None, q=None,
+    )
+    assert [it["id"] for it in out["items"]] == ["m2"]
