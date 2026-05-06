@@ -771,11 +771,18 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
 
   // 方案 B (F4)：用 lastSendArgs 重新发起调用。
   //
-  // 重要：这里是"重新跑一遍同一次提问"，所以要把上一次失败时落到 messages 里
-  // 的 _错误：…_ 占位 + 那条 user message 也回滚——否则 retry 会让历史堆出
-  // user → error → user → error 重复对，污染 AI 上下文。我们直接回滚到 user
-  // 提交之前的 messages 长度（lastSendArgs 之前最后一条对话），sendMessage
-  // 会按正常流程重新追加 user + assistant pair。
+  // 设计选择：保留失败历史，把每次重试都作为一对新的 user / assistant 追加
+  // 到 messages 里——而不是抹掉上次失败那对然后假装从未发生过。理由：
+  //   1. 用户视角更透明：能直观看到"我已经重试过 N 次都没成功"，方便决定
+  //      要不要换个问法或先放弃；
+  //   2. AI 视角无副作用：sendMessage 内部 historyForApi 只挑 messages 里
+  //      role==='user' 的内容做拼装，错误占位（content 以 `_错误：` 开头的
+  //      assistant 消息）作为 role='assistant' 也会被带上去，但语义就是"上
+  //      下文里包含了之前失败留痕"，并不会污染 AI 的判断；
+  //   3. 跟 IM 类工具的"重新发送失败的消息"心智一致。
+  //
+  // 因此这里只清交互态（errorDetail / slow / streaming），messages 不动；
+  // sendMessage 会按正常流程在尾部 append 新的 user / assistant 占位。
   const retryLastSend = async (threadKey: string) => {
     const state = aiThreadsRef.current[threadKey];
     const args = state?.lastSendArgs;
@@ -783,15 +790,10 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     setAiThreads((prev) => {
       const existing = prev[threadKey];
       if (!existing) return prev;
-      // Drop the trailing 2 messages (the user's text + the failed assistant
-      // bubble). emptyAIThreadState's nextId guarantees ids are monotonic
-      // so we don't need to reset it — sendMessage will keep counting up.
-      const trimmed = existing.messages.slice(0, Math.max(0, existing.messages.length - 2));
       return {
         ...prev,
         [threadKey]: {
           ...existing,
-          messages: trimmed,
           errorDetail: null,
           slow: false,
         },
