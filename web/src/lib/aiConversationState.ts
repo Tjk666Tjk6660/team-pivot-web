@@ -1,5 +1,9 @@
 import type { ChatMessage } from "@/api";
 
+/** Minimum shape needed by `mergeLoadedAIConversation` / `setAIReplyTarget`.
+ * Callers may extend this with extra fields (e.g. Dashboard's `slow`,
+ * `errorDetail`, `lastSendArgs`); the helpers preserve those via the
+ * generic `T extends AIConversationThreadState<...>`. */
 export type AIConversationThreadState<TMessage extends ChatMessage> = {
   loaded: boolean;
   loading: boolean;
@@ -15,10 +19,13 @@ export type LoadedAIConversation = {
   reply_target: string | null;
 };
 
-export function mergeLoadedAIConversation<TMessage extends ChatMessage>(
-  existing: AIConversationThreadState<TMessage>,
+export function mergeLoadedAIConversation<
+  TMessage extends ChatMessage,
+  T extends AIConversationThreadState<TMessage>,
+>(
+  existing: T,
   conversation: LoadedAIConversation,
-): AIConversationThreadState<TMessage> {
+): T {
   const mapped = conversation.messages.map((m, idx) => ({
     ...m,
     id: idx + 1,
@@ -34,11 +41,14 @@ export function mergeLoadedAIConversation<TMessage extends ChatMessage>(
   };
 }
 
-export function setAIReplyTarget<TMessage extends ChatMessage>(
-  existing: AIConversationThreadState<TMessage>,
+export function setAIReplyTarget<
+  TMessage extends ChatMessage,
+  T extends AIConversationThreadState<TMessage>,
+>(
+  existing: T,
   replyTarget: string | null,
 ): {
-  state: AIConversationThreadState<TMessage>;
+  state: T;
   changed: boolean;
 } {
   if (existing.replyTarget === replyTarget) {

@@ -65,7 +65,12 @@ export function AIPane({
   const isNewMatter = mode === "new-matter";
   const { ai } = useDashboard();
   const state = ai.getThreadState(threadKey);
-  const { messages, replyTarget, input, streaming, loading, loaded } = state;
+  const {
+    messages, replyTarget, input, streaming, loading, loaded,
+    // 方案 B 五态扩展。slow 由服务端 heartbeat 驱动；errorDetail 由 AIChatError
+    // 持久化，retryable=true 时把"重试"按钮亮起来。
+    slow, errorDetail,
+  } = state;
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -279,6 +284,71 @@ export function AIPane({
             <span className="truncate font-mono text-[11px]">
               {replyTarget.split("/").pop() ?? replyTarget}
             </span>
+          </div>
+        </div>
+      )}
+
+      {/* 方案 B (F2)：服务端 heartbeat 触发的"AI 响应较慢"提示。streaming
+          状态下才显示，避免空闲态误报。 */}
+      {streaming && slow && !errorDetail && (
+        <div
+          className="shrink-0 rounded-[var(--r-sm)] px-3 py-2 text-[11.5px]"
+          style={{
+            border:
+              "1px solid color-mix(in srgb, var(--warn-500) 35%, var(--line))",
+            background:
+              "color-mix(in srgb, var(--warn-500) 10%, var(--surface))",
+            color: "var(--warn-600)",
+          }}
+        >
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+            <span className="font-semibold">AI 响应较慢，可继续等待或停止</span>
+          </div>
+        </div>
+      )}
+
+      {/* 方案 B (F4)：失败时的错误条 + 一键重试。retryable=false 的错误（auth /
+          parse_error）只显示原因，不给重试。 */}
+      {errorDetail && !streaming && (
+        <div
+          className="shrink-0 rounded-[var(--r-sm)] px-3 py-2 text-[12px]"
+          style={{
+            border:
+              "1px solid color-mix(in srgb, var(--error-500, #d33) 35%, var(--line))",
+            background:
+              "color-mix(in srgb, var(--error-500, #d33) 8%, var(--surface))",
+            color: "var(--error-600, #b22)",
+          }}
+        >
+          <div className="flex items-start gap-2">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="font-semibold">AI 调用失败</div>
+              <div className="mt-1 leading-relaxed">
+                {errorDetail.message}
+                {errorDetail.code && errorDetail.code !== "unknown" && (
+                  <span
+                    className="ml-1 font-mono text-[11px]"
+                    style={{ color: "var(--text-fade)" }}
+                  >
+                    [{errorDetail.code}
+                    {errorDetail.status ? ` ${errorDetail.status}` : ""}]
+                  </span>
+                )}
+              </div>
+              {errorDetail.retryable && (
+                <Button
+                  size="sm"
+                  variant="default"
+                  className="mt-2 h-7 rounded-[var(--r-sm)] px-3 text-[12px] font-semibold shadow-none"
+                  onClick={() => void ai.retryLastSend(threadKey)}
+                  disabled={blockedByOtherThread}
+                >
+                  重试
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       )}
