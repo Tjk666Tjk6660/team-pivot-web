@@ -79,11 +79,33 @@ class MatterEvent:
     matter_intent: str = ""            # 第一条 think.summary —— 这件事是干啥的、解决什么问题
     matter_prev_summary: str = ""      # 窗口之前最后一条 timeline.summary —— 上一步推到哪了
     matter_timeline_yaml: str = ""     # 完整 timeline 的精简 yaml(v0.4) —— 给 LLM 看 quote 链/状态推进/协作触发的原始 yaml 结构
+    # matter 顶层 owner(`matter.owner` from index) —— 个人日报"作为负责人"
+    # 角色化叙事用。空串 = matter 没有顶层 owner(老 matter / owner_change 之前)。
+    # 公司日报不读这个字段(它从 timeline_yaml 内部直接看 matter.owner),
+    # 所以新增此字段对公司日报数据流零影响。
+    matter_owner: str = ""
 
 
 # --------------------------------------------------------------------------- #
 # Aggregated per-user view                                                    #
 # --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class OwnedMatterDigest:
+    """A matter where I am the matter-level owner (matter.owner == self),
+    with today's activity digest. Used by personal-view narrative for
+    "作为 X 事项的负责人,今天推到 Y" sentences.
+
+    Only matters with at least one in-window event are included
+    (passive-idle owners aren't surfaced here — those are covered by
+    the company-view report).
+    """
+    matter_id: str
+    title: str
+    current_status: str             # planning/executing/paused/finished/cancelled/reviewed
+    prev_summary: str               # 窗口前最后一条 summary,空串 = matter 是新开的
+    today_events: tuple[MatterEvent, ...]   # 今天发生在该 matter 的事件(in-window only)
 
 
 @dataclass(frozen=True)
@@ -100,6 +122,10 @@ class UserActivity:
     status_changes_triggered: tuple[MatterEvent, ...]  # 自己创建的 + 带 status_change 的
     comments_given: tuple[MatterEventComment, ...]  # 自己写的评论(自己/别人文件)
     mentions_received: int
+    # NEW: matter.owner == self 的事项,今天有活动的清单。供个人日报 prompt
+    # 按事项分组叙事("作为 X 负责人推到 Y"),解决"按动作类型分桶"的局限。
+    # 默认空 tuple 保证向后兼容(测试里旧用例不传也不会爆)。
+    matters_as_owner: tuple[OwnedMatterDigest, ...] = ()
 
     @property
     def is_active(self) -> bool:
@@ -107,6 +133,7 @@ class UserActivity:
         return bool(
             self.file_creates or self.file_owns or self.verifications_given
             or self.comments_given or self.mentions_received
+            or self.matters_as_owner
         )
 
 

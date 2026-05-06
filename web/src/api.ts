@@ -1089,11 +1089,6 @@ export type DailyReportRunsPage = {
   total: number;
 };
 
-export type AdminNotifyConfig = {
-  chat_ids: string[];
-  open_ids: string[];
-};
-
 export type FeishuChat = {
   chat_id: string;
   name: string;
@@ -1253,23 +1248,16 @@ export async function fetchDailyReportRun(
   return (await r.json()) as DailyReportRunDetail;
 }
 
-export async function fetchAdminNotifyConfig(): Promise<AdminNotifyConfig> {
-  const r = await adminFetch(`${V2_BASE}/admin-notify`);
-  if (!r.ok) throw new Error(`admin-notify get failed: ${r.status}`);
-  return (await r.json()) as AdminNotifyConfig;
-}
-
-export async function updateAdminNotifyConfig(
-  body: AdminNotifyConfig,
-): Promise<void> {
-  const r = await adminFetch(`${V2_BASE}/admin-notify`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+export async function cancelDailyReportRun(runId: number): Promise<void> {
+  // POST /runs/{id}/cancel — 把卡住的 running run 强制标 failed。
+  // 后端是 conditional UPDATE,只对 status='running' 生效。404=run 不存在,
+  // 409=已是终态(前端应停 polling)。
+  const r = await adminFetch(`${V2_BASE}/runs/${runId}/cancel`, {
+    method: "POST",
   });
   if (!r.ok) {
     const d = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(d.detail || `admin-notify put failed: ${r.status}`);
+    throw new Error(d.detail || `cancel run failed: ${r.status}`);
   }
 }
 

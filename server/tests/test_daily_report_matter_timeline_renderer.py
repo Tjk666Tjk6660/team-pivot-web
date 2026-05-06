@@ -265,11 +265,14 @@ def test_comments_with_mentions_preserved():
     assert c["mentions"] == ["bob", "carol"]
 
 
-def test_comments_truncated_with_note():
+def test_all_comments_preserved_no_count_cap():
+    """评论不再按数量截断 —— 每条都进 yaml 喂给 LLM。
+    评论里常有拍板/@抛球/异议等关键决策信号,丢一条都可能让 LLM 漏掉
+    弧线。仅 body 超长时截断单条 body。"""
     comments = [
         {"author": f"u{i}", "body": f"评论 {i}", "mentions": [],
          "created_at": "2026-04-28T10:00:00+08:00"}
-        for i in range(5)
+        for i in range(20)
     ]
     rendered = render_matter_timeline_yaml(
         _matter(timeline=[
@@ -280,16 +283,14 @@ def test_comments_truncated_with_note():
             ),
         ]),
         _w(),
-        max_comments_per_item=3,
     )
     parsed = _parse(rendered)
     cs = parsed["timeline"][0]["comments"]
-    # 3 实际 + 1 _note
-    assert len(cs) == 4
+    # 全部 20 条都保留,没有 _note 占位
+    assert len(cs) == 20
     assert cs[0]["body"] == "评论 0"
-    assert cs[2]["body"] == "评论 2"
-    assert "_note" in cs[3]
-    assert "另 2 条评论省略" in cs[3]["_note"]
+    assert cs[19]["body"] == "评论 19"
+    assert all("_note" not in c for c in cs)
 
 
 def test_long_comment_body_truncated():

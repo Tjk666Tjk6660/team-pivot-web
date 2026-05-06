@@ -180,6 +180,25 @@ class JobsRepo:
                 tuple(params),
             )
 
+    def delete(self, job_id: int) -> bool:
+        """硬删:DELETE 该 job 行。
+
+        runs 表里的历史记录通过冗余的 `view` 字段自包含,即使 job 行不在了
+        也能完整查历史(见 db.py schema 注释)。所以 hard delete 是安全的:
+        不会破坏历史可见性,也不需要 cascade。
+
+        ⚠ 注意:本方法对**已归档**(legacy)的 job 同样有效,UI 重命名为
+        "删除任务"后,新流程不再产生 archived 状态,但老数据可能有,通过
+        admin 重新打开后再删依然走这条路径。
+
+        Returns True 当且仅当 DELETE 真删除了 1 行(job 之前存在)。
+        """
+        with self._db.connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM daily_report_jobs WHERE id=?", (job_id,),
+            )
+            return cur.rowcount > 0
+
     def update_status(self, job_id: int, status: JobStatus,
                       *, next_run_at: datetime | None | _Unset = _UNSET) -> None:
         """切换 active / paused / archived。

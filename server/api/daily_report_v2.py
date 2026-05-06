@@ -7,7 +7,7 @@
   GET    /jobs/{id}                单条详情
   PUT    /jobs/{id}                部分更新配置
   PUT    /jobs/{id}/status         切换 active / paused / archived
-  DELETE /jobs/{id}                软删(等同于 status=archived)
+  DELETE /jobs/{id}                硬删(从 daily_report_jobs 表 DELETE 该行,不可恢复)
   POST   /jobs/{id}/run-now        立即跑该 job 一次(后台 thread)
   GET    /jobs/{id}/runs           分页历史(time desc)
   GET    /runs/{run_id}            单条 run 详情(含 debug_json)
@@ -342,11 +342,14 @@ def build_router(
         job_id: int,
         _: User = Depends(current_user_cookie_only),
     ) -> dict:
-        """软删:status=archived,清 next_run_at。"""
-        job = jobs_repo.get(job_id)
-        if job is None:
+        """硬删:DELETE 该 job 行(不可恢复)。
+
+        历史 runs 通过冗余的 `view` 字段自包含,即使 job 行不在了也能完整
+        查历史(见 db.py schema 注释)。前端管理界面提示"不可恢复"。
+        """
+        ok = jobs_repo.delete(job_id)
+        if not ok:
             raise HTTPException(404, "job not found")
-        jobs_repo.update_status(job_id, "archived", next_run_at=None)
         return {"ok": True}
 
     # ------------------ run-now / manual-trigger ------------ #
@@ -487,6 +490,40 @@ def build_router(
         if run is None:
             raise HTTPException(404, "run not found")
         return _run_to_detail_out(run)
+
+    @router.post("/runs/{run_id}/cancel")
+    def cancel_run(
+        run_id: int,
+        _: User = Depends(current_user_cookie_only),
+    ) -> dict:
+        """强制把卡住的 running run 标为 failed。
+
+        触发后端是 daemon thread 跑的 LLM 调用,如果 LLM 端点 hang 整条
+        线程会卡死,run 永远 status=running。前端 polling 也跟着死循环。
+        本端点提供逃生口:**不强制 kill 线程**(daemon thread 进程退出
+        时自动回收),只标 DB 状态。前端拿到 status=failed 就能停 polling。
+
+        线程后续如果还能完成,`runs_repo.finish` 加了 status='running'
+        守卫,迟到的回调不会覆盖 cancel 结果。
+        """
+        run = runs_repo.get(run_id)
+        if run is None:
+            raise HTTPException(404, "run not found")
+        if run.status != "running":
+            raise HTTPException(
+                409, f"cannot cancel run in status={run.status} (already finished)"
+            )
+        ok = runs_repo.cancel(run_id, reason="manually cancelled by admin")
+        if not ok:
+            # 极小概率:get() 看到 running 但 cancel() 时已被合法 finish 抢先
+            # 完成。再 get 一次给客户端真实状态。
+            run = runs_repo.get(run_id)
+            raise HTTPException(
+                409,
+                f"run finished before cancel took effect "
+                f"(status={run.status if run else 'unknown'})"
+            )
+        return {"ok": True, "run_id": run_id}
 
     # ------------------ admin notify config ---------------- #
 

@@ -4,9 +4,17 @@ v0.2 dengke #013 主张两份独立报告,**两张独立卡片**,共用 _card_sh
 
 Phase 3 实现公司视角卡 `build_company_card`;
 Phase 4 实现个人视角卡 `build_personal_card`。
+
+格式层后处理(2026-05-06 演示反馈):
+- 删除 "整体节奏" 那一行(老板视为多余的主观判断)
+- 方向段标题"第X是 Y 方向"渲染成 bold + 编号 emoji,与正文加视觉区分
+- 子段标题(以 —— 结尾)下若有 ≥2 行事项,逐行加 "- " 前缀变成 markdown
+  bullet list,提升层次感
+内容(LLM 输出本身)零改动,只是渲染层加视觉装饰。
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 from server.daily_report.company_narrate import CompanyNarrative
@@ -16,6 +24,106 @@ from server.daily_report.personal_narrate import (
 )
 from server.daily_report.shared_facts import SharedFacts
 from server.notify import _card_shell
+
+_ORDINAL_TO_EMOJI = {
+    "一": "1️⃣", "二": "2️⃣", "三": "3️⃣", "四": "4️⃣", "五": "5️⃣",
+    "六": "6️⃣", "七": "7️⃣", "八": "8️⃣", "九": "9️⃣", "十": "🔟",
+}
+
+# 方向段开头匹配:"第X是 Y。" + 可选剩余内容(可能是子段标题)。
+# 匹配中文序号一/二/三...,方向名(到第一个句号 "。" 为止),句号后剩余文字。
+# 注意:不要求方向名以"方向"二字结尾 —— LLM 偶尔写"第二是 enclaws 与
+# OPC 项目底座。" 没带"方向"二字也合法,识别为方向段标题。
+_DIRECTION_HEADER_RE = re.compile(
+    r"^第([一二三四五六七八九十])是\s*(.+?)。\s*(.*)$"
+)
+
+
+def _format_company_summary_for_card(text: str) -> str:
+    """格式层后处理 LLM 输出的公司视角叙事,加视觉层次。
+
+    内容(每个 matter 的事实陈述、跨度判断、把关人具名等)零改动。
+
+    转换规则:
+    1. 方向段开头"第X是 Y 方向。剩余" → 单独一行 **emoji Y 方向**,
+       剩余内容(可能含子段标题)放下一段
+    2. 子段标题(以 —— 结尾)下方紧跟的多行事项(到空行截止),**当行数 ≥ 2
+       时**逐行加 "- " 前缀。≤1 行的(≤3 matter 串接子段)不加,因为
+       单点 bullet 没意义。
+    3. 不是子段事项的普通段落(开头 / 结尾收束句)不动。
+    """
+    lines = text.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # ---- 方向段标题 ----
+        m = _DIRECTION_HEADER_RE.match(stripped)
+        if m:
+            ord_zh, direction, rest = m.groups()
+            emoji = _ORDINAL_TO_EMOJI.get(ord_zh, "▪️")
+            out.append(f"**{emoji} {direction}**")
+            i += 1
+            # 剩余内容(可能是子段头或起始描述)放下一段
+            if rest:
+                out.append("")
+                if _is_subsection_header(rest.rstrip()):
+                    # 子段头用 bold 与正文加视觉区分
+                    out.append(f"**{rest.rstrip()}**")
+                    i, block_lines = _collect_block(lines, i)
+                    out.extend(_bulletize_if_multi(block_lines))
+                else:
+                    out.append(rest)
+            continue
+
+        # ---- 子段标题(全角 ":" 结尾) ----
+        # prompt 已规定子段头统一用全角 ":",渲染层把整行加粗,与正文区分。
+        if _is_subsection_header(stripped):
+            out.append(f"**{line.rstrip()}**")
+            i += 1
+            i, block_lines = _collect_block(lines, i)
+            out.extend(_bulletize_if_multi(block_lines))
+            continue
+
+        # ---- 普通行 ----
+        out.append(line)
+        i += 1
+
+    return "\n".join(out)
+
+
+def _is_subsection_header(stripped: str) -> bool:
+    """子段标题判定:**只看全角中文冒号 ":" (U+FF1A)**。
+
+    Captain 反馈 "——" 看着怪,且半角 ":" 在中文叙事里几乎不出现。
+    prompt 已统一要求子段头用 "几项 X:",渲染层只识别这一种,简单干净。
+    """
+    if not stripped:
+        return False
+    return stripped.endswith("：")  # U+FF1A only
+
+
+def _collect_block(lines: list[str], start: int) -> tuple[int, list[str]]:
+    """从 start 起收集连续非空行,直到遇到空行或文件结束。返回新 i 和块。"""
+    block: list[str] = []
+    i = start
+    while i < len(lines) and lines[i].strip():
+        block.append(lines[i])
+        i += 1
+    return i, block
+
+
+def _bulletize_if_multi(block: list[str]) -> list[str]:
+    """块行数 ≥ 2 时,每行加 "- " 前缀;≤ 1 行时原样返回。
+
+    ≤ 1 行的情况通常是 ≤3 matter 子段(LLM 用句号/分号在同一段串接),
+    单点 bullet 没意义反而难看。
+    """
+    if len(block) < 2:
+        return block
+    return [f"- {b.strip()}" for b in block]
 
 
 # --------------------------------------------------------------------------- #
@@ -31,12 +139,12 @@ def build_company_card(facts: SharedFacts, narrative: CompanyNarrative) -> dict:
       template:blue(AI 成功)/ wathet(fallback / no_activity)
       body:
         覆盖窗口
-        团队总览(简短统计行)
-        公司视角叙事(主体段落)
-        tone 提示(active/steady/stalled 配色 emoji)
+        公司视角叙事(主体段落,经 _format_company_summary_for_card 加视觉层次)
         AI 缺席提示(仅 fallback 状态)
     """
     s = facts.summary
+    # tone 仍解析(影响 template 冷暖色),但不再渲染"整体节奏: X"那行文字
+    # —— 老板视其为多余的主观判断,直接陈述事实即可。
     template = "blue" if narrative.status == "ai" else "wathet"
     header = f"📊 公司日报 · {s.window.label}"
 
@@ -50,21 +158,12 @@ def build_company_card(facts: SharedFacts, narrative: CompanyNarrative) -> dict:
     # 注:不再渲染"📈 团队总览"统计行 —— 老板不爱看僵硬的统计数字,
     # 真正有价值的"5 人 / 4 个事项"等业务数字由 narrative 收尾段自己写。
 
-    # 整体定性 emoji(状态可视化)
-    tone_emoji = {
-        "active": "🚀",
-        "steady": "🌊",
-        "stalled": "⚠️",
-    }.get(narrative.tone, "")
-    tone_label = {
-        "active": "积极推进",
-        "steady": "平稳推进",
-        "stalled": "偏停滞",
-    }.get(narrative.tone, narrative.tone)
-
-    parts.append(f"**{tone_emoji} 整体节奏:{tone_label}**")
-    parts.append("")
-    parts.append(narrative.summary)
+    if narrative.status == "ai":
+        # 后处理给方向标题 / 子段事项加视觉层次
+        parts.append(_format_company_summary_for_card(narrative.summary))
+    else:
+        # fallback / no_activity 状态下 summary 是一句固定统计,不需要后处理
+        parts.append(narrative.summary)
 
     # Fallback 提示
     if narrative.status == "fallback":
@@ -121,10 +220,19 @@ def build_personal_card(facts: SharedFacts, narrative: PersonalNarrative) -> dic
     else:
         parts.append("**👥 团队动态**")
         for e in active:
-            parts.append(f"· **{e.display_name}**:{e.narrative}")
+            # 显示 pinyin 而非 display_name —— 与公司日报 / company prompt
+            # "人名一律 pinyin"口径一致(见 memory: feedback_daily_report_use_pinyin_only)。
+            # display_name 是飞书名(如"Captain"),会和叙述里的 pinyin
+            # 引用("huangshengli 推进...")混排,造成同一人两种名字感觉别扭。
+            #
+            # 用 "- " 列表前缀(markdown bullet list)而不是 "·"(普通中点字符)。
+            # 飞书卡片会把 "- " 行渲染成真正的列表,左侧实心圆点 +
+            # 缩进对齐,视觉层次明显;"·" 只是文字字符,挤在一起没层次感。
+            parts.append(f"- **{e.pinyin}**: {e.narrative}")
         if inactive:
-            names = "、".join(e.display_name for e in inactive)
-            parts.append(f"· {NO_ACTIVITY_NARRATIVE}:{names}")
+            names = "、".join(e.pinyin for e in inactive)
+            # inactive 行用 italic 与 active 区分(还是 - 前缀维持列表整齐)
+            parts.append(f"- _{NO_ACTIVITY_NARRATIVE}_: {names}")
 
     if narrative.status == "fallback":
         parts.append("")

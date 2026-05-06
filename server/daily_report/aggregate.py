@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from server.daily_report.types import (
     MatterEvent,
+    OwnedMatterDigest,
     TeamSummary,
     TimeWindow,
     UserActivity,
@@ -42,12 +43,16 @@ def aggregate(
     The returned UserActivity list includes EVERY user with a pinyin —
     inactive users land with empty arrays so the renderer can list them
     in the "今日 0 活动" bucket. Sorting is the caller's job."""
+    # 一次性把 events 按 matter 分桶,_build_user_activity 用得着 + 后面构造
+    # OwnedMatterDigest 也用得着,避免每个 user 都重新分桶一遍。
+    events_by_matter = _group_events_by_matter(matter_events)
+
     activities: list[UserActivity] = []
     inactive_names: list[str] = []
 
     eligible_users = [u for u in all_users if u.pinyin]
     for user in eligible_users:
-        ua = _build_user_activity(user, matter_events)
+        ua = _build_user_activity(user, matter_events, events_by_matter)
         activities.append(ua)
         if not ua.is_active:
             inactive_names.append(ua.display_name)
@@ -60,6 +65,16 @@ def aggregate(
     return activities, summary
 
 
+def _group_events_by_matter(
+    events: list[MatterEvent],
+) -> dict[str, list[MatterEvent]]:
+    """Group events by matter_id, preserving original order."""
+    out: dict[str, list[MatterEvent]] = {}
+    for ev in events:
+        out.setdefault(ev.matter_id, []).append(ev)
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # Internals                                                                   #
 # --------------------------------------------------------------------------- #
@@ -68,6 +83,7 @@ def aggregate(
 def _build_user_activity(
     user: User,
     events: list[MatterEvent],
+    events_by_matter: dict[str, list[MatterEvent]],
 ) -> UserActivity:
     pinyin = user.pinyin
     assert pinyin is not None  # eligible_users filter guarantees
@@ -108,6 +124,8 @@ def _build_user_activity(
             if pinyin in c.mentions:
                 mentions_received += 1
 
+    matters_as_owner = _build_matters_as_owner(pinyin, events_by_matter)
+
     return UserActivity(
         pinyin=pinyin,
         display_name=user.name or pinyin,
@@ -117,7 +135,59 @@ def _build_user_activity(
         status_changes_triggered=tuple(status_changes_triggered),
         comments_given=tuple(comments_given),
         mentions_received=mentions_received,
+        matters_as_owner=matters_as_owner,
     )
+
+
+def _build_matters_as_owner(
+    pinyin: str,
+    events_by_matter: dict[str, list[MatterEvent]],
+) -> tuple[OwnedMatterDigest, ...]:
+    """For each matter where the user is owner (explicit or inferred) and
+    there's at least one in-window event, build a digest.
+
+    "Owner" judgment, in priority:
+      1. Explicit: `matter.owner` == pinyin (post-owner_change matters)
+      2. Inferred fallback: `matter.owner` is empty (legacy matter where
+         owner_change feature wasn't yet adopted) AND the user authored at
+         least one in-window file in that matter. The pragmatic assumption:
+         老 matter 缺失 owner 字段时,真实负责人就是当下还在该事项里下场
+         写文件的人。比起"丢失整个事项",误归一两条更可接受。
+
+    "In-window" means: the matter has at least one MatterEvent (which by
+    construction in collect_matter only emits events where file is in window
+    or there's an in-window comment). So presence in events_by_matter ==
+    today activity.
+    """
+    digests: list[OwnedMatterDigest] = []
+    for matter_id, evs in events_by_matter.items():
+        if not evs:
+            continue
+        # All events of one matter share the same matter-level metadata,
+        # so reading any event's matter_owner / matter_title / etc. works.
+        first = evs[0]
+        is_owner = False
+        if first.matter_owner:
+            # Explicit owner — only match if it's me
+            if first.matter_owner == pinyin:
+                is_owner = True
+        else:
+            # Legacy matter without owner field — fall back to "did self
+            # author any in-window file in this matter"
+            is_owner = any(
+                ev.file_in_window and ev.creator == pinyin
+                for ev in evs
+            )
+        if not is_owner:
+            continue
+        digests.append(OwnedMatterDigest(
+            matter_id=matter_id,
+            title=first.matter_title,
+            current_status=first.matter_current_status,
+            prev_summary=first.matter_prev_summary,
+            today_events=tuple(evs),
+        ))
+    return tuple(digests)
 
 
 def _build_team_summary(

@@ -60,6 +60,7 @@ def _scan_one_matter(path: Path, window: TimeWindow) -> list[MatterEvent]:
     matter_id = str(matter.get("id") or path.stem.replace(".index", ""))
     matter_title = str(matter.get("title") or matter_id)
     matter_status = str(matter.get("current_status") or "")
+    matter_owner = str(matter.get("owner") or "")
     timeline = data.get("timeline") or []
     matter_intent = _derive_intent(timeline)
     matter_prev_summary = _derive_prev_summary(timeline, window)
@@ -73,6 +74,7 @@ def _scan_one_matter(path: Path, window: TimeWindow) -> list[MatterEvent]:
             matter_id=matter_id,
             matter_title=matter_title,
             matter_status=matter_status,
+            matter_owner=matter_owner,
             matter_intent=matter_intent,
             matter_prev_summary=matter_prev_summary,
             matter_timeline_yaml=matter_timeline_yaml,
@@ -122,6 +124,7 @@ def _convert_item(
     matter_id: str,
     matter_title: str,
     matter_status: str,
+    matter_owner: str,
     matter_intent: str,
     matter_prev_summary: str,
     matter_timeline_yaml: str,
@@ -185,6 +188,7 @@ def _convert_item(
         matter_intent=matter_intent,
         matter_prev_summary=matter_prev_summary,
         matter_timeline_yaml=matter_timeline_yaml,
+        matter_owner=matter_owner,
         file=file_path,
         file_type=file_type,
         created_at=ev_dt,
