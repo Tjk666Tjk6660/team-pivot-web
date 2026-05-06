@@ -212,6 +212,60 @@ def test_mark_all_read_for_file_idempotent_on_already_read_rows(repo):
     assert n2 == 0
 
 
+# ---------- mark_matter_events_read ----------
+
+
+def test_mark_matter_events_read_clears_only_matter_event_rows(repo):
+    """只清 filename='' 的 matter 级事件行,不动文件级行。"""
+    repo.insert_matter_event(
+        "ou_a", "m-x",
+        reason="matter_owner_changed",
+        event_at="2026-04-29T10:00:00+08:00", actor_pinyin="bob",
+    )
+    repo.insert_mention(
+        "ou_a", "m-x", "01.md",
+        comment_at="2026-04-29T11:00:00+08:00", actor_pinyin="bob",
+    )
+    n = repo.mark_matter_events_read("ou_a", "m-x")
+    assert n == 1
+    # 文件级 mention 行未受影响
+    assert repo.unread_breakdown_per_matter("ou_a") == {"m-x": (0, 1)}
+
+
+def test_mark_matter_events_read_idempotent(repo):
+    repo.insert_matter_event(
+        "ou_a", "m-x",
+        reason="matter_owner_changed",
+        event_at="2026-04-29T10:00:00+08:00", actor_pinyin="bob",
+    )
+    n1 = repo.mark_matter_events_read("ou_a", "m-x")
+    n2 = repo.mark_matter_events_read("ou_a", "m-x")
+    assert n1 == 1
+    assert n2 == 0
+
+
+def test_mark_matter_events_read_scoped_to_user_and_matter(repo):
+    repo.insert_matter_event(
+        "ou_a", "m-x",
+        reason="matter_owner_changed",
+        event_at="t1", actor_pinyin="bob",
+    )
+    repo.insert_matter_event(
+        "ou_b", "m-x",
+        reason="matter_owner_changed",
+        event_at="t1", actor_pinyin="bob",
+    )
+    repo.insert_matter_event(
+        "ou_a", "m-y",
+        reason="matter_owner_changed",
+        event_at="t2", actor_pinyin="bob",
+    )
+    n = repo.mark_matter_events_read("ou_a", "m-x")
+    assert n == 1
+    assert repo.unread_breakdown_per_matter("ou_a") == {"m-y": (0, 1)}
+    assert repo.unread_breakdown_per_matter("ou_b") == {"m-x": (0, 1)}
+
+
 # ---------- unread_breakdown_per_matter ----------
 
 

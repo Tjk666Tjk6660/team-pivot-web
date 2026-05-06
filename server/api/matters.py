@@ -242,6 +242,21 @@ def build_router(
             "first_read_at": _ts_to_iso(entry.first_read_at),
         }
 
+    @router.post("/matters/{matter_id}/events/read")
+    def mark_matter_events_read(
+        matter_id: str,
+        user: User = Depends(current_user),
+    ):
+        """Clear matter-level relevance event rows (e.g. owner_change) that
+        have no file to bind to. Triggered by OwnerChangeRow's visibility
+        observer on the frontend."""
+        if read_matter_index(
+            matter_index_path(workspace.index_dir, matter_id),
+        ) is None:
+            raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
+        cleared = relevance_repo.mark_matter_events_read(user.open_id, matter_id)
+        return {"matter_id": matter_id, "cleared": cleared}
+
     @router.post("/matters/{matter_id}/read")
     def mark_read(matter_id: str, user: User = Depends(current_user)):
         data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))

@@ -1,10 +1,52 @@
+import { useEffect, useRef } from "react";
 import { ArrowRight, UserRound } from "lucide-react";
-import type { TimelineOwnerChangeItem } from "@/api";
+import { markMatterEventsRead, type TimelineOwnerChangeItem } from "@/api";
+import { publishListRefresh } from "@/events/listRefresh";
 import { relativeTime } from "@/lib/time";
 
-export function OwnerChangeRow({ item }: { item: TimelineOwnerChangeItem }) {
+export function OwnerChangeRow({
+  item,
+  matterId,
+}: {
+  item: TimelineOwnerChangeItem;
+  matterId: string;
+}) {
+  // Matter-level relevance rows (filename='') don't get cleared by FileCard's
+  // read-mark side effect when no file becomes visible. Mark them as read
+  // when this row scrolls into view so the red badge actually clears.
+  // Backend dedupes (idempotent UPDATE), so no client-side guard needed.
+  const ref = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (
+            entry.isIntersecting &&
+            entry.intersectionRect.height >= 60
+          ) {
+            void markMatterEventsRead(matterId)
+              .then((r) => {
+                if (r.cleared > 0) publishListRefresh();
+              })
+              .catch(() => {});
+            observer.disconnect();
+            break;
+          }
+        }
+      },
+      { threshold: [0, 0.25, 0.5, 0.75, 1] },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [matterId]);
+
   return (
-    <article className="rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] p-4 shadow-[var(--shadow-sm)]">
+    <article
+      ref={ref}
+      className="rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] p-4 shadow-[var(--shadow-sm)]"
+    >
       <div className="flex flex-wrap items-center gap-2 text-sm text-[var(--text)]">
         {item.actor_avatar_url ? (
           <img

@@ -539,6 +539,24 @@ export async function markFileRead(
   return await r.json();
 }
 
+export async function markMatterEventsRead(
+  matterId: string,
+): Promise<{ matter_id: string; cleared: number }> {
+  const r = await fetch(
+    `/api/matters/${encodeURIComponent(matterId)}/events/read`,
+    { method: "POST", credentials: "include" },
+  );
+  if (!r.ok) {
+    await throwIfSessionExpired(r);
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    const detail = typeof d.detail === "string"
+      ? d.detail
+      : d.detail?.message || d.detail?.code || `mark matter events read failed: ${r.status}`;
+    throw new Error(detail);
+  }
+  return await r.json();
+}
+
 export async function setMatterFavorite(
   matterId: string,
   favorite: boolean,

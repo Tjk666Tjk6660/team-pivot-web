@@ -200,6 +200,25 @@ class RelevanceEventsRepo:
             )
             return cur.rowcount
 
+    def mark_matter_events_read(
+        self,
+        user_open_id: str,
+        matter_id: str,
+    ) -> int:
+        """Mark matter-level event rows (filename=MATTER_EVENT_FILENAME) as
+        read for (user, matter). Used when the user has seen the OwnerChangeRow
+        but hasn't read any file in the matter — the side-effect path on
+        `mark_all_read_for_file` only fires when a real file is read."""
+        now = time()
+        with self._db.connect() as conn:
+            cur = conn.execute(
+                "UPDATE relevance_events SET read_at = ?"
+                " WHERE user_open_id = ? AND matter_id = ?"
+                "   AND filename = ? AND read_at IS NULL",
+                (now, user_open_id, matter_id, MATTER_EVENT_FILENAME),
+            )
+            return cur.rowcount
+
     # ---------- aggregates ----------
 
     def unread_breakdown_per_matter(
