@@ -156,12 +156,12 @@ def build_router(
                 raise HTTPException(status_code=500, detail="binding_orphan")
             if user.status == "suspended":
                 return RedirectResponse(
-                    f"{post_login_redirect}login?reason=suspended",
+                    f"{post_login_redirect}?reason=suspended",
                     status_code=302,
                 )
             if user.status == "deleted":
                 return RedirectResponse(
-                    f"{post_login_redirect}login?reason=deleted",
+                    f"{post_login_redirect}?reason=deleted",
                     status_code=302,
                 )
             # 飞书最新头像 / 名字同步到 pivot_user，only-when-changed 避免每次
@@ -228,12 +228,12 @@ def build_router(
         if blocking is not None:
             if blocking.status == "pending":
                 return RedirectResponse(
-                    f"{post_login_redirect}login?reason=pending_approval",
+                    f"{post_login_redirect}?reason=pending_approval",
                     status_code=302,
                 )
             if blocking.status == "rejected":
                 return RedirectResponse(
-                    f"{post_login_redirect}login?reason=rejected",
+                    f"{post_login_redirect}?reason=rejected",
                     status_code=302,
                 )
 
@@ -257,7 +257,7 @@ def build_router(
                 admin_open_ids=admin_open_ids,
             )
         return RedirectResponse(
-            f"{post_login_redirect}login?reason=submitted",
+            f"{post_login_redirect}?reason=submitted",
             status_code=302,
         )
 
