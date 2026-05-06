@@ -96,6 +96,11 @@ export function VisibilityScopePicker({
     });
   }, [activeRole, allowUsers, allowedRoleSet, options, query]);
 
+  const openRoleChildren = (role: string) => {
+    setActiveRole(role);
+    setQuery("");
+  };
+
   const toggleRole = (role: string) => {
     const roles = draft.roles.includes(role)
       ? draft.roles.filter((item) => item !== role)
@@ -194,7 +199,7 @@ export function VisibilityScopePicker({
                       <button
                         type="button"
                         className="inline-flex items-center gap-1 text-xs text-[var(--accent)]"
-                        onClick={() => setActiveRole(item.role)}
+                        onClick={() => openRoleChildren(item.role)}
                       >
                         下级 <ChevronRight className="h-3.5 w-3.5" />
                       </button>
@@ -214,6 +219,11 @@ export function VisibilityScopePicker({
                     <span className="min-w-0 truncate text-sm">{item.display_name}</span>
                   </div>
                 ))}
+                {(activeRole || roleRows.length === 0) && (!allowUsers || userRows.length === 0) && (
+                  <div className="px-2 py-8 text-center text-sm text-[var(--text-mute)]">
+                    {activeRole ? "这个范围下暂无成员" : "没有匹配结果"}
+                  </div>
+                )}
               </div>
             </div>
             <div className="p-4">
