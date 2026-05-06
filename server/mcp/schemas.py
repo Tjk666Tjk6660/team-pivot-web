@@ -79,6 +79,17 @@ class ListMattersIn(BaseModel):
     status: str | None = None
     owner: str | None = None
     q: str | None = None
+    filter: Literal["all", "mine"] = Field(
+        default="all",
+        description=(
+            "Relevance filter for the calling user. 'mine' returns only "
+            "matters with red unread > 0 (i.e. you have unread file-level "
+            "relevance hits — owner_assigned / replies to your files / "
+            "verify of your work / activity in your matters / mentions of "
+            "you). 'mine' is NOT 'matters you created or own' — it tracks "
+            "unread, not authorship. Default 'all'."
+        ),
+    )
 
 
 class MatterListItem(BaseModel):

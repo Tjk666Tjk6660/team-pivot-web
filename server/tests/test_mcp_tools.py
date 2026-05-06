@@ -1055,3 +1055,23 @@ def test_create_matter_no_creator_skips_validation():
         "https://pivot",
     )
     assert out["ok"] is True
+
+
+# ---------- list_matters filter=mine ----------
+
+from server.mcp.schemas import ListMattersIn
+
+
+def test_list_matters_in_filter_defaults_to_all():
+    m = ListMattersIn.model_validate({})
+    assert m.filter == "all"
+
+
+def test_list_matters_in_filter_accepts_mine():
+    m = ListMattersIn.model_validate({"filter": "mine"})
+    assert m.filter == "mine"
+
+
+def test_list_matters_in_filter_rejects_unknown_value():
+    with pytest.raises(Exception):  # pydantic ValidationError
+        ListMattersIn.model_validate({"filter": "foo"})
