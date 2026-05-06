@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field
 
 from server.auth.feishu_oauth import FeishuOAuth, FeishuOAuthError
 from server.auth.session import SessionStore
-from server.contacts import ContactRepo
 from server.external_bindings import ExternalBindingRepo
 from server.join_applications import JoinApplicationRepo, compute_match_candidates
 from server.notify import Notifier
@@ -64,7 +63,6 @@ def build_router(
     bindings: ExternalBindingRepo,
     applications: JoinApplicationRepo,
     notifier: Notifier,
-    contacts: ContactRepo,
     session_secret: str,
     post_login_redirect: str = "/",
     secure_cookie: bool = False,
@@ -149,12 +147,6 @@ def build_router(
             info = oauth.get_user_info(token.access_token)
         except FeishuOAuthError as e:
             raise HTTPException(status_code=502, detail=str(e)) from e
-
-        # Always update contacts mirror — independent of binding state
-        contacts.upsert_from_login(
-            open_id=info.open_id, union_id=info.union_id,
-            name=info.name, avatar_url=info.avatar_url or "",
-        )
 
         binding = bindings.lookup(provider="feishu", external_id=info.open_id)
         if binding is not None:

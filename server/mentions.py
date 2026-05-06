@@ -8,11 +8,13 @@ The resolver is "direct-lookup with binding fallback" (see design §7.1):
      content written under the §7.1.1 storage contract (Task 19.5+).
   2. Fallback through `external_binding` for legacy frontmatter that still
      stores feishu open_id / union_id from before the migration.
-  3. Optional `contacts` fallback for external feishu users who never logged
-     in (we have a name + avatar from the contact-sync pull but no
-     pivot_user row).
-  4. Echo the original ref back with status='unknown' if nothing matches —
+  3. Echo the original ref back with status='unknown' if nothing matches —
      never throws.
+
+External feishu colleagues who never logged into Pivot used to render via
+a third-priority ``contacts`` fallback; that path is gone (contacts table
+is being retired). Such refs now display as their raw open_id with
+status='unknown'.
 
 The resolver memoises results within its lifetime; callers MUST call
 ``invalidate()`` after profile / status / binding changes so subsequent
@@ -24,7 +26,6 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 
-from server.contacts import ContactRepo
 from server.external_bindings import ExternalBindingRepo
 from server.pivot_users import PivotUserRepo
 
@@ -43,11 +44,9 @@ class DisplayResolver:
         self,
         pivot_users: PivotUserRepo,
         bindings: ExternalBindingRepo,
-        contacts: ContactRepo | None = None,
     ) -> None:
         self._pivot_users = pivot_users
         self._bindings = bindings
-        self._contacts = contacts
         self._cached = lru_cache(maxsize=2048)(self._resolve_uncached)
 
     def resolve(self, ref: str | None) -> DisplayInfo:
@@ -77,11 +76,6 @@ class DisplayResolver:
             u = self._pivot_users.get(binding.pivot_user_id)
             if u is not None:
                 return DisplayInfo(u.display_name, u.avatar_url, u.status)
-
-        if self._contacts is not None:
-            c = self._contacts.get_by_any_id(ref)
-            if c is not None:
-                return DisplayInfo(c.name, c.avatar_url or "", "unknown")
 
         return DisplayInfo(ref, "", "unknown")
 
