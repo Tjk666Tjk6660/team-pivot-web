@@ -37,6 +37,18 @@ _DROPPABLE_TYPES_ORDER = ("insight", "think")
 # File types that are core evidence and must NEVER be dropped.
 _CORE_TYPES = frozenset({"act", "verify", "result"})
 
+# Role hints rendered in each file item header so the AI can apply
+# 【评价范围限制】 (matter 005) consistently. think/act are evaluation
+# sources; verify is the evaluation endpoint about the *verified* file's
+# author; result/insight are background only.
+_FILE_TYPE_ROLE = {
+    "think":   "（核心：可发起评价）",
+    "act":     "（核心：可发起评价）",
+    "verify":  "（终点：作为对被验文件作者的事实证据）",
+    "result":  "（背景：不发起新评价，仅作 outcome 判断）",
+    "insight": "（背景：不发起新评价）",
+}
+
 
 class PromptTooLargeError(Exception):
     """Even after dropping all droppable items, prompt exceeds the budget."""
@@ -88,6 +100,38 @@ _SYSTEM_PROMPT_TEMPLATE = """\
 - 仅评分 matter.owner，本次为：{subject}
 - 其他人的发言只作为证据来源，不要为他们生成 score 行
 - scores 数组长度必须 ≤ 1；如果证据完全不足，scores 留空，将 {subject} 加入 skipped_subjects
+
+【评价对象识别规则（归因决策链）】
+v1 仍以 matter.owner 为评分对象，但下面的归因规则决定一条原文（评论 / verify 内容 /
+owner_change.reason）能否进入 owner 的评分证据池：
+
+  1. 评价者（comment author）== {subject} → 自我评价，**不入链**（即使 owner 在自己
+     文件下夸自己 / 自责，也跳过）
+  2. 文本中明确点名 / @ 了 owner 以外的人，并描述其工作行为 → 该证据**不归 owner**，
+     跳过（例：在 owner 的 think 下，lisi 评论"王五这次判断很准"，应跳过）
+  3. 否则 → 默认归被评论文件的作者；若该文件作者 == {subject} → 入链作为 owner 证据
+  4. 在他人（非 owner）的 think / act 下的泛泛评价（"做得不错"无明确指向） →
+     按"文件作者归因"，文件作者既不是 owner → 跳过
+  5. verify 文件的 verifications 内容是对"被 verify 文件作者"的评价；若被 verify 的
+     act 文件作者 == {subject}，入链；否则跳过
+
+【评价范围限制】
+- 可发起评价的来源：
+  · think / act 的 body 与 comments
+  · verify 的 verifications 内容
+  · owner_change.reason
+- 不发起新评价的来源：
+  · result / insight 仅作背景判断（如 result.outcome 用于 delivery 维度的事实层
+    判断）；**不要**从 result / insight 的 body 或 comments 抽出独立 evidence 条目
+- result.outcome 与 status_change 仍是事实层信号——通过事实层渠道影响评分，不需要
+  单独作为 evidence 列出
+
+【owner_change.reason 解析】
+- reason 含对 from_owner 工作质量的评价（如"前期推进不力"、"做得很好转给 X 推广"）
+  且 from_owner == {subject} → 入链
+- reason 是中性说明（"职责调整"、"人员变动"、"项目分流"） → 不入链
+- 当前 owner（{subject}）若是某次 owner_change 的 to_owner，那次 reason 通常描述的是
+  前任，不归 {subject}
 
 【双层证据模型】
 - 事实层（硬证据，来自 timeline 结构）：verify 是否 passed、result.outcome、
@@ -152,6 +196,7 @@ P3. 维度对两层证据的依赖度不同（见下表）
           "source_kind": "file",
           "source_filename": "003_lisi_verify_xxx.md",
           "source_file_type": "verify",
+          "source_file_creator": "lisi",
           "source_comment_created_at": null,
           "source_comment_author": null,
           "weight_applied": 1.0,
@@ -168,8 +213,12 @@ P3. 维度对两层证据的依赖度不同（见下表）
 - subject_pinyin 必须等于 {subject}
 - 每个非 null dimension 至少 1 条 evidence 指向该维度
 - source_filename 必须是我提供的 timeline 中真实存在的文件名（不要编造）
+- source_file_creator 应填写该文件的 creator pinyin（在每条 timeline 文件头里能看到）；
+  此字段用于自我评价检测，错填会被服务端拒收
 - evidence.quote 必须是原文截取（≤200 字符），不要改写
 - source_kind="comment" 时必填 source_comment_created_at + source_comment_author
+- evidence 不能违反【评价对象识别规则】：自我评价（comment author == {subject}）一律不入链；
+  正向 file 证据若 source_file_creator == {subject} 也不入链
 - 不评价私人态度，只评价工作行为
 """
 
@@ -265,8 +314,9 @@ def _render_file_item(
     creator_tag = _annotate_actor(creator, weight_map)
     owner_tag = _annotate_actor(owner, weight_map) if owner and owner != creator else ""
 
+    role_tag = _FILE_TYPE_ROLE.get(ftype, "")
     head = (
-        f"[文件 {seq:03d}] type={ftype}  filename={filename}\n"
+        f"[文件 {seq:03d}] type={ftype}{role_tag}  filename={filename}\n"
         f"  creator={creator_tag}"
     )
     if owner_tag:
