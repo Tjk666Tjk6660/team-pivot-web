@@ -19,6 +19,8 @@ import logging
 import sqlite3
 from typing import Awaitable, Callable
 
+import httpx
+
 from server.ai.client import DEFAULT_BASE_URL, DEFAULT_MODEL
 from server.ai.oneshot import AIError, generate_text
 from server.matter_index import matter_index_path, read_matter_index
@@ -48,7 +50,7 @@ _AI_KEY_API_KEY = "ai.openrouter_api_key"
 _AI_KEY_BASE_URL = "ai.base_url"
 _AI_KEY_MODEL = "ai.model"
 
-DEFAULT_TIMEOUT_SECONDS = 120.0
+DEFAULT_TIMEOUT_SECONDS = 180.0
 
 
 # ---------- queue ----------
@@ -301,6 +303,10 @@ def _run_scoring_once_inner(
 
     # 7. Call AI
     timeout = _load_timeout(settings)
+    log.info(
+        "scoring: calling AI matter=%s run=%s timeout=%.1fs model=%s",
+        job.matter_id, run_id, timeout, model,
+    )
     try:
         raw = ai_call(
             messages=messages,
@@ -309,18 +315,30 @@ def _run_scoring_once_inner(
             base_url=ai_settings.base_url,
             timeout_seconds=timeout,
         )
-    except (AIError, TimeoutError, asyncio.TimeoutError) as e:
+    except (AIError, TimeoutError, asyncio.TimeoutError, httpx.TimeoutException) as e:
+        log.error(
+            "scoring: AI failed matter=%s run=%s error=%s",
+            job.matter_id, run_id, repr(e),
+        )
         store.finish_run(
             run_id, "failed",
             error=f"ai_error: {type(e).__name__}: {str(e)[:200]}",
         )
         return
     except Exception as e:  # noqa: BLE001
+        log.exception(
+            "scoring: AI unexpected exception matter=%s run=%s",
+            job.matter_id, run_id,
+        )
         store.finish_run(
             run_id, "failed",
             error=f"ai_unexpected: {type(e).__name__}: {str(e)[:200]}",
         )
         return
+    log.info(
+        "scoring: AI completed matter=%s run=%s len=%d",
+        job.matter_id, run_id, len(raw),
+    )
 
     # 8. Parse + validate (anti-fabrication)
     try:

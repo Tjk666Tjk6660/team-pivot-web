@@ -23,6 +23,7 @@ async def stream_chat(
     api_key: str,
     base_url: str,
     tools: list[dict] | None = None,
+    timeout_read_seconds: float = 180.0,
 ) -> AsyncIterator[dict]:
     """
     Stream a single turn from an OpenAI-compatible endpoint.
@@ -57,7 +58,7 @@ async def stream_chat(
     pending: dict[int, dict] = {}
     finish_reason: str | None = None
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=120.0)) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=timeout_read_seconds)) as client:
         async with client.stream(
             "POST",
             f"{base_url.rstrip('/')}/chat/completions",

@@ -53,7 +53,7 @@ from server.workspace import Workspace
 log = logging.getLogger(__name__)
 
 DEFAULT_VISIBILITY = "admin_only"
-DEFAULT_TIMEOUT_SECONDS = 120
+DEFAULT_TIMEOUT_SECONDS = 180
 
 
 # --------------------------------------------------------------------------- #
@@ -245,7 +245,7 @@ def build_router(
             ok=True,
             matter_id=matter_id,
             queued=True,
-            message="已入队，等待 worker 处理（约 1-2 分钟）",
+            message="已入队，等待 worker 处理（约 1-3 分钟）",
         )
 
     @router.post("/scores/{run_id}/override")
