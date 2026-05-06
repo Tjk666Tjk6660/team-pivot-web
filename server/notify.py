@@ -579,22 +579,6 @@ class FeishuNotifier:
         """发送一条飞书互动卡。返回 (ok, error)。
         error 是面向 admin 的简短理由(HTTP 状态 / 飞书 code+msg / 异常类型)。"""
         try:
-            # DEBUG:打印发往飞书的卡片内容,验证是 markdown 格式而不是富文本。
-            # 卡片用 schema 2.0,body.elements[].tag='markdown',飞书会按
-            # markdown 解析(- 列表 / **bold** / > 引用等)。如果显示异常,
-            # 看 log 里 markdown_content 部分确认 LLM 输出原文是不是符合预期。
-            try:
-                md_elems = [
-                    e for e in (card.get("body", {}).get("elements") or [])
-                    if e.get("tag") == "markdown"
-                ]
-                md_text = "\n---\n".join(e.get("content", "") for e in md_elems)
-                log.info(
-                    "feishu send to=%s type=%s | markdown_content:\n%s",
-                    receive_id, receive_id_type, md_text,
-                )
-            except Exception:
-                log.exception("dumping card markdown for log failed")
             resp = _http_post_with_retry(
                 _SEND_MESSAGE_ENDPOINT,
                 params={"receive_id_type": receive_id_type},
