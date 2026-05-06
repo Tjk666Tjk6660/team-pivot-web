@@ -15,9 +15,9 @@ import {
 import { toast } from "sonner";
 import {
   AdminRequiredError,
+  cancelDailyReportRun,
   createDailyReportJob,
   deleteDailyReportJob,
-  fetchAdminNotifyConfig,
   fetchContactsByIds,
   fetchDailyReportJobs,
   fetchDailyReportRun,
@@ -27,9 +27,7 @@ import {
   runDailyReportJobNow,
   searchContacts,
   setDailyReportJobStatus,
-  updateAdminNotifyConfig,
   updateDailyReportJob,
-  type AdminNotifyConfig,
   type Contact,
   type DailyReportJob,
   type DailyReportJobIn,
@@ -50,7 +48,7 @@ import {
 } from "../AdminPage";
 
 // --------------------------------------------------------------------------
-// Top-level — order: 定时任务(主) → 立即触发 → 系统通知(折叠)
+// Top-level — order: 定时任务(主) → 立即触发
 // --------------------------------------------------------------------------
 
 export function DailyReportSection({
@@ -93,7 +91,7 @@ export function DailyReportSection({
       <ACard>
         <CardHead
           title="定时任务"
-          desc="每个任务独立配置视角 / 时间窗口 / 推送时刻 / 接收人"
+          desc="每个任务独立配置日报类型 / 时间窗口 / 推送时刻 / 接收人"
           trailing={
             <Button
               size="sm"
@@ -131,8 +129,6 @@ export function DailyReportSection({
 
       <ManualTriggerCard onAdminLost={onAdminLost} chats={chats} />
 
-      <SystemNotifyCard onAdminLost={onAdminLost} chats={chats} />
-
       {editingJob && (
         <JobEditDrawer
           job={editingJob === "new" ? null : editingJob}
@@ -169,130 +165,6 @@ function EmptyJobs() {
 }
 
 // --------------------------------------------------------------------------
-// SystemNotifyCard — collapsible, secondary
-// --------------------------------------------------------------------------
-
-function SystemNotifyCard({
-  onAdminLost,
-  chats,
-}: {
-  onAdminLost: () => void;
-  chats: FeishuChat[];
-}) {
-  const [open, setOpen] = useState(false);
-  const [config, setConfig] = useState<AdminNotifyConfig>({
-    chat_ids: [],
-    open_ids: [],
-  });
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [openIdNames, setOpenIdNames] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    fetchAdminNotifyConfig()
-      .then(setConfig)
-      .catch((e) => {
-        if (e instanceof AdminRequiredError) onAdminLost();
-        else toast.error(e instanceof Error ? e.message : String(e));
-      })
-      .finally(() => setLoading(false));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const save = async () => {
-    setSaving(true);
-    try {
-      await updateAdminNotifyConfig(config);
-      toast.success("系统通知接收人已保存");
-    } catch (e) {
-      if (e instanceof AdminRequiredError) onAdminLost();
-      else toast.error(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const summary =
-    config.chat_ids.length + config.open_ids.length === 0
-      ? "未配置 · fallback 广播全部 bot 群"
-      : `${config.chat_ids.length} 群 · ${config.open_ids.length} 人`;
-
-  return (
-    <ACard>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition-colors hover:bg-[var(--surface-alt)]"
-      >
-        <div className="min-w-0">
-          <h3 className="m-0 text-[14px] font-semibold" style={{ color: "var(--text)" }}>
-            系统通知接收人
-          </h3>
-          <div className="mt-0.5 text-[12px]" style={{ color: "var(--text-mute)" }}>
-            日报漏跑 / 失败 / 重试到上限时给这里发卡 · {summary}
-          </div>
-        </div>
-        <ChevronRight
-          className="h-4 w-4 flex-none transition-transform"
-          style={{
-            color: "var(--text-mute)",
-            transform: open ? "rotate(90deg)" : undefined,
-          }}
-        />
-      </button>
-      {open && (
-        <>
-          <div
-            className="px-5 py-4 flex flex-col gap-4"
-            style={{ borderTop: "1px solid var(--line)" }}
-          >
-            {loading ? (
-              <div className="text-sm" style={{ color: "var(--text-mute)" }}>
-                加载中…
-              </div>
-            ) : (
-              <>
-                <div className="flex flex-col gap-2">
-                  <FieldLabel>接收群</FieldLabel>
-                  <FeishuChatMultiPick
-                    chats={chats}
-                    value={config.chat_ids}
-                    onChange={(v) => setConfig({ ...config, chat_ids: v })}
-                  />
-                </div>
-                <div className="flex flex-col gap-2">
-                  <FieldLabel>接收个人(DM)</FieldLabel>
-                  <OpenIdMultiPick
-                    value={config.open_ids}
-                    onChange={(v) => setConfig({ ...config, open_ids: v })}
-                    resolvedNames={openIdNames}
-                    setResolvedNames={setOpenIdNames}
-                  />
-                </div>
-                <div
-                  className="rounded-md border px-3 py-2.5 text-[12px] leading-[1.55]"
-                  style={{
-                    background: "var(--surface-alt)",
-                    color: "var(--text-mute)",
-                    borderColor: "var(--line)",
-                  }}
-                >
-                  未配置任何接收人时,系统通知 fallback 广播到所有 bot 所在的飞书群。
-                </div>
-              </>
-            )}
-          </div>
-          <CardFoot hint="">
-            <Button onClick={save} disabled={saving || loading} size="sm">
-              {saving ? "保存中…" : "保存"}
-            </Button>
-          </CardFoot>
-        </>
-      )}
-    </ACard>
-  );
-}
-
-// --------------------------------------------------------------------------
 // JobRow — primary actions inline + secondary in overflow menu
 // --------------------------------------------------------------------------
 
@@ -315,6 +187,9 @@ function JobRow({
 }) {
   const [busy, setBusy] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  // 菜单用 position: fixed 渲染(脱离父级 ACard 的 overflow-hidden 裁切),
+  // 坐标在按钮被点击时从 currentTarget rect 直接算。
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -325,6 +200,25 @@ function JobRow({
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
   }, [menuOpen]);
+
+  // 点 ... 按钮时算菜单位置:下方空间不够就翻向按钮上方,菜单右边缘对齐
+  // 按钮右边缘。fixed 位置下,父容器的 overflow-hidden 不会裁掉菜单。
+  const openMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
+    if (!menuOpen) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const ESTIMATED_MENU_HEIGHT = 130;   // 3 个 MenuItem 估算
+      const MENU_WIDTH = 140;
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const openAbove = spaceBelow < ESTIMATED_MENU_HEIGHT + 8;
+      setMenuPos({
+        top: openAbove
+          ? rect.top - ESTIMATED_MENU_HEIGHT - 4
+          : rect.bottom + 4,
+        left: rect.right - MENU_WIDTH,
+      });
+    }
+    setMenuOpen((v) => !v);
+  };
 
   const togglePause = async () => {
     setBusy(true);
@@ -358,11 +252,11 @@ function JobRow({
 
   const remove = async () => {
     setMenuOpen(false);
-    if (!confirm(`确认归档任务"${job.name}"?(可在归档列表恢复)`)) return;
+    if (!confirm(`确认删除任务"${job.name}"?此操作不可恢复。`)) return;
     setBusy(true);
     try {
       await deleteDailyReportJob(job.id);
-      toast.success("任务已归档");
+      toast.success("任务已删除");
       await onChange();
     } catch (e) {
       if (e instanceof AdminRequiredError) onAdminLost();
@@ -372,7 +266,7 @@ function JobRow({
     }
   };
 
-  const viewLabel = job.view === "company" ? "公司视角" : "个人视角";
+  const viewLabel = job.view === "company" ? "公司日报" : "个人日报";
   const freqLabel = formatPushFreq(job.push_freq);
   const statusColor = {
     active: "var(--ok-600, #2F7A4D)",
@@ -409,11 +303,7 @@ function JobRow({
                 className="h-1.5 w-1.5 rounded-full"
                 style={{ background: statusColor }}
               />
-              {job.status === "active"
-                ? "运行中"
-                : job.status === "paused"
-                ? "已暂停"
-                : "已归档"}
+              {job.status === "active" ? "运行中" : "已暂停"}
             </span>
             {lastBadge && (
               <span
@@ -464,14 +354,19 @@ function JobRow({
           <div ref={menuRef} className="relative">
             <IconBtn
               label="更多"
-              onClick={() => setMenuOpen((v) => !v)}
+              onClick={openMenu}
               disabled={busy}
               icon={<MoreHorizontal className="h-3.5 w-3.5" />}
             />
             {menuOpen && (
               <div
-                className="absolute right-0 top-[calc(100%+4px)] z-20 min-w-[140px] overflow-hidden rounded-md border shadow-lg"
-                style={{ background: "var(--surface)", borderColor: "var(--line)" }}
+                className="fixed z-50 min-w-[140px] overflow-hidden rounded-md border shadow-lg"
+                style={{
+                  background: "var(--surface)",
+                  borderColor: "var(--line)",
+                  top: menuPos.top,
+                  left: menuPos.left,
+                }}
               >
                 <MenuItem
                   icon={<History className="h-3.5 w-3.5" />}
@@ -494,7 +389,7 @@ function JobRow({
                 />
                 <MenuItem
                   icon={<Trash2 className="h-3.5 w-3.5" />}
-                  label="归档任务"
+                  label="删除任务"
                   onClick={remove}
                   danger
                 />
@@ -543,7 +438,9 @@ function IconBtn({
   danger,
 }: {
   label: string;
-  onClick: () => void;
+  // onClick 接受可选的 mouse event,让调用方需要按钮位置时(如下拉菜单)
+  // 可以从 e.currentTarget.getBoundingClientRect() 取。无参用法继续兼容。
+  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
   disabled?: boolean;
   icon: React.ReactNode;
   danger?: boolean;
@@ -632,6 +529,12 @@ function fmtTime(iso: string): string {
   }
 }
 
+// 把 Date 转成 datetime-local input 接受的字符串(本地时区,YYYY-MM-DDTHH:mm)
+function toLocalInputValue(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 // --------------------------------------------------------------------------
 // JobEditDrawer
 // --------------------------------------------------------------------------
@@ -656,7 +559,9 @@ function JobEditDrawer({
   const [pushFreq, setPushFreq] = useState<DailyReportPushFreq>(
     job?.push_freq ?? "weekdays",
   );
-  const [windowHours, setWindowHours] = useState(job?.window_hours ?? 24);
+  const [windowHours, setWindowHours] = useState<number | null>(
+    job?.window_hours ?? 24,
+  );
   const [receiverType, setReceiverType] = useState<"groups" | "users">(
     job?.receiver_type ?? "groups",
   );
@@ -681,7 +586,7 @@ function JobEditDrawer({
           view,
           push_time: pushTime,
           push_freq: pushFreq,
-          window_hours: windowHours,
+          window_hours: windowHours ?? 24,
           receiver_type: receiverType,
           receiver_ids: receiverIds.length > 0 ? receiverIds : null,
           status: paused ? "paused" : "active",
@@ -694,7 +599,7 @@ function JobEditDrawer({
           view,
           push_time: pushTime,
           push_freq: pushFreq,
-          window_hours: windowHours,
+          window_hours: windowHours ?? 24,
           receiver_type: receiverType,
           receiver_ids: receiverIds.length > 0 ? receiverIds : null,
         };
@@ -723,21 +628,21 @@ function JobEditDrawer({
             id="job-name"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="如:公司视角早报"
+            placeholder="如:公司日报早报"
           />
         </div>
 
         <div className="grid grid-cols-2 gap-4">
           <div className="flex flex-col gap-1.5">
-            <FieldLabel>视角</FieldLabel>
+            <FieldLabel>日报类型</FieldLabel>
             <select
               value={view}
               onChange={(e) => setView(e.target.value as "company" | "personal")}
               className="h-[34px] rounded-md border bg-white px-3 text-[13px]"
               style={{ borderColor: "var(--line-strong, var(--line))" }}
             >
-              <option value="company">公司视角</option>
-              <option value="personal">个人视角</option>
+              <option value="company">公司日报</option>
+              <option value="personal">个人日报</option>
             </select>
           </div>
           <div className="flex flex-col gap-1.5">
@@ -789,10 +694,20 @@ function JobEditDrawer({
               type="number"
               min={1}
               max={168}
-              value={windowHours}
-              onChange={(e) =>
-                setWindowHours(Number(e.target.value) || 24)
-              }
+              value={windowHours ?? ""}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "") {
+                  setWindowHours(null);
+                  return;
+                }
+                const n = Number(v);
+                if (!Number.isNaN(n)) setWindowHours(n);
+              }}
+              onBlur={() => {
+                if (windowHours === null || windowHours < 1)
+                  setWindowHours(24);
+              }}
             />
             <FieldHelp>1–168 小时</FieldHelp>
           </div>
@@ -946,6 +861,8 @@ function RunHistoryDrawer({
   const [size] = useState(20);
   const [loading, setLoading] = useState(false);
   const [openRunId, setOpenRunId] = useState<number | null>(null);
+  // cancel 后 bump 让 useEffect 重新拉一次,刷新列表里的 status badge
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -966,7 +883,7 @@ function RunHistoryDrawer({
     return () => {
       cancelled = true;
     };
-  }, [job.id, page, size, onAdminLost]);
+  }, [job.id, page, size, onAdminLost, reloadKey]);
 
   const totalPages = Math.max(1, Math.ceil(total / size));
 
@@ -989,6 +906,7 @@ function RunHistoryDrawer({
               isOpen={openRunId === r.id}
               onToggle={() => setOpenRunId(openRunId === r.id ? null : r.id)}
               onAdminLost={onAdminLost}
+              onCancelled={() => setReloadKey((k) => k + 1)}
             />
           ))
         )}
@@ -1028,12 +946,32 @@ function RunRow({
   isOpen,
   onToggle,
   onAdminLost,
+  onCancelled,
 }: {
   run: DailyReportRun;
   isOpen: boolean;
   onToggle: () => void;
   onAdminLost: () => void;
+  onCancelled: () => void;
 }) {
+  const [cancelling, setCancelling] = useState(false);
+  const isRunning = run.status === "running";
+
+  const handleCancel = async (e: React.MouseEvent) => {
+    e.stopPropagation();    // 不触发 onToggle 展开
+    if (cancelling) return;
+    setCancelling(true);
+    try {
+      await cancelDailyReportRun(run.id);
+      toast.success(`已标记 run_id=${run.id} 失败`);
+      onCancelled();
+    } catch (err) {
+      if (err instanceof AdminRequiredError) onAdminLost();
+      else toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCancelling(false);
+    }
+  };
   const [detail, setDetail] = useState<DailyReportRunDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
 
@@ -1107,6 +1045,30 @@ function RunRow({
             </div>
           )}
         </div>
+        {isRunning && (
+          // role=button + onClick 直接挂到 div 上,避免 button 内嵌 button
+          // 的 HTML 非法结构(button cannot appear as descendant of button)。
+          <div
+            role="button"
+            tabIndex={0}
+            aria-disabled={cancelling}
+            onClick={handleCancel}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                handleCancel(e as unknown as React.MouseEvent);
+              }
+            }}
+            className="flex-none rounded border px-2 py-1 text-[11px] transition-colors hover:bg-[var(--surface-alt)] aria-disabled:opacity-50 aria-disabled:cursor-not-allowed cursor-pointer select-none"
+            style={{
+              color: "var(--warn-600, #B43E3E)",
+              borderColor: "var(--line)",
+            }}
+            title="把卡住的 running run 标为 failed(后台线程仍可能在跑,但 UI/状态会立即解锁)"
+          >
+            {cancelling ? "处理中…" : "标记失败"}
+          </div>
+        )}
         <ChevronRight
           className="h-4 w-4 flex-none transition-transform"
           style={{
@@ -1202,7 +1164,11 @@ function ManualTriggerCard({
   chats: FeishuChat[];
 }) {
   const [view, setView] = useState<"company" | "personal">("company");
-  const [windowHours, setWindowHours] = useState(24);
+  const [windowMode, setWindowMode] = useState<"hours" | "range">("hours");
+  const [windowHours, setWindowHours] = useState<number | null>(24);
+  // datetime-local input 值(无时区,后端按 Asia/Shanghai 解释)
+  const [sinceLocal, setSinceLocal] = useState<string>("");
+  const [untilLocal, setUntilLocal] = useState<string>("");
   const [receiverType, setReceiverType] = useState<"groups" | "users">("groups");
   const [receiverIds, setReceiverIds] = useState<string[]>([]);
   const [openIdNames, setOpenIdNames] = useState<Record<string, string>>({});
@@ -1240,18 +1206,42 @@ function ManualTriggerCard({
     };
   }, [pollingRunId]);
 
+  // 切到"时间区间"模式时,如果还没填,默认填过去 24h
+  useEffect(() => {
+    if (windowMode !== "range") return;
+    if (sinceLocal || untilLocal) return;
+    const now = new Date();
+    const past = new Date(now.getTime() - 24 * 3600 * 1000);
+    setSinceLocal(toLocalInputValue(past));
+    setUntilLocal(toLocalInputValue(now));
+  }, [windowMode, sinceLocal, untilLocal]);
+
   const trigger = async () => {
     if (receiverType === "users" && receiverIds.length === 0) {
       return toast.error("接收类型为个人时,至少选 1 个 open_id");
     }
+    // 构造 body —— 按窗口模式分支
+    const body: Parameters<typeof manualTriggerDailyReport>[0] = {
+      view,
+      receiver_type: receiverType,
+      receiver_ids: receiverIds.length > 0 ? receiverIds : null,
+    };
+    if (windowMode === "range") {
+      if (!sinceLocal || !untilLocal) {
+        return toast.error("时间区间模式需要填写起止时间");
+      }
+      if (sinceLocal >= untilLocal) {
+        return toast.error("起始时间必须早于结束时间");
+      }
+      // datetime-local 给的是 YYYY-MM-DDTHH:mm,补 :00 凑成完整 ISO
+      body.since = `${sinceLocal}:00`;
+      body.until = `${untilLocal}:00`;
+    } else {
+      body.window_hours = windowHours ?? 24;
+    }
     setBusy(true);
     try {
-      const r = await manualTriggerDailyReport({
-        view,
-        window_hours: windowHours,
-        receiver_type: receiverType,
-        receiver_ids: receiverIds.length > 0 ? receiverIds : null,
-      });
+      const r = await manualTriggerDailyReport(body);
       toast.message(`已开始 run_id=${r.run_id}`);
       setPollingRunId(r.run_id);
       setLastRun(null);
@@ -1286,20 +1276,50 @@ function ManualTriggerCard({
         }
       />
       <div className="px-5 py-4 flex flex-col gap-3.5">
-        {/* 视角 + 窗口 */}
+        {/* 日报类型 + 窗口模式选择 */}
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="flex flex-col gap-1.5">
-            <FieldLabel>视角</FieldLabel>
+            <FieldLabel>日报类型</FieldLabel>
             <select
               value={view}
               onChange={(e) => setView(e.target.value as "company" | "personal")}
               className="h-[34px] rounded-md border bg-white px-3 text-[13px]"
               style={{ borderColor: "var(--line-strong, var(--line))" }}
             >
-              <option value="company">公司视角</option>
-              <option value="personal">个人视角</option>
+              <option value="company">公司日报</option>
+              <option value="personal">个人日报</option>
             </select>
           </div>
+          <div className="flex flex-col gap-1.5">
+            <FieldLabel>窗口模式</FieldLabel>
+            <div
+              className="flex h-[34px] items-center gap-4 rounded-md border bg-white px-3 text-[13px]"
+              style={{ borderColor: "var(--line-strong, var(--line))" }}
+            >
+              <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="radio"
+                  name="manual-window-mode"
+                  checked={windowMode === "hours"}
+                  onChange={() => setWindowMode("hours")}
+                />
+                <span>统计窗口</span>
+              </label>
+              <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="radio"
+                  name="manual-window-mode"
+                  checked={windowMode === "range"}
+                  onChange={() => setWindowMode("range")}
+                />
+                <span>时间区间</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        {/* 窗口具体输入 — 按模式分支 */}
+        {windowMode === "hours" ? (
           <div className="flex flex-col gap-1.5">
             <FieldLabel htmlFor="manual-window">统计窗口(小时)</FieldLabel>
             <Input
@@ -1307,11 +1327,50 @@ function ManualTriggerCard({
               type="number"
               min={1}
               max={168}
-              value={windowHours}
-              onChange={(e) => setWindowHours(Number(e.target.value) || 24)}
+              value={windowHours ?? ""}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "") {
+                  setWindowHours(null);
+                  return;
+                }
+                const n = Number(v);
+                if (!Number.isNaN(n)) setWindowHours(n);
+              }}
+              onBlur={() => {
+                if (windowHours === null || windowHours < 1)
+                  setWindowHours(24);
+              }}
             />
+            <FieldHelp>1–168 小时,从当前时间倒推</FieldHelp>
           </div>
-        </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <FieldLabel htmlFor="manual-since">起始时间</FieldLabel>
+              <Input
+                id="manual-since"
+                type="datetime-local"
+                value={sinceLocal}
+                onChange={(e) => setSinceLocal(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <FieldLabel htmlFor="manual-until">结束时间</FieldLabel>
+              <Input
+                id="manual-until"
+                type="datetime-local"
+                value={untilLocal}
+                onChange={(e) => setUntilLocal(e.target.value)}
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <FieldHelp>
+                区间最长 168 小时(7 天),时区为 Asia/Shanghai
+              </FieldHelp>
+            </div>
+          </div>
+        )}
 
         {/* 接收人 — 折叠 */}
         <div
@@ -1386,6 +1445,29 @@ function ManualTriggerCard({
             : ""
         }
       >
+        {pollingRunId !== null && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={async () => {
+              const id = pollingRunId;
+              if (id == null) return;
+              try {
+                await cancelDailyReportRun(id);
+                // cancel 后 polling 自然会拿到 status=failed + finished_at,
+                // 但这里也直接停掉,UI 立即解锁。
+                setPollingRunId(null);
+                toast.success(`已标记 run_id=${id} 失败(后台线程仍可能在跑)`);
+              } catch (e) {
+                if (e instanceof AdminRequiredError) onAdminLost();
+                else toast.error(e instanceof Error ? e.message : String(e));
+              }
+            }}
+          >
+            标记失败
+          </Button>
+        )}
         <Button
           onClick={trigger}
           disabled={busy || pollingRunId !== null}

@@ -54,6 +54,7 @@ class JobScheduler:
         runs_repo: RunsRepo,
         settings: SettingsRepo,
         notifier: Notifier,
+        users_db_path: Path | None = None,
     ) -> None:
         self._db_path = db_path
         self._workspace_provider = workspace_index_dir_provider
@@ -61,6 +62,9 @@ class JobScheduler:
         self._runs_repo = runs_repo
         self._settings = settings
         self._notifier = notifier
+        # Dev 时用 .env 的 DAILY_REPORT_USERS_DB_PATH 覆盖
+        # 进 personal 视角全员列表的来源(只读),不影响 AI 配置 / runs / jobs。
+        self._users_db_path = users_db_path
 
         self._task: asyncio.Task | None = None
         self._stop_event: asyncio.Event | None = None
@@ -210,6 +214,7 @@ class JobScheduler:
                 workspace_index_dir=self._workspace_provider(),
                 notifier=self._notifier,
                 now=fired_at,
+                users_db_path=self._users_db_path,
             )
             error = None
             if rc == 0:

@@ -204,3 +204,62 @@ def test_delete_before_handles_large_batches(repo):
     assert len(deleted) == 1100
     items, total = repo.list_for_job(1)
     assert total == 0
+
+
+# --------------------------------------------------------------------------- #
+# cancel + finish guard                                                       #
+# --------------------------------------------------------------------------- #
+
+
+def test_cancel_marks_running_run_as_failed(repo):
+    """cancel a running run → status=failed, error stamped."""
+    rid = repo.start(job_id=1, trigger_type="manual", view="personal")
+    ok = repo.cancel(rid, reason="manually cancelled by admin")
+    assert ok is True
+    run = repo.get(rid)
+    assert run.status == "failed"
+    assert run.error == "manually cancelled by admin"
+    assert run.finished_at is not None
+
+
+def test_cancel_returns_false_when_already_finished(repo):
+    """cancel a finished run → returns False, original status untouched."""
+    rid = repo.start(job_id=1, trigger_type="manual", view="company")
+    repo.finish(rid, status="succeeded", rc=0)
+    ok = repo.cancel(rid, reason="late cancel attempt")
+    assert ok is False
+    run = repo.get(rid)
+    assert run.status == "succeeded"   # untouched
+    # Sanity: cancel reason should NOT have stomped the original error
+    assert run.error is None
+
+
+def test_cancel_returns_false_when_run_does_not_exist(repo):
+    """cancel non-existent run id → False (caller distinguishes via get)."""
+    assert repo.cancel(99999) is False
+
+
+def test_cancel_truncates_long_reason(repo):
+    rid = repo.start(job_id=1, trigger_type="manual", view="company")
+    long_reason = "x" * 300
+    repo.cancel(rid, reason=long_reason)
+    run = repo.get(rid)
+    assert run.error.endswith("…")
+    assert len(run.error) <= 201    # 200 + ellipsis
+
+
+def test_finish_does_not_overwrite_cancelled_state(repo):
+    """守卫验证: 如果 run 已被 cancel 标为 failed,迟到的 thread finish()
+    不会把它改回 succeeded。"""
+    rid = repo.start(job_id=1, trigger_type="manual", view="personal")
+    repo.cancel(rid, reason="user cancelled")
+    # Simulate the runaway thread eventually completing & calling finish
+    repo.finish(rid, status="succeeded", rc=0,
+                cards_sent=2, cards_total=2)
+    run = repo.get(rid)
+    # Cancelled state held — finish was a no-op
+    assert run.status == "failed"
+    assert run.error == "user cancelled"
+    # And the late finish did NOT stamp success metrics either
+    assert run.cards_sent is None
+    assert run.rc is None

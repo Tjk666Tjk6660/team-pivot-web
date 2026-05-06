@@ -78,7 +78,11 @@ class RunsRepo:
         error: str | None = None,
         debug_json: str | None = None,
     ) -> None:
-        """fire 完成时 UPDATE。error 自动截断到 200 字。"""
+        """fire 完成时 UPDATE。error 自动截断到 200 字。
+
+        ⚠ **守卫**:仅当 status 仍为 'running' 时更新。这样如果某个 run 在
+        线程完成前已被 admin 通过 cancel 端点强制标为 failed,迟到的线程
+        回调不会覆盖 cancel 结果。"""
         ts = (finished_at or datetime.now(tz=CHINA_TZ)).timestamp()
         if error and len(error) > 200:
             error = error[:200].rstrip() + "…"
@@ -87,12 +91,33 @@ class RunsRepo:
                 "UPDATE daily_report_runs SET"
                 "  finished_at=?, status=?, rc=?, cards_sent=?, cards_total=?,"
                 "  ai_tokens_in=?, ai_tokens_out=?, error=?, debug_json=?"
-                " WHERE id=?",
+                " WHERE id=? AND status='running'",
                 (
                     ts, status, rc, cards_sent, cards_total,
                     ai_tokens_in, ai_tokens_out, error, debug_json, run_id,
                 ),
             )
+
+    def cancel(self, run_id: int, *, reason: str | None = None) -> bool:
+        """Admin 强制把 running 状态的 run 标为 failed。原子条件更新。
+
+        Returns True 当且仅当成功更新一行(即 run 之前确实在 running)。
+        False 时调用方应根据 get(run_id) 区分:
+            · run 不存在 → 404
+            · run 已是终态 → 409 (前端应停止 polling)
+        """
+        ts = datetime.now(tz=CHINA_TZ).timestamp()
+        err = (reason or "manually cancelled by admin")
+        if len(err) > 200:
+            err = err[:200].rstrip() + "…"
+        with self._db.connect() as conn:
+            cur = conn.execute(
+                "UPDATE daily_report_runs SET"
+                "  finished_at=?, status='failed', error=?"
+                " WHERE id=? AND status='running'",
+                (ts, err, run_id),
+            )
+            return cur.rowcount > 0
 
     def delete_before(self, cutoff: datetime) -> list[int]:
         """删除 cutoff 之前的所有 runs,返回被删除的 id 列表(供 jobs_repo

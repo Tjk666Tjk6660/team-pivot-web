@@ -33,14 +33,19 @@ Lifecycle = Literal[
 class MatterActivityMetrics:
     """单个 matter 在窗口内的活动强度指标 + 业务摘要 + 生命周期阶段。
 
-    `title` + `today_summaries` + `lifecycle` 是业务信号 —— company narrate
-    据此说"公司昨天干了什么":lifecycle 提示用什么动词("完成 / 推进 / 启动 /
-    讨论"),title 是事项名,today_summaries 是业务事实。剩下的计数(file_count /
-    file_types / status_change / verify_judgements)留作活跃度排序依据,
-    prompt 不再喂给 LLM。"""
+    `title` + `today_summaries` + `lifecycle` + `participants` 是业务信号 ——
+    company narrate 据此说"公司昨天干了什么":lifecycle 提示用什么动词,
+    title 是事项名,today_summaries 是业务事实,participants 是涉及的人(pinyin)。
+    剩下的计数(file_count / file_types / status_change / verify_judgements)留作
+    活跃度排序依据,prompt 不再喂给 LLM。"""
     path: str                              # "category/slug",e.g. "Pivot/数据迁移方案"
+    category: str                          # 业务方向硬骨架,来自 path[1] —— Pivot / enclaws / 外部客户实施 / probe
     title: str                             # matter 真实标题(从 matter index 读取)
+    intent: str                            # matter 第一条 think.summary —— 这件事是干啥的、解决什么问题
+    prev_summary: str                      # 窗口之前最后一条 timeline.summary —— 上一步推到哪了;空串 = 新开
+    timeline_yaml: str                     # 完整 timeline 的精简 yaml(v0.4) —— 给 LLM 看 quote/状态/评论原始 yaml 结构
     today_summaries: tuple[str, ...]       # 窗口内新增 file 的 summary 列表(非空,去重)
+    participants: tuple[str, ...]          # 窗口内涉及的 pinyin(creator/owner/comment author);稳定排序后去重
     lifecycle: Lifecycle                   # 业务阶段提示(closed/just_started/decided/discussing/paused/planning)
     current_status: str
     file_count: int                        # 窗口内该 matter 新增文件数
@@ -92,10 +97,13 @@ def build_shared_facts(
     user_activities: list[UserActivity],
     summary: TeamSummary,
     window: TimeWindow,
-    *,
-    top_n_matters: int = 5,
 ) -> SharedFacts:
-    """Compose `SharedFacts` from collector / aggregator outputs."""
+    """Compose `SharedFacts` from collector / aggregator outputs.
+
+    设计原则(2026-05-01 拍板):**不限制 top_active_matters 数量**。
+    日报核心问题是"今天团队都干了啥",任何活跃 matter 被隐匿都是错。
+    凡是窗口内有活动(activity_score > 0)的 matter 全部进入 facts。
+    上下文撑爆是优化议题,不是当前目标。"""
     return SharedFacts(
         window=window,
         matter_events=tuple(matter_events),
@@ -104,9 +112,7 @@ def build_shared_facts(
         matter_status_breakdown=_count_matter_status(matter_events),
         file_type_breakdown=_count_file_types(matter_events),
         verify_judgements=_count_verify_judgements(matter_events),
-        top_active_matters=_compute_top_active_matters(
-            matter_events, top_n=top_n_matters,
-        ),
+        top_active_matters=_compute_top_active_matters(matter_events),
     )
 
 
@@ -170,9 +176,14 @@ def _count_verify_judgements(events: list[MatterEvent]) -> dict[str, int]:
 
 
 def _compute_top_active_matters(
-    events: list[MatterEvent], *, top_n: int,
+    events: list[MatterEvent],
 ) -> tuple[MatterActivityMetrics, ...]:
-    """按 matter 聚合活动强度指标,降序取前 N。
+    """按 matter 聚合活动强度指标,降序排列。
+
+    **不限制返回数量** —— 凡是 activity_score > 0(窗口内有真实活动)的
+    matter 全部返回。日报核心问题是"今天团队都干了啥",任何活跃 matter
+    被隐匿都是错。排序仅用于让 LLM 知道哪些事项更有"分量"(高分往往是
+    有 status_change / result / verify 的事项)。
 
     activity_score 公式(粗略,实测后再调):
       file_count
@@ -189,6 +200,10 @@ def _compute_top_active_matters(
             mid = e.matter_id
             slot = by_matter.setdefault(mid, _new_metric_slot(e))
             slot["comments_count"] += len(e.comments_in_window)
+            for c in e.comments_in_window:
+                a = (c.author or "").strip()
+                if a:
+                    slot["participants"].add(a)
             continue
         mid = e.matter_id
         slot = by_matter.setdefault(mid, _new_metric_slot(e))
@@ -207,6 +222,15 @@ def _compute_top_active_matters(
         if s and s not in slot["today_summaries_set"]:
             slot["today_summaries_set"].add(s)
             slot["today_summaries"].append(s)
+        # 收集涉及的 pinyin(creator / owner / comment 作者)
+        for who in (e.creator, e.owner):
+            who = (who or "").strip()
+            if who:
+                slot["participants"].add(who)
+        for c in e.comments_in_window:
+            a = (c.author or "").strip()
+            if a:
+                slot["participants"].add(a)
         if e.status_change and slot["status_change"] is None:
             slot["status_change"] = {
                 "from": e.status_change.get("from"),
@@ -237,8 +261,13 @@ def _compute_top_active_matters(
             continue
         metrics.append(MatterActivityMetrics(
             path=slot["path"],
+            category=slot["category"],
             title=slot["title"] or mid,         # 标题缺失时回落到 matter_id
+            intent=slot["intent"],
+            prev_summary=slot["prev_summary"],
+            timeline_yaml=slot["timeline_yaml"],
             today_summaries=tuple(slot["today_summaries"]),
+            participants=tuple(sorted(slot["participants"])),
             lifecycle=_derive_lifecycle(slot),
             current_status=slot["current_status"],
             file_count=slot["file_count"],
@@ -250,7 +279,7 @@ def _compute_top_active_matters(
         ))
 
     metrics.sort(key=lambda m: (-m.activity_score, m.path))
-    return tuple(metrics[:top_n])
+    return tuple(metrics)
 
 
 _CLOSED_STATES = {"finished", "reviewed", "cancelled"}
@@ -288,12 +317,20 @@ def _derive_lifecycle(slot: dict) -> Lifecycle:
 
 
 def _new_metric_slot(e: MatterEvent) -> dict:
-    """初始化一个 matter 的活动指标累加 slot。path = category/matter_id。"""
+    """初始化一个 matter 的活动指标累加 slot。path = category/matter_id。
+
+    intent / prev_summary 是 matter 级常量(同一 matter 各 event 携带相同值),
+    用第一次见到该 matter 时的 event 值 seed 即可。"""
     return {
         "path": f"{category_of(e.file)}/{e.matter_id}",
+        "category": category_of(e.file),
         "title": e.matter_title or "",
+        "intent": e.matter_intent or "",
+        "prev_summary": e.matter_prev_summary or "",
+        "timeline_yaml": e.matter_timeline_yaml or "",
         "today_summaries": [],            # 顺序保留:按事件遍历顺序追加
         "today_summaries_set": set(),     # 去重用,生成 metrics 时丢弃
+        "participants": set(),            # pinyin 集合,生成 metrics 时排序后落 tuple
         "current_status": e.matter_current_status or "",
         "file_count": 0,
         "file_types": {},

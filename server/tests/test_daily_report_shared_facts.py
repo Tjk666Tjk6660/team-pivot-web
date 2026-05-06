@@ -272,14 +272,17 @@ def test_top_active_matters_sorted_by_activity_score_descending():
     assert sf.top_active_matters[0].activity_score > sf.top_active_matters[1].activity_score
 
 
-def test_top_active_matters_caps_at_top_n():
-    """top_n_matters 控制返回上限。"""
+def test_top_active_matters_returns_all_active_no_cap():
+    """**不再限制返回数量** —— 所有 activity_score > 0 的 matter 全部返回。
+
+    设计 2026-05-01 拍板:日报核心问题是"今天团队都干了啥",任何活跃 matter
+    被隐匿都是错。原 `top_n_matters` 上限被去掉。"""
     events = [
         _ev(matter_id=f"m{i}", file=f"discussions/Pivot/m{i}/001.md", file_type="think")
         for i in range(10)
     ]
-    sf = build_shared_facts(events, [], _summary(), _w(), top_n_matters=3)
-    assert len(sf.top_active_matters) == 3
+    sf = build_shared_facts(events, [], _summary(), _w())
+    assert len(sf.top_active_matters) == 10  # 全部返回,不截断
 
 
 def test_top_active_matters_records_status_change():

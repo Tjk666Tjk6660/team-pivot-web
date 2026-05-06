@@ -44,8 +44,15 @@ def run_daily_report_for_job(
     no_ai: bool = False,
     now: datetime | None = None,
     explicit_window: TimeWindow | None = None,
+    users_db_path: Path | None = None,
 ) -> tuple[int, dict[str, Any]]:
-    """跑一个 Job,返回 (rc, debug)。"""
+    """跑一个 Job,返回 (rc, debug)。
+
+    `users_db_path`(dev 用):如果给定,从该 sqlite 以 mode=ro 读取 users 列表
+    (personal 视角全员),`db_path` 仍只用于 SettingsRepo(AI 配置)。这样
+    可以本地启动 + 用主 data.db 的 AI key + 用生产快照的真实团队跑日报
+    预览,绝不写入快照。生产/正常路径下置 None,二者都用 db_path。
+    """
     if not db_path.exists():
         log.error("db_path does not exist: %s", db_path)
         return 2, {"error": f"db not found: {db_path}"}
@@ -56,12 +63,24 @@ def run_daily_report_for_job(
 
     from server.db import Database
     from server.settings import SettingsRepo
-    from server.users import UserRepo
+    from server.users import ReadOnlyUserView, UserRepo
 
     db = Database(db_path)
     settings = SettingsRepo(db)
-    user_repo = UserRepo(db)
-    all_users = user_repo.list_all()
+
+    if users_db_path is not None:
+        if not users_db_path.exists():
+            log.error("users_db_path does not exist: %s", users_db_path)
+            return 2, {"error": f"users_db not found: {users_db_path}"}
+        try:
+            all_users = ReadOnlyUserView(users_db_path).list_all()
+            log.info("daily-report users overridden: %s (%d users, read-only)",
+                     users_db_path, len(all_users))
+        except Exception as e:
+            log.exception("ReadOnlyUserView failed for %s", users_db_path)
+            return 2, {"error": f"users_db_path open failed: {e}"}
+    else:
+        all_users = UserRepo(db).list_all()
 
     # 1. 计算时间窗口
     if explicit_window is not None:

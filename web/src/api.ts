@@ -1113,11 +1113,6 @@ export type DailyReportRunsPage = {
   total: number;
 };
 
-export type AdminNotifyConfig = {
-  chat_ids: string[];
-  open_ids: string[];
-};
-
 export type FeishuChat = {
   chat_id: string;
   name: string;
@@ -1235,7 +1230,11 @@ export async function runDailyReportJobNow(
 
 export async function manualTriggerDailyReport(body: {
   view: "company" | "personal";
+  // 模式 A:倒推窗口(默认)
   window_hours?: number;
+  // 模式 B:显式时间区间(都给则覆盖 window_hours)。ISO8601 字符串
+  since?: string;
+  until?: string;
   receiver_type: "groups" | "users";
   receiver_ids?: string[] | null;
   dry_run?: boolean;
@@ -1273,23 +1272,16 @@ export async function fetchDailyReportRun(
   return (await r.json()) as DailyReportRunDetail;
 }
 
-export async function fetchAdminNotifyConfig(): Promise<AdminNotifyConfig> {
-  const r = await adminFetch(`${V2_BASE}/admin-notify`);
-  if (!r.ok) throw new Error(`admin-notify get failed: ${r.status}`);
-  return (await r.json()) as AdminNotifyConfig;
-}
-
-export async function updateAdminNotifyConfig(
-  body: AdminNotifyConfig,
-): Promise<void> {
-  const r = await adminFetch(`${V2_BASE}/admin-notify`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+export async function cancelDailyReportRun(runId: number): Promise<void> {
+  // POST /runs/{id}/cancel — 把卡住的 running run 强制标 failed。
+  // 后端是 conditional UPDATE,只对 status='running' 生效。404=run 不存在,
+  // 409=已是终态(前端应停 polling)。
+  const r = await adminFetch(`${V2_BASE}/runs/${runId}/cancel`, {
+    method: "POST",
   });
   if (!r.ok) {
     const d = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(d.detail || `admin-notify put failed: ${r.status}`);
+    throw new Error(d.detail || `cancel run failed: ${r.status}`);
   }
 }
 

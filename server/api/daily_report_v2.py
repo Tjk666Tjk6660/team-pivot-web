@@ -7,7 +7,7 @@
   GET    /jobs/{id}                单条详情
   PUT    /jobs/{id}                部分更新配置
   PUT    /jobs/{id}/status         切换 active / paused / archived
-  DELETE /jobs/{id}                软删(等同于 status=archived)
+  DELETE /jobs/{id}                硬删(从 daily_report_jobs 表 DELETE 该行,不可恢复)
   POST   /jobs/{id}/run-now        立即跑该 job 一次(后台 thread)
   GET    /jobs/{id}/runs           分页历史(time desc)
   GET    /runs/{run_id}            单条 run 详情(含 debug_json)
@@ -99,9 +99,19 @@ class RunNowIn(BaseModel):
 
 
 class ManualTriggerIn(BaseModel):
-    """不绑 job 的一次性触发。窗口 = [now - window_hours, now)。"""
+    """不绑 job 的一次性触发。
+
+    窗口模式两选一(都给以 since/until 优先):
+      - 模式 A:`window_hours` —— 窗口 = [now - window_hours, now)
+      - 模式 B:`since` + `until` —— 窗口 = [since, until),允许跑历史时段
+    """
     view: Literal["company", "personal"]
+    # 模式 A:倒推
     window_hours: int = Field(default=24, ge=1, le=168)
+    # 模式 B:显式时间区间(都给则覆盖 window_hours)。ISO8601,带不带时区都行
+    # (无时区按 Asia/Shanghai 解释)
+    since: datetime | None = None
+    until: datetime | None = None
     receiver_type: Literal["groups", "users"]
     receiver_ids: list[str] | None = None
     dry_run: bool = False
@@ -187,11 +197,26 @@ def build_router(
     jobs_repo: JobsRepo,
     runs_repo: RunsRepo,
     current_user_cookie_only: Callable,
+    index_dir_provider: Callable[[], Path] | None = None,
+    users_db_path: Path | None = None,
 ) -> APIRouter:
+    """v2 daily report admin router.
+
+    `index_dir_provider`(dev override):返回 matter index 目录路径的 callable。
+        默认 None → 用 `workspace.path / "index"`(正常路径)。
+        Dev 时由 app.py 注入 lambda,优先返回 cfg.daily_report_index_dir_override。
+    `users_db_path`(dev override):personal 视角的全员列表来源(只读)。
+        默认 None → 用 `db_path`(正常路径)。
+    """
     router = APIRouter(
         prefix="/api/admin/daily-report",
         dependencies=[Depends(require_admin)],
     )
+
+    def _index_dir() -> Path:
+        if index_dir_provider is not None:
+            return index_dir_provider()
+        return workspace.path / "index"
 
     # ------------------ jobs CRUD --------------------------- #
 
@@ -317,11 +342,14 @@ def build_router(
         job_id: int,
         _: User = Depends(current_user_cookie_only),
     ) -> dict:
-        """软删:status=archived,清 next_run_at。"""
-        job = jobs_repo.get(job_id)
-        if job is None:
+        """硬删:DELETE 该 job 行(不可恢复)。
+
+        历史 runs 通过冗余的 `view` 字段自包含,即使 job 行不在了也能完整
+        查历史(见 db.py schema 注释)。前端管理界面提示"不可恢复"。
+        """
+        ok = jobs_repo.delete(job_id)
+        if not ok:
             raise HTTPException(404, "job not found")
-        jobs_repo.update_status(job_id, "archived", next_run_at=None)
         return {"ok": True}
 
     # ------------------ run-now / manual-trigger ------------ #
@@ -350,10 +378,11 @@ def build_router(
                 job=job, run_id=run_id,
                 runs_repo=runs_repo,
                 db_path=db_path,
-                workspace_index_dir=workspace.path / "index",
+                workspace_index_dir=_index_dir(),
                 notifier=notifier,
                 dry_run=body.dry_run,
                 no_ai=body.no_ai,
+                users_db_path=users_db_path,
             ),
             name=f"daily-report-run-now-{job_id}",
             daemon=True,
@@ -369,12 +398,33 @@ def build_router(
         body: ManualTriggerIn,
         _: User = Depends(current_user_cookie_only),
     ) -> TriggerResponse:
-        """不绑 job 的一次性触发。窗口 = [now - window_hours, now)。"""
+        """不绑 job 的一次性触发。窗口模式见 ManualTriggerIn。"""
         if body.receiver_type == "users" and not body.receiver_ids:
             raise HTTPException(400, "receiver_ids required when receiver_type=users")
 
         now = datetime.now(tz=CHINA_TZ)
-        # 构造 dummy Job(不入库,只供 runner 用)
+
+        # 决定窗口:since/until 都给 → 用显式区间;否则倒推
+        if body.since is not None and body.until is not None:
+            since = body.since if body.since.tzinfo else body.since.replace(tzinfo=CHINA_TZ)
+            until = body.until if body.until.tzinfo else body.until.replace(tzinfo=CHINA_TZ)
+            if since >= until:
+                raise HTTPException(400, "since must be before until")
+            span_hours = (until - since).total_seconds() / 3600
+            if span_hours > 168:
+                raise HTTPException(400, "time range too large (max 168 hours = 7 days)")
+            explicit_window = TimeWindow(since=since, until=until)
+        elif body.since is not None or body.until is not None:
+            raise HTTPException(400, "since and until must be provided together")
+        else:
+            explicit_window = TimeWindow(
+                since=now - timedelta(hours=body.window_hours),
+                until=now,
+            )
+
+        # 构造 dummy Job(不入库,只供 runner 用)。window_hours 字段保留 body 值
+        # (即便走 since/until 模式,job 字段沿用默认或 body 给的);runner 会优先
+        # 用 explicit_window,所以 dummy.window_hours 实际不被消费。
         dummy = Job(
             id=0, name="manual-trigger", view=body.view,
             status="active",
@@ -387,11 +437,6 @@ def build_router(
             retry_count=0, last_notified_at=None,
             created_by=None, created_at=now, updated_at=now,
         )
-        # 显式时间窗口 = 过去 N 小时
-        explicit_window = TimeWindow(
-            since=now - timedelta(hours=body.window_hours),
-            until=now,
-        )
 
         run_id = runs_repo.start(
             job_id=None, trigger_type="manual",
@@ -403,11 +448,12 @@ def build_router(
                 job=dummy, run_id=run_id,
                 runs_repo=runs_repo,
                 db_path=db_path,
-                workspace_index_dir=workspace.path / "index",
+                workspace_index_dir=_index_dir(),
                 notifier=notifier,
                 dry_run=body.dry_run,
                 no_ai=body.no_ai,
                 explicit_window=explicit_window,
+                users_db_path=users_db_path,
             ),
             name=f"daily-report-manual-{run_id}",
             daemon=True,
@@ -444,6 +490,40 @@ def build_router(
         if run is None:
             raise HTTPException(404, "run not found")
         return _run_to_detail_out(run)
+
+    @router.post("/runs/{run_id}/cancel")
+    def cancel_run(
+        run_id: int,
+        _: User = Depends(current_user_cookie_only),
+    ) -> dict:
+        """强制把卡住的 running run 标为 failed。
+
+        触发后端是 daemon thread 跑的 LLM 调用,如果 LLM 端点 hang 整条
+        线程会卡死,run 永远 status=running。前端 polling 也跟着死循环。
+        本端点提供逃生口:**不强制 kill 线程**(daemon thread 进程退出
+        时自动回收),只标 DB 状态。前端拿到 status=failed 就能停 polling。
+
+        线程后续如果还能完成,`runs_repo.finish` 加了 status='running'
+        守卫,迟到的回调不会覆盖 cancel 结果。
+        """
+        run = runs_repo.get(run_id)
+        if run is None:
+            raise HTTPException(404, "run not found")
+        if run.status != "running":
+            raise HTTPException(
+                409, f"cannot cancel run in status={run.status} (already finished)"
+            )
+        ok = runs_repo.cancel(run_id, reason="manually cancelled by admin")
+        if not ok:
+            # 极小概率:get() 看到 running 但 cancel() 时已被合法 finish 抢先
+            # 完成。再 get 一次给客户端真实状态。
+            run = runs_repo.get(run_id)
+            raise HTTPException(
+                409,
+                f"run finished before cancel took effect "
+                f"(status={run.status if run else 'unknown'})"
+            )
+        return {"ok": True, "run_id": run_id}
 
     # ------------------ admin notify config ---------------- #
 
@@ -502,6 +582,7 @@ def _run_job_in_thread(
     dry_run: bool,
     no_ai: bool,
     explicit_window: TimeWindow | None = None,
+    users_db_path: Path | None = None,
 ) -> None:
     """跑 runner.run_daily_report_for_job + UPDATE runs.finish。
     与 JobScheduler 的 _run_one_job_safely 类似但不更新 jobs 表(因为是 ad-hoc)。"""
@@ -514,6 +595,7 @@ def _run_job_in_thread(
             notifier=notifier,
             dry_run=dry_run, no_ai=no_ai,
             explicit_window=explicit_window,
+            users_db_path=users_db_path,
         )
         if rc == 0:
             status = "succeeded"
