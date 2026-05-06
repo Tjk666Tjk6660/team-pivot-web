@@ -81,13 +81,15 @@ export function NewMatter({ me }: { me: Me }) {
     () => (hasDraftParam ? "classic" : "guided"),
   );
   const [bridge, setBridge] = useState<ClassicBridgeSnapshot | null>(null);
+  const [classicSeed, setClassicSeed] = useState<ClassicBridgeSnapshot | null>(null);
   if (mode === "guided") {
     return (
       <NewMatterGuidedFlow
         me={me}
         initialBridge={bridge ?? undefined}
-        onSwitchToClassic={() => {
+        onSwitchToClassic={(snapshot) => {
           setBridge(null);
+          setClassicSeed(snapshot ?? null);
           setMode("classic");
         }}
       />
@@ -96,12 +98,15 @@ export function NewMatter({ me }: { me: Me }) {
   return (
     <NewMatterClassicForm
       me={me}
+      initialSnapshot={classicSeed ?? undefined}
       onSwitchToGuided={() => {
         setBridge(null);
+        setClassicSeed(null);
         setMode("guided");
       }}
       onSwitchToGuidedWithSnapshot={(snap) => {
         setBridge(snap);
+        setClassicSeed(null);
         setMode("guided");
       }}
     />
@@ -110,39 +115,52 @@ export function NewMatter({ me }: { me: Me }) {
 
 function NewMatterClassicForm({
   me,
+  initialSnapshot,
   onSwitchToGuided,
   onSwitchToGuidedWithSnapshot,
 }: {
   me: Me;
+  initialSnapshot?: ClassicBridgeSnapshot;
   onSwitchToGuided: () => void;
   onSwitchToGuidedWithSnapshot: (snap: ClassicBridgeSnapshot) => void;
 }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const draftIdFromUrl = searchParams.get("draft");
-  const [category, setCategory] = useState("");
+  const [category, setCategory] = useState(() => initialSnapshot?.category ?? "");
   const [newCategory, setNewCategory] = useState("");
   const [categoryMode, setCategoryMode] = useState<"select" | "create">("select");
-  const [createdCategory, setCreatedCategory] = useState<string | null>(null);
+  const [createdCategory, setCreatedCategory] = useState<string | null>(
+    () => initialSnapshot?.createdCategory ?? null,
+  );
   const [categoryVisibility, setCategoryVisibility] =
-    useState<CategoryVisibilityScope>(PUBLIC_CATEGORY_VISIBILITY);
+    useState<CategoryVisibilityScope>(
+      () => initialSnapshot?.categoryVisibility ?? PUBLIC_CATEGORY_VISIBILITY,
+    );
   const [availableCategories, setAvailableCategories] = useState<string[]>([]);
-  const [title, setTitle] = useState("");
-  const [initialType, setInitialType] = useState<DocType>("think");
-  const [body, setBody] = useState("");
+  const [title, setTitle] = useState(() => initialSnapshot?.title ?? "");
+  const [initialType, setInitialType] = useState<DocType>(
+    () => initialSnapshot?.docType ?? "think",
+  );
+  const [body, setBody] = useState(() => initialSnapshot?.body ?? "");
   const [bodyState, setBodyState] = useState<BodySourceState>({
-    body_source: "manual",
+    body_source: initialSnapshot?.body ? "ai" : "manual",
+    ...(initialSnapshot?.body ? { body_source_snapshot: initialSnapshot.body } : {}),
   });
   const [matterOwner, setMatterOwner] = useState<{ openId: string; name: string }>(
-    () => ({
+    () => initialSnapshot?.matterOwner ?? ({
       openId: me.open_id,
       name: me.name,
     }),
   );
   const [owner, setOwner] = useState<string>(me.open_id);
   const [ownerDisplayName, setOwnerDisplayName] = useState<string>(me.name);
-  const [mentions, setMentions] = useState<MentionBlock>(() => emptyMention());
-  const [visibility, setVisibility] = useState<VisibilityScope>(PUBLIC_VISIBILITY);
+  const [mentions, setMentions] = useState<MentionBlock>(
+    () => initialSnapshot?.mentions ?? emptyMention(),
+  );
+  const [visibility, setVisibility] = useState<VisibilityScope>(
+    () => initialSnapshot?.matterVisibility ?? PUBLIC_VISIBILITY,
+  );
   const [stage, setStage] = useState<"idle" | "generating" | "submitting">("idle");
   const submitting = stage !== "idle";
   const [draftId, setDraftId] = useState<string | null>(null);
@@ -165,7 +183,13 @@ function NewMatterClassicForm({
               .filter((c): c is string => typeof c === "string" && c.length > 0),
           ),
         );
-        setAvailableCategories(cats);
+        setAvailableCategories(
+          initialSnapshot?.category && !cats.includes(initialSnapshot.category)
+            ? [...cats, initialSnapshot.category]
+            : cats,
+        );
+
+        if (initialSnapshot) return;
 
         const proposalDrafts = drafts.filter(
           (d) => d.type === "proposal" && !d.thread_key,
@@ -180,6 +204,9 @@ function NewMatterClassicForm({
           setBody(candidate.body_md ?? "");
           if (candidate.category) {
             setCategory(candidate.category);
+            if (!cats.includes(candidate.category)) {
+              setCreatedCategory(candidate.category);
+            }
           } else if (cats.length === 0) {
             setCategoryMode("create");
           } else {
@@ -225,6 +252,33 @@ function NewMatterClassicForm({
               open_ids: rawMentions.open_ids as string[],
               comments: rawMentions.comments,
             });
+          }
+          const rawCategoryVisibility = payload.category_visibility as
+            | CategoryVisibilityScope
+            | undefined;
+          if (
+            rawCategoryVisibility &&
+            (rawCategoryVisibility.mode === "public" ||
+              rawCategoryVisibility.mode === "restricted") &&
+            Array.isArray(rawCategoryVisibility.authorized_roles)
+          ) {
+            setCategoryVisibility(rawCategoryVisibility);
+          }
+          const rawMatterVisibility = payload.matter_visibility as
+            | VisibilityScope
+            | undefined;
+          if (
+            rawMatterVisibility &&
+            (rawMatterVisibility.mode === "public" ||
+              rawMatterVisibility.mode === "restricted") &&
+            Array.isArray(rawMatterVisibility.roles) &&
+            Array.isArray(rawMatterVisibility.user_ids)
+          ) {
+            setVisibility(rawMatterVisibility);
+          }
+          const restoredCreatedCategory = payload.created_category;
+          if (typeof restoredCreatedCategory === "string" && restoredCreatedCategory) {
+            setCreatedCategory(restoredCreatedCategory);
           }
         } else if (cats.length === 0) {
           setCategoryMode("create");
@@ -286,6 +340,9 @@ function NewMatterClassicForm({
           ? { body_source_snapshot: bodyState.body_source_snapshot }
           : {}),
         ...(mentions.open_ids.length > 0 ? { mentions } : {}),
+        category_visibility: categoryVisibility,
+        matter_visibility: visibility,
+        created_category: createdCategory,
       },
     }),
     enabled: draftLoaded && isDirty && stage === "idle",
@@ -295,6 +352,9 @@ function NewMatterClassicForm({
       matterOwner.openId, matterOwner.name, owner, ownerDisplayName,
       bodyState.body_source, bodyState.body_source_snapshot,
       mentions.open_ids.length, mentions.comments,
+      categoryVisibility.mode, categoryVisibility.authorized_roles.join("|"),
+      visibility.mode, visibility.roles.join("|"), visibility.user_ids.join("|"),
+      createdCategory,
     ],
   });
 

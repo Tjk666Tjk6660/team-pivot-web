@@ -154,7 +154,7 @@ export function NewMatterGuidedFlow({
   initialBridge,
 }: {
   me: Me;
-  onSwitchToClassic: () => void;
+  onSwitchToClassic: (snapshot?: ClassicBridgeSnapshot) => void;
   /** When set, the user is arriving from the classic form's quality gate.
    *  All fields are already filled — skip the manual Q&A and go directly to
    *  AI drafting using the user's typed body as base. */
@@ -284,6 +284,9 @@ export function NewMatterGuidedFlow({
       ...(draftBody.trim() ? { body_source_snapshot: draftBody } : {}),
       ...(data.topic.trim() ? { topic: data.topic.trim() } : {}),
       ...(data.mentions.open_ids.length > 0 ? { mentions: data.mentions } : {}),
+      category_visibility: data.categoryVisibility,
+      matter_visibility: data.matterVisibility,
+      created_category: createdCategory,
     },
   });
   const { saveNow } = useDraftAutosave({
@@ -305,6 +308,12 @@ export function NewMatterGuidedFlow({
       data.mentions.comments,
       data.body,
       data.summary,
+      data.categoryVisibility.mode,
+      data.categoryVisibility.authorized_roles.join("|"),
+      data.matterVisibility.mode,
+      data.matterVisibility.roles.join("|"),
+      data.matterVisibility.user_ids.join("|"),
+      createdCategory,
       streamingBody,
     ],
   });
@@ -320,6 +329,18 @@ export function NewMatterGuidedFlow({
     }
     navigate("/");
   };
+
+  const buildClassicSnapshot = (): ClassicBridgeSnapshot => ({
+    body: draftBody,
+    title: data.title,
+    category: data.category,
+    docType: data.docType,
+    matterOwner: data.matterOwner,
+    mentions: data.mentions,
+    categoryVisibility: data.categoryVisibility,
+    matterVisibility: data.matterVisibility,
+    createdCategory,
+  });
 
   const advanceToNextAI = (next: Phase) => {
     setPhase(next);
@@ -695,7 +716,7 @@ export function NewMatterGuidedFlow({
               </span>
               <button
                 type="button"
-                onClick={onSwitchToClassic}
+                onClick={() => onSwitchToClassic(buildClassicSnapshot())}
                 className="text-xs text-[var(--text-mute)] underline-offset-2 hover:text-[var(--accent)] hover:underline"
                 title="切换到表单模式"
               >
