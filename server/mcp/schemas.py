@@ -41,6 +41,38 @@ class ResolveContextOut(BaseModel):
     )
 
 
+# ---------- visibility (shared) ----------
+
+
+class VisibilityScopeIn(BaseModel):
+    """Matter-level visibility scope, mirroring the backend's wire format.
+
+    Empty restricted scope (no roles, no user_ids) is allowed at this layer —
+    the backend rejects it implicitly via `visibility_excludes_required_user`
+    when the creator/owner can't be admitted, and we surface that 422 verbatim.
+    """
+
+    mode: Literal["public", "restricted"] = "public"
+    roles: list[str] = Field(
+        default_factory=list,
+        description="Role names allowed to see the matter when mode='restricted'.",
+    )
+    user_ids: list[str] = Field(
+        default_factory=list,
+        description="User open_ids individually allowed when mode='restricted'.",
+    )
+
+
+class CategoryVisibilityIn(BaseModel):
+    """Category-level visibility, only used at category creation time."""
+
+    mode: Literal["public", "restricted"] = "public"
+    authorized_roles: list[str] = Field(
+        default_factory=list,
+        description="Role names allowed to see this category when mode='restricted'.",
+    )
+
+
 # ---------- list_matters ----------
 
 class ListMattersIn(BaseModel):
@@ -307,6 +339,27 @@ class CreateMatterIn(BaseModel):
             "in the body are NOT a signal to auto-mention. Always present the "
             "resolved targets + `say` line to the user for confirmation before "
             "calling."
+        ),
+    )
+    visibility: VisibilityScopeIn | None = Field(
+        default=None,
+        description=(
+            "OPTIONAL matter-level visibility. PROTOCOL: only set when the "
+            "user EXPLICITLY says to limit access (e.g. '只给 dev 看', "
+            "'限制可见范围', '不要让 X 看到'); otherwise leave null and the "
+            "backend defaults to public. Do NOT infer from the body text. "
+            "Before setting `mode='restricted'`, call `list_visibility_options` "
+            "to fetch the candidate roles/users for the target category, then "
+            "echo the resolved scope back to the user for confirmation."
+        ),
+    )
+    new_category_visibility: CategoryVisibilityIn | None = Field(
+        default=None,
+        description=(
+            "OPTIONAL category-level visibility, ONLY needed when (a) the "
+            "`category` does not yet exist AND (b) the matter `visibility` is "
+            "restricted. Backend returns 422 `missing_category_visibility` "
+            "if absent in that scenario. Leave null in every other case."
         ),
     )
 

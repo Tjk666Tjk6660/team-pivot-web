@@ -10,6 +10,67 @@ from server.mcp.tools import (
     tool_list_matters,
     tool_resolve_context,
 )
+from server.mcp.schemas import (
+    CategoryVisibilityIn,
+    CreateMatterIn,
+    VisibilityScopeIn,
+)
+
+
+def test_visibility_scope_in_defaults_public():
+    v = VisibilityScopeIn()
+    assert v.mode == "public"
+    assert v.roles == []
+    assert v.user_ids == []
+
+
+def test_visibility_scope_in_restricted_roundtrip():
+    v = VisibilityScopeIn(mode="restricted", roles=["dev"], user_ids=["u1"])
+    assert v.model_dump() == {
+        "mode": "restricted", "roles": ["dev"], "user_ids": ["u1"],
+    }
+
+
+def test_visibility_scope_in_rejects_unknown_mode():
+    with pytest.raises(Exception):
+        VisibilityScopeIn(mode="weird")
+
+
+def test_category_visibility_in_defaults_public():
+    c = CategoryVisibilityIn()
+    assert c.mode == "public"
+    assert c.authorized_roles == []
+
+
+def test_category_visibility_in_restricted():
+    c = CategoryVisibilityIn(mode="restricted", authorized_roles=["dev"])
+    assert c.model_dump() == {
+        "mode": "restricted", "authorized_roles": ["dev"],
+    }
+
+
+def test_create_matter_in_accepts_visibility_fields():
+    payload = {
+        "category": "Pivot", "title": "T", "type": "think",
+        "summary": "s", "body": "b",
+        "visibility": {"mode": "restricted", "roles": ["dev"], "user_ids": []},
+        "new_category_visibility": {"mode": "public", "authorized_roles": []},
+    }
+    m = CreateMatterIn.model_validate(payload)
+    assert m.visibility is not None
+    assert m.visibility.mode == "restricted"
+    assert m.visibility.roles == ["dev"]
+    assert m.new_category_visibility is not None
+    assert m.new_category_visibility.mode == "public"
+
+
+def test_create_matter_in_visibility_default_is_none():
+    m = CreateMatterIn.model_validate({
+        "category": "Pivot", "title": "T", "type": "think",
+        "summary": "s", "body": "b",
+    })
+    assert m.visibility is None
+    assert m.new_category_visibility is None
 
 
 def _make_client(matter: dict, timeline: list[dict]) -> MatterApiClient:
