@@ -50,6 +50,9 @@ from server.external_bindings import ExternalBindingRepo
 from server.feishu_token import FeishuTokenManager
 from server.favorites import FavoriteRepo
 from server.file_reads import FileReadRepo
+from server.git_ops import push as git_push
+from server.git_outbox import GitPushOutbox
+from server.git_worker import GitWorker
 from server.invites import InviteRepo
 from server.join_applications import JoinApplicationRepo
 from server.logging_setup import configure_logging
@@ -125,6 +128,18 @@ def create_app() -> FastAPI:
 
     workspace = WorkspaceRuntime(base_dir=cfg.data_dir / "git", settings=settings)
 
+    # 方案 A · Write Pipeline: build the outbox + GitWorker so writes can
+    # commit locally and hand the push off asynchronously. Wiring is done
+    # here (rather than inside WorkspaceRuntime) because the worker depends
+    # on the workspace's repo path which only resolves after `reload()`.
+    git_outbox = GitPushOutbox(db)
+    git_worker = GitWorker(
+        outbox=git_outbox,
+        push_fn=git_push,
+        repo_dir=workspace.path,
+    )
+    workspace.attach_outbox(outbox=git_outbox, worker_notify=git_worker.notify)
+
     notifier: Notifier
     if cfg.notify_enabled:
         notifier = FeishuNotifier(
@@ -181,6 +196,11 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI):
         await daily_report_scheduler.start()
         await scoring_worker.start()
+        # Start the git push worker AFTER the workspace.recover() has run
+        # synchronously inside WorkspaceRuntime construction. The worker
+        # itself sweeps any 'in_flight' rows back to 'pending' on start, so
+        # crash-mid-push is safe.
+        await git_worker.start()
 
         if workspace.configured():
             try:
@@ -234,6 +254,11 @@ def create_app() -> FastAPI:
                 await hourly_task
             except (asyncio.CancelledError, Exception):
                 pass
+            # Stop the git worker BEFORE scoring/daily-report so any in-flight
+            # push has a chance to finish + ack its outbox row. Workers further
+            # downstream (scoring) don't enqueue to git_outbox so this order
+            # only matters for clean shutdown logs, not correctness.
+            await git_worker.stop()
             await scoring_worker.stop()
             scoring_unsubscribe()
             await daily_report_scheduler.stop()
