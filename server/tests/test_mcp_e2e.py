@@ -587,7 +587,8 @@ def test_mcp_e2e_full_flow(live_server):
     ]:
         assert tool in instructions, (tool, instructions)
     assert {"resolve_context", "list_matters", "get_matter", "read_files",
-            "create_file", "create_matter", "add_comment"} <= result["tool_names"]
+            "create_file", "create_matter", "add_comment",
+            "list_visibility_options"} <= result["tool_names"]
 
     # resolve_context
     resolved = result["resolved"]

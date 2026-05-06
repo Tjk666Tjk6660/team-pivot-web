@@ -24,6 +24,7 @@ from server.mcp.schemas import (
     CreateMatterIn,
     GetMatterIn,
     ListMattersIn,
+    ListVisibilityOptionsIn,
     ReadFilesIn,
     ResolveContextIn,
 )
@@ -35,6 +36,7 @@ from server.mcp.tools import (
     tool_create_matter,
     tool_get_matter,
     tool_list_matters,
+    tool_list_visibility_options,
     tool_read_files,
     tool_resolve_context,
 )
@@ -207,6 +209,25 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
                 ),
                 inputSchema=AddCommentIn.model_json_schema(),
             ),
+            Tool(
+                name="list_visibility_options",
+                description=(
+                    "List the role + user candidates eligible for a matter's "
+                    "visibility scope, optionally filtered by category. "
+                    "Common user phrasings (any language): \"哪些角色能选\", "
+                    "\"列一下能限制可见的人和组\", \"who can I share this with\". "
+                    "PRIMARY USE: call this BEFORE `create_matter` whenever the "
+                    "user expresses a restricted-visibility intent (\"只给 dev "
+                    "看\", \"limit to ops\", \"不要让 X 看到\") — the response "
+                    "tells you what `roles` / `user_ids` are valid for that "
+                    "category, so you can echo the resolved scope back to the "
+                    "user for confirmation, then submit `create_matter` with "
+                    "the right visibility object. "
+                    "When no category is given, returns the global candidates "
+                    "the calling user can see."
+                ),
+                inputSchema=ListVisibilityOptionsIn.model_json_schema(),
+            ),
         ]
 
     @mcp_server.call_tool()
@@ -248,6 +269,10 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
             elif name == "add_comment":
                 out = await anyio.to_thread.run_sync(
                     partial(tool_add_comment, arguments, client, web_base_url)
+                )
+            elif name == "list_visibility_options":
+                out = await anyio.to_thread.run_sync(
+                    partial(tool_list_visibility_options, arguments, client)
                 )
             else:
                 raise ToolError(404, f"unknown_tool: {name}")
