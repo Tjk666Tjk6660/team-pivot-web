@@ -24,7 +24,7 @@ def generate_text(
     model: str,
     api_key: str,
     base_url: str,
-    timeout_seconds: float = 90.0,
+    timeout_seconds: float = 180.0,
 ) -> str:
     """Run a single chat turn end-to-end and return the model's text reply.
 
@@ -46,6 +46,7 @@ def generate_text(
         parts: list[str] = []
         async for ev in stream_chat(
             messages, model, api_key, base_url, tools=None,
+            timeout_read_seconds=timeout_seconds,
         ):
             if ev.get("type") == "text":
                 parts.append(ev.get("delta") or "")
