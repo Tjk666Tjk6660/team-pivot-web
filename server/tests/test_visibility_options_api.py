@@ -49,7 +49,7 @@ def _make_user(
     return users.update_role(user_id=user.id, roles=roles)
 
 
-def test_visibility_options_excludes_admin_role_and_admin_users(tmp_path):
+def test_visibility_options_excludes_admin_role_but_keeps_admin_users_selectable(tmp_path):
     client, users, _categories_dir = _client(tmp_path)
     _make_user(users, name="Tech", roles=["member", "tech"])
     _make_user(users, name="Admin", roles=["admin", "tech"])
@@ -59,9 +59,9 @@ def test_visibility_options_excludes_admin_role_and_admin_users(tmp_path):
     assert r.status_code == 200
     body = r.json()
     assert {item["role"] for item in body["roles"]} == {"member", "tech"}
-    assert {item["display_name"] for item in body["users"]} == {"Current", "Tech"}
+    assert {item["display_name"] for item in body["users"]} == {"Current", "Tech", "Admin"}
     tech_role = next(item for item in body["roles"] if item["role"] == "tech")
-    assert [item["display_name"] for item in tech_role["users"]] == ["Tech"]
+    assert [item["display_name"] for item in tech_role["users"]] == ["Tech", "Admin"]
 
 
 def test_visibility_options_are_limited_by_restricted_category(tmp_path):

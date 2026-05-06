@@ -29,7 +29,7 @@ def build_router(
         allowed_roles = _allowed_roles_for_category(categories_dir, category)
         active_users = [
             u for u in users.list_for_admin(include_deleted=False)
-            if u.status == "active" and "admin" not in u.roles
+            if u.status == "active"
         ]
         role_members: dict[str, list[PivotUser]] = {
             item.name: []
