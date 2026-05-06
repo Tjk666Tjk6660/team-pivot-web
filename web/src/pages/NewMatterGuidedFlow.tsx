@@ -825,6 +825,7 @@ export function NewMatterGuidedFlow({
                       onChange={(next) => setData((d) => ({ ...d, matterVisibility: next }))}
                       disabled={submitting || revising}
                       allowedRoles={categoryAllowedRoles}
+                      requiredUserId={me.open_id}
                     />
                   </div>
                 </div>

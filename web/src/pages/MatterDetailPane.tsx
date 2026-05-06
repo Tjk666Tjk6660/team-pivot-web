@@ -1461,6 +1461,7 @@ export function MatterDetailPane() {
             value={visibilityDraft}
             onChange={setVisibilityDraft}
             disabled={visibilitySaving}
+            requiredUserId={sessionOpenId || undefined}
           />
           <DialogFooter>
             <Button

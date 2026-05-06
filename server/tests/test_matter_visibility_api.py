@@ -18,7 +18,6 @@ from server.notify import NoOpNotifier
 from server.pivot_users import PivotUserRepo
 from server.read_state import ReadStateRepo
 from server.relevance_events import RelevanceEventsRepo
-from server.users import UserRepo
 
 
 class _WorkspaceStub:
@@ -41,9 +40,7 @@ class _WorkspaceStub:
 
 def _client(tmp_path):
     db = Database(tmp_path / "test.db")
-    users = UserRepo(db)
-    users.upsert_from_feishu(open_id="ou_1", union_id=None, name="邓柯", avatar_url="")
-    users.update_profile("ou_1", pinyin="dengke")
+    # Auth/session is keyed by pivot_user.id post-migration; legacy users table is unused here.
     pivot_users = PivotUserRepo(db)
     pivot_user = pivot_users.create(
         display_name="dengke",
@@ -54,15 +51,14 @@ def _client(tmp_path):
     )
     pivot_users.update_role(user_id=pivot_user.id, roles=["member", "tech", "ops"])
     sessions = SessionStore(db)
-    sid = sessions.create("ou_1")
-    current_user = make_current_user(sessions, users, ApiTokenRepo(db))
+    sid = sessions.create(pivot_user.id)
+    current_user = make_current_user(sessions, pivot_users, ApiTokenRepo(db))
     workspace = _WorkspaceStub(tmp_path / "workspace")
     bindings = ExternalBindingRepo(db)
     app = FastAPI()
     app.include_router(
         build_router(
             workspace,
-            users,
             pivot_users,
             bindings,
             NoOpNotifier(),
@@ -77,13 +73,20 @@ def _client(tmp_path):
     )
     client = TestClient(app)
     client.cookies.set("sid", sid)
-    return client, workspace, users, sessions, db
+    return client, workspace, pivot_users, sessions, db
 
 
-def _as_user(client, sessions, users, *, open_id: str, pinyin: str):
-    users.upsert_from_feishu(open_id=open_id, union_id=None, name=pinyin, avatar_url="")
-    users.update_profile(open_id, pinyin=pinyin)
-    sid = sessions.create(open_id)
+def _as_user(client, sessions, pivot_users, *, pinyin: str, roles: list[str] | None = None):
+    pu = pivot_users.create(
+        display_name=pinyin,
+        pinyin=pinyin,
+        email=f"{pinyin}@example.com",
+        avatar_url="",
+        role="member",
+    )
+    if roles is not None:
+        pivot_users.update_role(user_id=pu.id, roles=roles)
+    sid = sessions.create(pu.id)
     client.cookies.set("sid", sid)
 
 
@@ -240,7 +243,7 @@ def test_creator_can_update_matter_visibility(tmp_path):
 
 
 def test_update_matter_visibility_rejects_non_creator_or_owner(tmp_path):
-    client, _workspace, users, sessions, _db = _client(tmp_path)
+    client, _workspace, pivot_users, sessions, _db = _client(tmp_path)
     created = client.post(
         "/api/matters",
         json={
@@ -254,7 +257,7 @@ def test_update_matter_visibility_rejects_non_creator_or_owner(tmp_path):
         },
     )
     assert created.status_code == 200
-    _as_user(client, sessions, users, open_id="ou_2", pinyin="other")
+    _as_user(client, sessions, pivot_users, pinyin="other")
 
     r = client.put(
         f"/api/matters/{created.json()['matter_id']}/visibility",
@@ -352,7 +355,7 @@ def test_update_matter_visibility_emits_event(tmp_path):
 
 
 def test_restricted_matter_is_hidden_from_unauthorized_user(tmp_path):
-    client, _workspace, users, sessions, _db = _client(tmp_path)
+    client, _workspace, pivot_users, sessions, _db = _client(tmp_path)
     created = client.post(
         "/api/matters",
         json={
@@ -376,7 +379,7 @@ def test_restricted_matter_is_hidden_from_unauthorized_user(tmp_path):
     )
     assert created.status_code == 200
     matter_id = created.json()["matter_id"]
-    _as_user(client, sessions, users, open_id="ou_2", pinyin="other")
+    _as_user(client, sessions, pivot_users, pinyin="other", roles=["member"])
 
     listing = client.get("/api/matters")
     detail = client.get(f"/api/matters/{matter_id}")

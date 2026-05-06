@@ -713,6 +713,7 @@ function NewMatterClassicForm({
                   onChange={setVisibility}
                   disabled={submitting}
                   allowedRoles={categoryAllowedRoles}
+                  requiredUserId={me.open_id}
                 />
               </div>
 

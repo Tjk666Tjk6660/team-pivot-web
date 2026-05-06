@@ -901,6 +901,23 @@ def _scope_allows_principal(
         return True
     if principal_id in visibility.user_ids:
         return True
+
+    # `creator/owner` in indexes are typically pinyin; the picker UI submits
+    # pivot_user.id. Treat any identifier for the principal (id/pinyin/email)
+    # as satisfying a user_ids allowlist entry.
+    if db is not None:
+        with db.connect() as conn:
+            row = conn.execute(
+                "SELECT id, pinyin, email FROM pivot_user"
+                " WHERE status='active' AND (id=? OR pinyin=? OR email=?)"
+                " LIMIT 1",
+                (principal_id, principal_id, principal_id),
+            ).fetchone()
+        if row is not None:
+            identifiers = {row["id"], row["pinyin"], row["email"]}
+            if any(v and v in visibility.user_ids for v in identifiers):
+                return True
+
     roles = _roles_for_principal(principal_id, db)
     return bool(set(roles) & set(visibility.roles))
 
