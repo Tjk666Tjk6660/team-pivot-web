@@ -71,6 +71,7 @@ CREATE INDEX IF NOT EXISTS idx_pivot_user_role_status ON pivot_user(role, status
 
 CREATE TABLE IF NOT EXISTS pivot_role (
     name TEXT PRIMARY KEY,
+    label TEXT,
     kind TEXT NOT NULL DEFAULT 'business' CHECK(kind IN ('system','business')),
     description TEXT,
     is_active INTEGER NOT NULL DEFAULT 1,
@@ -540,12 +541,23 @@ def _set_initial_admin(
 
 def _ensure_pivot_roles(conn: sqlite3.Connection) -> None:
     now = time()
-    for name in ("admin", "member"):
+    cols = _table_columns(conn, "pivot_role")
+    if cols and "label" not in cols:
+        conn.execute("ALTER TABLE pivot_role ADD COLUMN label TEXT")
+    system_role_labels = {
+        "admin": "管理员",
+        "member": "成员",
+    }
+    for name, label in system_role_labels.items():
         conn.execute(
             "INSERT OR IGNORE INTO pivot_role"
-            " (name, kind, description, is_active, created_at, updated_at)"
-            " VALUES (?, 'system', NULL, 1, ?, ?)",
-            (name, now, now),
+            " (name, label, kind, description, is_active, created_at, updated_at)"
+            " VALUES (?, ?, 'system', NULL, 1, ?, ?)",
+            (name, label, now, now),
+        )
+        conn.execute(
+            "UPDATE pivot_role SET label=?, kind='system' WHERE name=?",
+            (label, name),
         )
     for row in conn.execute("SELECT role FROM pivot_user").fetchall():
         raw = row["role"] or ""
@@ -560,9 +572,9 @@ def _ensure_pivot_roles(conn: sqlite3.Connection) -> None:
             kind = "system" if name in {"admin", "member"} else "business"
             conn.execute(
                 "INSERT OR IGNORE INTO pivot_role"
-                " (name, kind, description, is_active, created_at, updated_at)"
-                " VALUES (?, ?, NULL, 1, ?, ?)",
-                (name, kind, now, now),
+                " (name, label, kind, description, is_active, created_at, updated_at)"
+                " VALUES (?, ?, ?, NULL, 1, ?, ?)",
+                (name, system_role_labels.get(name), kind, now, now),
             )
 
 

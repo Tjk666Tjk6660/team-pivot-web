@@ -226,6 +226,11 @@ def test_full_migration_succeeds_and_drops_user_open_id(tmp_path):
     assert conn.execute(
         "SELECT COUNT(*) FROM pivot_role WHERE name IN ('admin','member')"
     ).fetchone()[0] == 2
+    role_rows = conn.execute(
+        "SELECT name, label FROM pivot_role WHERE name IN ('admin','member')"
+    ).fetchall()
+    role_labels = {name: label for name, label in role_rows}
+    assert role_labels == {"admin": "管理员", "member": "成员"}
     # Legacy users table dropped
     assert conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type=? AND name=?", ("table", "users"),

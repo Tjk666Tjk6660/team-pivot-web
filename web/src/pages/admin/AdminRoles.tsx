@@ -70,6 +70,10 @@ export function AdminRoles() {
     () => roles.find((role) => role.role === selectedRole) ?? null,
     [roles, selectedRole],
   );
+  const roleNameByKey = useMemo(
+    () => new Map(roles.map((role) => [role.role, roleDisplayName(role)])),
+    [roles],
+  );
 
   const selectRole = (role: string) => {
     setSelectedRole(role);
@@ -82,9 +86,9 @@ export function AdminRoles() {
     setSaving(true);
     setError(null);
     try {
-      await createAdminRole(name);
+      const created = await createAdminRole(name);
       setCreateOpen(false);
-      await reload(name);
+      await reload(created.role);
     } catch (err) {
       throw err;
     } finally {
@@ -162,7 +166,7 @@ export function AdminRoles() {
                       : "text-[var(--text)] hover:bg-[var(--surface-alt)]",
                   )}
                 >
-                  <span className="min-w-0 truncate">{role.role}</span>
+                  <span className="min-w-0 truncate">{roleDisplayName(role)}</span>
                   <span className="shrink-0 text-xs text-[var(--text-mute)]">
                     {role.kind === "system" ? "系统" : "业务"} · {role.user_count}人
                   </span>
@@ -180,7 +184,7 @@ export function AdminRoles() {
                   <div className="flex items-center gap-2">
                     <Users className="h-4 w-4 text-[var(--accent)]" />
                     <h2 className="text-base font-semibold text-[var(--text)]">
-                      {activeRole.role}
+                      {roleDisplayName(activeRole)}
                     </h2>
                   </div>
                   <p className="mt-1 text-sm text-[var(--text-mute)]">
@@ -209,7 +213,7 @@ export function AdminRoles() {
                         {user.display_name}
                       </div>
                       <div className="truncate text-xs text-[var(--text-mute)]">
-                        {user.roles?.join("、") || "无角色"}
+                        {formatRoleList(user.roles, roleNameByKey)}
                       </div>
                     </div>
                   </label>
@@ -238,6 +242,18 @@ export function AdminRoles() {
       />
     </div>
   );
+}
+
+function roleDisplayName(role: AdminRoleOption): string {
+  return role.label || role.name || role.role;
+}
+
+function formatRoleList(
+  roles: string[] | undefined,
+  roleNameByKey: Map<string, string>,
+): string {
+  const labels = (roles ?? []).map((role) => roleNameByKey.get(role) ?? role);
+  return labels.length ? labels.join("、") : "无角色";
 }
 
 function CreateRoleDialog({

@@ -221,8 +221,9 @@ def build_router(
                     "suggestions": sorted(set(suggestions)),
                 },
             )
-        for role in unknown:
-            roles.create(name=role)
+        if unknown:
+            created_by_label = {role: roles.create(name=role).name for role in unknown}
+            requested = [created_by_label.get(role, role) for role in requested]
 
         if "admin" in target.roles and "admin" not in requested:
             _refuse_self(user_id, admin)
@@ -253,9 +254,11 @@ def build_router(
 
 
 def _role_dict(role: PivotRole) -> dict:
+    label = role.label or role.name
     return {
         "role": role.name,
-        "name": role.name,
+        "name": label,
+        "label": label,
         "kind": role.kind,
         "description": role.description,
         "is_active": role.is_active,

@@ -53,10 +53,16 @@ def build_router(
             "all": {"label": "全部用户", "value": "public"},
             "roles": [
                 {
-                    "role": role,
-                    "users": [_user_option(u) for u in members],
+                    "role": role.name,
+                    "name": role.label or role.name,
+                    "label": role.label or role.name,
+                    "users": [_user_option(u) for u in role_members[role.name]],
                 }
-                for role, members in sorted(role_members.items())
+                for role in sorted(
+                    roles.list(include_inactive=False),
+                    key=lambda item: (item.label or item.name).lower(),
+                )
+                if role.name in role_members
             ],
             "users": [_user_option(u) for u in visible_users],
         }
