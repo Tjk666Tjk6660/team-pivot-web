@@ -83,11 +83,11 @@ class ListMattersIn(BaseModel):
         default="all",
         description=(
             "Relevance filter for the calling user. 'mine' returns only "
-            "matters with red unread > 0 (i.e. you have unread file-level "
-            "relevance hits — owner_assigned / replies to your files / "
-            "verify of your work / activity in your matters / mentions of "
-            "you). 'mine' is NOT 'matters you created or own' — it tracks "
-            "unread, not authorship. Default 'all'."
+            "matters with unread items relevant to you (file-level hits like "
+            "owner_assigned / replies to your files / verify of your work / "
+            "activity in your matters / mentions of you). 'mine' is NOT "
+            "'matters you created or own' — it tracks unread relevance, "
+            "not authorship. Default 'all'."
         ),
     )
 
