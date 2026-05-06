@@ -88,7 +88,7 @@ def _pick_free_port() -> int:
         return s.getsockname()[1]
 
 
-def _build_combined_app(db: Database, users: UserRepo,
+def _build_combined_app(db: Database, pivot_users: PivotUserRepo,
                         api_tokens: ApiTokenRepo,
                         workspace: _WorkspaceStub,
                         base_url: str) -> FastAPI:
@@ -99,20 +99,19 @@ def _build_combined_app(db: Database, users: UserRepo,
     loop back to the same worker that answered the inbound /mcp request.
     """
     sessions = SessionStore(db)
-    current_user = make_current_user(sessions, users, api_tokens)
-    mcp_app = build_mcp_app(api_tokens, users, base_url, base_url)
+    current_user = make_current_user(sessions, pivot_users, api_tokens)
+    mcp_app = build_mcp_app(api_tokens, pivot_users, base_url, base_url)
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI):
         async with mcp_app.router.lifespan_context(mcp_app):
             yield
 
-    pivot_users = PivotUserRepo(db)
     bindings = ExternalBindingRepo(db)
     app = FastAPI(lifespan=lifespan)
     app.include_router(
         build_matters_router(
-            workspace, users, pivot_users, bindings, NoOpNotifier(),
+            workspace, pivot_users, bindings, NoOpNotifier(),
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
             RelevanceEventsRepo(db), DisplayResolver(pivot_users, bindings), current_user,
         )
@@ -237,7 +236,7 @@ def live_server(tmp_path) -> Iterator[dict]:
         pivot_user_id=pu.id, provider="feishu",
         external_id="ou_1", external_union_id=None, raw_profile_json=None,
     )
-    plaintext, _ = api_tokens.create(user_open_id="ou_1", name="Test PAT")
+    plaintext, _ = api_tokens.create(pivot_user_id=pu.id, name="Test PAT")
 
     workspace = _WorkspaceStub(tmp_path)
 
@@ -249,7 +248,7 @@ def live_server(tmp_path) -> Iterator[dict]:
     port = _pick_free_port()
     base_url = f"http://127.0.0.1:{port}"
 
-    app = _build_combined_app(db, users, api_tokens, workspace, base_url)
+    app = _build_combined_app(db, pivot_users_seed, api_tokens, workspace, base_url)
     server = _ServerInThread(app, port, probe_path="/api/matters")
     server.start()
     try:

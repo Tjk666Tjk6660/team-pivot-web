@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from server.matter_index import read_matter_index
+from server.external_bindings import ExternalBindingRepo
+from server.pivot_users import PivotUser, PivotUserRepo
 from server.relevance import compute_relevance
 from server.relevance_events import (
     KIND_FILE,
@@ -32,7 +34,6 @@ from server.relevance_events import (
     REASON_COMMENT_MENTION,
     RelevanceEventsRepo,
 )
-from server.users import UserRepo
 from server.workspace import Workspace
 
 log = logging.getLogger(__name__)
@@ -61,8 +62,9 @@ class ScanReport:
 def scan_all(
     *,
     workspace: Workspace,
-    users_repo: UserRepo,
+    users_repo: PivotUserRepo,
     repo: RelevanceEventsRepo,
+    bindings: ExternalBindingRepo | None = None,
     mark_as_read: bool = False,
 ) -> ScanReport:
     """Walk every matter and insert any missing relevance rows.
@@ -144,7 +146,7 @@ def scan_all(
                 if not comment_at or not comment_author:
                     continue
                 for mention_id in comment.get("mentions") or []:
-                    target = users_repo.get_by_any_id(str(mention_id))
+                    target = _resolve_user_ref(str(mention_id), users_repo, bindings)
                     if target is None:
                         continue
                     if target.pinyin and target.pinyin == comment_author:
@@ -208,8 +210,9 @@ def get_scan_interval_minutes() -> int:
 async def schedule_hourly_scan(
     *,
     workspace: Workspace,
-    users_repo: UserRepo,
+    users_repo: PivotUserRepo,
     repo: RelevanceEventsRepo,
+    bindings: ExternalBindingRepo | None = None,
     interval_seconds: int = HOURLY_INTERVAL_SECONDS,
 ) -> None:
     """Background task: scan_all every `interval_seconds`. Runs forever
@@ -235,6 +238,7 @@ async def schedule_hourly_scan(
                 workspace=workspace,
                 users_repo=users_repo,
                 repo=repo,
+                bindings=bindings,
             )
         except Exception:
             log.exception("relevance hourly scan_all failed")
@@ -256,6 +260,20 @@ def _list_matter_index_paths(index_dir: Path) -> list[Path]:
     return out
 
 
+def _resolve_user_ref(
+    ref: str,
+    users_repo: PivotUserRepo,
+    bindings: ExternalBindingRepo | None,
+) -> PivotUser | None:
+    target = users_repo.get_by_any_id(ref)
+    if target is not None:
+        return target
+    if bindings is None:
+        return None
+    binding = bindings.lookup_any_provider(ref)
+    return users_repo.get(binding.pivot_user_id) if binding is not None else None
+
+
 # ---------- CLI ----------
 
 
@@ -269,6 +287,7 @@ def _main() -> int:
 
     from server.config import load_config
     from server.db import Database
+    from server.external_bindings import ExternalBindingRepo
     from server.workspace_runtime import WorkspaceRuntime
     from server.settings import SettingsRepo
 
@@ -276,10 +295,13 @@ def _main() -> int:
     db = Database(cfg.data_dir / "data.db")
     settings = SettingsRepo(db)
     workspace = WorkspaceRuntime(base_dir=cfg.data_dir / "git", settings=settings)
-    users_repo = UserRepo(db)
+    users_repo = PivotUserRepo(db)
+    bindings = ExternalBindingRepo(db)
     repo = RelevanceEventsRepo(db)
 
-    report = scan_all(workspace=workspace, users_repo=users_repo, repo=repo)
+    report = scan_all(
+        workspace=workspace, users_repo=users_repo, bindings=bindings, repo=repo,
+    )
     print(
         f"scan_all: matters={report.matters} "
         f"inserted={report.inserted} skipped={report.skipped}"

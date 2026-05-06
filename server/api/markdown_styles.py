@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from server.markdown_styles import (
     DEFAULT_MARKDOWN_STYLE,
     KEY_MARKDOWN_DEFAULT_STYLE,
+    KEY_USER_MARKDOWN_STYLE,
     all_markdown_style_dicts,
     effective_markdown_style,
     is_markdown_style_id,
@@ -13,7 +14,7 @@ from server.markdown_styles import (
 )
 from server.pivot_users import PivotUser
 from server.settings import SettingsRepo
-from server.users import User, UserRepo
+from server.user_preferences import UserPreferenceRepo
 
 
 class UserMarkdownStyleIn(BaseModel):
@@ -26,7 +27,7 @@ class AdminMarkdownSettingsIn(BaseModel):
 
 def build_router(
     settings: SettingsRepo,
-    users: UserRepo,
+    user_prefs: UserPreferenceRepo,
     current_user_dep,
     current_user_cookie_only,
     admin_user_cookie_only,
@@ -34,29 +35,35 @@ def build_router(
     router = APIRouter()
 
     @router.get("/api/markdown/styles")
-    def get_markdown_styles(user: User = Depends(current_user_dep)):
+    def get_markdown_styles(user: PivotUser = Depends(current_user_dep)):
         system_style = system_default_style(settings)
-        user_style = user.markdown_style if is_markdown_style_id(user.markdown_style) else None
+        user_style = user_prefs.get(user.open_id, KEY_USER_MARKDOWN_STYLE)
+        user_style = user_style if is_markdown_style_id(user_style) else None
         return {
             "styles": all_markdown_style_dicts(),
             "system_default_style": system_style,
             "user_style": user_style,
-            "effective_style": effective_markdown_style(user=user, settings=settings),
+            "effective_style": effective_markdown_style(
+                user_style=user_style,
+                settings=settings,
+            ),
             "builtin_default_style": DEFAULT_MARKDOWN_STYLE,
         }
 
     @router.put("/api/me/markdown-style")
     def update_user_markdown_style(
         body: UserMarkdownStyleIn,
-        user: User = Depends(current_user_dep),
+        user: PivotUser = Depends(current_user_dep),
     ):
         if not is_markdown_style_id(body.style):
             raise HTTPException(status_code=400, detail="invalid_markdown_style")
-        updated = users.update_markdown_style(user.open_id, body.style)
-        assert updated is not None
+        user_prefs.set(user.open_id, KEY_USER_MARKDOWN_STYLE, body.style)
         return {
-            "user_style": updated.markdown_style,
-            "effective_style": effective_markdown_style(user=updated, settings=settings),
+            "user_style": body.style,
+            "effective_style": effective_markdown_style(
+                user_style=body.style,
+                settings=settings,
+            ),
         }
 
     @router.get("/api/admin/markdown-settings")

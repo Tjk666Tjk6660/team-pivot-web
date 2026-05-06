@@ -120,6 +120,28 @@ def test_system_prompt_does_not_leak_subject_into_template_braces():
     assert "{{" not in s and "}}" not in s
 
 
+def test_system_prompt_contains_attribution_rules():
+    """Phase 1 / matter 005: prompt must guide AI on归因决策链."""
+    s = build_system_prompt("zhangsan")
+    # 三个新章节标题都在
+    assert "评价对象识别规则" in s
+    assert "评价范围限制" in s
+    assert "owner_change.reason 解析" in s
+    # 关键规则关键词
+    assert "自我评价" in s
+    assert "明确点名" in s or "@" in s
+    # source_file_creator 字段在 schema 示例和硬约束中
+    assert "source_file_creator" in s
+
+
+def test_system_prompt_lists_evidence_source_constraints():
+    """Phase 1: 范围限制要明确列出 think/act/verify 是来源、result/insight 不是。"""
+    s = build_system_prompt("zhangsan")
+    assert "think" in s and "act" in s
+    # result / insight 应被显式标"不发起新评价"或类似含义
+    assert "result" in s and "insight" in s
+
+
 # ---------- timeline serialization ----------
 
 
@@ -135,6 +157,45 @@ def test_serialize_timeline_includes_all_files(index_data, weight_map):
     assert "type=act" in out
     assert "type=verify" in out
     assert "type=result" in out
+
+
+def test_serialize_timeline_marks_file_roles(index_data, weight_map):
+    """Phase 1: 文件类型角色标签——think/act 核心、verify 终点、result 背景。"""
+    out = serialize_timeline(
+        index_data=index_data,
+        weight_map=weight_map,
+        file_body_loader=_no_body_loader,
+    )
+    # act 是核心
+    assert "type=act（核心" in out
+    # verify 是终点
+    assert "type=verify（终点" in out
+    # result 是背景
+    assert "type=result（背景" in out
+
+
+def test_serialize_timeline_marks_think_and_insight_roles():
+    """Verify think→核心、insight→背景 also rendered."""
+    index_data = {
+        "matter": {"id": "m", "title": "t", "current_status": "finished", "owner": "x"},
+        "timeline": [
+            {
+                "file": "discussions/x/m/001_x_think.md", "type": "think",
+                "creator": "x", "owner": "x", "created_at": "2026-04-01",
+                "summary": "s",
+            },
+            {
+                "file": "discussions/x/m/002_x_insight.md", "type": "insight",
+                "creator": "x", "owner": "x", "created_at": "2026-04-02",
+                "summary": "s",
+            },
+        ],
+    }
+    out = serialize_timeline(
+        index_data=index_data, weight_map={}, file_body_loader=_no_body_loader,
+    )
+    assert "type=think（核心" in out
+    assert "type=insight（背景" in out
 
 
 def test_serialize_timeline_annotates_high_weight_actor(index_data, weight_map):

@@ -55,8 +55,8 @@ def run_daily_report(
     """Run the daily report end-to-end."""
     # Lazy imports to avoid hard dependency on server boot for tests
     from server.db import Database
+    from server.pivot_users import PivotUserRepo
     from server.settings import SettingsRepo
-    from server.users import UserRepo
 
     if not db_path.exists():
         log.error("db_path does not exist: %s", db_path)
@@ -76,7 +76,7 @@ def run_daily_report(
         )
         return 2, {"error": f"workspace index dir missing: {workspace_index_dir}"}
 
-    user_repo = UserRepo(db)
+    user_repo = PivotUserRepo(db)
     all_users = user_repo.list_all()
 
     if window is None:

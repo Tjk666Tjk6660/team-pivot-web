@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from server.pivot_users import PivotUser
 from server.settings import SettingsRepo
-from server.users import User
 
 DEFAULT_MARKDOWN_STYLE = "code-light"
 KEY_MARKDOWN_DEFAULT_STYLE = "markdown.default_style"
+KEY_USER_MARKDOWN_STYLE = "markdown_style"
 
 
 @dataclass(frozen=True)
@@ -88,9 +89,11 @@ def system_default_style(settings: SettingsRepo) -> str | None:
 
 
 def effective_markdown_style(
-    *, user: User | None, settings: SettingsRepo
+    *, user: PivotUser | None = None, user_style: str | None = None, settings: SettingsRepo
 ) -> str:
-    user_style = normalize_markdown_style(user.markdown_style if user else None)
+    user_style = normalize_markdown_style(
+        user_style if user_style is not None else (user.markdown_style if user else None)
+    )
     if user_style:
         return user_style
     return system_default_style(settings) or DEFAULT_MARKDOWN_STYLE

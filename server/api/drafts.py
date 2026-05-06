@@ -13,7 +13,7 @@ from server.drafts import Draft, DraftRepo
 from server.external_bindings import ExternalBindingRepo
 from server.matter_validator import validate_append
 from server.notify import Notifier
-from server.pivot_users import PivotUserRepo
+from server.pivot_users import PivotUser, PivotUserRepo
 from server.publish import (
     MatterAlreadyExistsError,
     MatterNotFoundError,
@@ -21,7 +21,6 @@ from server.publish import (
     publish_matter_append,
     publish_matter_create,
 )
-from server.users import User
 from server.workspace import Workspace
 
 log = logging.getLogger(__name__)
@@ -77,7 +76,7 @@ def build_router(
 ) -> APIRouter:
     router = APIRouter(prefix="/api/drafts")
 
-    def _require_owner(draft: Draft | None, user: User) -> Draft:
+    def _require_owner(draft: Draft | None, user: PivotUser) -> Draft:
         if draft is None:
             raise HTTPException(status_code=404, detail="draft not found")
         if draft.pivot_user_id != user.open_id:
@@ -85,12 +84,12 @@ def build_router(
         return draft
 
     @router.get("")
-    def list_drafts(user: User = Depends(current_user)):
+    def list_drafts(user: PivotUser = Depends(current_user)):
         require_profile(user)
         return {"items": [_to_dict(d) for d in drafts.list_for_user(user.open_id)]}
 
     @router.post("")
-    def create_draft(body: CreateDraftBody, user: User = Depends(current_user)):
+    def create_draft(body: CreateDraftBody, user: PivotUser = Depends(current_user)):
         require_profile(user)
         log.debug(
             "draft create user=%s type=%s matter=%s",
@@ -113,7 +112,7 @@ def build_router(
         return _to_dict(d)
 
     @router.get("/{draft_id}")
-    def get_draft(draft_id: str, user: User = Depends(current_user)):
+    def get_draft(draft_id: str, user: PivotUser = Depends(current_user)):
         require_profile(user)
         d = _require_owner(drafts.get(draft_id), user)
         return _to_dict(d)
@@ -121,7 +120,7 @@ def build_router(
     @router.patch("/{draft_id}")
     def update_draft(
         draft_id: str, body: UpdateDraftBody,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         require_profile(user)
         _require_owner(drafts.get(draft_id), user)
@@ -143,14 +142,14 @@ def build_router(
         return _to_dict(d)
 
     @router.delete("/{draft_id}")
-    def delete_draft(draft_id: str, user: User = Depends(current_user)):
+    def delete_draft(draft_id: str, user: PivotUser = Depends(current_user)):
         require_profile(user)
         _require_owner(drafts.get(draft_id), user)
         drafts.delete(draft_id)
         return {"ok": True}
 
     @router.post("/{draft_id}/publish")
-    def publish_draft(draft_id: str, user: User = Depends(current_user)):
+    def publish_draft(draft_id: str, user: PivotUser = Depends(current_user)):
         require_profile(user)
         d = _require_owner(drafts.get(draft_id), user)
         matter_payload = _parse_matter_payload(d.matter_payload_json)
@@ -248,7 +247,7 @@ def _parse_matter_payload(s: str | None) -> dict | None:
 
 def _publish_matter_from_draft(
     workspace: Workspace,
-    user: User,
+    user: PivotUser,
     d: Draft,
     payload: dict,
     *,

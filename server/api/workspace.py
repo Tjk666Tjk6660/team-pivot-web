@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 
 from server.pivot_users import PivotUser
 from server.settings import SettingsRepo
-from server.users import User
 from server.workspace_config import (
     WorkspaceConfigDraft,
     load_workspace_draft,
@@ -33,7 +32,7 @@ def build_router(
     router = APIRouter(prefix="/api")
 
     @router.get("/workspace/status")
-    def status(_: User = Depends(current_user)):
+    def status(_: PivotUser = Depends(current_user)):
         return {
             "ready": workspace.is_cloned(),
             "path": str(workspace.path),
@@ -41,12 +40,12 @@ def build_router(
         }
 
     @router.post("/workspace/refresh")
-    def refresh(_: User = Depends(current_user)):
+    def refresh(_: PivotUser = Depends(current_user)):
         workspace.refresh()
         return {"ok": True, "head": workspace.head()}
 
     @router.get("/workspace/mirror")
-    def mirror(_: User = Depends(current_user)):
+    def mirror(_: PivotUser = Depends(current_user)):
         return workspace.mirror_payload()
 
     @router.get("/admin/workspace-config")

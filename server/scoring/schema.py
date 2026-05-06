@@ -42,6 +42,14 @@ class SchemaError(Exception):
     """AI output failed pydantic or business-rule validation."""
 
 
+class SelfEvaluationError(SchemaError):
+    """Evidence violates the self-evaluation rule (matter 005 §6 决策链).
+
+    Subclass so the worker can distinguish "AI tried to score self-eval" from
+    other schema failures — for tuning prompt vs. tuning rules.
+    """
+
+
 # ---------- pydantic models ----------
 
 
@@ -53,6 +61,10 @@ class EvidenceItem(BaseModel):
     source_kind: Literal["file", "comment"]
     source_filename: str = Field(min_length=1, max_length=500)
     source_file_type: str = Field(min_length=1, max_length=20)
+    # Optional for backward compat — older AI runs predate this field. When
+    # present, used to enforce "owner can't cite their own file as positive
+    # evidence for themselves" (matter 005 决策链 §6 自我评价不入链).
+    source_file_creator: str | None = Field(default=None, max_length=80)
     source_comment_created_at: str | None = Field(default=None, max_length=64)
     source_comment_author: str | None = Field(default=None, max_length=80)
     weight_applied: float = Field(default=1.0, ge=0.1, le=5.0)
@@ -170,7 +182,8 @@ def _validate_business_rules(
 ) -> None:
     """Apply rules that pydantic alone can't enforce.
 
-    See design §1.1 (subject = owner), §3.4 (evidence purity), §6 (硬约束).
+    See design §1.1 (subject = owner), §3.4 (evidence purity), §6 (硬约束),
+    matter 005 §6 决策链 (no self-evaluation).
     """
     for s in parsed.scores:
         if s.subject_pinyin != expected_subject:
@@ -182,6 +195,7 @@ def _validate_business_rules(
         for e in s.evidence:
             _validate_evidence_source(e, valid_filenames)
             _validate_comment_evidence_completeness(e)
+            _validate_no_self_evaluation(e, s.subject_pinyin)
 
 
 def _validate_dimensions_have_evidence(s: SubjectScore) -> None:
@@ -233,6 +247,37 @@ def _validate_comment_evidence_completeness(e: EvidenceItem) -> None:
         raise SchemaError(
             f"comment evidence missing source_comment_author "
             f"({e.source_filename})"
+        )
+
+
+def _validate_no_self_evaluation(e: EvidenceItem, subject: str) -> None:
+    """Reject evidence that is self-evaluation by the subject.
+
+    Two paths per matter 005 §6 决策链:
+      1. Comment authored by subject → reject (regardless of polarity)
+      2. Subject's own file used as POSITIVE evidence for self → reject.
+         Negative file evidence (e.g. think showing flawed analysis later
+         contradicted by verify) is allowed because the *signal* comes from
+         the structural mismatch, not from the subject praising themselves.
+
+    source_file_creator is optional; when AI omits it the file-level check is
+    skipped (older runs / models that predate the field — backward compat).
+    """
+    if e.source_kind == "comment" and e.source_comment_author == subject:
+        raise SelfEvaluationError(
+            f"self-evaluation rejected: comment by {subject!r} on "
+            f"{e.source_filename!r} cannot be evidence for {subject!r}"
+        )
+    if (
+        e.source_kind == "file"
+        and e.polarity == "positive"
+        and e.source_file_creator
+        and e.source_file_creator == subject
+    ):
+        raise SelfEvaluationError(
+            f"self-evaluation rejected: positive evidence on file "
+            f"{e.source_filename!r} authored by {subject!r} cannot support "
+            f"{subject!r}'s own score"
         )
 
 

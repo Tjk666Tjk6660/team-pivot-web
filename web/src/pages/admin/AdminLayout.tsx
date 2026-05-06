@@ -60,19 +60,18 @@ export function AdminLayout() {
 
   return (
     <div
-      className="flex min-h-screen"
+      className="flex min-h-screen flex-col md:flex-row"
       style={{ background: "var(--bg)" }}
     >
       <Toaster position="top-center" richColors />
       <aside
-        className="flex w-[240px] shrink-0 flex-col"
+        className="flex w-full shrink-0 flex-col border-b border-[var(--line)] md:w-[240px] md:border-b-0 md:border-r"
         style={{
           background: "var(--surface-alt)",
-          borderRight: "1px solid var(--line)",
         }}
       >
         <SidebarHeader me={me} />
-        <nav className="flex-1 overflow-y-auto px-3 py-4">
+        <nav className="max-h-[42vh] flex-1 overflow-y-auto px-3 py-3 md:max-h-none md:py-4">
           <ul className="mb-4 flex flex-col gap-0.5">
             <NavItem to="/admin" icon={<Home className="h-3.5 w-3.5" />}>
               首页

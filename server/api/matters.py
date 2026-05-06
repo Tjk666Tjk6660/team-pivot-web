@@ -34,7 +34,7 @@ from server.mentions import (
     resolve_text,
 )
 from server.notify import Notifier
-from server.pivot_users import PivotUserRepo
+from server.pivot_users import PivotUser, PivotUserRepo
 from server.posts import read_post
 from server.publish import (
     AmbiguousMentionError,
@@ -47,7 +47,6 @@ from server.publish import (
     publish_matter_owner_change,
 )
 from server.read_state import ReadStateRepo
-from server.users import User, UserRepo
 from server.workspace import Workspace
 from server.visibility_scopes import CategoryVisibilityScope, VisibilityScope
 from server.visibility_store import read_category_visibility, write_matter_visibility
@@ -147,7 +146,6 @@ class MatterVisibilityBody(BaseModel):
 
 def build_router(
     workspace: Workspace,
-    users: UserRepo,
     pivot_users: PivotUserRepo,
     bindings: ExternalBindingRepo,
     notifier: Notifier,
@@ -166,7 +164,7 @@ def build_router(
         status: str | None = None,
         owner: str | None = None,
         q: str | None = None,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         # Per-user overlays: unread counts + favorites. Keyed by category/slug
         # (matter_id == slug), reusing the thread read_state / favorites tables
@@ -212,7 +210,7 @@ def build_router(
         return {"items": items}
 
     @router.get("/matters/{matter_id}")
-    def get_matter(matter_id: str, user: User = Depends(current_user)):
+    def get_matter(matter_id: str, user: PivotUser = Depends(current_user)):
         data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
         if data is None or not _can_read_matter(data, user, db, workspace):
             raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
@@ -231,7 +229,7 @@ def build_router(
     def mark_file_read(
         matter_id: str,
         filename: str,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
         if data is None:
@@ -253,7 +251,7 @@ def build_router(
         }
 
     @router.post("/matters/{matter_id}/read")
-    def mark_read(matter_id: str, user: User = Depends(current_user)):
+    def mark_read(matter_id: str, user: PivotUser = Depends(current_user)):
         data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
         if data is None or not _can_read_matter(data, user, db, workspace):
             raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
@@ -277,7 +275,7 @@ def build_router(
     def toggle_favorite(
         matter_id: str,
         body: FavoriteToggleBody,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
         if data is None or not _can_read_matter(data, user, db, workspace):
@@ -298,7 +296,7 @@ def build_router(
     @router.get("/matters/{matter_id}/visibility")
     def get_matter_visibility(
         matter_id: str,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
         if data is None or not _can_read_matter(data, user, db, workspace):
@@ -311,7 +309,7 @@ def build_router(
     def update_matter_visibility(
         matter_id: str,
         body: MatterVisibilityBody,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         require_profile(user)
         data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
@@ -373,7 +371,7 @@ def build_router(
         return {"visibility": visibility.to_dict()}
 
     @router.post("/matters")
-    def create_matter(body: NewMatterBody, user: User = Depends(current_user)):
+    def create_matter(body: NewMatterBody, user: PivotUser = Depends(current_user)):
         require_profile(user)
         initial = {
             "type": body.initial_file.type,
@@ -420,7 +418,7 @@ def build_router(
                 initial_item=initial,
                 matter_owner_open_id=body.owner_open_id,
                 notifier=notifier,
-                users=users,
+                users=pivot_users,
                 pivot_users=pivot_users,
                 bindings=bindings,
                 file_reads=file_reads,
@@ -467,7 +465,7 @@ def build_router(
     def transfer_owner(
         matter_id: str,
         body: OwnerChangeBody,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         require_profile(user)
         data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
@@ -488,7 +486,7 @@ def build_router(
                 reason=body.reason,
                 status_change=sc_dict,
                 notifier=notifier,
-                users=users,
+                users=pivot_users,
                 pivot_users=pivot_users,
                 bindings=bindings,
             )
@@ -538,7 +536,7 @@ def build_router(
     def append_file(
         matter_id: str,
         body: NewFileBody,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         require_profile(user)
         index_path = matter_index_path(workspace.index_dir, matter_id)
@@ -557,7 +555,7 @@ def build_router(
                 matter_id=matter_id,
                 item_body=item_preview,
                 notifier=notifier,
-                users=users,
+                users=pivot_users,
                 pivot_users=pivot_users,
                 bindings=bindings,
                 file_reads=file_reads,
@@ -580,7 +578,7 @@ def build_router(
     def append_result(
         matter_id: str,
         body: NewResultBody,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         require_profile(user)
         index_path = matter_index_path(workspace.index_dir, matter_id)
@@ -609,7 +607,7 @@ def build_router(
                 matter_id=matter_id,
                 item_body=item_preview,
                 notifier=notifier,
-                users=users,
+                users=pivot_users,
                 pivot_users=pivot_users,
                 bindings=bindings,
                 file_reads=file_reads,
@@ -632,7 +630,7 @@ def build_router(
     def append_comment_route(
         matter_id: str,
         body: CommentBody,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         require_profile(user)
         data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
@@ -648,7 +646,7 @@ def build_router(
                 body=body.body,
                 mentions=body.mentions,
                 notifier=notifier,
-                users=users,
+                users=pivot_users,
                 pivot_users=pivot_users,
                 bindings=bindings,
             )
@@ -698,7 +696,7 @@ def _preflight(index_data: dict, item: dict) -> None:
     )
 
 
-def _body_to_item_preview(body: NewFileBody, *, user: User) -> dict:
+def _body_to_item_preview(body: NewFileBody, *, user: PivotUser) -> dict:
     """Build a dict compatible with matter_validator.validate_append + publish."""
     out: dict[str, Any] = {
         "type": body.type,
@@ -805,14 +803,14 @@ def _matter_creator(data: dict) -> str | None:
     return None
 
 
-def _can_edit_matter_visibility(data: dict, user: User) -> bool:
+def _can_edit_matter_visibility(data: dict, user: PivotUser) -> bool:
     user_id = user.pinyin or user.open_id
     return user_id in {_matter_creator(data), _effective_matter_owner(data)}
 
 
 def _can_read_matter(
     data: dict,
-    user: User,
+    user: PivotUser,
     db: Database | None,
     workspace: Workspace,
 ) -> bool:
@@ -839,14 +837,14 @@ def _can_read_matter(
 
 def _can_write_matter(
     data: dict,
-    user: User,
+    user: PivotUser,
     db: Database | None,
     workspace: Workspace,
 ) -> bool:
     return _can_read_matter(data, user, db, workspace)
 
 
-def _identifiers_for_user(user: User) -> list[str]:
+def _identifiers_for_user(user: PivotUser) -> list[str]:
     values = [
         getattr(user, "id", None),
         getattr(user, "open_id", None),
@@ -856,7 +854,7 @@ def _identifiers_for_user(user: User) -> list[str]:
     return [str(v) for v in values if v]
 
 
-def _roles_for_user(user: User, db: Database | None) -> list[str]:
+def _roles_for_user(user: PivotUser, db: Database | None) -> list[str]:
     roles = getattr(user, "roles", None)
     if isinstance(roles, list):
         return [str(role) for role in roles]

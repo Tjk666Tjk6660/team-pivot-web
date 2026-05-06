@@ -75,7 +75,6 @@ def test_threads_route_resolves_author_display_via_pivot_user(db, users, tmp_pat
     app.include_router(
         build_router(
             _WorkspaceStub(discussions, index_dir),
-            users,
             pivot_users,
             bindings,
             NoOpNotifier(),
@@ -110,7 +109,6 @@ def test_create_thread_accepts_chinese_category(db, users, tmp_path):
     app.include_router(
         build_router(
             _WorkspaceStub(discussions, index_dir),
-            users,
             pivot_users,
             bindings,
             NoOpNotifier(),
@@ -156,7 +154,6 @@ def test_threads_route_marks_favorites_for_current_user(db, users, tmp_path):
     app.include_router(
         build_router(
             _WorkspaceStub(discussions, index_dir),
-            users,
             pivot_users,
             bindings,
             NoOpNotifier(),
@@ -196,7 +193,6 @@ def test_toggle_thread_favorite(db, users, tmp_path):
     app.include_router(
         build_router(
             _WorkspaceStub(discussions, index_dir),
-            users,
             pivot_users,
             bindings,
             NoOpNotifier(),
@@ -243,7 +239,6 @@ def test_thread_detail_includes_favorite_flag(db, users, tmp_path):
     app.include_router(
         build_router(
             _WorkspaceStub(discussions, index_dir),
-            users,
             pivot_users,
             bindings,
             NoOpNotifier(),
@@ -287,7 +282,6 @@ def test_thread_detail_includes_author_avatar_url(db, users, tmp_path):
     app.include_router(
         build_router(
             _WorkspaceStub(discussions, index_dir),
-            users,
             pivot_users,
             bindings,
             NoOpNotifier(),

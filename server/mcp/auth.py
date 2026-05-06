@@ -10,7 +10,7 @@ from __future__ import annotations
 from starlette.requests import Request
 
 from server.api_tokens import ApiTokenRepo
-from server.users import User, UserRepo
+from server.pivot_users import PivotUser, PivotUserRepo
 
 
 class McpAuthError(Exception):
@@ -29,9 +29,9 @@ class McpAuthError(Exception):
 def authenticate(
     request: Request,
     tokens: ApiTokenRepo,
-    users: UserRepo,
-) -> tuple[User, str]:
-    """Extract Bearer PAT and return (User, plaintext_token).
+    users: PivotUserRepo,
+) -> tuple[PivotUser, str]:
+    """Extract Bearer PAT and return (PivotUser, plaintext_token).
 
     Raises McpAuthError with proper HTTP status on failure.
     """

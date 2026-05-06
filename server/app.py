@@ -72,7 +72,6 @@ from server.scoring.worker import ScoringQueue, ScoringWorker
 from server.settings import SettingsRepo
 from server.roles import PivotRoleRepo
 from server.user_preferences import UserPreferenceRepo
-from server.users import UserRepo
 from server.workspace_config import load_workspace_config, save_workspace_config
 from server.workspace_runtime import WorkspaceRuntime
 
@@ -84,7 +83,6 @@ def create_app() -> FastAPI:
     log.info("starting team-pivot-web log_level=%s data_dir=%s", cfg.log_level, cfg.data_dir)
 
     db = Database(cfg.data_dir / "data.db")
-    users = UserRepo(db)
     pivot_users = PivotUserRepo(db)
     roles = PivotRoleRepo(db)
     bindings = ExternalBindingRepo(db)
@@ -143,7 +141,7 @@ def create_app() -> FastAPI:
     # writes relevance_events rows on each matter mutation. Failures are
     # swallowed; the hourly scanner is the safety net.
     install_relevance_writer(
-        workspace=workspace, users_repo=users, repo=relevance_events,
+        workspace=workspace, users_repo=pivot_users, bindings=bindings, repo=relevance_events,
     )
 
     # Scoring system: TOPIC_RESULT_CREATED → trigger → ScoringQueue → background
@@ -166,7 +164,7 @@ def create_app() -> FastAPI:
     # Build MCP sub-app once; FastAPI does not propagate lifespan to mounted
     # sub-apps, so we enter its lifespan_context from our own lifespan below.
     # The sub-app enforces PAT bearer auth on every HTTP request using the
-    # same ApiTokenRepo / UserRepo as /api/*.
+    # same ApiTokenRepo / PivotUserRepo as /api/*.
     # api_base_url: where MCP tool handlers loopback to call /api/matters.
     # Stays on 127.0.0.1 even in prod (same uvicorn worker).
     api_base_url = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
@@ -210,7 +208,8 @@ def create_app() -> FastAPI:
             await asyncio.to_thread(
                 scan_relevance_all,
                 workspace=workspace,
-                users_repo=users,
+                users_repo=pivot_users,
+                bindings=bindings,
                 repo=relevance_events,
                 mark_as_read=cold_start,
             )
@@ -223,7 +222,7 @@ def create_app() -> FastAPI:
             scan_interval_seconds, scan_interval_seconds // 60,
         )
         hourly_task = asyncio.create_task(schedule_hourly_scan(
-            workspace=workspace, users_repo=users, repo=relevance_events,
+            workspace=workspace, users_repo=pivot_users, bindings=bindings, repo=relevance_events,
             interval_seconds=scan_interval_seconds,
         ))
         try:
@@ -274,7 +273,7 @@ def create_app() -> FastAPI:
         )
     )
     app.include_router(build_discussions_router(
-        workspace, users, pivot_users, bindings, notifier, read_states, favorites,
+        workspace, pivot_users, bindings, notifier, read_states, favorites,
         resolver, current_user_dep,
     ))
     # The events stream MUST be registered before the matters router,
@@ -282,7 +281,7 @@ def create_app() -> FastAPI:
     # "events" as a matter_id (returning 404 matter_not_found).
     app.include_router(build_matters_events_router(current_user_dep, workspace, db))
     app.include_router(build_matters_router(
-        workspace, users, pivot_users, bindings, notifier,
+        workspace, pivot_users, bindings, notifier,
         read_states, favorites, file_reads, relevance_events,
         resolver, current_user_dep, db,
     ))
@@ -306,7 +305,7 @@ def create_app() -> FastAPI:
         workspace, drafts, pivot_users, bindings, notifier, current_user_dep,
     ))
     app.include_router(build_inbox_router(
-        workspace, users, read_states, resolver, current_user_dep,
+        workspace, read_states, resolver, current_user_dep,
     ))
     app.include_router(build_contacts_router(pivot_users, current_user_dep))
     app.include_router(build_users_router(pivot_users, current_user_dep))
@@ -316,7 +315,7 @@ def create_app() -> FastAPI:
     ))
     app.include_router(build_app_home_router(workspace, current_user_dep))
     app.include_router(build_markdown_styles_router(
-        settings, users, current_user_dep, current_user_cookie_dep,
+        settings, user_prefs, current_user_dep, current_user_cookie_dep,
         admin_user_cookie_dep,
     ))
     app.include_router(build_tokens_router(api_tokens, current_user_cookie_dep))

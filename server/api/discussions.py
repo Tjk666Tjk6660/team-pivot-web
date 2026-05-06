@@ -20,7 +20,7 @@ from server.mentions import (
     resolve_text,
 )
 from server.notify import Notifier
-from server.pivot_users import PivotUserRepo
+from server.pivot_users import PivotUser, PivotUserRepo
 from server.publish import (
     PublishError,
     add_standalone_mention,
@@ -35,7 +35,6 @@ from server.status_machine import (
     requires_reason,
 )
 from server.threads import ThreadMeta, get_thread, list_threads
-from server.users import User, UserRepo
 from server.workspace import Workspace
 
 
@@ -78,7 +77,6 @@ class FavoriteToggleBody(BaseModel):
 
 def build_router(
     workspace: Workspace,
-    users: UserRepo,
     pivot_users: PivotUserRepo,
     bindings: ExternalBindingRepo,
     notifier: Notifier,
@@ -90,7 +88,7 @@ def build_router(
     router = APIRouter(prefix="/api")
 
     @router.get("/categories")
-    def list_categories(user: User = Depends(current_user)):
+    def list_categories(user: PivotUser = Depends(current_user)):
         # Aggregate both legacy threads and new matters by category. Matters
         # contribute file_count from their timeline; threads contribute
         # post_count. The API surface stays compatible (post_count is the
@@ -146,7 +144,7 @@ def build_router(
     @router.get("/threads")
     def threads(
         category: str | None = None,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         items = list_threads(
             workspace.discussions_dir, workspace.index_dir, category=category
@@ -170,7 +168,7 @@ def build_router(
     @router.get("/threads/{category}/{slug}")
     def thread_detail(
         category: str, slug: str,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         detail = get_thread(workspace.discussions_dir, workspace.index_dir, category, slug)
         if detail is None:
@@ -202,7 +200,7 @@ def build_router(
         }
 
     @router.post("/threads")
-    def new_thread(body: NewThreadBody, user: User = Depends(current_user)):
+    def new_thread(body: NewThreadBody, user: PivotUser = Depends(current_user)):
         require_profile(user)
         try:
             m = body.mentions
@@ -221,7 +219,7 @@ def build_router(
     @router.post("/threads/{category}/{slug}/posts")
     def new_reply(
         category: str, slug: str, body: ReplyBody,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         require_profile(user)
         try:
@@ -244,7 +242,7 @@ def build_router(
     @router.post("/threads/{category}/{slug}/mentions")
     def add_mention(
         category: str, slug: str, body: StandaloneMentionBody,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         require_profile(user)
         try:
@@ -266,7 +264,7 @@ def build_router(
     @router.post("/threads/{category}/{slug}/status")
     def change_status(
         category: str, slug: str, body: StatusChangeBody,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         require_profile(user)
         if body.to not in VALID_STATES:
@@ -313,7 +311,7 @@ def build_router(
         category: str,
         slug: str,
         body: FavoriteToggleBody,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         detail = get_thread(workspace.discussions_dir, workspace.index_dir, category, slug)
         if detail is None:

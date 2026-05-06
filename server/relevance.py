@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from server.users import User
+from server.pivot_users import PivotUser
 
 
 # Reason codes — order matters: priority is top-down, first match wins.
@@ -17,7 +17,7 @@ REASON_IN_MY_OWNED_MATTER = "in_my_owned_matter"
 def compute_relevance(
     item: dict[str, Any],
     matter_data: dict[str, Any],
-    user: User,
+    user: PivotUser,
 ) -> tuple[bool, str | None]:
     """Decide whether a timeline item is file-level relevant to ``user``.
 

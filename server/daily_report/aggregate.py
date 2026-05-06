@@ -29,12 +29,12 @@ from server.daily_report.types import (
     TimeWindow,
     UserActivity,
 )
-from server.users import User
+from server.pivot_users import PivotUser
 
 
 def aggregate(
     matter_events: list[MatterEvent],
-    all_users: list[User],
+    all_users: list[PivotUser],
     window: TimeWindow,
 ) -> tuple[list[UserActivity], TeamSummary]:
     """Produce (UserActivity[] for all users with pinyin, TeamSummary).
@@ -66,7 +66,7 @@ def aggregate(
 
 
 def _build_user_activity(
-    user: User,
+    user: PivotUser,
     events: list[MatterEvent],
 ) -> UserActivity:
     pinyin = user.pinyin

@@ -16,8 +16,8 @@ from typing import Callable
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from server.pivot_users import PivotUser
 from server.user_preferences import UserPreferenceRepo
-from server.users import User
 
 
 # Allowed preference keys. Adding a new key = a code change, by design.
@@ -37,14 +37,14 @@ def build_router(
     router = APIRouter(prefix="/api")
 
     @router.get("/me/preferences")
-    def list_preferences(user: User = Depends(current_user)):
+    def list_preferences(user: PivotUser = Depends(current_user)):
         return prefs.get_all(user.open_id)
 
     @router.put("/me/preferences/{key}")
     def set_preference(
         key: str,
         body: PreferenceBody,
-        user: User = Depends(current_user),
+        user: PivotUser = Depends(current_user),
     ):
         if key not in ALLOWED_KEYS:
             raise HTTPException(
