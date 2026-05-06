@@ -649,6 +649,9 @@ def test_create_matter_new_category_visibility_passthrough():
         "https://pivot.enclaws.ai",
     )
     sent_body = client.post_matter.call_args[0][0]
+    assert sent_body["visibility"] == {
+        "mode": "restricted", "roles": ["dev"], "user_ids": [],
+    }
     assert sent_body["new_category_visibility"] == {
         "mode": "restricted", "authorized_roles": ["dev"],
     }
