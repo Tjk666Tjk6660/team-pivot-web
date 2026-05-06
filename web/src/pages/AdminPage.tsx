@@ -36,6 +36,10 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  getMarkdownStyleClass,
+  isMarkdownStyleId,
+} from "@/components/markdown/markdownStyles";
 
 const SUGGESTED_MODELS = [
   "anthropic/claude-sonnet-4-5",
@@ -210,6 +214,7 @@ export function MarkdownSettingsSection({ onAdminLost }: { onAdminLost: () => vo
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [previewStyleId, setPreviewStyleId] = useState("");
 
   useEffect(() => {
     fetchAdminMarkdownSettings()
@@ -255,11 +260,18 @@ export function MarkdownSettingsSection({ onAdminLost }: { onAdminLost: () => vo
   };
 
   const selectedStyle = styles.find((s) => s.id === systemDefaultStyle);
+  const previewStyle =
+    styles.find((s) => s.id === previewStyleId) ?? selectedStyle;
+  const closeMenuOnWideScreen = () => {
+    if (window.matchMedia("(min-width: 640px)").matches) {
+      setMenuOpen(false);
+    }
+  };
 
   return (
     <section>
       <Card className="shadow-[var(--shadow-sm)]">
-        <CardHeader className="pb-4">
+        <CardHeader className="px-4 pb-4 pt-4 sm:px-6 sm:pt-6">
           <CardTitle className="flex items-center gap-2 text-base">
             <Palette className="h-4 w-4" />
             Markdown 正文主题
@@ -268,7 +280,7 @@ export function MarkdownSettingsSection({ onAdminLost }: { onAdminLost: () => vo
             设置 matter 文档正文的系统默认 Markdown 渲染主题；用户个人选择优先。
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-5">
+        <CardContent className="space-y-5 px-4 pb-4 sm:px-6 sm:pb-6">
           {loading ? (
             <p className="text-sm text-muted-foreground">加载中...</p>
           ) : (
@@ -279,15 +291,18 @@ export function MarkdownSettingsSection({ onAdminLost }: { onAdminLost: () => vo
                   <button
                     id="markdown-default-style"
                     type="button"
-                    onClick={() => setMenuOpen((v) => !v)}
+                    onClick={() => {
+                      setPreviewStyleId(systemDefaultStyle);
+                      setMenuOpen((v) => !v);
+                    }}
                     className="flex min-h-12 w-full items-center gap-3 rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface-alt)] px-3 py-2 text-left transition hover:border-[var(--accent-soft)] hover:bg-[var(--surface)]"
                   >
                     {selectedStyle && <MarkdownAdminSwatch style={selectedStyle} />}
                     <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-semibold text-[var(--text)]">
-                        {selectedStyle?.label ?? "未选择"}
+                      <span className="flex flex-wrap items-center gap-1.5 text-sm font-semibold text-[var(--text)]">
+                        <span>{selectedStyle?.label ?? "未选择"}</span>
                         {selectedStyle && (
-                          <span className="ml-2 rounded-full bg-[var(--surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-mute)] ring-1 ring-[var(--line)]">
+                          <span className="rounded-full bg-[var(--surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-mute)] ring-1 ring-[var(--line)]">
                             {selectedStyle.tone === "dark" ? "暗色" : "亮色"}
                           </span>
                         )}
@@ -302,40 +317,50 @@ export function MarkdownSettingsSection({ onAdminLost }: { onAdminLost: () => vo
                   </button>
 
                   {menuOpen && (
-                    <div className="absolute left-0 right-0 top-full z-50 mt-2 max-h-80 overflow-y-auto rounded-[var(--r-md)] border border-[var(--line-strong)] bg-[var(--surface)] p-2 shadow-[var(--shadow-lg)]">
-                      {styles.map((style) => (
-                        <button
-                          key={style.id}
-                          type="button"
-                          onClick={() => {
-                            setSystemDefaultStyle(style.id);
-                            setMenuOpen(false);
-                          }}
-                          className={`flex w-full items-center gap-3 rounded-[var(--r-sm)] px-2.5 py-2.5 text-left transition ${
-                            systemDefaultStyle === style.id
-                              ? "bg-[color-mix(in_srgb,var(--accent-bg)_62%,var(--surface))] ring-1 ring-[var(--accent-soft)]"
-                              : "hover:bg-[var(--surface-alt)]"
-                          }`}
-                        >
-                          <MarkdownAdminSwatch style={style} />
-                          <span className="min-w-0 flex-1">
-                            <span className="flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--text)]">
-                              {style.label}
-                              <span className="rounded-full bg-[var(--surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-mute)] ring-1 ring-[var(--line)]">
-                                {style.tone === "dark" ? "暗色" : "亮色"}
-                              </span>
-                              {systemDefaultStyle === style.id && (
-                                <span className="rounded-full bg-[var(--surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent)] ring-1 ring-[var(--accent-soft)]">
-                                  已选
+                    <div className="relative z-50 mt-2 max-h-[calc(100dvh-12rem)] overflow-y-auto rounded-[var(--r-md)] border border-[var(--line-strong)] bg-[var(--surface)] p-2 shadow-[var(--shadow-lg)] sm:absolute sm:left-0 sm:right-0 sm:top-full sm:max-h-[calc(100vh-10rem)]">
+                      <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_18rem]">
+                        <div>
+                          {styles.map((style) => (
+                            <button
+                              key={style.id}
+                              type="button"
+                              onClick={() => {
+                                setSystemDefaultStyle(style.id);
+                                setPreviewStyleId(style.id);
+                                closeMenuOnWideScreen();
+                              }}
+                              onFocus={() => setPreviewStyleId(style.id)}
+                              onMouseEnter={() => setPreviewStyleId(style.id)}
+                              className={`flex w-full items-center gap-3 rounded-[var(--r-sm)] px-2.5 py-2.5 text-left transition ${
+                                systemDefaultStyle === style.id
+                                  ? "bg-[color-mix(in_srgb,var(--accent-bg)_62%,var(--surface))] ring-1 ring-[var(--accent-soft)]"
+                                  : "hover:bg-[var(--surface-alt)]"
+                              }`}
+                            >
+                              <MarkdownAdminSwatch style={style} />
+                              <span className="min-w-0 flex-1">
+                                <span className="flex flex-wrap items-center gap-1.5 text-[12.5px] font-semibold text-[var(--text)]">
+                                  {style.label}
+                                  <span className="rounded-full bg-[var(--surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-mute)] ring-1 ring-[var(--line)]">
+                                    {style.tone === "dark" ? "暗色" : "亮色"}
+                                  </span>
+                                  {systemDefaultStyle === style.id && (
+                                    <span className="rounded-full bg-[var(--surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent)] ring-1 ring-[var(--accent-soft)]">
+                                      已选
+                                    </span>
+                                  )}
                                 </span>
-                              )}
-                            </span>
-                            <span className="mt-0.5 block text-[11px] leading-4 text-[var(--text-mute)]">
-                              {style.description}
-                            </span>
-                          </span>
-                        </button>
-                      ))}
+                                <span className="mt-0.5 block text-[11px] leading-4 text-[var(--text-mute)]">
+                                  {style.description}
+                                </span>
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                        {previewStyle && (
+                          <MarkdownAdminPreview style={previewStyle} />
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -344,7 +369,16 @@ export function MarkdownSettingsSection({ onAdminLost }: { onAdminLost: () => vo
                   {styles.find((s) => s.id === effectiveStyle)?.label ?? effectiveStyle}
                 </p>
               </div>
-              <div className="flex justify-end border-t pt-4">
+              <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
+                {menuOpen && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    收起预览
+                  </Button>
+                )}
                 <Button onClick={save} disabled={saving}>
                   {saving ? "保存中..." : "保存"}
                 </Button>
@@ -354,6 +388,49 @@ export function MarkdownSettingsSection({ onAdminLost }: { onAdminLost: () => vo
         </CardContent>
       </Card>
     </section>
+  );
+}
+
+function MarkdownAdminPreview({ style }: { style: MarkdownStyleMeta }) {
+  const styleClass = isMarkdownStyleId(style.id)
+    ? getMarkdownStyleClass(style.id)
+    : "";
+
+  return (
+    <div className="rounded-[var(--r-sm)] border border-[var(--line)] bg-[var(--surface-alt)] p-2">
+      <div className="mb-1.5 flex items-center justify-between px-0.5">
+        <span className="text-[11px] font-semibold text-[var(--text)]">
+          预览
+        </span>
+        <span className="text-[10px] text-[var(--text-mute)]">
+          {style.label}
+        </span>
+      </div>
+      <article className={`markdown-theme-preview prose-pivot ${styleClass}`}>
+        <h2>行动方案</h2>
+        <p>
+          把关键判断写清楚，保留 <strong>结论</strong>、引用和后续动作。
+        </p>
+        <blockquote>这里是一段 Matter 正文里的重点说明。</blockquote>
+        <pre>
+          <code>{`status: planning\nowner: team`}</code>
+        </pre>
+        <table>
+          <thead>
+            <tr>
+              <th>项</th>
+              <th>状态</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>验证</td>
+              <td>进行中</td>
+            </tr>
+          </tbody>
+        </table>
+      </article>
+    </div>
   );
 }
 

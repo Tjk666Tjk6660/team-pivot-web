@@ -12,10 +12,10 @@ export function PageShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="mx-auto max-w-4xl p-6 lg:p-8">
-      <header className="mb-6">
+    <div className="mx-auto w-full max-w-4xl px-4 py-5 sm:p-6 lg:p-8">
+      <header className="mb-5 sm:mb-6">
         <h1
-          className="m-0 text-[24px]"
+          className="m-0 text-[22px] sm:text-[24px]"
           style={{
             fontFamily: "var(--font-serif)",
             fontWeight: 600,
@@ -27,7 +27,7 @@ export function PageShell({
         </h1>
         {description && (
           <p
-            className="mt-2 text-[13.5px] leading-[1.65]"
+            className="mt-2 max-w-2xl text-[13px] leading-[1.65] sm:text-[13.5px]"
             style={{
               fontFamily: "var(--font-serif)",
               color: "var(--text-soft)",

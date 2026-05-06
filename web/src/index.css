@@ -391,6 +391,43 @@
 .prose-pivot--nord-dark tr:nth-child(even) td { background: #343b49; }
 .prose-pivot--nord-dark a { color: #88c0d0; }
 
+.markdown-theme-preview {
+  max-height: 18rem;
+  overflow: hidden;
+  padding: 12px;
+  font-size: 11px;
+  line-height: 1.45;
+  border-radius: var(--r-sm);
+}
+.markdown-theme-preview h2 {
+  margin-top: 0;
+  margin-bottom: 0.45em;
+  font-size: 1.2em;
+}
+.markdown-theme-preview p {
+  margin: 0.35em 0;
+}
+.markdown-theme-preview blockquote {
+  margin: 0.55em 0;
+  padding: 0.45em 0.7em;
+}
+.markdown-theme-preview pre {
+  margin: 0.55em 0;
+  padding: 0.55em 0.7em;
+  overflow: hidden;
+}
+.markdown-theme-preview code {
+  font-size: 10px;
+}
+.markdown-theme-preview table {
+  margin-top: 0.55em;
+  font-size: 10.5px;
+}
+.markdown-theme-preview th,
+.markdown-theme-preview td {
+  padding: 0.3em 0.55em;
+}
+
 @layer utilities {
   .font-serif-body { font-family: var(--font-body); }
   .font-ui { font-family: var(--font-ui); }

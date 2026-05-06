@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from server.api.markdown_styles import build_router
 from server.pivot_users import PivotUser
 from server.settings import SettingsRepo
+from server.user_preferences import UserPreferenceRepo
 from server.users import User, UserRepo
 
 
@@ -46,6 +47,7 @@ def _build_client(
     db, users: UserRepo, *, admin: bool = True,
 ) -> tuple[TestClient, SettingsRepo]:
     settings = SettingsRepo(db)
+    prefs = UserPreferenceRepo(db)
     current = _user()
 
     def current_user() -> User:
@@ -61,7 +63,45 @@ def _build_client(
 
     app = FastAPI()
     app.include_router(build_router(
-        settings, users, current_user, current_user, admin_user,
+        settings, prefs, current_user, current_user, admin_user,
+    ))
+    return TestClient(app), settings
+
+
+def _build_pivot_client(
+    db, *, admin: bool = True,
+) -> tuple[TestClient, SettingsRepo]:
+    settings = SettingsRepo(db)
+    prefs = UserPreferenceRepo(db)
+    current = PivotUser(
+        id="pu_1",
+        display_name="Ken",
+        pinyin="ken",
+        email="ken@example.com",
+        avatar_url="",
+        github_username=None,
+        role="member",
+        roles=["member"],
+        status="active",
+        status_note=None,
+        created_at=1.0,
+        updated_at=1.0,
+        last_login_at=None,
+        status_changed_at=None,
+        status_changed_by=None,
+    )
+
+    def current_user() -> PivotUser:
+        return current
+
+    def admin_user() -> PivotUser:
+        if not admin:
+            raise HTTPException(status_code=403, detail="admin_required")
+        return _admin_pivot_user()
+
+    app = FastAPI()
+    app.include_router(build_router(
+        settings, prefs, current_user, current_user, admin_user,
     ))
     return TestClient(app), settings
 
@@ -108,6 +148,22 @@ def test_user_markdown_style_overrides_system_default(db, users):
         "effective_style": "neon-dark",
     }
     assert client.get("/api/markdown/styles").json()["effective_style"] == "neon-dark"
+
+
+def test_user_markdown_style_works_for_pivot_user(db):
+    client, settings = _build_pivot_client(db)
+    settings.set("markdown.default_style", "page-brown")
+
+    r = client.put("/api/me/markdown-style", json={"style": "neon-dark"})
+
+    assert r.status_code == 200
+    assert r.json() == {
+        "user_style": "neon-dark",
+        "effective_style": "neon-dark",
+    }
+    body = client.get("/api/markdown/styles").json()
+    assert body["user_style"] == "neon-dark"
+    assert body["effective_style"] == "neon-dark"
 
 
 def test_user_markdown_style_rejects_unknown_style(db, users):

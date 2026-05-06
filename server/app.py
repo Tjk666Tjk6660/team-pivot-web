@@ -316,7 +316,7 @@ def create_app() -> FastAPI:
     ))
     app.include_router(build_app_home_router(workspace, current_user_dep))
     app.include_router(build_markdown_styles_router(
-        settings, users, current_user_dep, current_user_cookie_dep,
+        settings, user_prefs, current_user_dep, current_user_cookie_dep,
         admin_user_cookie_dep,
     ))
     app.include_router(build_tokens_router(api_tokens, current_user_cookie_dep))

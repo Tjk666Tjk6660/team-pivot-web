@@ -58,11 +58,9 @@ class PivotUser:
     @property
     def markdown_style(self) -> str | None:
         """Legacy ``User.markdown_style`` column is gone (DROP TABLE users).
-        Per-user markdown style is not (yet) carried on pivot_user; return
-        None so GET /api/markdown/styles falls back to the system default.
-        TODO: thread the per-user override through ``settings`` (key
-        scheme like ``markdown_style:<pivot_user_id>``) so PUT
-        /api/me/markdown-style works again."""
+        Per-user markdown style is stored in ``user_preferences`` by
+        ``server.api.markdown_styles``; return None for legacy call sites
+        that still expect the attribute on the user object."""
         return None
 
 

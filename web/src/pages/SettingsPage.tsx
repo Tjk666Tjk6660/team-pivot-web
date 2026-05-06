@@ -76,30 +76,30 @@ function ReadingPreferencesSection() {
   return (
     <section>
       <SectionHeading title="阅读偏好" />
-      <Card className="rounded-[var(--r-md)] border-[var(--line)] p-0 shadow-none">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0 px-6 py-5">
+      <Card className="rounded-[var(--r-md)] border-[var(--line)] p-4 shadow-none sm:p-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
             <div className="text-[15px] font-semibold text-[var(--text)]">
               Matter 正文 Markdown 主题
             </div>
-            <p className="mt-1 max-w-xl text-[12.5px] leading-5 text-muted-foreground">
+            <p className="mt-1 max-w-xl text-[12.5px] leading-5 text-[var(--text-mute)]">
               只影响 matter 文档正文的 Markdown 渲染，不影响 AI 回复、编辑器或页面整体主题。
             </p>
-            <p className="mt-2 text-[12.5px] text-muted-foreground">
-              当前使用：
-              <span className="font-semibold text-[var(--text)]">
+            <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[12.5px] text-[var(--text-mute)]">
+              <span>当前使用</span>
+              <span className="rounded-full bg-[var(--surface-alt)] px-2 py-0.5 text-[12px] font-semibold text-[var(--text)] ring-1 ring-[var(--line)]">
                 {active?.label ?? effectiveStyle}
               </span>
               {userStyle ? (
-                <span className="ml-2">个人默认</span>
+                <span>个人默认</span>
               ) : (
-                <span className="ml-2">
+                <span>
                   跟随系统默认{system ? `（${system.label}）` : ""}
                 </span>
               )}
-            </p>
+            </div>
           </div>
-          <div className="px-6 py-5">
+          <div className="flex shrink-0 justify-start sm:justify-end">
             <MarkdownStyleSwitcher align="right" />
           </div>
         </div>
