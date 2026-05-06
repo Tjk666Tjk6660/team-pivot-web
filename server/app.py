@@ -44,11 +44,9 @@ from server.auth.feishu_oauth import FeishuOAuth
 from server.auth.routes import build_router as build_auth_router
 from server.auth.session import SessionStore
 from server.config import load_config
-from server.contacts import ContactRepo
 from server.db import Database
 from server.drafts import DraftRepo
 from server.external_bindings import ExternalBindingRepo
-from server.feishu_contacts import FeishuContactSyncer
 from server.feishu_token import FeishuTokenManager
 from server.favorites import FavoriteRepo
 from server.file_reads import FileReadRepo
@@ -98,7 +96,6 @@ def create_app() -> FastAPI:
     file_reads = FileReadRepo(db)
     relevance_events = RelevanceEventsRepo(db)
     user_prefs = UserPreferenceRepo(db)
-    contacts = ContactRepo(db)
     settings = SettingsRepo(db)
     _migrate_legacy_workspace_env(settings)
     ai_conversations = AIConversationRepo(db)
@@ -109,7 +106,6 @@ def create_app() -> FastAPI:
         app_secret=cfg.feishu_app_secret,
         cache_dir=cfg.data_dir,
     )
-    syncer = FeishuContactSyncer(contacts=contacts, tenant_token_getter=tokens.get)
 
     oauth = FeishuOAuth(
         app_id=cfg.feishu_app_id,
@@ -117,7 +113,7 @@ def create_app() -> FastAPI:
         redirect_uri=cfg.feishu_redirect_uri,
     )
     sessions = SessionStore(db)
-    resolver = DisplayResolver(pivot_users, bindings, contacts)
+    resolver = DisplayResolver(pivot_users, bindings)
     purged = sessions.sweep_expired()
     if purged > 0:
         log.info("sessions swept on startup purged=%d", purged)
@@ -254,7 +250,7 @@ def create_app() -> FastAPI:
     app.include_router(
         build_auth_router(
             oauth, sessions, pivot_users, bindings, applications, notifier,
-            contacts, cfg.session_secret,
+            cfg.session_secret,
             post_login_redirect=cfg.web_dev_origin + "/",
             secure_cookie=cfg.feishu_redirect_uri.startswith("https://"),
         )
@@ -278,7 +274,7 @@ def create_app() -> FastAPI:
         )
     )
     app.include_router(build_discussions_router(
-        workspace, users, contacts, notifier, read_states, favorites,
+        workspace, users, pivot_users, bindings, notifier, read_states, favorites,
         resolver, current_user_dep,
     ))
     # The events stream MUST be registered before the matters router,
@@ -286,9 +282,9 @@ def create_app() -> FastAPI:
     # "events" as a matter_id (returning 404 matter_not_found).
     app.include_router(build_matters_events_router(current_user_dep, workspace, db))
     app.include_router(build_matters_router(
-        workspace, users, contacts, notifier,
+        workspace, users, pivot_users, bindings, notifier,
         read_states, favorites, file_reads, relevance_events,
-        resolver, current_user_dep, db, pivot_users, bindings,
+        resolver, current_user_dep, db,
     ))
     app.include_router(build_visibility_options_router(
         pivot_users,
@@ -307,15 +303,12 @@ def create_app() -> FastAPI:
         admin_user_cookie_dep,
     ))
     app.include_router(build_drafts_router(
-        workspace, drafts, contacts, notifier, current_user_dep,
+        workspace, drafts, pivot_users, bindings, notifier, current_user_dep,
     ))
     app.include_router(build_inbox_router(
-        workspace, users, contacts, read_states, resolver, current_user_dep,
+        workspace, users, read_states, resolver, current_user_dep,
     ))
-    app.include_router(build_contacts_router(
-        sessions, contacts, pivot_users, bindings, syncer,
-        current_user_dep, current_user_cookie_dep, admin_user_cookie_dep,
-    ))
+    app.include_router(build_contacts_router(pivot_users, current_user_dep))
     app.include_router(build_users_router(pivot_users, current_user_dep))
     app.include_router(build_ai_router(
         workspace, settings, ai_conversations, current_user_dep, current_user_cookie_dep,

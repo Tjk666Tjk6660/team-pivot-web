@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from datetime import datetime, timezone
 
 from server.auth.deps import require_profile
-from server.contacts import ContactRepo
+from server.external_bindings import ExternalBindingRepo
 from server.favorites import FavoriteRepo
 from server.inbox import compute_unread_counts
 from server.index_files import change_thread_status, get_mentions_by_file
@@ -20,6 +20,7 @@ from server.mentions import (
     resolve_text,
 )
 from server.notify import Notifier
+from server.pivot_users import PivotUserRepo
 from server.publish import (
     PublishError,
     add_standalone_mention,
@@ -78,7 +79,8 @@ class FavoriteToggleBody(BaseModel):
 def build_router(
     workspace: Workspace,
     users: UserRepo,
-    contacts: ContactRepo,
+    pivot_users: PivotUserRepo,
+    bindings: ExternalBindingRepo,
     notifier: Notifier,
     read_states: ReadStateRepo,
     favorites: FavoriteRepo,
@@ -209,7 +211,8 @@ def build_router(
                 category=body.category, title=body.title, body=body.body,
                 mention_open_ids=(m.open_ids if m else None),
                 mention_comments=(m.comments if m else None),
-                contacts=contacts,
+                pivot_users=pivot_users,
+                bindings=bindings,
                 notifier=notifier,
             )
         except PublishError as e:
@@ -227,7 +230,8 @@ def build_router(
                 workspace, user, category=category, slug=slug, body=body.body,
                 mention_open_ids=(m.open_ids if m else None),
                 mention_comments=(m.comments if m else None),
-                contacts=contacts,
+                pivot_users=pivot_users,
+                bindings=bindings,
                 notifier=notifier,
                 reply_to=body.reply_to,
                 references=body.references,
@@ -250,7 +254,8 @@ def build_router(
                 target_filename=body.target_filename,
                 mention_open_ids=body.mentions.open_ids,
                 mention_comments=body.mentions.comments,
-                contacts=contacts,
+                pivot_users=pivot_users,
+                bindings=bindings,
                 notifier=notifier,
             )
         except PublishError as e:

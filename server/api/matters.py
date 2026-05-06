@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field
 
 from server.acl_cache import rebuild_acl_cache
 from server.auth.deps import require_profile
-from server.contacts import ContactRepo
 from server.db import Database
 from server.events import TOPIC_MATTER_VISIBILITY_CHANGED, emit
 from server.external_bindings import ExternalBindingRepo
@@ -149,7 +148,8 @@ class MatterVisibilityBody(BaseModel):
 def build_router(
     workspace: Workspace,
     users: UserRepo,
-    contacts: ContactRepo,
+    pivot_users: PivotUserRepo,
+    bindings: ExternalBindingRepo,
     notifier: Notifier,
     read_states: ReadStateRepo,
     favorites: FavoriteRepo,
@@ -158,8 +158,6 @@ def build_router(
     resolver: DisplayResolver,
     current_user: Callable,
     db: Database | None = None,
-    pivot_users: PivotUserRepo | None = None,
-    bindings: ExternalBindingRepo | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
 
@@ -421,7 +419,6 @@ def build_router(
                 title=body.title,
                 initial_item=initial,
                 matter_owner_open_id=body.owner_open_id,
-                contacts=contacts,
                 notifier=notifier,
                 users=users,
                 pivot_users=pivot_users,
@@ -490,7 +487,6 @@ def build_router(
                 to_owner_open_id=body.to_owner,
                 reason=body.reason,
                 status_change=sc_dict,
-                contacts=contacts,
                 notifier=notifier,
                 users=users,
                 pivot_users=pivot_users,
@@ -560,7 +556,6 @@ def build_router(
                 workspace, user,
                 matter_id=matter_id,
                 item_body=item_preview,
-                contacts=contacts,
                 notifier=notifier,
                 users=users,
                 pivot_users=pivot_users,
@@ -613,7 +608,6 @@ def build_router(
                 workspace, user,
                 matter_id=matter_id,
                 item_body=item_preview,
-                contacts=contacts,
                 notifier=notifier,
                 users=users,
                 pivot_users=pivot_users,
@@ -653,9 +647,10 @@ def build_router(
                 target_file=body.target_file,
                 body=body.body,
                 mentions=body.mentions,
-                contacts=contacts,
                 notifier=notifier,
                 users=users,
+                pivot_users=pivot_users,
+                bindings=bindings,
             )
         except MatterNotFoundError as e:
             raise HTTPException(status_code=404, detail={"code": "matter_not_found"}) from e

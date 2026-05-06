@@ -21,7 +21,6 @@ log = logging.getLogger(__name__)
 def build_router(
     workspace: Workspace,
     users: UserRepo,
-    contacts,
     read_states: ReadStateRepo,
     resolver: DisplayResolver,
     current_user: Callable,

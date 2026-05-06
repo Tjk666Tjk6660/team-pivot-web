@@ -9,10 +9,11 @@ from pydantic import BaseModel, Field
 import json as _json
 
 from server.auth.deps import require_profile
-from server.contacts import ContactRepo
 from server.drafts import Draft, DraftRepo
+from server.external_bindings import ExternalBindingRepo
 from server.matter_validator import validate_append
 from server.notify import Notifier
+from server.pivot_users import PivotUserRepo
 from server.publish import (
     MatterAlreadyExistsError,
     MatterNotFoundError,
@@ -69,7 +70,8 @@ class UpdateDraftBody(BaseModel):
 def build_router(
     workspace: Workspace,
     drafts: DraftRepo,
-    contacts: ContactRepo,
+    pivot_users: PivotUserRepo,
+    bindings: ExternalBindingRepo,
     notifier: Notifier,
     current_user: Callable,
 ) -> APIRouter:
@@ -176,7 +178,7 @@ def build_router(
         try:
             result = _publish_matter_from_draft(
                 workspace, user, d, matter_payload,
-                contacts=contacts, notifier=notifier,
+                pivot_users=pivot_users, bindings=bindings, notifier=notifier,
             )
         except PublishError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -250,7 +252,8 @@ def _publish_matter_from_draft(
     d: Draft,
     payload: dict,
     *,
-    contacts: ContactRepo,
+    pivot_users: PivotUserRepo,
+    bindings: ExternalBindingRepo,
     notifier: Notifier,
 ) -> dict:
     """P4.6: matter 草稿分支。
@@ -313,7 +316,8 @@ def _publish_matter_from_draft(
                 category=d.category,
                 title=d.title,
                 initial_item=common_fields,
-                contacts=contacts,
+                pivot_users=pivot_users,
+                bindings=bindings,
                 notifier=notifier,
             )
         except MatterAlreadyExistsError as e:
@@ -339,7 +343,8 @@ def _publish_matter_from_draft(
             workspace, user,
             matter_id=matter_id,
             item_body=common_fields,
-            contacts=contacts,
+            pivot_users=pivot_users,
+            bindings=bindings,
             notifier=notifier,
         )
     except MatterNotFoundError as e:
