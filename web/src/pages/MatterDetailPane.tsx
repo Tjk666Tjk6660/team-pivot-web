@@ -913,12 +913,14 @@ export function MatterDetailPane() {
 
           {/* ==== Header ==== */}
           <header className="pivot-card mb-4 p-5">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
               <div className="min-w-0">
-                <div className="mb-1 flex items-center gap-2 text-[11px] uppercase tracking-wide text-[var(--text-fade)]">
-                  <span>matter</span>
-                  <span>·</span>
-                  <span className="font-mono">{matter.id}</span>
+                <div className="mb-1 flex min-w-0 items-center gap-2 text-[11px] uppercase tracking-wide text-[var(--text-fade)]">
+                  <span className="shrink-0">matter</span>
+                  <span className="shrink-0">·</span>
+                  <span className="min-w-0 truncate font-mono">
+                    {matter.id}
+                  </span>
                 </div>
                 <h1 className="editorial-title text-xl font-semibold sm:text-[22px]">
                   {matter.title}
