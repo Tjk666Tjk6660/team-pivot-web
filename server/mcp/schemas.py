@@ -426,3 +426,26 @@ class AddCommentOut(BaseModel):
     summary_for_ai: str = Field(
         description="A human-friendly confirmation message the AI MUST relay verbatim to the user."
     )
+
+
+# ---------- list_visibility_options ----------
+
+
+class ListVisibilityOptionsIn(BaseModel):
+    category: str | None = Field(
+        default=None,
+        description=(
+            "OPTIONAL category id. When provided AND the category is "
+            "restricted, the returned roles/users list is filtered to only "
+            "what's compatible with that category's authorized_roles. Leave "
+            "null to list everything visible to the calling user."
+        ),
+    )
+
+
+class ListVisibilityOptionsOut(BaseModel):
+    """Mirrors backend `/api/visibility-options` response."""
+
+    all: dict
+    roles: list[dict]
+    users: list[dict]

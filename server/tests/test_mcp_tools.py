@@ -842,3 +842,38 @@ def test_add_comment_404_raises_with_specific_code():
         )
     assert ei.value.status == 404
     assert ei.value.detail == "comment_target_not_found"
+
+
+# ---------- list_visibility_options ----------
+
+from server.mcp.tools import tool_list_visibility_options
+
+
+def test_list_visibility_options_passes_category_to_client():
+    client = MagicMock(spec=MatterApiClient)
+    client.get_visibility_options.return_value = {
+        "all": {"label": "全部用户", "value": "public"},
+        "roles": [
+            {"role": "dev", "name": "Dev", "label": "Dev",
+             "users": [{"id": "u1", "display_name": "Alice",
+                        "pinyin": "alice", "avatar_url": ""}]},
+        ],
+        "users": [
+            {"id": "u1", "display_name": "Alice",
+             "pinyin": "alice", "avatar_url": ""},
+        ],
+    }
+    out = tool_list_visibility_options({"category": "Pivot"}, client)
+    client.get_visibility_options.assert_called_once_with(category="Pivot")
+    assert out["roles"][0]["role"] == "dev"
+    assert out["users"][0]["pinyin"] == "alice"
+
+
+def test_list_visibility_options_no_category():
+    client = MagicMock(spec=MatterApiClient)
+    client.get_visibility_options.return_value = {
+        "all": {"label": "全部用户", "value": "public"},
+        "roles": [], "users": [],
+    }
+    tool_list_visibility_options({}, client)
+    client.get_visibility_options.assert_called_once_with(category=None)

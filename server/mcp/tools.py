@@ -18,6 +18,7 @@ from server.mcp.schemas import (
     AddCommentIn,
     AddCommentOut,
     AvailableTransition,
+    CategoryVisibilityIn,
     CreateFileIn,
     CreateFileOut,
     CreateMatterIn,
@@ -27,6 +28,8 @@ from server.mcp.schemas import (
     GetMatterOut,
     ListMattersIn,
     ListMattersOut,
+    ListVisibilityOptionsIn,
+    ListVisibilityOptionsOut,
     MatterListItem,
     MatterSnapshot,
     ReadFilesIn,
@@ -34,6 +37,7 @@ from server.mcp.schemas import (
     ResolveContextIn,
     ResolveContextOut,
     TimelineItem,
+    VisibilityScopeIn,
 )
 
 
@@ -228,6 +232,28 @@ class MatterApiClient:
             raise ToolError(404, code)
         if resp.status_code == 422:
             return {"__validation_errors__": resp.json()}
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_visibility_options(self, category: str | None = None) -> dict:
+        """GET /api/visibility-options?category=... — candidate roles + users.
+
+        Wraps the same endpoint Web's VisibilityScopePicker uses. Returns the
+        full payload (`all`, `roles`, `users`) verbatim so the MCP tool can
+        relay it without reshaping.
+        """
+        params: dict[str, str] = {}
+        if category:
+            params["category"] = category
+        resp = self._client.get(
+            f"{self._base}/api/visibility-options",
+            headers=self._headers,
+            params=params,
+        )
+        if resp.status_code == 401:
+            raise ToolError(401, "invalid_token")
+        if resp.status_code == 403:
+            raise ToolError(403, "forbidden")
         resp.raise_for_status()
         return resp.json()
 
@@ -546,4 +572,16 @@ def tool_add_comment(
         at=resp.get("at", ""),
         view_url=view_url,
         summary_for_ai=summary_ai,
+    ).model_dump(mode="json")
+
+
+def tool_list_visibility_options(payload: dict, client: MatterApiClient) -> dict:
+    """List candidate roles/users for the visibility picker, optionally
+    scoped to a category. Wraps GET /api/visibility-options."""
+    input_ = ListVisibilityOptionsIn.model_validate(payload)
+    raw = client.get_visibility_options(category=input_.category)
+    return ListVisibilityOptionsOut(
+        all=raw.get("all") or {},
+        roles=raw.get("roles") or [],
+        users=raw.get("users") or [],
     ).model_dump(mode="json")
