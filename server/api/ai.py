@@ -16,6 +16,7 @@ from server.ai.context import (
     truncate_messages,
 )
 from server.ai.prompts import build_new_matter_system_prompt, build_system_prompt
+from server.ai.runner import spec_for
 from server.ai.tools import AITools
 from server.ai_conversations import AIConversationRepo
 from server.db import Database
@@ -224,6 +225,11 @@ def build_router(
         )
         tool_specs = tools_handler.specs()
 
+        # 方案 B：所有 chat 调用走统一 spec — 心跳/超时/错误归一从这里集中。
+        # NewMatter 模式下走 "summary" 桶（更短的 soft/hard 超时，匹配生成草稿
+        # 的实际语义），其他对话走 "chat" 桶。
+        ai_spec = spec_for("summary" if body.mode == "new-matter" else "chat")
+
         async def generate():
             try:
                 selected = truncate_messages(
@@ -242,13 +248,25 @@ def build_router(
                     assistant_text_parts: list[str] = []
 
                     async for event in stream_chat(
-                        messages, model, api_key, base_url, tools=tool_specs
+                        messages, model, api_key, base_url,
+                        tools=tool_specs, spec=ai_spec,
                     ):
                         etype = event.get("type")
                         if etype == "text":
                             delta = event.get("delta") or ""
                             assistant_text_parts.append(delta)
                             yield _sse({"delta": delta})
+                        elif etype == "heartbeat":
+                            # Forward upstream-silent signals to the frontend so
+                            # AIPane can show "AI 响应较慢…". Field name kept
+                            # explicit so the wire format is self-describing.
+                            yield _sse({
+                                "heartbeat": {
+                                    "since_last_token_ms": int(
+                                        event.get("since_last_token_ms") or 0
+                                    ),
+                                }
+                            })
                         elif etype == "tool_call":
                             pending_tool_calls.append(
                                 {
@@ -324,11 +342,27 @@ def build_router(
                         }
                     )
             except AIError as e:
-                log.warning("ai matter chat error: %s", e)
-                yield _sse({"error": str(e)})
+                log.warning(
+                    "ai matter chat error code=%s retryable=%s: %s",
+                    e.code, e.retryable, e,
+                )
+                # 方案 B：error 事件升级为结构化 payload {code, retryable, message,
+                # status}，同时保留旧 `error: <string>` 字段供旧前端兜底。
+                yield _sse({
+                    "error": e.user_message_zh,
+                    "error_detail": e.to_event_payload(),
+                })
             except Exception:
                 log.exception("unexpected ai matter chat error")
-                yield _sse({"error": "服务异常，请稍后重试"})
+                yield _sse({
+                    "error": "服务异常，请稍后重试",
+                    "error_detail": {
+                        "code": "unknown",
+                        "retryable": True,
+                        "message": "服务异常，请稍后重试",
+                        "status": None,
+                    },
+                })
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(generate(), media_type="text/event-stream")

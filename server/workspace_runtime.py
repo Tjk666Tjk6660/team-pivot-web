@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Callable
 
 from fastapi import HTTPException
 
+from server.git_outbox import GitPushOutbox
 from server.settings import SettingsRepo
 from server.workspace import Workspace
 from server.workspace_config import (
@@ -22,6 +24,12 @@ class WorkspaceRuntime:
         self._settings = settings
         self._workspace: Workspace | None = None
         self._config: WorkspaceConfig | None = None
+        # Outbox + worker-notify are wired by app.py during lifespan startup
+        # AFTER WorkspaceRuntime is built (chicken-and-egg: the worker depends
+        # on the workspace's repo path which only exists after `reload()`).
+        # Cache them here so a future `reload()` re-attaches automatically.
+        self._pending_outbox: GitPushOutbox | None = None
+        self._pending_worker_notify: Callable[[], None] | None = None
         self.reload()
 
     @property
@@ -74,6 +82,8 @@ class WorkspaceRuntime:
         )
         try:
             workspace.ensure_cloned()
+            # recover() must run BEFORE attaching the outbox: it pushes
+            # synchronously by design (boot-time, no GitWorker yet).
             workspace.recover()
         except Exception:
             if workspace.is_cloned():
@@ -83,9 +93,34 @@ class WorkspaceRuntime:
                 )
             else:
                 raise
+        # Re-apply any outbox wiring that was set before this reload (e.g.
+        # admin re-pointed the workspace at a new repo while the server was
+        # already running — we don't want to lose async-push wiring).
+        if self._pending_outbox is not None:
+            workspace.attach_outbox(
+                outbox=self._pending_outbox,
+                worker_notify=self._pending_worker_notify,
+            )
         self._config = cfg
         self._workspace = workspace
         log.info("workspace runtime ready repo=%s path=%s", cfg.repo_url, workspace.path)
+
+    def attach_outbox(
+        self,
+        *,
+        outbox: GitPushOutbox,
+        worker_notify: Callable[[], None] | None = None,
+    ) -> None:
+        """Wire the async-push outbox after construction.
+
+        Called once by app.py's lifespan after the GitPushOutbox + GitWorker
+        are built. Safe to call before `reload()` finds a workspace — the
+        attachment is cached and re-applied on every successful reload.
+        """
+        self._pending_outbox = outbox
+        self._pending_worker_notify = worker_notify
+        if self._workspace is not None:
+            self._workspace.attach_outbox(outbox=outbox, worker_notify=worker_notify)
 
     def mirror_payload(self) -> dict:
         cfg = self._config

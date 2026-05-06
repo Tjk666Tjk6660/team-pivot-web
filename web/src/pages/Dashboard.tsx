@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import {
+  AIChatError,
   clearAIConversation,
   deleteDraft,
   fetchAIConversation,
@@ -26,6 +27,7 @@ import {
   setMatterFavorite,
   setPreference,
   streamAIChat,
+  type AIErrorDetail,
   type AIToolUse,
   type ChatMessage,
   type Draft,
@@ -46,6 +48,23 @@ import {
 
 export type AIMsg = ChatMessage & { id: number; toolUses?: AIToolUse[] };
 
+// 方案 B：sendMessage 时记下入参，供"重试"按钮直接复用同一上下文调用
+// （F4：retryable 错误时一键重试）。
+type LastSendArgs = {
+  matter_id: string;
+  threadKey: string;
+  threadTitle: string;
+  rawText: string;
+  hasReplyDraft: boolean;
+  onUseDraftAsReply: (
+    content: string,
+    replyTo: string,
+    summary?: string,
+    title?: string,
+  ) => Promise<boolean>;
+  mode?: "reply" | "new-matter";
+};
+
 type AIThreadState = {
   loaded: boolean;
   loading: boolean;
@@ -54,6 +73,14 @@ type AIThreadState = {
   input: string;
   streaming: boolean;
   nextId: number;
+  // 方案 B 状态机扩展：
+  // slow=true 表示当前正在等待 AI 上游回复（最近一次事件是 heartbeat 而非 token），
+  // 用于驱动 AIPane 顶部的"AI 响应较慢…" banner（F2）。
+  slow: boolean;
+  // 最近一次失败的结构化详情；retryable=true 时 AIPane 显示"重试"按钮（F4）。
+  errorDetail: AIErrorDetail | null;
+  // 最近一次 sendMessage 的入参，"重试"按钮原样回放它即可（F4）。
+  lastSendArgs: LastSendArgs | null;
 };
 
 type ActiveAIStream = {
@@ -87,21 +114,11 @@ type DashboardContext = {
       matter_id: string,
       threadKey: string,
     ) => Promise<void>;
-    sendMessage: (args: {
-      matter_id: string;
-      threadKey: string;
-      threadTitle: string;
-      rawText: string;
-      hasReplyDraft: boolean;
-      onUseDraftAsReply: (
-        content: string,
-        replyTo: string,
-        summary?: string,
-        title?: string,
-      ) => Promise<boolean>;
-      mode?: "reply" | "new-matter";
-    }) => Promise<void>;
+    sendMessage: (args: LastSendArgs) => Promise<void>;
     stopMessage: (threadKey: string) => void;
+    /** 方案 B：复用上一次入参重新发起调用。AIPane "重试"按钮调用。
+     *  无 lastSendArgs 时是 no-op。 */
+    retryLastSend: (threadKey: string) => Promise<void>;
   };
 };
 
@@ -114,6 +131,9 @@ function emptyAIThreadState(): AIThreadState {
     input: "",
     streaming: false,
     nextId: 1,
+    slow: false,
+    errorDetail: null,
+    lastSendArgs: null,
   };
 }
 
@@ -377,7 +397,10 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
         const existing = prev[threadKey] ?? emptyAIThreadState();
         return {
           ...prev,
-          [threadKey]: mergeLoadedAIConversation<AIMsg>(existing, conv),
+          [threadKey]: mergeLoadedAIConversation<AIMsg, AIThreadState>(
+            existing,
+            conv,
+          ),
         };
       });
     } catch {
@@ -450,20 +473,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     hasReplyDraft,
     onUseDraftAsReply,
     mode = "reply",
-  }: {
-    matter_id: string;
-    threadKey: string;
-    threadTitle: string;
-    rawText: string;
-    hasReplyDraft: boolean;
-    onUseDraftAsReply: (
-      content: string,
-      replyTo: string,
-      summary?: string,
-      title?: string,
-    ) => Promise<boolean>;
-    mode?: "reply" | "new-matter";
-  }) => {
+  }: LastSendArgs) => {
     const trimmed = rawText.trim();
     if (!trimmed) return;
 
@@ -479,6 +489,13 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       toast.error("未找到起点帖子，请从某条帖子上点击「AI 回复」进入");
       return;
     }
+    // Snapshot args for the retry button (F4) — anything that can change
+    // between send and retry is re-derived inside sendMessage on retry, so
+    // we keep the *original* user intent here (rawText + mode + handlers).
+    const sendArgsForRetry: LastSendArgs = {
+      matter_id, threadKey, threadTitle, rawText,
+      hasReplyDraft, onUseDraftAsReply, mode,
+    };
 
     // new-matter mode has no replyTarget; use empty string when calling
     // onUseDraftAsReply (handler ignores it).
@@ -505,6 +522,12 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
         input: "",
         streaming: true,
         nextId: current.nextId + 2,
+        // 方案 B：开新 stream 时重置交互态。slow / errorDetail 应该是上一轮
+        // 留下的"陈旧"态——发新消息时 UI 必须立即清掉，否则会在
+        // "正在连接 AI…"阶段误报"AI 响应较慢"。
+        slow: false,
+        errorDetail: null,
+        lastSendArgs: sendArgsForRetry,
       },
     }));
 
@@ -534,10 +557,25 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
               ...prev,
               [threadKey]: {
                 ...existing,
+                // 收到真实 token → 上游恢复响应，立即清掉"较慢" banner（F2 ↔
+                // streaming 切回）。
+                slow: false,
                 messages: existing.messages.map((m) =>
                   m.id === assistantId ? { ...m, content: accumulated } : m,
                 ),
               },
+            };
+          });
+        } else if (ev.kind === "heartbeat") {
+          // 方案 B (F2)：服务端在 `heartbeat_interval_s` 内未收到上游 token 时
+          // 下发 heartbeat。把 thread 切到 slow 态触发 AIPane 顶部的"AI 响应较慢
+          // ..." banner；下一条 delta 会自动把它撤掉。
+          setAiThreads((prev) => {
+            const existing = prev[threadKey] ?? emptyAIThreadState();
+            if (existing.slow) return prev;
+            return {
+              ...prev,
+              [threadKey]: { ...existing, slow: true },
             };
           });
         } else if (ev.kind === "tool_start") {
@@ -638,6 +676,9 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
             },
           ]),
           streaming: false,
+          // 成功结束的兜底：F2/F4 的状态在这里清干净，避免 banner 残留。
+          slow: false,
+          errorDetail: null,
         };
         finalSnapshot = nextState;
         return { ...prev, [threadKey]: nextState };
@@ -649,14 +690,18 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       const errText = e instanceof Error ? e.message : String(e);
       const aborted =
         e instanceof DOMException && e.name === "AbortError";
+      // 方案 B：AIChatError 携带服务端归一化后的 detail，按 retryable/code 分流
+      // UI（F4）。其他错误退化为最简提示（不带 retry）。
+      const errorDetail: AIErrorDetail | null =
+        e instanceof AIChatError
+          ? e.detail
+          : aborted || e instanceof SessionExpiredError
+            ? null
+            : { code: "unknown", retryable: true, message: errText, status: null };
       if (e instanceof SessionExpiredError) {
         toast.error(errText);
       } else if (!aborted) {
-        // Surface stream errors so the user notices — without this they would
-        // only see a small "_错误：…_" annotation in the message bubble. Caller
-        // may retry by sending the same message again; body / body_source on
-        // any consuming form stays untouched per the failure-fallback contract.
-        toast.error(`AI 调用失败：${errText}`);
+        toast.error(`AI 调用失败：${errorDetail?.message ?? errText}`);
       }
       if (aborted) {
         const frozenToolUses = toolUses.map((t) => ({ ...t }));
@@ -677,6 +722,8 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
                 : m,
             ),
             streaming: false,
+            slow: false,
+            errorDetail: null,
           };
           finalSnapshot = nextState;
           return { ...prev, [threadKey]: nextState };
@@ -688,16 +735,21 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
       }
       setAiThreads((prev) => {
         const existing = prev[threadKey] ?? emptyAIThreadState();
+        // 失败时把消息体替换成简短占位文，把详细信息收到 errorDetail。
+        // 用户点"重试"会复用 lastSendArgs 重新发起；不点也仍然能看到错误。
+        const userMessage = errorDetail?.message ?? errText;
         return {
           ...prev,
           [threadKey]: {
             ...existing,
             messages: existing.messages.map((m) =>
               m.id === assistantId
-                ? { ...m, content: `_错误：${errText}_` }
+                ? { ...m, content: `_错误：${userMessage}_` }
                 : m,
             ),
             streaming: false,
+            slow: false,
+            errorDetail,
           },
         };
       });
@@ -715,6 +767,37 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
     const activeAbort = activeAIAbortRef.current;
     if (!activeAbort || activeAbort.threadKey !== threadKey) return;
     activeAbort.controller.abort();
+  };
+
+  // 方案 B (F4)：用 lastSendArgs 重新发起调用。
+  //
+  // 重要：这里是"重新跑一遍同一次提问"，所以要把上一次失败时落到 messages 里
+  // 的 _错误：…_ 占位 + 那条 user message 也回滚——否则 retry 会让历史堆出
+  // user → error → user → error 重复对，污染 AI 上下文。我们直接回滚到 user
+  // 提交之前的 messages 长度（lastSendArgs 之前最后一条对话），sendMessage
+  // 会按正常流程重新追加 user + assistant pair。
+  const retryLastSend = async (threadKey: string) => {
+    const state = aiThreadsRef.current[threadKey];
+    const args = state?.lastSendArgs;
+    if (!args || state?.streaming) return;
+    setAiThreads((prev) => {
+      const existing = prev[threadKey];
+      if (!existing) return prev;
+      // Drop the trailing 2 messages (the user's text + the failed assistant
+      // bubble). emptyAIThreadState's nextId guarantees ids are monotonic
+      // so we don't need to reset it — sendMessage will keep counting up.
+      const trimmed = existing.messages.slice(0, Math.max(0, existing.messages.length - 2));
+      return {
+        ...prev,
+        [threadKey]: {
+          ...existing,
+          messages: trimmed,
+          errorDetail: null,
+          slow: false,
+        },
+      };
+    });
+    await sendMessage(args);
   };
 
   useEffect(() => {
@@ -1047,6 +1130,7 @@ export function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
                   clearThreadConversation,
                   sendMessage,
                   stopMessage,
+                  retryLastSend,
                 },
               } satisfies DashboardContext
             }
