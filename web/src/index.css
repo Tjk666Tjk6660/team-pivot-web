@@ -23,6 +23,7 @@
   --ok-600: #1f7a50;
   --warn-500: #c98a1a;
   --warn-600: #a36a0e;
+  --warn-700: #7a4f08;
   --info-500: #3a6bf5;
   --info-600: #2854d4;
   --danger-500: #c74545;
@@ -44,10 +45,11 @@
   --text-mute:   #8a8572;
   --text-fade:   #b8b1a0;
 
-  --accent:      #5a3a1a;        /* sepia brown */
-  --accent-soft: #e8dcc4;
-  --accent-bg:   #f3ead8;
-  --accent-ink:  #ffffff;
+  --accent:        #5a3a1a;       /* sepia brown */
+  --accent-strong: #3d2811;       /* darker sepia for hover/active */
+  --accent-soft:   #e8dcc4;
+  --accent-bg:     #f3ead8;
+  --accent-ink:    #ffffff;
 
   --r-xs: 3px; --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-xl: 20px;
   --shadow-sm: 0 1px 0 rgba(31, 29, 23, 0.04);

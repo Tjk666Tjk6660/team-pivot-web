@@ -188,9 +188,15 @@
 
 ### 任务拆解
 
-1. **`server/api/matters_events.py`** — SSE 主题映射
-   - 订阅 `events.TOPIC_MATTER_EVENT_APPENDED`,转发给 SSE 客户端为 `matter.event_appended` 事件
-   - SSE payload 与 events 总线 payload 一致(`{matter_id, target_file, creator, created_at, reason, summary?}`)
+1. **`server/api/matters_events.py`** — SSE 主题映射(沿用现有 thin SSE 模式)
+   - 在 `_TOPIC_MAP` 加一行:`TOPIC_MATTER_EVENT_APPENDED: ("matter.updated", "event_appended")`
+     —— 复用现有的 `matter.updated` SSE 事件名,通过 payload 里的 `reason` 字段
+     区分细粒度,不引入新 SSE 事件名
+   - SSE 帧 data **仅含 thin 4 字段** `{matter_id, reason: "event_appended", actor, at}`,
+     **不携带业务字段**(`target_file` / 失效 reason / summary 等留在 events 总线
+     payload 里给 notifier 模板用,不流到 SSE)
+   - 与现有 `matter.created` / `file_appended` / `comment_appended` 等处理路径一致 ——
+     "SSE 只通知变了,前端去 fetch",避免 SSE 与 REST 两份 schema 同步问题
 
 2. **`server/notify.py`** — 飞书卡片
    - 新增 `Notifier.notify_matter_event(matter_id, target_file, creator, reason, summary)`
@@ -202,7 +208,10 @@
 
 ### 测试
 
-- `test_sse_event_appended`:模拟客户端订阅,publish 后能收到正确 SSE payload
+- `test_sse_event_appended`:模拟客户端订阅 `/api/matters/events`,触发
+  `events.emit(TOPIC_MATTER_EVENT_APPENDED, ...)` 后,客户端应收到
+  `event: matter.updated` 帧、`data.reason === "event_appended"`、
+  `data.matter_id` 正确,且 **data 不含 `target_file` 等业务字段**(thin SSE 验证)
 - `test_notify_matter_event_invalidation`:mock notifier 验证卡片字段
 - `test_notify_matter_event_restoration`:mock notifier 验证卡片字段
 - `test_notify_matter_event_no_op_notifier`:NoOpNotifier 不报错
@@ -235,10 +244,14 @@
    }): Promise<{ event: ...; target: ... }>
    ```
 
-2. **`web/src/events/MatterEventsProvider.tsx`** — 处理新 SSE 主题
-   - 收到 `matter.event_appended`:
-     - 把事件项追加到本地 timeline(按 `created_at` 排序插入)
-     - 找到 `file == target_file` 的文件项,立即更新 `invalidated / invalidated_at / invalidated_reason / invalidated_by` 4 字段
+2. **`web/src/events/MatterEventsProvider.tsx`** — **零改动**
+   - Provider 已在监听 `matter.updated`,thin SSE 模式下事件项触发的也是这个事件名
+     (reason=`event_appended`),不需要新增 listener
+   - 业务层订阅者(`MatterDetailPane.tsx` 或调用 `useMatterEvents` 的地方)在
+     `reason === "event_appended"` 时 **refetch matter detail**:
+     - 后端 `_reverse_write_invalidation` 已经把文件项的 4 字段反写好
+     - timeline 里已含新追加的事件项(无 `type` / 有 `reason`)
+     - 不需要前端手工合并 SSE payload 到 timeline(避免 SSE 与 REST 两份数据契约)
 
 3. **`web/src/pages/MatterDetailPane.tsx`** — timeline 渲染分支
    - 读 timeline,对每条 entry 判断:
@@ -285,7 +298,8 @@
 2. **`AI-docs/pivot-interface.md`** — API 文档
    - 新增 `POST /api/matters/{matter_id}/events` 完整契约
    - 请求体、响应体、所有错误码
-   - SSE 新主题 `matter.event_appended` 字段
+   - SSE `matter.updated` 事件补充 `reason="event_appended"` 这一新值的语义说明
+     (沿用现有 thin SSE 模式,不新增 SSE 事件名)
 
 ### 验收
 
@@ -319,8 +333,7 @@ P5 文档同步
 | 事件项无 md 文件,git diff 看起来"只有 yaml 变更",作者 commit 不直观 | commit message 模板化:`feat(invalidate): <reason> <target_file>` 让 git log 自解释 |
 | 反写函数与 timeline append 不同步导致状态不一致 | 反写写在 `append_event` 函数内部,与 yaml 写入是同一原子操作;不暴露独立反写 API |
 | 已失效文件被新文档 quote 引用的检查放在哪里 | 在文件项创建路径(publish_matter_create / publish_matter_append)的校验里加,而不是事件路径——这是 §5.3 的实现位置 |
-| SSE payload 与 timeline yaml 字段不一致 | payload 字段集与 yaml event item 字段一一对应,通过同一 dataclass 序列化,源头一致 |
-| 前端 SSE 状态更新逻辑出错导致徽标不刷 | 端到端测试覆盖 SSE 流;前端组件 mock SSE payload 单测 |
+| 前端 refetch 失败导致徽标不刷新 | thin SSE 设计本来就是"通知 + refetch",refetch 失败由前端常规错误处理承接;`MatterEventsProvider` 的 `resume` 信号(visibility / focus / 重连)会触发再次 refetch 兜底 |
 
 ---
 

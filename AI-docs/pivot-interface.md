@@ -743,6 +743,46 @@ matter 草稿在 `matter_payload` 字段（JSON）里承载全部 matter 专属�
   - `item`
   - `matter`
 
+### POST /api/matters/{matter_id}/events
+- 作用：作者**撤回 / 恢复**自己已发布的某个文件（声明式撤回，不删除原文）
+- 鉴权：Cookie 或 Bearer PAT
+- 设计依据：`AI-docs/invalidate-self/product-design.md`
+- 说明：
+  - 在 timeline 上写入一条**事件项**（无 md 文件落盘，仅 yaml index）
+  - 同时反写目标文件的 `invalidated / invalidated_at / invalidated_reason / invalidated_by` 4 字段
+  - **作者本人限定**：请求者的 pinyin 必须等于目标文件的 `creator`
+  - **失效不影响 matter 状态机**：被失效的若是 result 文件且曾把 matter 推到 finished，matter 仍 finished
+- 请求体：
+  - `target_file`: string，目标文件路径（必须是同一 matter 的 file 项）
+  - `reason`: `"misposted" | "inaccurate" | "restored"`
+    - `misposted` / `inaccurate`：失效（目标当前必须未失效）
+    - `restored`：恢复（目标当前必须已失效）
+  - `summary?`: 可选自由说明，最长 500
+- 返回：
+  - `event`: `{ creator, created_at, quote, reason, summary? }` —— 新追加的事件项
+  - `target`: `{ file, invalidated, invalidated_at, invalidated_reason, invalidated_by }` —— 目标文件反写后的状态
+  - `matter`: matter 元数据
+- 错误码（detail.code）：
+  - `target_not_found` (404)：目标文件不在本 matter 的 timeline 内（跨 matter / comment / 事件项路径）
+  - `event_creator_mismatch` (403)：请求者非目标文件作者
+  - `target_already_invalidated` (409)：目标已失效，需先恢复才能再次失效
+  - `target_not_invalidated` (409)：目标未失效，无法发恢复事件
+  - `target_not_file_item` (422)：目标不是合法文件项（防御性）
+  - `invalid_reason` / `quote_required` / `creator_required` (422)
+  - `quote_target_invalidated` (422)：另见 `POST /files`，新文件 `quote` / `refer` 不能指向已失效文件
+- SSE：成功后服务端 emit `matter.event_appended`，SSE 层映射为 `matter.updated` 事件，`reason="event_appended"`，详见下文 SSE 章节
+
+### SSE: GET /api/matters/events
+- 事件：`matter.created` / `matter.updated`
+- payload：`{matter_id, reason, actor, at}` —— **thin SSE**，不携带业务字段
+- `reason` 取值：
+  - `created`：新建 matter
+  - `file_appended`：新文件追加
+  - `comment_appended`：评论追加
+  - `owner_changed`：负责人转交
+  - `event_appended`：失效 / 恢复事件追加（来自 `POST /events`）
+- 客户端收到任一 `matter.updated` 事件后，应通过 `GET /api/matters/{id}` 重新拉取详情
+
 ### 最小服务端校验建议
 
 第一版建议只做最小必要校验：

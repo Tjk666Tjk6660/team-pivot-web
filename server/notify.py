@@ -106,6 +106,18 @@ class Notifier(Protocol):
         status_change: dict | None = None,
     ) -> None: ...
 
+    def notify_matter_event(
+        self,
+        *,
+        category: str,
+        slug: str,
+        thread_title: str,
+        target_filename: str,
+        actor_name: str,
+        reason: str,                  # misposted | inaccurate | restored
+        summary: str | None = None,
+    ) -> None: ...
+
     def notify_standalone_mention(
         self,
         *,
@@ -128,6 +140,7 @@ class NoOpNotifier:
     def notify_new_reply(self, **_: object) -> None: pass
     def notify_status_change(self, **_: object) -> None: pass
     def notify_owner_change(self, **_: object) -> None: pass
+    def notify_matter_event(self, **_: object) -> None: pass
     def notify_standalone_mention(self, **_: object) -> None: pass
 
     # v2 多任务调度需要的精细化接口(NoOp 实现)
@@ -323,6 +336,35 @@ class FeishuNotifier:
             status_change=status_change,
         )
         self._dm_many([to_owner_open_id], card, event=f"owner_change slug={slug}")
+
+    def notify_matter_event(
+        self,
+        *,
+        category: str,
+        slug: str,
+        thread_title: str,
+        target_filename: str,
+        actor_name: str,
+        reason: str,
+        summary: str | None = None,
+    ) -> None:
+        """Broadcast an invalidation/restoration event card to bot groups.
+
+        Same notification level as notify_new_reply (broadcast), per
+        AI-docs/invalidate-self/product-design.md §5.2.
+        """
+        detail_url = self._matter_url(slug)
+        card = build_matter_event_card(
+            thread_title=thread_title,
+            target_filename=target_filename,
+            actor_name=actor_name,
+            reason=reason,
+            summary=summary,
+            thread_url=detail_url,
+        )
+        self._broadcast(
+            card, event=f"matter_event slug={slug} reason={reason}",
+        )
 
     def _thread_url(self, category: str, slug: str) -> str:
         from urllib.parse import urlencode
@@ -702,6 +744,52 @@ def build_owner_change_card(
     return _card_shell(
         header=f"负责人变更：{thread_title}",
         template="yellow",
+        markdown="<br>".join(markdown_rows),
+        button_text="查看讨论",
+        thread_url=thread_url,
+    )
+
+
+_INVALIDATION_REASON_LABEL = {
+    "misposted": "误发",
+    "inaccurate": "信息有误",
+    "restored": "恢复",
+}
+
+
+def build_matter_event_card(
+    *,
+    thread_title: str,
+    target_filename: str,
+    actor_name: str,
+    reason: str,
+    summary: str | None,
+    thread_url: str,
+) -> dict:
+    """Card for an invalidation/restoration event broadcast.
+
+    See AI-docs/invalidate-self/product-design.md §5.2 — same notification
+    level as a new reply (broadcast), but with a header that distinguishes
+    "withdrawn" vs "restored" so readers know it's a withdrawal action and
+    NOT new content. Body shows actor / target file / optional summary.
+    """
+    is_restore = reason == "restored"
+    header_verb = "恢复了文档" if is_restore else "撤回了文档"
+    reason_label = _INVALIDATION_REASON_LABEL.get(reason, reason)
+    rows: list[tuple[str, str]] = [
+        ("操作", f"{actor_name}（{reason_label}）"),
+        ("文件", target_filename),
+    ]
+    if summary and str(summary).strip():
+        rows.append(("说明", _oneline(str(summary))))
+    markdown_rows = [f"**{label}**：{value}" for label, value in rows]
+    # Use yellow for invalidation (caution / withdrawal) and turquoise for
+    # restore (positive). Both differ from default blue so scanning the chat
+    # surface, the read receipt is "this is an event, not new content".
+    template = "turquoise" if is_restore else "yellow"
+    return _card_shell(
+        header=f"作者{header_verb}：{thread_title}",
+        template=template,
         markdown="<br>".join(markdown_rows),
         button_text="查看讨论",
         thread_url=thread_url,

@@ -1,5 +1,11 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { isTimelineFileItem, type TimelineItem } from "@/api";
+import {
+  isTimelineFileItem,
+  isTimelineInvalidationEventItem,
+  type TimelineFileItem,
+  type TimelineItem,
+  type TimelineOwnerChangeItem,
+} from "@/api";
 import { cn } from "@/lib/utils";
 import { relativeTime } from "@/lib/time";
 import { TYPE_VISUAL, shortFile } from "./timeline-config";
@@ -144,8 +150,22 @@ function arrowHeadPoints(arrow: ConnectorArrow): string {
   ].join(" ");
 }
 
+// Navigation strip renders **file items + owner_change events**.
+// Invalidation/restoration events are excluded — they're audit annotations
+// on existing files (rendered via FileCard's InvalidatedBadge + the
+// InvalidationEventRow in the main flow) and don't represent a new node
+// on the matter's progress timeline.
+//
+// Owner_change is shown as a grey diamond (vs the file circle), disabled
+// for click-to-jump (it has no file to scroll to), and labeled
+// "owner_change #N". This restores the pre-invalidate-self behavior that
+// the team agreed to keep.
+//
+// We accept the broader `TimelineItem[]` here and filter defensively inside
+// the component, so a regression elsewhere can't sneak invalidation events
+// onto the strip.
 export function TimelineStrip({
-  items,
+  items: rawItems,
   highlight,
   onJump,
 }: {
@@ -153,6 +173,10 @@ export function TimelineStrip({
   highlight: string | null;
   onJump: (file: string) => void;
 }) {
+  const items: (TimelineFileItem | TimelineOwnerChangeItem)[] = rawItems.filter(
+    (t): t is TimelineFileItem | TimelineOwnerChangeItem =>
+      !isTimelineInvalidationEventItem(t),
+  );
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
 
@@ -230,65 +254,129 @@ export function TimelineStrip({
             );
           })}
 
-          {/* 节点 */}
+          {/* 节点 — file items 用圆形彩色，owner_change 用灰色斜方块（不可跳转） */}
           {items.map((item, i) => {
             const pos = layout.positions[i];
             if (!pos) return null;
-            const itemIsFile = isTimelineFileItem(item);
-            const fileItem = itemIsFile ? item : null;
-            const actorLabel = itemIsFile ? item.creator : item.actor;
-            const cfg = fileItem ? TYPE_VISUAL[fileItem.type] : null;
-            const active = !!fileItem && highlight === fileItem.file;
-            const key = fileItem ? fileItem.file : `owner-${item.created_at}-${i}`;
+            const isFile = isTimelineFileItem(item);
+            if (!isFile) {
+              // owner_change branch: grey diamond, disabled, no jump.
+              return (
+                <button
+                  key={`owner-${item.created_at}-${i}`}
+                  type="button"
+                  disabled
+                  className="absolute flex flex-col items-center focus:outline-none disabled:cursor-default"
+                  style={{
+                    left: pos.x - 56,
+                    top: pos.y - DOT_SIZE / 2,
+                    width: 112,
+                  }}
+                  title={`owner_change #${i + 1}`}
+                >
+                  <span
+                    className="flex h-6 w-6 rotate-45 items-center justify-center rounded-[3px] border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-sm)]"
+                  >
+                    <span className="block h-3.5 w-3.5 rounded-[2px] bg-[var(--text-fade)]" />
+                  </span>
+                  <span className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-mute)]">
+                    owner_change #{i + 1}
+                  </span>
+                  <span className="max-w-full truncate text-[10px] font-medium text-[var(--text-soft)]">
+                    {/* Use raw `actor` (pinyin) to match file-node `creator`
+                        on the strip. `actor_display` resolves to Feishu name
+                        which would render inconsistently (e.g. "Captain" vs
+                        "huangshengli" for the same user). */}
+                    {item.actor}
+                  </span>
+                  <span className="text-[10px] text-[var(--text-mute)]">
+                    {relativeTime(item.created_at)}
+                  </span>
+                  {item.status_change && (
+                    <span className="mt-0.5 inline-flex max-w-full items-center truncate rounded-full bg-[var(--status-project-bg)] px-1.5 py-0.5 text-[10px] text-[var(--status-project-fg)] ring-1 ring-[var(--accent-soft)]">
+                      {item.status_change.from} → {item.status_change.to}
+                    </span>
+                  )}
+                </button>
+              );
+            }
+            const cfg = TYPE_VISUAL[item.type];
+            const active = highlight === item.file;
+            const isInvalidated = item.invalidated === true;
             return (
               <button
-                key={key}
+                key={item.file}
                 type="button"
-                disabled={!fileItem}
-                onClick={() => fileItem && onJump(fileItem.file)}
-                className="absolute flex flex-col items-center focus:outline-none disabled:cursor-default"
+                onClick={() => onJump(item.file)}
+                className="absolute flex flex-col items-center focus:outline-none"
                 style={{
                   left: pos.x - 56,
                   top: pos.y - DOT_SIZE / 2,
                   width: 112,
                 }}
                 title={
-                  fileItem
-                    ? `${fileItem.type} #${i + 1} · ${shortFile(fileItem.file)} · ${fileItem.summary}`
-                    : `owner_change #${i + 1}`
+                  isInvalidated
+                    ? `${item.type} #${i + 1} · ${shortFile(item.file)} · ${item.summary} · 已失效（${item.invalidated_reason ?? ""}）`
+                    : `${item.type} #${i + 1} · ${shortFile(item.file)} · ${item.summary}`
                 }
               >
                 <span
                   className={cn(
-                    "flex h-6 w-6 items-center justify-center border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-sm)] transition-transform",
-                    fileItem ? "rounded-full" : "rotate-45 rounded-[3px]",
+                    "flex h-6 w-6 items-center justify-center rounded-full border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-sm)] transition-transform",
                     active && "scale-125 shadow-[var(--shadow-lg)]",
                   )}
                 >
                   <span
                     className={cn(
-                      "block h-3.5 w-3.5",
-                      fileItem ? "rounded-full" : "rounded-[2px] bg-[var(--text-fade)]",
-                      cfg?.dot,
+                      "block h-3.5 w-3.5 rounded-full",
+                      // Invalidated files lose their type color and turn grey
+                      // — matches the InvalidatedBadge on the file card and
+                      // signals "this entry is withdrawn" at strip glance.
+                      isInvalidated
+                        ? "bg-[var(--text-fade)] opacity-60"
+                        : cfg.dot,
                     )}
                   />
                 </span>
                 <span
                   className={cn(
                     "mt-1 text-[10px] font-semibold uppercase tracking-wide",
-                    cfg?.pill ?? "text-[var(--text-mute)]",
+                    isInvalidated
+                      ? "text-[var(--text-fade)] line-through"
+                      : cfg.pill,
                   )}
                 >
                   {item.type} #{i + 1}
                 </span>
-                <span className="max-w-full truncate text-[10px] font-medium text-[var(--text-soft)]">
-                  {actorLabel}
+                <span
+                  className={cn(
+                    "max-w-full truncate text-[10px] font-medium",
+                    isInvalidated
+                      ? "text-[var(--text-fade)]"
+                      : "text-[var(--text-soft)]",
+                  )}
+                >
+                  {item.creator}
                 </span>
-                <span className="text-[10px] text-[var(--text-mute)]">
+                <span
+                  className={cn(
+                    "text-[10px]",
+                    isInvalidated
+                      ? "text-[var(--text-fade)]"
+                      : "text-[var(--text-mute)]",
+                  )}
+                >
                   {relativeTime(item.created_at)}
                 </span>
                 {item.status_change && (
-                  <span className="mt-0.5 inline-flex max-w-full items-center truncate rounded-full bg-[var(--status-project-bg)] px-1.5 py-0.5 text-[10px] text-[var(--status-project-fg)] ring-1 ring-[var(--accent-soft)]">
+                  <span
+                    className={cn(
+                      "mt-0.5 inline-flex max-w-full items-center truncate rounded-full px-1.5 py-0.5 text-[10px] ring-1",
+                      isInvalidated
+                        ? "bg-[var(--surface-alt)] text-[var(--text-fade)] ring-[var(--line)]"
+                        : "bg-[var(--status-project-bg)] text-[var(--status-project-fg)] ring-[var(--accent-soft)]",
+                    )}
+                  >
                     {item.status_change.from} → {item.status_change.to}
                   </span>
                 )}
@@ -296,7 +384,9 @@ export function TimelineStrip({
                   <span
                     className={cn(
                       "mt-0.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] ring-1",
-                      item.outcome === "finished"
+                      isInvalidated
+                        ? "bg-[var(--surface-alt)] text-[var(--text-fade)] ring-[var(--line)]"
+                        : item.outcome === "finished"
                         ? "bg-[var(--status-concluded-bg)] text-[var(--status-concluded-fg)] ring-[var(--line)]"
                         : "bg-[var(--surface-alt)] text-[var(--text-soft)] ring-[var(--line-strong)]",
                     )}

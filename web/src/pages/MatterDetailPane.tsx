@@ -26,6 +26,7 @@ import {
   streamAIChat,
   updateDraft,
   isTimelineFileItem,
+  isTimelineInvalidationEventItem,
   type Draft,
   type DocType,
   type MatterDetail as MatterDetailData,
@@ -40,6 +41,7 @@ import { TimelineStrip } from "@/components/matter/TimelineStrip";
 import { FileCard } from "@/components/matter/FileCard";
 import { OwnerChip } from "@/components/matter/OwnerChip";
 import { OwnerChangeRow } from "@/components/matter/OwnerChangeRow";
+import { InvalidationEventRow } from "@/components/matter/InvalidationEventRow";
 import { TransferOwnerDialog } from "@/components/matter/TransferOwnerDialog";
 import {
   CreateFileForm,
@@ -119,11 +121,19 @@ function sameDetail(
   for (let i = 0; i < prev.timeline.length; i++) {
     const x = prev.timeline[i];
     const y = next.timeline[i];
-    if (x.type !== y.type) return false;
+    // Compare shape category first. Three kinds: file / owner_change /
+    // invalidation_event. Mismatched kinds always count as a real change.
+    const xKind = "type" in x ? x.type : "__event__";
+    const yKind = "type" in y ? y.type : "__event__";
+    if (xKind !== yKind) return false;
     if (!isTimelineFileItem(x) || !isTimelineFileItem(y)) {
+      // Both are non-file (owner_change or invalidation_event). status_change
+      // doesn't exist on invalidation events; "in" guard avoids the access.
+      const xSc = "status_change" in x ? x.status_change : null;
+      const ySc = "status_change" in y ? y.status_change : null;
       if (
         x.created_at !== y.created_at ||
-        (x.status_change?.to ?? null) !== (y.status_change?.to ?? null)
+        (xSc?.to ?? null) !== (ySc?.to ?? null)
       ) {
         return false;
       }
@@ -132,7 +142,9 @@ function sameDetail(
     if (
       x.file !== y.file ||
       x.comments.length !== y.comments.length ||
-      (x.status_change?.to ?? null) !== (y.status_change?.to ?? null)
+      (x.status_change?.to ?? null) !== (y.status_change?.to ?? null) ||
+      (x.invalidated ?? false) !== (y.invalidated ?? false) ||
+      (x.invalidated_reason ?? null) !== (y.invalidated_reason ?? null)
     ) {
       return false;
     }
@@ -154,6 +166,10 @@ export function MatterDetailPane() {
   const [sessionOpenId, setSessionOpenId] = useState<string>("");
   const [sessionName, setSessionName] = useState<string>("");
   const [sessionAvatarUrl, setSessionAvatarUrl] = useState<string>("");
+  // pinyin is the canonical author key written into matter index files
+  // (publish.py::_resolve_owner_for_index). Compare against item.creator
+  // to gate author-only actions like invalidate / restore.
+  const [sessionPinyin, setSessionPinyin] = useState<string | null>(null);
   const [pendingCreate, setPendingCreate] = useState<{
     type: DocType;
     quote: string | null;
@@ -420,11 +436,13 @@ export function MatterDetailPane() {
         setSessionOpenId(me?.open_id ?? "");
         setSessionName(me?.name ?? "");
         setSessionAvatarUrl(me?.avatar_url ?? "");
+        setSessionPinyin(me?.pinyin ?? null);
       })
       .catch(() => {
         setSessionOpenId("");
         setSessionName("");
         setSessionAvatarUrl("");
+        setSessionPinyin(null);
       });
   }, []);
 
@@ -545,6 +563,13 @@ export function MatterDetailPane() {
 
   const { matter, timeline } = data;
   const fileTimeline = timeline.filter(isTimelineFileItem);
+  // Strip / count: files + owner_change (both rendered as nodes on the
+  // navigation strip). Invalidation/restoration events are audit
+  // annotations on existing files, not new nodes on the timeline.
+  const stripTimeline = timeline.filter(
+    (t) => !isTimelineInvalidationEventItem(t),
+  );
+  const timelineCount = stripTimeline.length;
   const canGenerateResult = matter.current_status === "executing";
   const canGenerateInsight =
     matter.current_status === "finished" ||
@@ -1009,14 +1034,19 @@ export function MatterDetailPane() {
           <section className="pivot-card mb-4 p-4">
             <div className="mb-2 flex items-center justify-between">
               <h2 className="text-[13px] font-semibold text-[var(--text)]">
-                时间轴 · {timeline.length}
+                时间轴 · {timelineCount}
               </h2>
               <span className="text-[11px] text-[var(--text-mute)]">
                 按时间升序 · 点节点跳到对应卡片
               </span>
             </div>
             <TimelineStrip
-              items={timeline}
+              // Strip carries file items + owner_change events (rendered as
+              // grey diamonds, no jump). Invalidation / restoration events
+              // are excluded — they're audit annotations on existing files,
+              // shown via FileCard's InvalidatedBadge + the
+              // InvalidationEventRow in the main flow.
+              items={stripTimeline}
               highlight={highlight}
               onJump={onJump}
             />
@@ -1024,39 +1054,64 @@ export function MatterDetailPane() {
 
           {/* ==== 文件流 ==== */}
           <section className="space-y-3">
-            {timeline.map((item, i) =>
-              isTimelineFileItem(item) ? (
-                <FileCard
-                  key={item.file}
+            {timeline.map((item, i) => {
+              if (isTimelineFileItem(item)) {
+                return (
+                  <FileCard
+                    key={item.file}
+                    item={item}
+                    index={i}
+                    matterId={matter.id}
+                    matterStatus={matter.current_status}
+                    activeType={
+                      pendingCreate && pendingCreate.quote === item.file
+                        ? pendingCreate.type
+                        : null
+                    }
+                    onCreate={requestCreate}
+                    onAddComment={(body, mentions) =>
+                      submitComment(item.file, body, mentions)
+                    }
+                    onJump={onJump}
+                    registerRef={(el) => {
+                      cardRefs.current[item.file] = el;
+                    }}
+                    highlighted={highlight === item.file}
+                    markdownStyle={markdownStyle}
+                    me={{
+                      open_id: sessionOpenId,
+                      name: sessionName,
+                      avatar_url: sessionAvatarUrl || null,
+                      pinyin: sessionPinyin,
+                    }}
+                    onMatterChanged={refreshDetailSilently}
+                  />
+                );
+              }
+              if (isTimelineInvalidationEventItem(item)) {
+                // Render as a horizontal event row, mirroring OwnerChangeRow.
+                // The file's InvalidatedBadge + reverse-written invalidated_*
+                // fields already show the *current* state on the file card;
+                // this row makes the *action history* visible inline so each
+                // invalidate / restore is readable on the timeline. Stacking
+                // on repeated cycles is acceptable per product decision —
+                // it's the audit trail, same convention as owner_change.
+                return (
+                  <InvalidationEventRow
+                    key={`invalidation-${item.created_at}-${i}`}
+                    item={item}
+                  />
+                );
+              }
+              // owner_change
+              return (
+                <OwnerChangeRow
+                  key={`owner-${item.created_at}-${i}`}
                   item={item}
-                  index={i}
                   matterId={matter.id}
-                  matterStatus={matter.current_status}
-                  activeType={
-                    pendingCreate && pendingCreate.quote === item.file
-                      ? pendingCreate.type
-                      : null
-                  }
-                  onCreate={requestCreate}
-                  onAddComment={(body, mentions) =>
-                    submitComment(item.file, body, mentions)
-                  }
-                  onJump={onJump}
-                  registerRef={(el) => {
-                    cardRefs.current[item.file] = el;
-                  }}
-                  highlighted={highlight === item.file}
-                  markdownStyle={markdownStyle}
-                  me={{
-                    open_id: sessionOpenId,
-                    name: sessionName,
-                    avatar_url: sessionAvatarUrl || null,
-                  }}
                 />
-              ) : (
-                <OwnerChangeRow key={`owner-${item.created_at}-${i}`} item={item} />
-              ),
-            )}
+              );
+            })}
             {pendingCreate && (
               <article
                 ref={pendingArticleRef}

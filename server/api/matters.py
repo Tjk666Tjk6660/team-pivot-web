@@ -34,6 +34,7 @@ from server.publish import (
     publish_matter_append,
     publish_matter_comment,
     publish_matter_create,
+    publish_matter_event,
     publish_matter_owner_change,
 )
 from server.read_state import ReadStateRepo
@@ -120,6 +121,20 @@ class OwnerChangeBody(BaseModel):
     to_owner: str = Field(min_length=1, max_length=50)
     reason: str = Field(min_length=1, max_length=200)
     status_change: StatusChangeIn | None = None
+
+
+class MatterEventBody(BaseModel):
+    """Body for POST /api/matters/{id}/events — invalidate / restore a file.
+
+    See AI-docs/invalidate-self/product-design.md §2.2. reason encodes both
+    event type and (when invalidating) cause:
+      - misposted / inaccurate → invalidate
+      - restored → restore
+    Pydantic Literal rejects any other value with 422 (validator never runs).
+    """
+    target_file: str = Field(min_length=1, max_length=500)
+    reason: Literal["misposted", "inaccurate", "restored"]
+    summary: str | None = Field(default=None, max_length=500)
 
 
 # ---------- Router ----------
@@ -226,6 +241,21 @@ def build_router(
             "filename": filename,
             "first_read_at": _ts_to_iso(entry.first_read_at),
         }
+
+    @router.post("/matters/{matter_id}/events/read")
+    def mark_matter_events_read(
+        matter_id: str,
+        user: User = Depends(current_user),
+    ):
+        """Clear matter-level relevance event rows (e.g. owner_change) that
+        have no file to bind to. Triggered by OwnerChangeRow's visibility
+        observer on the frontend."""
+        if read_matter_index(
+            matter_index_path(workspace.index_dir, matter_id),
+        ) is None:
+            raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
+        cleared = relevance_repo.mark_matter_events_read(user.open_id, matter_id)
+        return {"matter_id": matter_id, "cleared": cleared}
 
     @router.post("/matters/{matter_id}/read")
     def mark_read(matter_id: str, user: User = Depends(current_user)):
@@ -395,6 +425,58 @@ def build_router(
             "matter": rendered_detail["matter"],
             "item": rendered_detail["timeline"][0],
         }
+
+    @router.post("/matters/{matter_id}/events")
+    def append_matter_event(
+        matter_id: str,
+        body: MatterEventBody,
+        user: User = Depends(current_user),
+    ):
+        """Append an invalidation/restoration event entry.
+
+        Status code mapping (per AI-docs/invalidate-self/implementation-plan.md P2):
+          target_not_found              → 404
+          event_creator_mismatch        → 403
+          target_already_invalidated    → 409
+          target_not_invalidated        → 409
+          target_not_file_item          → 422 (defensive; client gave a non-file path)
+          invalid_reason / quote_required / creator_required → 422
+        """
+        require_profile(user)
+        try:
+            result = publish_matter_event(
+                workspace, user,
+                matter_id=matter_id,
+                target_file=body.target_file,
+                reason=body.reason,
+                summary=body.summary,
+                notifier=notifier,
+            )
+        except MatterNotFoundError as e:
+            raise HTTPException(
+                status_code=404, detail={"code": "matter_not_found"}
+            ) from e
+        except MatterIndexValidationError as e:
+            code = e.result.code or "validation_error"
+            if code == "target_not_found":
+                status = 404
+            elif code == "event_creator_mismatch":
+                status = 403
+            elif code in ("target_already_invalidated", "target_not_invalidated"):
+                status = 409
+            else:
+                status = 422
+            raise HTTPException(
+                status_code=status,
+                detail={
+                    "code": code,
+                    "field": e.result.field,
+                    "message": e.result.message,
+                },
+            ) from e
+        except PublishError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return result
 
     @router.post("/matters/{matter_id}/files")
     def append_file(
@@ -602,10 +684,12 @@ def _summarize_matter(
 ) -> dict:
     matter = data.get("matter") or {}
     timeline = data.get("timeline") or []
-    # file_count / last_file_type / last_summary are file-only. Skip event-type
-    # entries (owner_change) so a recent transfer doesn't mask the actual last
-    # file in the list.
-    file_items = [t for t in timeline if t.get("type") not in {"owner_change"}]
+    # file_count / last_file_type / last_summary are file-only. We identify
+    # file items by the presence of a `file` field, which excludes both
+    # owner_change events (have type, no file) and invalidation/restoration
+    # events (no type, no file). Using `t.get("type") not in {...}` would
+    # miss invalidation events because `None not in {...}` evaluates to True.
+    file_items = [t for t in timeline if t.get("file")]
     last_file = file_items[-1] if file_items else {}
     out: dict = {
         "id": matter.get("id"),
@@ -687,8 +771,11 @@ def _render_matter_detail(
     for item in data.get("timeline") or []:
         rendered = _render_item(workspace, item, users, contacts)
         timeline_out.append(rendered)
-    # last_file_type / last_summary skip owner_change events (no summary).
-    file_items = [t for t in timeline_out if t.get("type") not in {"owner_change"}]
+    # File items are identified by having a `file` field. Event entries
+    # (owner_change with type=owner_change, or invalidation events with no
+    # type but a reason) have no file field and are excluded from file-stat
+    # aggregations like file_count / last_file_type.
+    file_items = [t for t in timeline_out if t.get("file")]
     last_file = file_items[-1] if file_items else None
     # Resolve matter-level owner display + avatar via the same fallback as
     # _summarize_matter (matter.owner → first file owner/creator → null).
@@ -729,6 +816,10 @@ def _render_item(
     # pollute event entries.
     if item.get("type") == "owner_change":
         return _render_owner_change_item(item, users, contacts)
+    # Invalidation/restoration events: no `type`, has `reason`. No file body /
+    # comments / readers; just creator + quote + reason (+ optional summary).
+    if "type" not in item and "reason" in item:
+        return _render_invalidation_event_item(item, users, contacts)
     out = dict(item)
     # Per pivot-interface.md: every timeline entry carries `expanded: false` and `body`.
     out.setdefault("quote", None)
@@ -798,6 +889,30 @@ def _render_owner_change_item(
     # at 0 (consistent with FileCard's empty state) so consumers don't have to
     # special-case missing keys.
     out.setdefault("status_change", None)
+    out["readers_count"] = 0
+    out["readers"] = []
+    return out
+
+
+def _render_invalidation_event_item(
+    item: dict,
+    users: UserRepo,
+    contacts: ContactRepo,
+) -> dict:
+    """Render an invalidation/restoration event entry.
+
+    Distinct shape from file-type entries: no file / body / quote (well, has
+    `quote` pointing to target file path) / refer / comments / readers, but
+    has creator / quote / reason / optional summary.
+    """
+    out = dict(item)
+    creator = out.get("creator")
+    out["creator_display"] = resolve_id(creator, users, contacts) if creator else None
+    out["creator_avatar_url"] = (
+        resolve_avatar_url(creator, users, contacts) if creator else None
+    )
+    # Empty placeholders so heterogeneous timeline renderers don't have to
+    # special-case missing keys (mirrors owner_change shape).
     out["readers_count"] = 0
     out["readers"] = []
     return out
