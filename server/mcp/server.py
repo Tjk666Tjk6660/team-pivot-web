@@ -182,7 +182,21 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
                     "When the user does ask for it, present the resolved targets + the "
                     "`say` line in chat first, get confirmation, then call. If the "
                     "backend can't resolve a name (422), surface it to the user — do "
-                    "not silently retry with guessed pinyin."
+                    "not silently retry with guessed pinyin. "
+                    "PROTOCOL (visibility): The `visibility` and "
+                    "`new_category_visibility` fields are OPTIONAL. Default to "
+                    "leaving them null — the matter goes public, matching the "
+                    "current behavior. Set them ONLY when the user EXPLICITLY "
+                    "asks to restrict access ('只给 dev 看', 'limit to ops', "
+                    "'不要让 X 看到'). When the user does ask for restriction, "
+                    "first call `list_visibility_options` with the same "
+                    "`category` to fetch valid role / user candidates, then "
+                    "echo the resolved scope (with display names) back to the "
+                    "user for confirmation, then call create_matter. If the "
+                    "category does not yet exist AND the matter is restricted, "
+                    "you MUST also include `new_category_visibility`; the "
+                    "backend rejects with 422 `missing_category_visibility` "
+                    "otherwise. Never infer restriction from the body text."
                 ),
                 inputSchema=CreateMatterIn.model_json_schema(),
             ),

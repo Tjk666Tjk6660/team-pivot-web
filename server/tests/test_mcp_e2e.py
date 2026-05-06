@@ -583,7 +583,7 @@ def test_mcp_e2e_full_flow(live_server):
     # concrete list to walk through during the introduction.
     for tool in [
         "resolve_context", "list_matters", "get_matter", "read_files",
-        "create_matter", "create_file", "add_comment",
+        "create_matter", "create_file", "add_comment", "list_visibility_options",
     ]:
         assert tool in instructions, (tool, instructions)
     assert {"resolve_context", "list_matters", "get_matter", "read_files",
