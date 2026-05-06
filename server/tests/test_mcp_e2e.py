@@ -51,7 +51,6 @@ from server.api.matters import build_router as build_matters_router
 from server.api_tokens import ApiTokenRepo
 from server.auth.deps import make_current_user
 from server.auth.session import SessionStore
-from server.contacts import ContactRepo
 from server.db import Database
 from server.events import clear_subscribers
 from server.favorites import FavoriteRepo
@@ -108,12 +107,14 @@ def _build_combined_app(db: Database, users: UserRepo,
         async with mcp_app.router.lifespan_context(mcp_app):
             yield
 
+    pivot_users = PivotUserRepo(db)
+    bindings = ExternalBindingRepo(db)
     app = FastAPI(lifespan=lifespan)
     app.include_router(
         build_matters_router(
-            workspace, users, ContactRepo(db), NoOpNotifier(),
+            workspace, users, pivot_users, bindings, NoOpNotifier(),
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
-            RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), ContactRepo(db)), current_user,
+            RelevanceEventsRepo(db), DisplayResolver(pivot_users, bindings), current_user,
         )
     )
     app.mount("/mcp", mcp_app)
@@ -220,14 +221,21 @@ def live_server(tmp_path) -> Iterator[dict]:
     users = UserRepo(db)
     api_tokens = ApiTokenRepo(db)
 
-    # Seed one user and mint a PAT for them. Mirrors the auth flow which
-    # also populates contacts (so @-mention resolution by name/pinyin works).
+    # Seed one user and mint a PAT for them. Mirrors the auth flow.
     users.upsert_from_feishu(
         open_id="ou_1", union_id=None, name="邓柯", avatar_url="",
     )
     users.update_profile("ou_1", pinyin="dengke")
-    ContactRepo(db).upsert_from_login(
-        open_id="ou_1", union_id=None, name="邓柯", avatar_url="",
+    # Seed pivot_user + feishu binding so @-mention resolution by
+    # name/pinyin works (replaces the old contacts table seeding).
+    pivot_users_seed = PivotUserRepo(db)
+    bindings_seed = ExternalBindingRepo(db)
+    pu = pivot_users_seed.create(
+        display_name="邓柯", pinyin="dengke", email=None, avatar_url="",
+    )
+    bindings_seed.bind(
+        pivot_user_id=pu.id, provider="feishu",
+        external_id="ou_1", external_union_id=None, raw_profile_json=None,
     )
     plaintext, _ = api_tokens.create(user_open_id="ou_1", name="Test PAT")
 

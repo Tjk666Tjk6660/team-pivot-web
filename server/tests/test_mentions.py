@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from server.contacts import ContactRepo
 from server.external_bindings import ExternalBindingRepo
 from server.mentions import (
     DisplayInfo,
@@ -14,17 +13,16 @@ from server.pivot_users import PivotUserRepo
 
 
 def _make_resolver(
-    db, *, with_contacts: bool = False,
-) -> tuple[DisplayResolver, PivotUserRepo, ExternalBindingRepo, ContactRepo | None]:
+    db,
+) -> tuple[DisplayResolver, PivotUserRepo, ExternalBindingRepo]:
     pivot_users = PivotUserRepo(db)
     bindings = ExternalBindingRepo(db)
-    contacts = ContactRepo(db) if with_contacts else None
-    resolver = DisplayResolver(pivot_users, bindings, contacts)
-    return resolver, pivot_users, bindings, contacts
+    resolver = DisplayResolver(pivot_users, bindings)
+    return resolver, pivot_users, bindings
 
 
 def test_direct_lookup_by_pivot_user_id_skips_binding(db):
-    resolver, pivot_users, bindings, _ = _make_resolver(db)
+    resolver, pivot_users, bindings = _make_resolver(db)
     user = pivot_users.create(
         display_name="Alice", pinyin="alice", email="a@x.com",
         avatar_url="https://x/a.png", role="member",
@@ -46,7 +44,7 @@ def test_direct_lookup_by_pivot_user_id_skips_binding(db):
 
 
 def test_binding_fallback_for_legacy_open_id(db):
-    resolver, pivot_users, bindings, _ = _make_resolver(db)
+    resolver, pivot_users, bindings = _make_resolver(db)
     user = pivot_users.create(
         display_name="Bob", pinyin="bob", email=None, avatar_url="",
         role="member",
@@ -63,7 +61,7 @@ def test_binding_fallback_for_legacy_open_id(db):
 
 
 def test_binding_fallback_via_union_id(db):
-    resolver, pivot_users, bindings, _ = _make_resolver(db)
+    resolver, pivot_users, bindings = _make_resolver(db)
     user = pivot_users.create(
         display_name="Carol", pinyin="carol", email=None, avatar_url="",
         role="member",
@@ -79,7 +77,7 @@ def test_binding_fallback_via_union_id(db):
 
 
 def test_status_propagates_through_binding(db):
-    resolver, pivot_users, bindings, _ = _make_resolver(db)
+    resolver, pivot_users, bindings = _make_resolver(db)
     user = pivot_users.create(
         display_name="Dave", pinyin="dave", email=None, avatar_url="",
         role="member",
@@ -97,16 +95,6 @@ def test_status_propagates_through_binding(db):
     assert info.status == "suspended"
 
 
-def test_contacts_fallback_for_unbound_open_id(db):
-    resolver, _, _, contacts = _make_resolver(db, with_contacts=True)
-    contacts.upsert_many([
-        {"open_id": "ou_contact000000000000", "name": "联系人A"},
-    ])
-    info = resolver.resolve("ou_contact000000000000")
-    assert info.display_name == "联系人A"
-    assert info.status == "unknown"
-
-
 def test_unknown_ref_echoes_back(db):
     resolver, *_ = _make_resolver(db)
     info = resolver.resolve("ou_ghost000000000000")
@@ -120,7 +108,7 @@ def test_empty_ref(db):
 
 
 def test_cache_avoids_repeated_db_hits(db):
-    resolver, pivot_users, bindings, _ = _make_resolver(db)
+    resolver, pivot_users, bindings = _make_resolver(db)
     user = pivot_users.create(
         display_name="E", pinyin="e", email=None, avatar_url="", role="member",
     )
@@ -141,7 +129,7 @@ def test_cache_avoids_repeated_db_hits(db):
 
 
 def test_invalidate_clears_cache(db):
-    resolver, pivot_users, _, _ = _make_resolver(db)
+    resolver, pivot_users, _ = _make_resolver(db)
     user = pivot_users.create(
         display_name="Old", pinyin="old", email=None, avatar_url="",
         role="member",
@@ -153,7 +141,7 @@ def test_invalidate_clears_cache(db):
 
 
 def test_resolve_id_thin_wrapper(db):
-    resolver, pivot_users, _, _ = _make_resolver(db)
+    resolver, pivot_users, _ = _make_resolver(db)
     user = pivot_users.create(
         display_name="Frank", pinyin="frank", email=None, avatar_url="",
         role="member",
@@ -165,7 +153,7 @@ def test_resolve_id_thin_wrapper(db):
 
 
 def test_resolve_avatar_url_thin_wrapper(db):
-    resolver, pivot_users, _, _ = _make_resolver(db)
+    resolver, pivot_users, _ = _make_resolver(db)
     user = pivot_users.create(
         display_name="Gina", pinyin="gina", email=None,
         avatar_url="https://x/g.png", role="member",
@@ -176,7 +164,7 @@ def test_resolve_avatar_url_thin_wrapper(db):
 
 
 def test_resolve_text_replaces_known_open_ids(db):
-    resolver, pivot_users, bindings, _ = _make_resolver(db)
+    resolver, pivot_users, bindings = _make_resolver(db)
     user = pivot_users.create(
         display_name="Ken", pinyin="ken", email=None, avatar_url="",
         role="member",
@@ -191,22 +179,13 @@ def test_resolve_text_replaces_known_open_ids(db):
     assert out == "hi @Ken and ou_missing0000000000, see you"
 
 
-def test_resolve_text_falls_back_to_contacts(db):
-    resolver, _, _, contacts = _make_resolver(db, with_contacts=True)
-    contacts.upsert_many([
-        {"open_id": "ou_contact000000000000", "name": "联系人A"},
-    ])
-    out = resolve_text("ping ou_contact000000000000 please", resolver)
-    assert out == "ping @联系人A please"
-
-
 def test_resolve_text_no_matches_unchanged(db):
     resolver, *_ = _make_resolver(db)
     assert resolve_text("plain text, no mentions", resolver) == "plain text, no mentions"
 
 
 def test_author_view_active_user(db):
-    resolver, pivot_users, _, _ = _make_resolver(db)
+    resolver, pivot_users, _ = _make_resolver(db)
     u = pivot_users.create(
         display_name="Hank", pinyin="hank", email=None,
         avatar_url="https://x/h.png", role="member",
@@ -222,7 +201,7 @@ def test_author_view_active_user(db):
 
 
 def test_author_view_legacy_open_id_resolves_to_active(db):
-    resolver, pivot_users, bindings, _ = _make_resolver(db)
+    resolver, pivot_users, bindings = _make_resolver(db)
     u = pivot_users.create(
         display_name="Ivy", pinyin="ivy", email=None, avatar_url="",
         role="member",
@@ -259,7 +238,7 @@ def test_author_view_empty_ref_returns_none(db):
 
 
 def test_author_view_reflects_suspended_status(db):
-    resolver, pivot_users, _, _ = _make_resolver(db)
+    resolver, pivot_users, _ = _make_resolver(db)
     u = pivot_users.create(
         display_name="J", pinyin="j", email=None, avatar_url="",
         role="member",

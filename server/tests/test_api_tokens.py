@@ -11,8 +11,8 @@ from server.api.tokens import build_router as build_tokens_router
 from server.api_tokens import ApiTokenRepo
 from server.auth.deps import make_current_user, make_current_user_cookie_only
 from server.auth.session import SessionStore
-from server.contacts import ContactRepo
 from server.drafts import DraftRepo
+from server.external_bindings import ExternalBindingRepo
 from server.notify import NoOpNotifier
 from server.pivot_users import PivotUserRepo
 
@@ -37,7 +37,8 @@ def app_and_sid(db):
     app = FastAPI()
     app.include_router(build_tokens_router(tokens, cu_cookie))
     app.include_router(build_drafts_router(
-        _FakeWorkspace(), DraftRepo(db), ContactRepo(db), NoOpNotifier(), cu,
+        _FakeWorkspace(), DraftRepo(db), pivot_users, ExternalBindingRepo(db),
+        NoOpNotifier(), cu,
     ))
     return app, sid, tokens, user
 

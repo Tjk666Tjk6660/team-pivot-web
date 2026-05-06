@@ -7,7 +7,6 @@ from server.api.discussions import build_router
 from server.api_tokens import ApiTokenRepo
 from server.auth.deps import make_current_user
 from server.auth.session import SessionStore
-from server.contacts import ContactRepo
 from server.external_bindings import ExternalBindingRepo
 from server.favorites import FavoriteRepo
 from server.mentions import DisplayResolver
@@ -34,15 +33,18 @@ def _write_index(index_dir, slug: str, last_updated: str) -> None:
     )
 
 
-def _build_app(db, users, contacts, discussions, index_dir):
+def _build_app(db, users, discussions, index_dir):
     current_user = make_current_user(SessionStore(db), users, ApiTokenRepo(db))
-    resolver = DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), contacts)
+    pivot_users = PivotUserRepo(db)
+    bindings = ExternalBindingRepo(db)
+    resolver = DisplayResolver(pivot_users, bindings)
     app = FastAPI()
     app.include_router(
         build_router(
             _WorkspaceStub(discussions, index_dir),
             users,
-            contacts,
+            pivot_users,
+            bindings,
             NoOpNotifier(),
             ReadStateRepo(db),
             FavoriteRepo(db),
@@ -69,12 +71,11 @@ def test_categories_ok_with_cookie_session(db, users, tmp_path):
         type_="proposal", author="ou_1", title="Refactor",
     )
 
-    contacts = ContactRepo(db)
     users.upsert_from_feishu(open_id="ou_1", union_id=None, name="Ken", avatar_url="")
     sessions = SessionStore(db)
     sid = sessions.create("ou_1")
 
-    app = _build_app(db, users, contacts, discussions, index_dir)
+    app = _build_app(db, users, discussions, index_dir)
     client = TestClient(app)
     client.cookies.set("sid", sid)
 
@@ -97,12 +98,11 @@ def test_categories_ok_with_bearer_pat(db, users, tmp_path):
         type_="proposal", author="ou_1", title="Hello",
     )
 
-    contacts = ContactRepo(db)
     users.upsert_from_feishu(open_id="ou_1", union_id=None, name="Ken", avatar_url="")
     token_repo = ApiTokenRepo(db)
     plaintext, _ = token_repo.create(user_open_id="ou_1", name="test", ttl_days=30)
 
-    app = _build_app(db, users, contacts, discussions, index_dir)
+    app = _build_app(db, users, discussions, index_dir)
     client = TestClient(app)
 
     r = client.get(
@@ -119,12 +119,11 @@ def test_categories_empty_workspace(db, users, tmp_path):
     discussions.mkdir(parents=True, exist_ok=True)
     index_dir = tmp_path / "index"
 
-    contacts = ContactRepo(db)
     users.upsert_from_feishu(open_id="ou_1", union_id=None, name="Ken", avatar_url="")
     sessions = SessionStore(db)
     sid = sessions.create("ou_1")
 
-    app = _build_app(db, users, contacts, discussions, index_dir)
+    app = _build_app(db, users, discussions, index_dir)
     client = TestClient(app)
     client.cookies.set("sid", sid)
 
@@ -138,12 +137,11 @@ def test_categories_missing_discussions_dir_returns_empty(db, users, tmp_path):
     discussions = tmp_path / "discussions"  # not created
     index_dir = tmp_path / "index"
 
-    contacts = ContactRepo(db)
     users.upsert_from_feishu(open_id="ou_1", union_id=None, name="Ken", avatar_url="")
     sessions = SessionStore(db)
     sid = sessions.create("ou_1")
 
-    app = _build_app(db, users, contacts, discussions, index_dir)
+    app = _build_app(db, users, discussions, index_dir)
     client = TestClient(app)
     client.cookies.set("sid", sid)
 
@@ -156,9 +154,8 @@ def test_categories_invalid_pat_returns_401(db, users, tmp_path):
     discussions = tmp_path / "discussions"
     discussions.mkdir(parents=True, exist_ok=True)
     index_dir = tmp_path / "index"
-    contacts = ContactRepo(db)
 
-    app = _build_app(db, users, contacts, discussions, index_dir)
+    app = _build_app(db, users, discussions, index_dir)
     client = TestClient(app)
 
     r = client.get(
@@ -193,12 +190,11 @@ def test_categories_post_count_aggregates_across_threads(db, users, tmp_path):
             title="T3" if i == 0 else "",
         )
 
-    contacts = ContactRepo(db)
     users.upsert_from_feishu(open_id="ou_1", union_id=None, name="Ken", avatar_url="")
     sessions = SessionStore(db)
     sid = sessions.create("ou_1")
 
-    app = _build_app(db, users, contacts, discussions, index_dir)
+    app = _build_app(db, users, discussions, index_dir)
     client = TestClient(app)
     client.cookies.set("sid", sid)
 
@@ -223,12 +219,11 @@ def test_categories_last_updated_is_max_of_threads(db, users, tmp_path):
     _write_index(index_dir, "older", "2026-01-01T00:00:00+00:00")
     _write_index(index_dir, "newer", "2026-04-20T12:00:00+00:00")
 
-    contacts = ContactRepo(db)
     users.upsert_from_feishu(open_id="ou_1", union_id=None, name="Ken", avatar_url="")
     sessions = SessionStore(db)
     sid = sessions.create("ou_1")
 
-    app = _build_app(db, users, contacts, discussions, index_dir)
+    app = _build_app(db, users, discussions, index_dir)
     client = TestClient(app)
     client.cookies.set("sid", sid)
 
@@ -257,12 +252,11 @@ def test_categories_sorted_by_last_updated_desc(db, users, tmp_path):
     _write_index(index_dir, "slug_mid", "2026-02-01T00:00:00+00:00")
     _write_index(index_dir, "slug_new", "2026-04-20T00:00:00+00:00")
 
-    contacts = ContactRepo(db)
     users.upsert_from_feishu(open_id="ou_1", union_id=None, name="Ken", avatar_url="")
     sessions = SessionStore(db)
     sid = sessions.create("ou_1")
 
-    app = _build_app(db, users, contacts, discussions, index_dir)
+    app = _build_app(db, users, discussions, index_dir)
     client = TestClient(app)
     client.cookies.set("sid", sid)
 

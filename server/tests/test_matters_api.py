@@ -11,7 +11,6 @@ from server.api.matters import build_router
 from server.api_tokens import ApiTokenRepo
 from server.auth.deps import make_current_user
 from server.auth.session import SessionStore
-from server.contacts import ContactRepo
 from server.events import Event, clear_subscribers, subscribe
 from server.favorites import FavoriteRepo
 from server.file_reads import FileReadRepo
@@ -50,18 +49,35 @@ def event_bucket():
     return bucket
 
 
+def _seed_pivot_user_with_feishu(
+    db, *, pinyin: str, display_name: str, open_id: str,
+) -> str:
+    """Test helper: create a pivot_user + feishu external_binding so the @
+    resolver path can map pinyin / open_id / display_name to a real user.
+
+    Returns the new pivot_user id.
+    """
+    pivot_users = PivotUserRepo(db)
+    bindings = ExternalBindingRepo(db)
+    user = pivot_users.create(
+        display_name=display_name, pinyin=pinyin,
+        email=None, avatar_url="",
+    )
+    bindings.bind(
+        pivot_user_id=user.id, provider="feishu",
+        external_id=open_id, external_union_id=None,
+        raw_profile_json=None,
+    )
+    return user.id
+
+
 @pytest.fixture
 def client(db, users, tmp_path):
     workspace = _WorkspaceStub(tmp_path)
     users.upsert_from_feishu(open_id="ou_1", union_id=None, name="邓柯", avatar_url="")
     users.update_profile("ou_1", pinyin="dengke")
-    contacts = ContactRepo(db)
-    contacts.upsert_from_login(
-        open_id="ou_1", union_id=None, name="閭撴煰", avatar_url="",
-    )
-    contacts.upsert_from_login(
-        open_id="ou_1", union_id=None, name="邓柯", avatar_url="",
-    )
+    pivot_users = PivotUserRepo(db)
+    bindings = ExternalBindingRepo(db)
     sessions = SessionStore(db)
     sid = sessions.create("ou_1")
     current_user = make_current_user(sessions, users, ApiTokenRepo(db))
@@ -69,9 +85,9 @@ def client(db, users, tmp_path):
     app = FastAPI()
     app.include_router(
         build_router(
-            workspace, users, contacts, NoOpNotifier(),
+            workspace, users, pivot_users, bindings, NoOpNotifier(),
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
-            RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), contacts), current_user,
+            RelevanceEventsRepo(db), DisplayResolver(pivot_users, bindings), current_user,
         )
     )
     c = TestClient(app)
@@ -580,8 +596,8 @@ def test_comment_mcp_pinyin_input_renders_chinese_name(client, db):
     返回原字符串，Web 上就显示 @zhangbo 而不是 @张菠。
     Fix: publish 应先把名/拼音解析为 open_id 再走 _resolve_mentions_for_index。
     回归 2026-04-29 用户报告的 MCP 圈人显示拼音 bug。"""
-    from server.contacts import ContactRepo
-    ContactRepo(db).upsert_many([{"open_id": "ou_zhangbo", "name": "张菠"}])
+    _seed_pivot_user_with_feishu(db, pinyin="zhangbo", display_name="张菠",
+                                 open_id="ou_zhangbo")
 
     r = client.post("/api/matters", json={
         "category": "Pivot", "title": "T",
@@ -603,10 +619,10 @@ def test_comment_mcp_pinyin_input_renders_chinese_name(client, db):
 
 
 def test_create_matter_mcp_pinyin_input_renders_chinese_name(client, db):
-    """create_matter 路径同 add_comment：MCP 直传 pinyin，未注册联系人渲染应是
-    中文名而非拼音。回归 2026-04-29 用户报告。"""
-    from server.contacts import ContactRepo
-    ContactRepo(db).upsert_many([{"open_id": "ou_zhangbo", "name": "张菠"}])
+    """create_matter 路径同 add_comment：MCP 直传 pinyin，渲染应是中文名而非
+    拼音。回归 2026-04-29 用户报告。"""
+    _seed_pivot_user_with_feishu(db, pinyin="zhangbo", display_name="张菠",
+                                 open_id="ou_zhangbo")
 
     r = client.post("/api/matters", json={
         "category": "Pivot", "title": "T",
@@ -625,9 +641,9 @@ def test_create_matter_mcp_pinyin_input_renders_chinese_name(client, db):
 
 def test_append_file_mcp_pinyin_input_renders_chinese_name(client, db):
     """append_file (POST /matters/{id}/files) 路径同 add_comment：MCP 直传
-    pinyin、未注册联系人，渲染应是中文名。回归 2026-04-29 用户报告。"""
-    from server.contacts import ContactRepo
-    ContactRepo(db).upsert_many([{"open_id": "ou_zhangbo", "name": "张菠"}])
+    pinyin，渲染应是中文名。回归 2026-04-29 用户报告。"""
+    _seed_pivot_user_with_feishu(db, pinyin="zhangbo", display_name="张菠",
+                                 open_id="ou_zhangbo")
 
     r = client.post("/api/matters", json={
         "category": "Pivot", "title": "T",
@@ -945,9 +961,9 @@ def test_notifier_is_called_on_append_and_status_change(db, users, tmp_path):
     app = FastAPI()
     app.include_router(
         build_router(
-            workspace, users, ContactRepo(db), RecordingNotifier(),
+            workspace, users, PivotUserRepo(db), ExternalBindingRepo(db), RecordingNotifier(),
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
-            RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), ContactRepo(db)), current_user,
+            RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db)), current_user,
         )
     )
     c = TestClient(app)
@@ -1010,9 +1026,9 @@ def test_create_and_append_propagate_bundled_mentions_to_notifier(db, users, tmp
     app = FastAPI()
     app.include_router(
         build_router(
-            workspace, users, ContactRepo(db), RecordingNotifier(),
+            workspace, users, PivotUserRepo(db), ExternalBindingRepo(db), RecordingNotifier(),
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
-            RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), ContactRepo(db)), current_user,
+            RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db)), current_user,
         )
     )
     c = TestClient(app)
@@ -1066,10 +1082,10 @@ def test_create_and_append_propagate_bundled_mentions_to_notifier(db, users, tmp
 
 
 def test_mcp_name_mentions_resolve_to_open_ids_for_notifier(db, users, tmp_path):
-    """MCP lets AI pass natural strings (邓柯 / Tank) instead of raw open_ids;
+    """MCP lets AI pass natural strings (邓柯 / dengke) instead of raw open_ids;
     the notifier needs the actual open_id to deliver Feishu DMs. Resolution
-    happens via ContactRepo on the publish path. Web's path (real open_ids)
-    must keep working unchanged.
+    now happens via pivot_user + external_binding(feishu). Web's path (real
+    open_ids) must keep working unchanged.
     """
     calls: list[tuple[str, dict]] = []
 
@@ -1086,21 +1102,18 @@ def test_mcp_name_mentions_resolve_to_open_ids_for_notifier(db, users, tmp_path)
     sid = sessions.create("ou_creator")
     current_user = make_current_user(sessions, users, ApiTokenRepo(db))
 
-    contacts = ContactRepo(db)
-    contacts.upsert_many([
-        {"open_id": "ou_dengke", "union_id": "on_dengke",
-         "name": "邓柯", "en_name": "Tank"},
-        {"open_id": "ou_alice",
-         "name": "李四", "en_name": "Alice"},
-    ])
+    _seed_pivot_user_with_feishu(db, pinyin="dengke", display_name="邓柯",
+                                 open_id="ou_dengke")
 
+    pivot_users = PivotUserRepo(db)
+    bindings = ExternalBindingRepo(db)
     from fastapi import FastAPI
     app = FastAPI()
     app.include_router(
         build_router(
-            workspace, users, contacts, RecordingNotifier(),
+            workspace, users, pivot_users, bindings, RecordingNotifier(),
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
-            RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), ContactRepo(db)), current_user,
+            RelevanceEventsRepo(db), DisplayResolver(pivot_users, bindings), current_user,
         )
     )
     c = TestClient(app)
@@ -1124,24 +1137,15 @@ def test_mcp_name_mentions_resolve_to_open_ids_for_notifier(db, users, tmp_path)
     sm = next(kw for t, kw in calls if t == "standalone_mention")
     assert sm["mention_open_ids"] == ["ou_dengke"]
 
-    # Case 2: AI passes English alias → resolved
-    calls.clear()
-    c.post(f"/api/matters/{matter_id}/comments", json={
-        "target_file": target_file, "body": "x", "mentions": ["Alice"],
-    })
-    sm2 = next(kw for t, kw in calls if t == "standalone_mention")
-    assert sm2["mention_open_ids"] == ["ou_alice"]
-
-    # Case 3: Web path (real open_id, in contacts) unchanged
+    # Case 2: Web path (real open_id) unchanged
     calls.clear()
     c.post(f"/api/matters/{matter_id}/comments", json={
         "target_file": target_file, "body": "y", "mentions": ["ou_dengke"],
     })
-    sm3 = next(kw for t, kw in calls if t == "standalone_mention")
-    assert sm3["mention_open_ids"] == ["ou_dengke"]
+    sm2 = next(kw for t, kw in calls if t == "standalone_mention")
+    assert sm2["mention_open_ids"] == ["ou_dengke"]
 
-    # Case 4: Unresolvable name → notifier NOT called for this comment
-    # (whole call still succeeds, but DM dispatch is silently dropped).
+    # Case 3: Unresolvable name → notifier NOT called for this comment
     calls.clear()
     r5 = c.post(f"/api/matters/{matter_id}/comments", json={
         "target_file": target_file, "body": "hi",
@@ -1150,7 +1154,7 @@ def test_mcp_name_mentions_resolve_to_open_ids_for_notifier(db, users, tmp_path)
     assert r5.status_code == 200
     assert not any(t == "standalone_mention" for t, _ in calls)
 
-    # Case 5: Mixed — one resolves, one doesn't → notifier gets only resolved
+    # Case 4: Mixed — one resolves, one doesn't → notifier gets only resolved
     calls.clear()
     c.post(f"/api/matters/{matter_id}/comments", json={
         "target_file": target_file, "body": "mixed",
@@ -1159,9 +1163,8 @@ def test_mcp_name_mentions_resolve_to_open_ids_for_notifier(db, users, tmp_path)
     sm5 = next(kw for t, kw in calls if t == "standalone_mention")
     assert sm5["mention_open_ids"] == ["ou_dengke"]
 
-    # Case 6: AI passes pinyin (e.g. 'dengke' for 邓柯) → resolved.
-    # Contacts table has no pinyin column from sync; the publish path relies
-    # on ContactRepo computing pinyin from `name` at write time.
+    # Case 5: AI passes pinyin (e.g. 'dengke' for 邓柯) → resolved
+    # via pivot_user.pinyin exact match.
     calls.clear()
     c.post(f"/api/matters/{matter_id}/comments", json={
         "target_file": target_file, "body": "ping by pinyin",
@@ -1193,18 +1196,19 @@ def test_comment_with_ambiguous_pinyin_returns_422_with_candidates(db, users, tm
     sid = sessions.create("ou_creator")
     current_user = make_current_user(sessions, users, ApiTokenRepo(db))
 
-    contacts = ContactRepo(db)
-    contacts.upsert_many([
-        {"open_id": "ou_zhangbo1", "name": "张博"},
-        {"open_id": "ou_zhangbo2", "name": "张菠"},
-    ])
+    _seed_pivot_user_with_feishu(db, pinyin="zhangbo", display_name="张博",
+                                 open_id="ou_zhangbo1")
+    _seed_pivot_user_with_feishu(db, pinyin="zhangbo", display_name="张菠",
+                                 open_id="ou_zhangbo2")
 
+    pivot_users = PivotUserRepo(db)
+    bindings = ExternalBindingRepo(db)
     app = FastAPI()
     app.include_router(
         build_router(
-            workspace, users, contacts, RecordingNotifier(),
+            workspace, users, pivot_users, bindings, RecordingNotifier(),
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
-            RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), ContactRepo(db)), current_user,
+            RelevanceEventsRepo(db), DisplayResolver(pivot_users, bindings), current_user,
         )
     )
     c = TestClient(app)
@@ -1298,11 +1302,13 @@ def test_comment_route_does_not_pass_unknown_kwargs_to_notifier(db, users, tmp_p
     from fastapi import FastAPI
     app = FastAPI()
     notifier = StrictNotifier()
+    pivot_users = PivotUserRepo(db)
+    bindings = ExternalBindingRepo(db)
     app.include_router(
         build_router(
-            workspace, users, ContactRepo(db), notifier,
+            workspace, users, pivot_users, bindings, notifier,
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
-            RelevanceEventsRepo(db), DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), ContactRepo(db)), current_user,
+            RelevanceEventsRepo(db), DisplayResolver(pivot_users, bindings), current_user,
         )
     )
     c = TestClient(app)

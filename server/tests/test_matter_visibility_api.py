@@ -8,7 +8,6 @@ from server.api.matters import build_router
 from server.api_tokens import ApiTokenRepo
 from server.auth.deps import make_current_user
 from server.auth.session import SessionStore
-from server.contacts import ContactRepo
 from server.db import Database
 from server.events import TOPIC_MATTER_VISIBILITY_CHANGED, clear_subscribers, subscribe
 from server.favorites import FavoriteRepo
@@ -58,18 +57,20 @@ def _client(tmp_path):
     sid = sessions.create("ou_1")
     current_user = make_current_user(sessions, users, ApiTokenRepo(db))
     workspace = _WorkspaceStub(tmp_path / "workspace")
+    bindings = ExternalBindingRepo(db)
     app = FastAPI()
     app.include_router(
         build_router(
             workspace,
             users,
-            ContactRepo(db),
+            pivot_users,
+            bindings,
             NoOpNotifier(),
             ReadStateRepo(db),
             FavoriteRepo(db),
             FileReadRepo(db),
             RelevanceEventsRepo(db),
-            DisplayResolver(pivot_users, ExternalBindingRepo(db), ContactRepo(db)),
+            DisplayResolver(pivot_users, bindings),
             current_user,
             db,
         )

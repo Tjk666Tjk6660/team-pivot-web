@@ -17,7 +17,6 @@ from server.api.matters import build_router
 from server.api_tokens import ApiTokenRepo
 from server.auth.deps import make_current_user
 from server.auth.session import SessionStore
-from server.contacts import ContactRepo
 from server.events import Event, clear_subscribers, subscribe
 from server.favorites import FavoriteRepo
 from server.file_reads import FileReadRepo
@@ -99,14 +98,13 @@ def client(db, tmp_path):
     current_user = make_current_user(sessions, pivot_users, ApiTokenRepo(db))
 
     notifier = _RecordingNotifier()
-    contacts = ContactRepo(db)
     app = FastAPI()
     app.include_router(
         build_router(
-            workspace, None, contacts, notifier,
+            workspace, None, pivot_users, bindings, notifier,
             ReadStateRepo(db), FavoriteRepo(db), FileReadRepo(db),
-            RelevanceEventsRepo(db), DisplayResolver(pivot_users, bindings, contacts),
-            current_user, db, pivot_users, bindings,
+            RelevanceEventsRepo(db), DisplayResolver(pivot_users, bindings),
+            current_user, db,
         )
     )
     c = TestClient(app)

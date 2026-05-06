@@ -9,7 +9,6 @@ from server.api.discussions import build_router
 from server.api_tokens import ApiTokenRepo
 from server.auth.deps import make_current_user
 from server.auth.session import SessionStore
-from server.contacts import ContactRepo
 from server.external_bindings import ExternalBindingRepo
 from server.favorites import FavoriteRepo
 from server.mentions import DisplayResolver
@@ -18,8 +17,8 @@ from server.pivot_users import PivotUserRepo
 from server.read_state import ReadStateRepo
 
 
-def _resolver(db, contacts) -> DisplayResolver:
-    return DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db), contacts)
+def _resolver(db) -> DisplayResolver:
+    return DisplayResolver(PivotUserRepo(db), ExternalBindingRepo(db))
 
 
 class _WorkspaceStub:
@@ -42,7 +41,10 @@ def _write_post(path, *, type_: str, author: str, title: str = "", body: str = "
     path.write_text(f"---\n{fm}---\n{body}\n", encoding="utf-8")
 
 
-def test_threads_route_uses_contact_fallback_for_author_display(db, users, tmp_path):
+def test_threads_route_resolves_author_display_via_pivot_user(db, users, tmp_path):
+    """Author open_id in frontmatter is resolved to display_name via the
+    pivot_user + external_binding(feishu) chain. Replaces the old contacts
+    fallback path."""
     discussions = tmp_path / "discussions"
     index_dir = tmp_path / "index"
     _write_post(
@@ -52,10 +54,17 @@ def test_threads_route_uses_contact_fallback_for_author_display(db, users, tmp_p
         title="Hello",
     )
 
-    contacts = ContactRepo(db)
-    contacts.upsert_many([
-        {"open_id": "ou_contact000000000000", "name": "联系人A"},
-    ])
+    pivot_users = PivotUserRepo(db)
+    bindings = ExternalBindingRepo(db)
+    pu = pivot_users.create(
+        display_name="联系人A", pinyin="lianxirena",
+        email=None, avatar_url="",
+    )
+    bindings.bind(
+        pivot_user_id=pu.id, provider="feishu",
+        external_id="ou_contact000000000000",
+        external_union_id=None, raw_profile_json=None,
+    )
 
     users.upsert_from_feishu(open_id="ou_1", union_id=None, name="Ken", avatar_url="")
     sessions = SessionStore(db)
@@ -67,11 +76,12 @@ def test_threads_route_uses_contact_fallback_for_author_display(db, users, tmp_p
         build_router(
             _WorkspaceStub(discussions, index_dir),
             users,
-            contacts,
+            pivot_users,
+            bindings,
             NoOpNotifier(),
             ReadStateRepo(db),
             FavoriteRepo(db),
-            _resolver(db, contacts),
+            _resolver(db),
             current_user,
         )
     )
@@ -87,7 +97,8 @@ def test_threads_route_uses_contact_fallback_for_author_display(db, users, tmp_p
 def test_create_thread_accepts_chinese_category(db, users, tmp_path):
     discussions = tmp_path / "discussions"
     index_dir = tmp_path / "index"
-    contacts = ContactRepo(db)
+    pivot_users = PivotUserRepo(db)
+    bindings = ExternalBindingRepo(db)
 
     users.upsert_from_feishu(open_id="ou_1", union_id=None, name="Ken", avatar_url="")
     users.update_profile("ou_1", pinyin="ken")
@@ -100,11 +111,12 @@ def test_create_thread_accepts_chinese_category(db, users, tmp_path):
         build_router(
             _WorkspaceStub(discussions, index_dir),
             users,
-            contacts,
+            pivot_users,
+            bindings,
             NoOpNotifier(),
             ReadStateRepo(db),
             FavoriteRepo(db),
-            _resolver(db, contacts),
+            _resolver(db),
             current_user,
         )
     )
@@ -131,7 +143,8 @@ def test_threads_route_marks_favorites_for_current_user(db, users, tmp_path):
         title="Hello",
     )
 
-    contacts = ContactRepo(db)
+    pivot_users = PivotUserRepo(db)
+    bindings = ExternalBindingRepo(db)
     users.upsert_from_feishu(open_id="ou_1", union_id=None, name="Ken", avatar_url="")
     sessions = SessionStore(db)
     sid = sessions.create("ou_1")
@@ -144,11 +157,12 @@ def test_threads_route_marks_favorites_for_current_user(db, users, tmp_path):
         build_router(
             _WorkspaceStub(discussions, index_dir),
             users,
-            contacts,
+            pivot_users,
+            bindings,
             NoOpNotifier(),
             ReadStateRepo(db),
             favorites,
-            _resolver(db, contacts),
+            _resolver(db),
             current_user,
         )
     )
@@ -170,7 +184,8 @@ def test_toggle_thread_favorite(db, users, tmp_path):
         title="Hello",
     )
 
-    contacts = ContactRepo(db)
+    pivot_users = PivotUserRepo(db)
+    bindings = ExternalBindingRepo(db)
     users.upsert_from_feishu(open_id="ou_1", union_id=None, name="Ken", avatar_url="")
     sessions = SessionStore(db)
     sid = sessions.create("ou_1")
@@ -182,11 +197,12 @@ def test_toggle_thread_favorite(db, users, tmp_path):
         build_router(
             _WorkspaceStub(discussions, index_dir),
             users,
-            contacts,
+            pivot_users,
+            bindings,
             NoOpNotifier(),
             ReadStateRepo(db),
             favorites,
-            _resolver(db, contacts),
+            _resolver(db),
             current_user,
         )
     )
@@ -214,7 +230,8 @@ def test_thread_detail_includes_favorite_flag(db, users, tmp_path):
         title="Hello",
     )
 
-    contacts = ContactRepo(db)
+    pivot_users = PivotUserRepo(db)
+    bindings = ExternalBindingRepo(db)
     users.upsert_from_feishu(open_id="ou_1", union_id=None, name="Ken", avatar_url="")
     sessions = SessionStore(db)
     sid = sessions.create("ou_1")
@@ -227,11 +244,12 @@ def test_thread_detail_includes_favorite_flag(db, users, tmp_path):
         build_router(
             _WorkspaceStub(discussions, index_dir),
             users,
-            contacts,
+            pivot_users,
+            bindings,
             NoOpNotifier(),
             ReadStateRepo(db),
             favorites,
-            _resolver(db, contacts),
+            _resolver(db),
             current_user,
         )
     )
@@ -253,7 +271,8 @@ def test_thread_detail_includes_author_avatar_url(db, users, tmp_path):
         title="Hello",
     )
 
-    contacts = ContactRepo(db)
+    pivot_users = PivotUserRepo(db)
+    bindings = ExternalBindingRepo(db)
     users.upsert_from_feishu(
         open_id="ou_1",
         union_id=None,
@@ -269,11 +288,12 @@ def test_thread_detail_includes_author_avatar_url(db, users, tmp_path):
         build_router(
             _WorkspaceStub(discussions, index_dir),
             users,
-            contacts,
+            pivot_users,
+            bindings,
             NoOpNotifier(),
             ReadStateRepo(db),
             FavoriteRepo(db),
-            _resolver(db, contacts),
+            _resolver(db),
             current_user,
         )
     )

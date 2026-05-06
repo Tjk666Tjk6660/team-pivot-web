@@ -9,7 +9,9 @@ from server.api_tokens import ApiTokenRepo
 from server.auth.deps import make_current_user
 from server.auth.session import SessionStore
 from server.drafts import DraftRepo
+from server.external_bindings import ExternalBindingRepo
 from server.notify import NoOpNotifier
+from server.pivot_users import PivotUserRepo
 
 
 class _FakeWorkspace:
@@ -29,10 +31,10 @@ def client_and_sid(db, users):
     drafts = DraftRepo(db)
 
     app = FastAPI()
-    from server.contacts import ContactRepo
     cu = make_current_user(sessions, users, ApiTokenRepo(db))
     app.include_router(build_router(
-        _FakeWorkspace(), drafts, ContactRepo(db), NoOpNotifier(), cu,
+        _FakeWorkspace(), drafts, PivotUserRepo(db), ExternalBindingRepo(db),
+        NoOpNotifier(), cu,
     ))
     client = TestClient(app)
     client.cookies.set("sid", sid)
@@ -49,10 +51,10 @@ def test_requires_auth():
         sessions = SessionStore(d)
         ur = UserRepo(d)
         app = FastAPI()
-        from server.contacts import ContactRepo
         cu = make_current_user(sessions, ur, ApiTokenRepo(d))
         app.include_router(build_router(
-            _FakeWorkspace(), DraftRepo(d), ContactRepo(d), NoOpNotifier(), cu,
+            _FakeWorkspace(), DraftRepo(d), PivotUserRepo(d), ExternalBindingRepo(d),
+            NoOpNotifier(), cu,
         ))
         client = TestClient(app)
         assert client.get("/api/drafts").status_code == 401
@@ -164,13 +166,13 @@ def matter_client(db, users, tmp_path):
     sid = sessions.create("ou_1")
     drafts = DraftRepo(db)
 
-    from server.contacts import ContactRepo
     ws = _RealWorkspaceStub(tmp_path)
     cu = make_current_user(sessions, users, ApiTokenRepo(db))
 
     app = FastAPI()
     app.include_router(build_router(
-        ws, drafts, ContactRepo(db), NoOpNotifier(), cu,
+        ws, drafts, PivotUserRepo(db), ExternalBindingRepo(db),
+        NoOpNotifier(), cu,
     ))
     client = TestClient(app)
     client.cookies.set("sid", sid)
