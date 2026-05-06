@@ -865,7 +865,6 @@ def test_list_visibility_options_passes_category_to_client():
     }
     out = tool_list_visibility_options({"category": "Pivot"}, client)
     client.get_visibility_options.assert_called_once_with(category="Pivot")
-    assert out["roles"][0]["role"] == "dev"
     assert out["users"][0]["pinyin"] == "alice"
 
 
@@ -877,3 +876,182 @@ def test_list_visibility_options_no_category():
     }
     tool_list_visibility_options({}, client)
     client.get_visibility_options.assert_called_once_with(category=None)
+
+
+def test_list_visibility_options_remaps_role_field_to_name_and_label():
+    """Backend's `{role: code, name: display, label: display}` is reshaped
+    so AI consumers see `{name: code, label: display}` per the documented
+    convention (name=machine identifier, label=user-facing string)."""
+    client = MagicMock(spec=MatterApiClient)
+    client.get_visibility_options.return_value = {
+        "all": {"label": "全部用户", "value": "public"},
+        "roles": [
+            {"role": "member", "name": "成员", "label": "成员", "users": []},
+        ],
+        "users": [],
+    }
+    out = tool_list_visibility_options({}, client)
+    assert out["roles"][0]["name"] == "member"
+    assert out["roles"][0]["label"] == "成员"
+    assert "role" not in out["roles"][0]
+
+
+def test_list_visibility_options_label_falls_back_to_code_when_missing():
+    """If backend somehow returns an empty label, label defaults to the code
+    so consumers always have a non-empty display string."""
+    client = MagicMock(spec=MatterApiClient)
+    client.get_visibility_options.return_value = {
+        "all": {"label": "全部用户", "value": "public"},
+        "roles": [
+            {"role": "ops", "name": "", "label": "", "users": []},
+        ],
+        "users": [],
+    }
+    out = tool_list_visibility_options({}, client)
+    assert out["roles"][0]["name"] == "ops"
+    assert out["roles"][0]["label"] == "ops"
+
+
+# ---------- create_matter creator-inclusion validation ----------
+
+from server.pivot_users import PivotUser
+
+
+def _fake_creator(user_id: str = "creator", roles: list[str] | None = None) -> PivotUser:
+    role_list = ["member"] if roles is None else list(roles)
+    return PivotUser(
+        id=user_id,
+        display_name="Creator",
+        pinyin="creator",
+        email=None,
+        avatar_url="",
+        github_username=None,
+        role=role_list[0] if role_list else "member",
+        roles=role_list,
+        status="active",
+        status_note=None,
+        created_at=1.0,
+        updated_at=1.0,
+        last_login_at=None,
+        status_changed_at=None,
+        status_changed_by=None,
+    )
+
+
+def test_create_matter_creator_in_user_ids_passes_validation():
+    client = MagicMock(spec=MatterApiClient)
+    client.post_matter.return_value = _ok_matter_response()
+    out = tool_create_matter(
+        {
+            "category": "Pivot", "title": "T", "type": "think",
+            "summary": "s", "body": "b",
+            "visibility": {
+                "mode": "restricted", "roles": [], "user_ids": ["creator"],
+            },
+        },
+        client,
+        "https://pivot",
+        creator=_fake_creator(user_id="creator", roles=[]),
+    )
+    assert out["ok"] is True
+
+
+def test_create_matter_creator_role_in_visibility_passes_validation():
+    client = MagicMock(spec=MatterApiClient)
+    client.post_matter.return_value = _ok_matter_response()
+    out = tool_create_matter(
+        {
+            "category": "Pivot", "title": "T", "type": "think",
+            "summary": "s", "body": "b",
+            "visibility": {
+                "mode": "restricted", "roles": ["member"], "user_ids": [],
+            },
+        },
+        client,
+        "https://pivot",
+        creator=_fake_creator(roles=["member"]),
+    )
+    assert out["ok"] is True
+
+
+def test_create_matter_creator_excluded_from_restricted_raises_422():
+    """Catches the 'creator can't see own matter' bug: scope is restricted
+    but creator is in neither user_ids nor any role intersecting scope.roles."""
+    client = MagicMock(spec=MatterApiClient)
+    with pytest.raises(ToolError) as ei:
+        tool_create_matter(
+            {
+                "category": "Pivot", "title": "T", "type": "think",
+                "summary": "s", "body": "b",
+                "visibility": {
+                    "mode": "restricted", "roles": ["member"], "user_ids": [],
+                },
+            },
+            client,
+            "https://pivot",
+            creator=_fake_creator(user_id="creator", roles=[]),
+        )
+    assert ei.value.status == 422
+    assert ei.value.detail == "visibility_excludes_required_user"
+    client.post_matter.assert_not_called()
+
+
+def test_create_matter_creator_excluded_from_new_category_visibility_raises_422():
+    """Category-level scope only supports roles; if creator has no role in
+    authorized_roles they couldn't read the category, so reject up front."""
+    client = MagicMock(spec=MatterApiClient)
+    with pytest.raises(ToolError) as ei:
+        tool_create_matter(
+            {
+                "category": "NewCat", "title": "T", "type": "think",
+                "summary": "s", "body": "b",
+                "visibility": {
+                    "mode": "restricted", "roles": ["member"], "user_ids": [],
+                },
+                "new_category_visibility": {
+                    "mode": "restricted", "authorized_roles": ["dev"],
+                },
+            },
+            client,
+            "https://pivot",
+            creator=_fake_creator(roles=["member"]),
+        )
+    assert ei.value.status == 422
+    assert ei.value.detail == "visibility_excludes_required_user"
+
+
+def test_create_matter_public_visibility_skips_validation():
+    """Public matters are visible to everyone, including creator — no need
+    to check anything."""
+    client = MagicMock(spec=MatterApiClient)
+    client.post_matter.return_value = _ok_matter_response()
+    out = tool_create_matter(
+        {
+            "category": "Pivot", "title": "T", "type": "think",
+            "summary": "s", "body": "b",
+        },
+        client,
+        "https://pivot",
+        creator=_fake_creator(roles=[]),
+    )
+    assert out["ok"] is True
+
+
+def test_create_matter_no_creator_skips_validation():
+    """When creator is not threaded in (e.g. legacy call sites or unit tests
+    not exercising visibility), validation is skipped — production wires it
+    via the MCP dispatch path."""
+    client = MagicMock(spec=MatterApiClient)
+    client.post_matter.return_value = _ok_matter_response()
+    out = tool_create_matter(
+        {
+            "category": "Pivot", "title": "T", "type": "think",
+            "summary": "s", "body": "b",
+            "visibility": {
+                "mode": "restricted", "roles": ["dev"], "user_ids": [],
+            },
+        },
+        client,
+        "https://pivot",
+    )
+    assert out["ok"] is True

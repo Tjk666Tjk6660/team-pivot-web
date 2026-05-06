@@ -8,6 +8,7 @@ from server.matter_status import (
     ALLOWED_TRANSITIONS,
     TRIGGER_TYPES_BY_TRANSITION,
 )
+from server.pivot_users import PivotUser
 from server.mcp.context import (
     ContextUrlError,
     build_user_facing_summary,
@@ -79,6 +80,27 @@ def _format_transitions_hint(transitions: list[AvailableTransition]) -> str:
     return f" 当前可触发的状态迁移：{'、'.join(parts)}。要随这次发布一起切换状态吗？"
 
 log = logging.getLogger(__name__)
+
+
+def _check_creator_visible(input_: CreateMatterIn, creator: PivotUser) -> None:
+    """Reject when a restricted scope would exclude the creator themselves.
+
+    Mirrors the `visibility_excludes_required_user` error the create_matter
+    docs claim the backend enforces — but doesn't. Without this guard an AI
+    can ship a scope the calling user falls outside of (e.g. roles=["member"]
+    when the user has no role assignments), and the resulting matter is
+    invisible to its own author.
+    """
+    visibility = input_.visibility
+    if visibility is not None and visibility.mode == "restricted":
+        in_users = creator.id in visibility.user_ids
+        in_roles = bool(set(creator.roles) & set(visibility.roles))
+        if not (in_users or in_roles):
+            raise ToolError(422, "visibility_excludes_required_user")
+    cat = input_.new_category_visibility
+    if cat is not None and cat.mode == "restricted":
+        if not (set(creator.roles) & set(cat.authorized_roles)):
+            raise ToolError(422, "visibility_excludes_required_user")
 
 
 class ToolError(Exception):
@@ -470,13 +492,22 @@ def tool_create_matter(
     payload: dict,
     client: MatterApiClient,
     web_base_url: str,
+    creator: PivotUser | None = None,
 ) -> dict:
     """Create a new Matter via /api/matters. Flat input → nested API body.
 
     Returns success + view_url + summary_for_ai, or {errors: ...} when the
     backend rejects with 422 so the AI can fix and retry.
+
+    `creator` is the calling user (resolved from the PAT in MCP dispatch);
+    when supplied, restricted-visibility scopes that would exclude them are
+    rejected up front with `visibility_excludes_required_user`. Backend has
+    no equivalent guard, so a missing creator-inclusion check would let an
+    AI create matters that even their own author can't see.
     """
     input_ = CreateMatterIn.model_validate(payload)
+    if creator is not None:
+        _check_creator_visible(input_, creator)
 
     api_body: dict = {
         "category": input_.category,
@@ -577,11 +608,29 @@ def tool_add_comment(
 
 def tool_list_visibility_options(payload: dict, client: MatterApiClient) -> dict:
     """List candidate roles/users for the visibility picker, optionally
-    scoped to a category. Wraps GET /api/visibility-options."""
+    scoped to a category. Wraps GET /api/visibility-options.
+
+    The backend (which is shared with the Web UI) returns each role as
+    `{role: <code>, name: <display>, label: <display>}` — `name`/`label`
+    being display strings and the actual machine identifier living in `role`.
+    For MCP consumers we restate this per the documented convention
+    (`name` = code, `label` = display) so AIs that pass `name` to
+    `visibility.roles` actually pick the right value.
+    """
     input_ = ListVisibilityOptionsIn.model_validate(payload)
     raw = client.get_visibility_options(category=input_.category)
     return ListVisibilityOptionsOut(
         all=raw.get("all") or {},
-        roles=raw.get("roles") or [],
+        roles=[_remap_role_option(item) for item in (raw.get("roles") or [])],
         users=raw.get("users") or [],
     ).model_dump(mode="json")
+
+
+def _remap_role_option(raw: dict) -> dict:
+    code = str(raw.get("role") or "")
+    display = str(raw.get("label") or raw.get("name") or code)
+    return {
+        "name": code,
+        "label": display or code,
+        "users": raw.get("users") or [],
+    }

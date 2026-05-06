@@ -17,7 +17,12 @@ from starlette.routing import Mount
 from server.api_tokens import ApiTokenRepo
 from server.mcp.auth import McpAuthError, authenticate
 from server.mcp.instructions import INSTRUCTIONS
-from server.mcp.runtime import current_user_token, set_user_token
+from server.mcp.runtime import (
+    current_user,
+    current_user_token,
+    set_user,
+    set_user_token,
+)
 from server.mcp.schemas import (
     AddCommentIn,
     CreateFileIn,
@@ -278,7 +283,11 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
                 )
             elif name == "create_matter":
                 out = await anyio.to_thread.run_sync(
-                    partial(tool_create_matter, arguments, client, web_base_url)
+                    partial(
+                        tool_create_matter,
+                        arguments, client, web_base_url,
+                        current_user(),
+                    )
                 )
             elif name == "add_comment":
                 out = await anyio.to_thread.run_sync(
@@ -355,15 +364,18 @@ def build_mcp_app(
 
         request = Request(scope, receive)
         try:
-            _user, token = authenticate(request, tokens, users)
+            user, token = authenticate(request, tokens, users)
         except McpAuthError as e:
             log.info("mcp auth rejected detail=%s", e.detail)
             response = JSONResponse({"detail": e.detail}, status_code=e.status)
             await response(scope, receive, send)
             return
 
-        # Stash token so tool callbacks can forward it to Matter API calls.
+        # Stash token so tool callbacks can forward it to Matter API calls,
+        # and the resolved user so tools can run identity-dependent checks
+        # (e.g. visibility validation) without a backend round-trip.
         set_user_token(token)
+        set_user(user)
         await session_manager.handle_request(scope, receive, send)
 
     return Starlette(
