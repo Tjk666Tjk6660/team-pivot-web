@@ -40,3 +40,16 @@ def test_decode_rejects_wrong_secret():
 def test_decode_rejects_malformed():
     with pytest.raises(InviteStateError):
         decode_invite_state("not-a-valid-state", secret=SECRET)
+
+
+def test_decode_rejects_empty_token():
+    """Mirror of encode's empty-token guard. A well-behaved encoder never
+    produces this, but we reject defensively in case a bug elsewhere does."""
+    # Hand-craft a state with an empty token but a signature valid for that
+    # empty payload, to prove the empty-check fires before signature verify.
+    from server.auth.invite_state import _sign
+    payload = "v1."
+    sig = _sign(payload, SECRET)
+    state = f"{payload}.{sig}"
+    with pytest.raises(InviteStateError):
+        decode_invite_state(state, secret=SECRET)

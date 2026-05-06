@@ -31,6 +31,8 @@ def decode_invite_state(state: str, *, secret: str) -> str:
     if len(parts) != 3 or parts[0] != _PREFIX:
         raise InviteStateError("malformed invite state envelope")
     prefix, invite_token, sig = parts
+    if not invite_token:
+        raise InviteStateError("invite state has empty token")
     payload = f"{prefix}{_SEP}{invite_token}"
     expected = _sign(payload, secret)
     if not hmac.compare_digest(expected, sig):
