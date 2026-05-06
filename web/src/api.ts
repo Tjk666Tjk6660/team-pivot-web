@@ -271,6 +271,8 @@ export type VisibilityUserOption = {
 
 export type VisibilityRoleOption = {
   role: string;
+  name: string;
+  label?: string;
   users: VisibilityUserOption[];
 };
 
@@ -408,6 +410,7 @@ export async function createMatter(body: {
 export type AdminRoleOption = {
   role: string;
   name: string;
+  label?: string;
   kind: "system" | "business";
   description: string | null;
   is_active: boolean;

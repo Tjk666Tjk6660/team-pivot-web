@@ -70,9 +70,13 @@ export function VisibilityScopePicker({
     const q = query.trim().toLowerCase();
     return (options?.roles ?? []).filter((item) =>
       (!allowedRoleSet || allowedRoleSet.has(item.role)) &&
-      (!q || item.role.toLowerCase().includes(q)),
+      (!q || `${roleDisplayName(item)} ${item.role}`.toLowerCase().includes(q)),
     );
   }, [allowedRoleSet, options, query]);
+  const roleNameByKey = useMemo(
+    () => new Map((options?.roles ?? []).map((item) => [item.role, roleDisplayName(item)])),
+    [options],
+  );
 
   const userRows = useMemo(() => {
     if (!allowUsers) return [];
@@ -185,7 +189,7 @@ export function VisibilityScopePicker({
                     <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent)] text-white">
                       <Shield className="h-3.5 w-3.5" />
                     </div>
-                    <span className="min-w-0 flex-1 truncate text-sm">{item.role}</span>
+                    <span className="min-w-0 flex-1 truncate text-sm">{roleDisplayName(item)}</span>
                     {allowUsers && (
                       <button
                         type="button"
@@ -218,7 +222,11 @@ export function VisibilityScopePicker({
               </div>
               <div className="space-y-2">
                 {draft.roles.map((role) => (
-                  <SelectedPill key={role} label={role} onRemove={() => toggleRole(role)} />
+                  <SelectedPill
+                    key={role}
+                    label={roleNameByKey.get(role) ?? role}
+                    onRemove={() => toggleRole(role)}
+                  />
                 ))}
                 {allowUsers && draft.user_ids.map((id) => {
                   const user = options?.users.find((item) => item.id === id);
@@ -246,6 +254,10 @@ export function VisibilityScopePicker({
       </Dialog>
     </div>
   );
+}
+
+function roleDisplayName(role: { role: string; name?: string; label?: string }): string {
+  return role.label || role.name || role.role;
 }
 
 function dedupeUsers(users: VisibilityUserOption[]): VisibilityUserOption[] {

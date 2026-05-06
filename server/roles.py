@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha1
 from time import time
 
 from server.db import Database
 from server.pivot_users import PivotUserRepo
 
-SYSTEM_ROLES = {"admin", "member"}
+SYSTEM_ROLE_LABELS = {
+    "admin": "管理员",
+    "member": "成员",
+}
+SYSTEM_ROLES = set(SYSTEM_ROLE_LABELS)
 
 
 @dataclass(frozen=True)
 class PivotRole:
     name: str
+    label: str | None
     kind: str
     description: str | None
     is_active: bool
@@ -31,6 +37,11 @@ def validate_role_name(value: str) -> str:
     return name
 
 
+def _role_key_for_label(label: str, index: int = 0) -> str:
+    digest = sha1(label.encode("utf-8")).hexdigest()[:10]
+    return f"role_{digest}" if index == 0 else f"role_{digest}_{index}"
+
+
 class PivotRoleRepo:
     def __init__(self, db: Database) -> None:
         self._db = db
@@ -42,18 +53,28 @@ class PivotRoleRepo:
             for name in SYSTEM_ROLES:
                 conn.execute(
                     "INSERT OR IGNORE INTO pivot_role"
-                    " (name, kind, description, is_active, created_at, updated_at)"
-                    " VALUES (?, 'system', NULL, 1, ?, ?)",
-                    (name, now, now),
+                    " (name, label, kind, description, is_active, created_at, updated_at)"
+                    " VALUES (?, ?, 'system', NULL, 1, ?, ?)",
+                    (name, SYSTEM_ROLE_LABELS[name], now, now),
+                )
+                conn.execute(
+                    "UPDATE pivot_role SET label=?, kind='system' WHERE name=?",
+                    (SYSTEM_ROLE_LABELS[name], name),
                 )
             for user in users.list_for_admin(include_deleted=False):
                 for role in user.roles:
                     kind = "system" if role in SYSTEM_ROLES else "business"
                     conn.execute(
                         "INSERT OR IGNORE INTO pivot_role"
-                        " (name, kind, description, is_active, created_at, updated_at)"
-                        " VALUES (?, ?, NULL, 1, ?, ?)",
-                        (role, kind, now, now),
+                        " (name, label, kind, description, is_active, created_at, updated_at)"
+                        " VALUES (?, ?, ?, NULL, 1, ?, ?)",
+                        (
+                            role,
+                            SYSTEM_ROLE_LABELS.get(role),
+                            kind,
+                            now,
+                            now,
+                        ),
                     )
 
     def list(self, include_inactive: bool = False) -> list[PivotRole]:
@@ -75,6 +96,7 @@ class PivotRoleRepo:
         return [
             PivotRole(
                 name=row["name"],
+                label=row["label"],
                 kind=row["kind"],
                 description=row["description"],
                 is_active=bool(row["is_active"]),
@@ -96,21 +118,29 @@ class PivotRoleRepo:
         description: str | None = None,
         kind: str = "business",
     ) -> PivotRole:
-        target = validate_role_name(name)
+        label = validate_role_name(name)
         if kind not in {"system", "business"}:
             raise ValueError("invalid role kind")
+        target = label if kind == "system" else _role_key_for_label(label)
         now = time()
         with self._db.connect() as conn:
             existing = conn.execute(
-                "SELECT 1 FROM pivot_role WHERE name=?", (target,)
+                "SELECT 1 FROM pivot_role WHERE name=? OR label=?",
+                (label, label),
             ).fetchone()
             if existing is not None:
                 raise ValueError("role already exists")
+            index = 0
+            while conn.execute(
+                "SELECT 1 FROM pivot_role WHERE name=?", (target,)
+            ).fetchone() is not None:
+                index += 1
+                target = _role_key_for_label(label, index)
             conn.execute(
                 "INSERT INTO pivot_role"
-                " (name, kind, description, is_active, created_at, updated_at)"
-                " VALUES (?,?,?,?,?,?)",
-                (target, kind, description, 1, now, now),
+                " (name, label, kind, description, is_active, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?)",
+                (target, label, kind, description, 1, now, now),
             )
         got = self.get(target)
         assert got is not None

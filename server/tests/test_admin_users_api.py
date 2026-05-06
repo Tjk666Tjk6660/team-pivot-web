@@ -200,7 +200,13 @@ def test_admin_can_assign_multiple_roles(db):
     )
 
     assert r.status_code == 200
-    assert r.json()["roles"] == ["member", "tech"]
+    created_role = next(role for role in r.json()["roles"] if role != "member")
+    assert created_role.startswith("role_")
+    listed = client.get("/api/admin/roles").json()["items"]
+    assert any(
+        item["role"] == created_role and item["name"] == "tech"
+        for item in listed
+    )
 
 
 def test_unknown_role_requires_confirm_create_role(db):
@@ -230,6 +236,11 @@ def test_list_admin_roles(db):
         item["role"] == "tech" and item["user_count"] == 1
         for item in r.json()["items"]
     )
+    system_roles = {item["role"]: item for item in r.json()["items"]}
+    assert system_roles["admin"]["name"] == "管理员"
+    assert system_roles["admin"]["label"] == "管理员"
+    assert system_roles["member"]["name"] == "成员"
+    assert system_roles["member"]["label"] == "成员"
 
 
 def test_admin_can_create_empty_role(db):
@@ -238,27 +249,34 @@ def test_admin_can_create_empty_role(db):
     r = client.post("/api/admin/roles", json={"name": "客户A项目组"})
 
     assert r.status_code == 201, r.text
-    assert r.json()["role"] == "客户A项目组"
+    assert r.json()["role"].startswith("role_")
+    assert r.json()["name"] == "客户A项目组"
     assert r.json()["user_count"] == 0
+    created_role = r.json()["role"]
     listed = client.get("/api/admin/roles").json()["items"]
-    assert any(item["role"] == "客户A项目组" for item in listed)
+    assert any(
+        item["role"] == created_role and item["name"] == "客户A项目组"
+        for item in listed
+    )
 
 
 def test_admin_can_set_role_members(db):
     client, pivot_users, _, _ = _build_app(db)
     a = _make_member(pivot_users, name="A", pinyin="a")
     b = _make_member(pivot_users, name="B", pinyin="b")
-    assert client.post("/api/admin/roles", json={"name": "技术部"}).status_code == 201
+    created = client.post("/api/admin/roles", json={"name": "技术部"})
+    assert created.status_code == 201
+    role_key = created.json()["role"]
 
     r = client.put(
-        "/api/admin/roles/技术部/members",
+        f"/api/admin/roles/{role_key}/members",
         json={"user_ids": [a.id, b.id]},
     )
 
     assert r.status_code == 200, r.text
     assert r.json()["role"]["user_count"] == 2
-    assert "技术部" in pivot_users.get(a.id).roles
-    assert "技术部" in pivot_users.get(b.id).roles
+    assert role_key in pivot_users.get(a.id).roles
+    assert role_key in pivot_users.get(b.id).roles
 
 
 def test_admin_role_members_cannot_remove_last_active_admin(db):

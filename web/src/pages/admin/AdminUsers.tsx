@@ -44,6 +44,7 @@ import { Label } from "@/components/ui/label";
 
 export function AdminUsers() {
   const [items, setItems] = useState<AdminUser[]>([]);
+  const [roleNameByKey, setRoleNameByKey] = useState<Map<string, string>>(new Map());
   const [me, setMe] = useState<Me | null>(null);
   const [search, setSearch] = useState("");
   const [includeDeleted, setIncludeDeleted] = useState(false);
@@ -54,11 +55,15 @@ export function AdminUsers() {
     setLoading(true);
     setError(null);
     try {
-      const r = await listAdminUsers({
-        include_deleted: includeDeleted,
-        search: search.trim() || undefined,
-      });
-      setItems(r.items);
+      const [users, roles] = await Promise.all([
+        listAdminUsers({
+          include_deleted: includeDeleted,
+          search: search.trim() || undefined,
+        }),
+        listAdminRoles(),
+      ]);
+      setItems(users.items);
+      setRoleNameByKey(new Map(roles.map((role) => [role.role, roleDisplayName(role)])));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -113,7 +118,13 @@ export function AdminUsers() {
 
       <ul className="flex flex-col gap-2">
         {items.map((u) => (
-          <UserRow key={u.id} user={u} me={me} onChanged={reload} />
+          <UserRow
+            key={u.id}
+            user={u}
+            me={me}
+            roleNameByKey={roleNameByKey}
+            onChanged={reload}
+          />
         ))}
       </ul>
     </div>
@@ -123,10 +134,12 @@ export function AdminUsers() {
 function UserRow({
   user,
   me,
+  roleNameByKey,
   onChanged,
 }: {
   user: AdminUser;
   me: Me | null;
+  roleNameByKey: Map<string, string>;
   onChanged: () => void;
 }) {
   const isSelf = me?.id === user.id;
@@ -182,7 +195,7 @@ function UserRow({
                 {user.display_name}
               </span>
               <UserStatusBadge status={user.status} />
-              {user.roles?.includes("admin") && <RoleChip label="ADMIN" strong />}
+              {user.roles?.includes("admin") && <RoleChip label="管理员" strong />}
               {isSelf && (
                 <span className="text-[10.5px] font-meta" style={mutedStyle}>
                   （你）
@@ -196,8 +209,8 @@ function UserRow({
               )}
             </div>
             <div className="mt-1 flex flex-wrap gap-1">
-              {(user.roles ?? []).map((role) => (
-                <RoleChip key={role} label={role} />
+              {(user.roles ?? []).filter((role) => role !== "admin").map((role) => (
+                <RoleChip key={role} label={roleNameByKey.get(role) ?? role} />
               ))}
             </div>
             <BindingChips bindings={user.bindings} />
@@ -402,7 +415,7 @@ function EditRolesDialog({
                     onChange={() => toggle(role.role)}
                   />
                   <span className="truncate text-sm font-medium text-[var(--text)]">
-                    {role.role}
+                    {roleDisplayName(role)}
                   </span>
                 </span>
                 <span className="shrink-0 text-xs text-[var(--text-mute)]">
@@ -426,6 +439,10 @@ function EditRolesDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+function roleDisplayName(role: AdminRoleOption): string {
+  return role.label || role.name || role.role;
 }
 
 function ConfirmDeleteDialog({
