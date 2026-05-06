@@ -350,10 +350,7 @@ function NewMatterClassicForm({
       const r = await createMatter({
         category: category.trim(),
         title: title.trim(),
-        owner_open_id:
-          matterOwner.openId && matterOwner.openId !== me.open_id
-            ? matterOwner.openId
-            : undefined,
+        owner_id: matterOwner.openId || me.open_id,
         initial_file: {
           type: initialType,
           summary,

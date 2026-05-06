@@ -71,7 +71,7 @@ class NewMatterBody(BaseModel):
     # Optional matter-level owner (distinct from initial_file.owner which is
     # the file-level owner of the first think/act). Defaults to the creator
     # when absent / equal to the creator's open_id.
-    owner_open_id: str | None = Field(default=None, max_length=50)
+    owner_id: str | None = Field(default=None, max_length=50)
     initial_file: InitialFileIn
 
 
@@ -319,7 +319,7 @@ def build_router(
                 category=body.category,
                 title=body.title,
                 initial_item=initial,
-                matter_owner_open_id=body.owner_open_id,
+                matter_owner_open_id=body.owner_id,
                 contacts=contacts,
                 notifier=notifier,
                 users=users,
@@ -340,7 +340,7 @@ def build_router(
             ) from e
         except PublishError as e:
             # publish_matter_create raises "matter owner not found: …" when the
-            # supplied owner_open_id can't be resolved. Translate to 422 with
+            # supplied owner_id can't be resolved. Translate to 422 with
             # the canonical owner_unknown code.
             msg = str(e)
             if msg.startswith("matter owner not found"):
@@ -348,7 +348,7 @@ def build_router(
                     status_code=422,
                     detail={
                         "code": "owner_unknown",
-                        "field": "owner_open_id",
+                        "field": "owner_id",
                         "message": msg,
                     },
                 ) from e

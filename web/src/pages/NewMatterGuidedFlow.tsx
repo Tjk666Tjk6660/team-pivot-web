@@ -556,10 +556,7 @@ export function NewMatterGuidedFlow({
       const r = await createMatter({
         category: data.category.trim(),
         title: data.title.trim(),
-        owner_open_id:
-          data.matterOwner.openId && data.matterOwner.openId !== me.open_id
-            ? data.matterOwner.openId
-            : undefined,
+        owner_id: data.matterOwner.openId || me.open_id,
         initial_file: {
           type: data.docType,
           summary: data.summary.trim(),

@@ -295,7 +295,7 @@ export type NewMatterResponse = {
 export async function createMatter(body: {
   category: string;
   title: string;
-  owner_open_id?: string;
+  owner_id?: string;
   initial_file: InitialFileIn;
 }): Promise<NewMatterResponse> {
   const r = await fetch("/api/matters", {

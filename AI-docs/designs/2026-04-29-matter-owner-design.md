@@ -131,14 +131,14 @@ POST /api/matters/{matter_id}/owner
 
 ### 2.4 创建路径：默认 owner = 创建者，也可显式指定他人
 
-`POST /api/matters` body 新增可选字段 `owner_open_id`，与既有 `initial_file.owner`（**文件级**owner，落到 `timeline[0].owner`）**完全分离**：
+`POST /api/matters` body 新增可选字段 `owner_id`，与既有 `initial_file.owner`（**文件级**owner，落到 `timeline[0].owner`）**完全分离**：
 
 ```jsonc
 POST /api/matters
 {
   "category": "Pivot",
   "title": "客服流程优化方案",
-  "owner_open_id": "ou_xxxxxx",     // ← 新增；可选；缺省 = 创建者
+  "owner_id": "ou_xxxxxx",     // ← 新增；可选；缺省 = 创建者
   "initial_file": {
     "type": "think",
     "summary": "...",
@@ -152,15 +152,15 @@ POST /api/matters
 
 | 字段 | 作用域 | 默认值 |
 |------|-------|-------|
-| `owner_open_id` | matter 级——`matter.owner`，谁负责整件事 | 缺省 = 创建者 pinyin |
+| `owner_id` | matter 级——`matter.owner`，谁负责整件事 | 缺省 = 创建者 pinyin |
 | `initial_file.owner` | 文件级——`timeline[0].owner`，这条 think/act 文件本身的执行人 / 作者 | 缺省 = 创建者 pinyin（既有） |
 
 **`publish_matter_create` 内部行为**：
 
 ```python
 matter_owner_pinyin = (
-    _resolve_owner_for_index(body.owner_open_id, users)
-    if body.owner_open_id
+    _resolve_owner_for_index(body.owner_id, users)
+    if body.owner_id
     else user.pinyin
 )
 matter_block = {
@@ -175,7 +175,7 @@ matter_block = {
 
 **关键决策**：创建时直接指定他人为 owner，**不**生成 owner_change timeline 事件。"创建即指定"和"创建后转交"语义不同——前者是 matter 出生时的归属，后者是变更事件。第一条 timeline item（think/act）已经记录了 creator，配合 matter.owner 就能完整表达"X 创建了这件事，Y 推进它"。强行在创建瞬间塞一条 owner_change（from_owner=X, to_owner=Y）反而冗余。
 
-`owner_open_id` 校验失败时返回 422 `owner_unknown`，与 §2.3 转交端点共用错误码。
+`owner_id` 校验失败时返回 422 `owner_unknown`，与 §2.3 转交端点共用错误码。
 
 **前端入口**（NewMatter）：在表单里加一个"指定责任人（可选）"OwnerPicker 字段，缺省灰文提示"默认 = 你自己"。
 
@@ -383,7 +383,7 @@ export type TimelineOwnerChangeItem = {
 | [server/matter_status.py](../../server/matter_status.py) | 新增 `EVENT_TRIGGERS_BY_TRANSITION` 仅含 `("planning", "executing"): {"owner_change"}` + `can_event_type_trigger()` helper |
 | [server/matter_validator.py](../../server/matter_validator.py) | `validate_append` 入口先按 type ∈ EVENT 分流；event 走 `_validate_owner_change_shape`（reason 非空、from_owner 与当前 matter.owner 一致、to_owner 非空、to_owner ≠ from_owner）；若 entry 带 `status_change` 则走 `can_event_type_trigger` 校验 |
 | [server/matter_index.py](../../server/matter_index.py) | `_normalize_item` 增加 owner_change 分支（不 fallback owner=creator——event 没有 creator 概念）；`create_matter_index` 接受 `matter_owner` 参数写入 matter block；新增 `apply_owner_change(path, *, item, now_iso)` 同时写 timeline、`matter.owner`、（可选）`matter.current_status`，全部在一次 `_atomic_write_yaml` 内 |
-| [server/api/matters.py](../../server/api/matters.py) | `NewMatterBody` 新增 `owner_open_id?: str`（matter 级，与既有 `initial_file.owner` 完全分离）；新增 `OwnerChangeBody` + `POST /api/matters/{id}/owner` 路由（接受可选 `status_change`）；`_summarize_matter` 输出 `owner / owner_display / owner_avatar_url`；`_render_matter_detail` 同步；`_render_item` owner_change 分支解析 `actor_display / from_owner_display / to_owner_display` |
+| [server/api/matters.py](../../server/api/matters.py) | `NewMatterBody` 新增 `owner_id?: str`（matter 级，与既有 `initial_file.owner` 完全分离）；新增 `OwnerChangeBody` + `POST /api/matters/{id}/owner` 路由（接受可选 `status_change`）；`_summarize_matter` 输出 `owner / owner_display / owner_avatar_url`；`_render_matter_detail` 同步；`_render_item` owner_change 分支解析 `actor_display / from_owner_display / to_owner_display` |
 | [server/publish.py](../../server/publish.py) | `publish_matter_create` 接受可选 `matter_owner_pinyin`（缺省 = `user.pinyin`）写入 matter block；新增 `publish_matter_owner_change(workspace, user, *, matter_id, to_owner, reason, status_change=None)` 走 write_session、emit `TOPIC_MATTER_OWNER_CHANGED`（payload 含 `status_change` 字段，下游 SSE 可同时刷 status） |
 | `server/events.py`（或对应 topics 文件） | 新增内部 topic `TOPIC_MATTER_OWNER_CHANGED = "matter.owner_changed"`；SSE 对外映射为 `matter.updated` + `reason: "owner_changed"` |
 | [server/api/ai.py](../../server/api/ai.py) / [server/ai/tools.py](../../server/ai/tools.py) | `read_matter_index` MCP 工具天然返回 owner_change（已在 timeline 内）；`build_system_prompt` 提到 matter.owner 的语义，让 AI 在 reply 时知道"现在这件事归谁推进" |
@@ -392,7 +392,7 @@ export type TimelineOwnerChangeItem = {
 
 | 路径 | 改动 |
 |------|------|
-| [web/src/api.ts](../../web/src/api.ts) | `MatterSummary` / `MatterMeta` / `MatterDetail.matter` 加 `owner / owner_display / owner_avatar_url`；`TimelineItem` 改 union；`createMatter` 入参增加可选 `owner_open_id`；新增 `transferMatterOwner(matter_id, to_owner, reason, status_change?)` |
+| [web/src/api.ts](../../web/src/api.ts) | `MatterSummary` / `MatterMeta` / `MatterDetail.matter` 加 `owner / owner_display / owner_avatar_url`；`TimelineItem` 改 union；`createMatter` 入参增加可选 `owner_id`；新增 `transferMatterOwner(matter_id, to_owner, reason, status_change?)` |
 | `web/src/components/matter/OwnerChip.tsx` | 新增；列表用 |
 | `web/src/components/matter/OwnerBadge.tsx`（或复用 OwnerChip 的 size 变体） | 详情顶部用 |
 | `web/src/components/matter/TransferOwnerDialog.tsx` | 新增；OwnerPicker + reason textarea + 可选"同时推进至 executing"复选框（仅当当前 status == planning 时显示）+ 确认 |
@@ -428,7 +428,7 @@ export type TimelineOwnerChangeItem = {
 | 决策点 | 取值 | 落点 |
 |--------|------|------|
 | 转交是否能与 status_change 合并到一次操作 | **是**——但仅限 `planning → executing` 一条迁移；底层一条 owner_change entry 携带 status_change，前端 timeline 渲染拆两条视觉行 | 二.5 |
-| 创建时是否允许指定他人为 owner | **是**——`POST /api/matters` 增加可选 `owner_open_id`；缺省 = 创建者；不生成 owner_change 事件 | 二.4 |
+| 创建时是否允许指定他人为 owner | **是**——`POST /api/matters` 增加可选 `owner_id`；缺省 = 创建者；不生成 owner_change 事件 | 二.4 |
 | owner 变更入口可见性 | **全员可见**（开放协作，需求 §8） | 二.7 |
 | reason 长度上限 | **200 字**（保持简短，复杂理由可放评论） | 二.3 |
 | owner_change 是否能在 reviewed / cancelled 状态下发生 | **允许**（"已结案 matter 重新指派复盘人"是合理用例） | 二.2 |
@@ -593,9 +593,9 @@ matter.owner / timeline owner_change 落盘**复用同一函数**，行为一致
 
 UI 始终能显示**某种**字符串，不会出现 undefined / 空白。
 
-### 6.7 owner_open_id 指向自己等价于不传（P1）
+### 6.7 owner_id 指向自己等价于不传（P1）
 
-API 兼容：`POST /api/matters` 时 `owner_open_id` 传创建者自己的 open_id 应等价于不传。后端解析后两者都让 matter.owner = creator.pinyin。**不**作为错误，**不**作为去重的特殊路径——`_resolve_owner_for_index(自己的 open_id) == user.pinyin` 自然落到正确值。
+API 兼容：`POST /api/matters` 时 `owner_id` 传创建者自己的 open_id 应等价于不传。后端解析后两者都让 matter.owner = creator.pinyin。**不**作为错误，**不**作为去重的特殊路径——`_resolve_owner_for_index(自己的 open_id) == user.pinyin` 自然落到正确值。
 
 只在前端 OwnerPicker 体感上给一个轻微优化：选中"自己"时灰文提示"默认就是你"，鼓励用户清空选择，但不强制。
 
@@ -640,9 +640,9 @@ UI 上详情页 owner 卡片旁加一行小灰字提示："转错了？再转一
 
 后端：
 
-- 创建 matter（不带 `owner_open_id`）→ matter.owner == 创建者；timeline 没有 owner_change
-- 创建 matter（带 `owner_open_id` 指向他人）→ matter.owner == 该他人；timeline 仍只有 1 条 think/act 文件 entry，无 owner_change
-- 创建 matter：`owner_open_id` 不存在 → 422 `owner_unknown`
+- 创建 matter（不带 `owner_id`）→ matter.owner == 创建者；timeline 没有 owner_change
+- 创建 matter（带 `owner_id` 指向他人）→ matter.owner == 该他人；timeline 仍只有 1 条 think/act 文件 entry，无 owner_change
+- 创建 matter：`owner_id` 不存在 → 422 `owner_unknown`
 - 创建 matter：matter 级 owner 与 `initial_file.owner` 互不影响（指定 matter owner = A，文件 owner = B，落盘后 matter.owner=A、timeline[0].owner=B）
 - 转交：reason 非空 → 200，matter.owner 更新，timeline 增加一条 owner_change
 - 转交：reason 空 → 422 `reason_required`
@@ -667,7 +667,7 @@ UI 上详情页 owner 卡片旁加一行小灰字提示："转错了？再转一
 - §6.3 timeline 写入顺序：手动 yaml 注入 created_at 早于已有 entry，前端不应重排（API 响应 timeline 仍按写入顺序）
 - §6.4 MCP schema：用 jsonschema 校验 read_matter_index 返回，含 owner_change 也通过
 - §6.6 owner 解析失败兜底：matter.owner = 不存在的 ou_xxx → 响应里 owner_display = 截断字符串、owner_avatar_url = null
-- §6.7 创建时 owner_open_id = 自己：等价于不传，matter.owner = creator.pinyin
+- §6.7 创建时 owner_id = 自己：等价于不传，matter.owner = creator.pinyin
 - §6.8 owner_change yaml key 顺序：落盘后字段顺序固定为 type → created_at → actor → from_owner → to_owner → reason → status_change?
 
 前端：
