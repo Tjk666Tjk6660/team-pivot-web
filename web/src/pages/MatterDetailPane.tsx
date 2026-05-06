@@ -41,6 +41,7 @@ import { TimelineStrip } from "@/components/matter/TimelineStrip";
 import { FileCard } from "@/components/matter/FileCard";
 import { OwnerChip } from "@/components/matter/OwnerChip";
 import { OwnerChangeRow } from "@/components/matter/OwnerChangeRow";
+import { InvalidationEventRow } from "@/components/matter/InvalidationEventRow";
 import { TransferOwnerDialog } from "@/components/matter/TransferOwnerDialog";
 import {
   CreateFileForm,
@@ -562,6 +563,13 @@ export function MatterDetailPane() {
 
   const { matter, timeline } = data;
   const fileTimeline = timeline.filter(isTimelineFileItem);
+  // Strip / count: files + owner_change (both rendered as nodes on the
+  // navigation strip). Invalidation/restoration events are audit
+  // annotations on existing files, not new nodes on the timeline.
+  const stripTimeline = timeline.filter(
+    (t) => !isTimelineInvalidationEventItem(t),
+  );
+  const timelineCount = stripTimeline.length;
   const canGenerateResult = matter.current_status === "executing";
   const canGenerateInsight =
     matter.current_status === "finished" ||
@@ -1026,19 +1034,19 @@ export function MatterDetailPane() {
           <section className="pivot-card mb-4 p-4">
             <div className="mb-2 flex items-center justify-between">
               <h2 className="text-[13px] font-semibold text-[var(--text)]">
-                时间轴 · {fileTimeline.length}
+                时间轴 · {timelineCount}
               </h2>
               <span className="text-[11px] text-[var(--text-mute)]">
                 按时间升序 · 点节点跳到对应卡片
               </span>
             </div>
             <TimelineStrip
-              // Navigation strip is strictly file-only: any timeline entry
-              // that didn't add a new file to the matter (owner_change /
-              // invalidation / restoration) is excluded. Their content is
-              // still rendered in the main file flow as OwnerChangeRow /
-              // InvalidatedBadge, but they don't inflate node count here.
-              items={fileTimeline}
+              // Strip carries file items + owner_change events (rendered as
+              // grey diamonds, no jump). Invalidation / restoration events
+              // are excluded — they're audit annotations on existing files,
+              // shown via FileCard's InvalidatedBadge + the
+              // InvalidationEventRow in the main flow.
+              items={stripTimeline}
               highlight={highlight}
               onJump={onJump}
             />
@@ -1081,15 +1089,19 @@ export function MatterDetailPane() {
                 );
               }
               if (isTimelineInvalidationEventItem(item)) {
-                // Invalidation/restoration events are intentionally NOT rendered
-                // in the main file flow: the file's `InvalidatedBadge` (top of
-                // its FileCard) + reverse-written invalidated_* fields already
-                // express the current state. Showing a horizontal event row
-                // here would duplicate the same information and create visible
-                // "stacking" on repeated invalidate ↔ restore cycles.
-                // The yaml event entry is still written for audit (data layer
-                // unchanged); just kept out of the user-facing timeline.
-                return null;
+                // Render as a horizontal event row, mirroring OwnerChangeRow.
+                // The file's InvalidatedBadge + reverse-written invalidated_*
+                // fields already show the *current* state on the file card;
+                // this row makes the *action history* visible inline so each
+                // invalidate / restore is readable on the timeline. Stacking
+                // on repeated cycles is acceptable per product decision —
+                // it's the audit trail, same convention as owner_change.
+                return (
+                  <InvalidationEventRow
+                    key={`invalidation-${item.created_at}-${i}`}
+                    item={item}
+                  />
+                );
               }
               // owner_change
               return (
