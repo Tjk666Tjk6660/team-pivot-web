@@ -19,6 +19,26 @@ from server.matter_status import (
 
 OWNER_CHANGE_REASON_MAX = 200
 
+# Annotation v1 only supports the "evaluation" type — a structured subjective
+# judgement of a file. Future flavors (e.g. follow-up question) will land as
+# new whitelist entries; never accept unknown types silently to avoid
+# schema drift in the on-disk YAML.
+VALID_ANNOTATION_TYPES = frozenset({"evaluation"})
+
+ANNOTATION_BODY_MIN = 1
+ANNOTATION_BODY_MAX = 2000
+
+# Derived fields that v1 explicitly refuses on the writer side. These are
+# either AI-computed (weight / score_delta) or upstream-only labels
+# (sentiment / dimension / rating). Letting them through would (a) anchor
+# the annotation YAML schema before the AI layer is designed, and (b) let
+# clients smuggle scoring inputs around the AI pipeline. Both Pydantic and
+# the writer schema reject them so a malicious dict that bypasses the API
+# layer still can't land.
+ANNOTATION_FORBIDDEN_DERIVED_FIELDS = frozenset({
+    "weight", "rating", "dimension", "sentiment", "score_delta",
+})
+
 
 @dataclass(frozen=True)
 class ValidationResult:
@@ -117,6 +137,57 @@ def validate_append(
         err = _validate_result_shape(item, sc)
         if err:
             return err
+
+    return OK
+
+
+def validate_annotation(annotation: dict[str, Any]) -> ValidationResult:
+    """Writer-side schema gate for an annotation entry.
+
+    Pure function. Run by ``publish.publish_matter_annotation`` (and
+    indirectly by the API layer's Pydantic guard) so a derived-field-laden
+    dict can't land on disk regardless of which entry path it took.
+    Mirrors ``validate_append``'s shape for consistency: returns OK or a
+    ``ValidationResult`` with code/field/message that the API layer turns
+    into a 422.
+
+    v1 enforces three rules: (1) ``type`` is in the whitelist, (2) ``body``
+    is a non-empty string within length cap, (3) no derived fields
+    (weight / rating / dimension / sentiment / score_delta) — those are
+    AI-computed labels that don't belong in the user-supplied entry.
+    """
+    if not isinstance(annotation, dict):
+        return _fail("annotation_not_object", None, "annotation must be a dict")
+
+    a_type = annotation.get("type")
+    if a_type is None:
+        return _fail("type_missing", "type", "annotation type is required")
+    if a_type not in VALID_ANNOTATION_TYPES:
+        return _fail(
+            "unknown_annotation_type", "type",
+            f"unknown annotation type: {a_type!r};"
+            f" expected one of {sorted(VALID_ANNOTATION_TYPES)}",
+        )
+
+    body = annotation.get("body")
+    if not isinstance(body, str):
+        return _fail("body_required", "body", "annotation body is required")
+    if len(body) < ANNOTATION_BODY_MIN:
+        return _fail("body_too_short", "body", "annotation body must not be empty")
+    if len(body) > ANNOTATION_BODY_MAX:
+        return _fail(
+            "body_too_long", "body",
+            f"annotation body exceeds {ANNOTATION_BODY_MAX} chars",
+        )
+
+    forbidden = ANNOTATION_FORBIDDEN_DERIVED_FIELDS & annotation.keys()
+    if forbidden:
+        bad = sorted(forbidden)
+        return _fail(
+            "derived_field_not_allowed", bad[0],
+            f"annotation rejects derived field(s): {bad};"
+            " these are AI-computed and not client-writable in v1",
+        )
 
     return OK
 

@@ -6,6 +6,7 @@ from pathlib import Path
 from server.notify import (
     FeishuNotifier,
     NoOpNotifier,
+    build_annotation_dm_card,
     build_application_card,
     build_mention_dm_card,
     build_owner_change_card,
@@ -853,3 +854,112 @@ def test_noop_notifier_application_methods_silent():
     )
     n.notify_application_approved(applicant_open_id="ou", merged=False)
     n.notify_application_rejected(applicant_open_id="ou")
+
+
+# ─── annotation DM card (Phase 6) ───────────────────────────────────────────
+
+
+def test_annotation_dm_card_structure():
+    card = build_annotation_dm_card(
+        author_name="邓柯",
+        thread_title="客户验收流程改造",
+        target_filename="003_alice_act_xx.md",
+        annotation_type="evaluation",
+        annotation_body="结构清楚，不过缺少边界条件",
+        post_url="http://x/m/auth-redesign",
+    )
+    md = card["body"]["elements"][0]["content"]
+
+    # 评价语气而非提醒/评论 — 让 stakeholder 一眼看出是"评价"类反馈
+    assert "评价了" in md
+    assert "**评价**：结构清楚，不过缺少边界条件" in md
+    # 主题 + 文件名都呈现
+    assert "**主题**：客户验收流程改造" in md
+    assert "邓柯" in md
+    assert "003_alice_act_xx.md" in md
+
+    # purple 模板区分于 mention 的 orange — DM 列表里能视觉区分
+    assert card["header"]["template"] == "purple"
+    assert card["header"]["title"]["content"] == "有人评价了你关注的文件"
+
+    # 按钮跳详情页
+    button = card["body"]["elements"][-1]
+    assert button["tag"] == "button"
+    assert button["multi_url"]["url"] == "http://x/m/auth-redesign"
+
+
+def test_annotation_dm_card_drops_body_row_when_empty():
+    """body 校验在 publish 侧已强制非空, 但渲染层防御性允许空字符串
+    并跳过该行而不是输出 '**评价**：'。"""
+    card = build_annotation_dm_card(
+        author_name="X",
+        thread_title="T",
+        target_filename="f.md",
+        annotation_type="evaluation",
+        annotation_body="",
+        post_url="http://x",
+    )
+    md = card["body"]["elements"][0]["content"]
+    assert "**评价**：" not in md
+
+
+def test_feishu_notifier_annotation_sends_dm_only(monkeypatch):
+    """关键产品决策: annotation 不发群卡片。落地时确保 _broadcast 不被调用,
+    只调 _dm_many。如果未来误加群广播这个用例会抓住。"""
+    notifier = FeishuNotifier(tokens=None, web_base_url="https://x")  # type: ignore[arg-type]
+    calls: dict[str, object] = {"broadcast": 0, "dm_recipients": []}
+
+    def fake_broadcast(self, card, *, event):
+        calls["broadcast"] = int(calls["broadcast"]) + 1
+
+    def fake_dm_many(self, open_ids, card, *, event):
+        calls["dm_recipients"] = list(open_ids)
+
+    monkeypatch.setattr(FeishuNotifier, "_broadcast", fake_broadcast)
+    monkeypatch.setattr(FeishuNotifier, "_dm_many", fake_dm_many)
+
+    notifier.notify_annotation(
+        category="cat", slug="m1", thread_title="T",
+        target_filename="003_alice_act.md",
+        author_name="邓柯",
+        annotation_type="evaluation",
+        annotation_body="可以再想想性能",
+        stakeholder_open_ids=["ou_alice", "ou_bob"],
+    )
+
+    assert calls["broadcast"] == 0
+    assert calls["dm_recipients"] == ["ou_alice", "ou_bob"]
+
+
+def test_feishu_notifier_annotation_no_recipients_no_op(monkeypatch):
+    """空 stakeholder 时不该发任何 DM (避免 _dm_many 拿空列表去 _send 0 次
+    的 noisy log)。"""
+    notifier = FeishuNotifier(tokens=None, web_base_url="https://x")  # type: ignore[arg-type]
+    fired = {"dm": 0, "broadcast": 0}
+    monkeypatch.setattr(
+        FeishuNotifier, "_dm_many",
+        lambda self, oids, card, *, event: fired.__setitem__("dm", fired["dm"] + 1),
+    )
+    monkeypatch.setattr(
+        FeishuNotifier, "_broadcast",
+        lambda self, card, *, event: fired.__setitem__("broadcast", fired["broadcast"] + 1),
+    )
+
+    notifier.notify_annotation(
+        category="c", slug="s", thread_title="t",
+        target_filename="f.md",
+        author_name="a",
+        annotation_type="evaluation",
+        annotation_body="x",
+        stakeholder_open_ids=[],
+    )
+    assert fired == {"dm": 0, "broadcast": 0}
+
+
+def test_noop_notifier_annotation_silent():
+    NoOpNotifier().notify_annotation(
+        category="c", slug="s", thread_title="t",
+        target_filename="f.md", author_name="a",
+        annotation_type="evaluation", annotation_body="x",
+        stakeholder_open_ids=["ou_x"],
+    )

@@ -27,6 +27,7 @@ from fastapi.responses import StreamingResponse
 from server.db import Database
 from server.events import (
     Event,
+    TOPIC_ANNOTATION_APPENDED,
     TOPIC_FILE_APPENDED,
     TOPIC_MATTER_CREATED,
     TOPIC_MATTER_OWNER_CHANGED,
@@ -50,6 +51,7 @@ _TOPIC_MAP: dict[str, tuple[str, str]] = {
     TOPIC_MATTER_CREATED: ("matter.created", "created"),
     TOPIC_FILE_APPENDED: ("matter.updated", "file_appended"),
     TOPIC_MENTION_APPENDED: ("matter.updated", "mention_appended"),
+    TOPIC_ANNOTATION_APPENDED: ("matter.updated", "annotation_appended"),
     TOPIC_MATTER_OWNER_CHANGED: ("matter.updated", "owner_changed"),
     TOPIC_MATTER_VISIBILITY_CHANGED: ("matter.updated", "visibility_changed"),
 }

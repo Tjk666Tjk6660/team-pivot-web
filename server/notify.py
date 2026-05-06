@@ -124,6 +124,19 @@ class Notifier(Protocol):
         dm_extra_open_ids: list[str] | None = None,
     ) -> None: ...
 
+    def notify_annotation(
+        self,
+        *,
+        category: str,
+        slug: str,
+        thread_title: str,
+        target_filename: str,
+        author_name: str,
+        annotation_type: str,
+        annotation_body: str,
+        stakeholder_open_ids: list[str],
+    ) -> None: ...
+
     def notify_application_created(
         self,
         *,
@@ -152,6 +165,7 @@ class NoOpNotifier:
     def notify_status_change(self, **_: object) -> None: pass
     def notify_owner_change(self, **_: object) -> None: pass
     def notify_standalone_mention(self, **_: object) -> None: pass
+    def notify_annotation(self, **_: object) -> None: pass
     def notify_application_created(self, **_: object) -> None: pass
     def notify_application_approved(self, **_: object) -> None: pass
     def notify_application_rejected(self, **_: object) -> None: pass
@@ -350,6 +364,31 @@ class FeishuNotifier:
                 dm_extra_open_ids, dm,
                 event=f"mention_stakeholder slug={slug} file={target_filename}",
             )
+
+    def notify_annotation(
+        self, *, category, slug, thread_title, target_filename,
+        author_name, annotation_type, annotation_body,
+        stakeholder_open_ids,
+    ) -> None:
+        """Annotation DMs are sent to file.creator / matter.owner /
+        matter.creator only. Distinct from notify_standalone_mention:
+        no group broadcast — annotations are evaluative, and a public
+        eval card invites pile-on. Keep it 1:1."""
+        if not stakeholder_open_ids:
+            return
+        post_url = self._post_url(category, slug, target_filename)
+        dm = build_annotation_dm_card(
+            author_name=author_name,
+            thread_title=thread_title,
+            target_filename=target_filename,
+            annotation_type=annotation_type,
+            annotation_body=annotation_body,
+            post_url=post_url,
+        )
+        self._dm_many(
+            stakeholder_open_ids, dm,
+            event=f"annotation slug={slug} file={target_filename}",
+        )
 
     def notify_status_change(
         self, *, category, slug, thread_title, from_state, to_state, author_name, reason,
@@ -739,6 +778,39 @@ def build_mention_on_your_file_dm_card(
     return _card_shell(
         header="有人在你关注的文件留下提醒",
         template="orange",
+        markdown="<br>".join(lines),
+        button_text="去查看",
+        thread_url=post_url,
+    )
+
+
+def build_annotation_dm_card(
+    *,
+    author_name: str,
+    thread_title: str,
+    target_filename: str,
+    annotation_type: str,
+    annotation_body: str,
+    post_url: str,
+) -> dict:
+    """DM card for inline stakeholders when someone writes an annotation
+    (a structured evaluation) on a file they care about.
+
+    Distinct from mention DM wording: annotations are evaluative ("评价"),
+    not free-form discussion. Header + body uses 评价 vocabulary so the
+    recipient can tell at a glance which kind of feedback this is. v1
+    only renders type=evaluation; future types (e.g. follow-up question)
+    can fork this builder."""
+    lines = [
+        f"**{author_name}** 评价了「{target_filename}」",
+        f"**主题**：{thread_title}",
+    ]
+    clean_body = _oneline(annotation_body)
+    if clean_body:
+        lines.append(f"**评价**：{clean_body}")
+    return _card_shell(
+        header="有人评价了你关注的文件",
+        template="purple",
         markdown="<br>".join(lines),
         button_text="去查看",
         thread_url=post_url,

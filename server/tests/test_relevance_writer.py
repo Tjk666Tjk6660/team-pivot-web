@@ -13,6 +13,7 @@ import pytest
 import yaml
 
 from server.events import (
+    TOPIC_ANNOTATION_APPENDED,
     TOPIC_FILE_APPENDED,
     TOPIC_MATTER_OWNER_CHANGED,
     TOPIC_MENTION_APPENDED,
@@ -643,3 +644,108 @@ def test_owner_changed_cleared_when_user_reads_a_file(
     # alice 打开任意一个文件
     relevance_repo.mark_all_read_for_file(alice_id, "m-x", "01-think.md")
     assert relevance_repo.unread_breakdown_per_matter(alice_id) == {}
+
+
+# ---------- annotation appended (Phase 6) ----------
+
+
+def test_annotation_appended_writes_rows_for_each_stakeholder(
+    workspace, users, relevance_repo, writer_installed,
+):
+    """publish 上游解析了三角色 stakeholder + 排自己 → writer 一视同仁地
+    给每个 stakeholder_open_id 写一条 kind=annotation 红点。"""
+    alice_id = _register_user(users, pinyin="alice")    # file.creator
+    charlie_id = _register_user(users, pinyin="charlie")  # matter.owner
+    _register_user(users, pinyin="bob")  # actor
+
+    emit(
+        TOPIC_ANNOTATION_APPENDED,
+        matter_id="m-x", actor="bob",
+        at="2026-04-28T13:00:00+08:00",
+        payload={
+            "target_file": "discussions/cat/m-x/01.md",
+            "type": "evaluation",
+            "body": "结构清楚",
+            "stakeholder_open_ids": [alice_id, charlie_id],
+        },
+    )
+
+    # Both stakeholders see a red dot. annotation kind is counted in the
+    # mention slot of unread_breakdown (matter-list level aggregation).
+    assert relevance_repo.unread_breakdown_per_matter(alice_id) == {"m-x": (0, 1)}
+    assert relevance_repo.unread_breakdown_per_matter(charlie_id) == {"m-x": (0, 1)}
+
+
+def test_annotation_appended_actor_self_excluded(
+    workspace, users, relevance_repo, writer_installed,
+):
+    """publish 已经在 _resolve_inline_stakeholders 里排了 actor，但 writer
+    再做一次 self-exclusion 兜底，避免上游疏漏导致作者自己收到红点。"""
+    bob_id = _register_user(users, pinyin="bob")
+
+    emit(
+        TOPIC_ANNOTATION_APPENDED,
+        matter_id="m-x", actor="bob",
+        at="2026-04-28T13:00:00+08:00",
+        payload={
+            "target_file": "discussions/cat/m-x/01.md",
+            "type": "evaluation",
+            "body": "我自己评价我自己",
+            "stakeholder_open_ids": [bob_id],
+        },
+    )
+
+    assert relevance_repo.unread_breakdown_per_matter(bob_id) == {}
+
+
+def test_annotation_appended_empty_stakeholders_writes_nothing(
+    workspace, users, relevance_repo, writer_installed,
+):
+    """无可达 stakeholder 时静默 — annotation 仍落 yaml，但不写红点。"""
+    _register_user(users, pinyin="alice")
+
+    emit(
+        TOPIC_ANNOTATION_APPENDED,
+        matter_id="m-x", actor="bob",
+        at="2026-04-28T13:00:00+08:00",
+        payload={
+            "target_file": "discussions/cat/m-x/01.md",
+            "type": "evaluation",
+            "body": "x",
+            "stakeholder_open_ids": [],
+        },
+    )
+
+    with relevance_repo._db.connect() as conn:
+        n = conn.execute("SELECT COUNT(*) FROM relevance_events").fetchone()[0]
+    assert n == 0
+
+
+def test_annotation_appended_kind_marker(
+    workspace, users, relevance_repo, writer_installed,
+):
+    """落表的 kind 必须是 'annotation' 字符串字面量 — 决定了未来
+    UI 拆分 mention vs annotation 红点的能力。"""
+    alice_id = _register_user(users, pinyin="alice")
+    _register_user(users, pinyin="bob")
+
+    emit(
+        TOPIC_ANNOTATION_APPENDED,
+        matter_id="m-x", actor="bob",
+        at="2026-04-28T13:00:00+08:00",
+        payload={
+            "target_file": "discussions/cat/m-x/01.md",
+            "type": "evaluation",
+            "body": "x",
+            "stakeholder_open_ids": [alice_id],
+        },
+    )
+
+    with relevance_repo._db.connect() as conn:
+        row = conn.execute(
+            "SELECT kind, reason FROM relevance_events"
+            " WHERE pivot_user_id = ?",
+            (alice_id,),
+        ).fetchone()
+    assert row[0] == "annotation"
+    assert row[1] == "annotation"

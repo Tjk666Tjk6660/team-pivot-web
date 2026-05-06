@@ -41,6 +41,7 @@ from server.publish import (
     MatterAlreadyExistsError,
     MatterNotFoundError,
     PublishError,
+    publish_matter_annotation,
     publish_matter_append,
     publish_matter_create,
     publish_matter_mention,
@@ -175,6 +176,39 @@ class MentionBody(BaseModel):
         # MentionBody's `targets` field is the same shape as MentionIn — apply
         # the same legacy-key rejection so old clients fail loudly.
         return _reject_legacy_mention_inner_key(data)
+
+
+# Phase 6: derived fields (AI-computed scoring inputs) explicitly NOT
+# client-writable in v1. The set is duplicated in matter_validator so the
+# writer-side schema rejects too — Pydantic guards the HTTP layer, the
+# writer guards every other entry path (MCP, direct calls, future bus
+# subscribers). Keep the two lists in sync.
+_ANNOTATION_FORBIDDEN_FIELDS = frozenset({
+    "weight", "rating", "dimension", "sentiment", "score_delta",
+})
+
+
+class AnnotationBody(BaseModel):
+    target_file: str = Field(min_length=1, max_length=500)
+    # Whitelist enforced inline; future flavors (e.g. follow-up question)
+    # require an explicit Literal bump rather than silent passthrough.
+    type: Literal["evaluation"] = Field(
+        description="Annotation flavor; v1 only supports 'evaluation'.",
+    )
+    body: str = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_derived_fields(cls, data):
+        if not isinstance(data, dict):
+            return data
+        bad = sorted(_ANNOTATION_FORBIDDEN_FIELDS & data.keys())
+        if bad:
+            raise ValueError(
+                f"annotation rejects derived field(s): {bad};"
+                " these are AI-computed and not client-writable in v1"
+            )
+        return data
 
 
 class FavoriteToggleBody(BaseModel):
@@ -731,6 +765,49 @@ def build_router(
             raise HTTPException(status_code=400, detail=str(e)) from e
         return result
 
+    @router.post("/matters/{matter_id}/annotations")
+    def append_annotation_route(
+        matter_id: str,
+        body: AnnotationBody,
+        user: PivotUser = Depends(current_user),
+    ):
+        require_profile(user)
+        data = read_matter_index(matter_index_path(workspace.index_dir, matter_id))
+        if data is None or not _can_read_matter(data, user, db, workspace):
+            raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
+        if not _can_write_matter(data, user, db, workspace):
+            raise HTTPException(status_code=403, detail={"code": "matter_write_forbidden"})
+        try:
+            result = publish_matter_annotation(
+                workspace, user,
+                matter_id=matter_id,
+                target_file=body.target_file,
+                type=body.type,
+                body=body.body,
+                notifier=notifier,
+                pivot_users=pivot_users,
+                bindings=bindings,
+            )
+        except MatterNotFoundError as e:
+            raise HTTPException(status_code=404, detail={"code": "matter_not_found"}) from e
+        except MatterIndexValidationError as e:
+            # Writer-side validator (matter_validator.validate_annotation) tripped.
+            # Pydantic catches most cases; this surfaces only on dict-bypass paths.
+            r = e.result
+            raise HTTPException(
+                status_code=422,
+                detail={"code": r.code, "field": r.field, "message": r.message},
+            ) from e
+        except ValueError as e:
+            # matter_index.append_annotation raises ValueError on missing target
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "annotation_target_not_found", "message": str(e)},
+            ) from e
+        except PublishError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return result
+
     return router
 
 
@@ -1096,6 +1173,7 @@ def _render_item(
     out.setdefault("quote", None)
     out.setdefault("refer", [])
     out.setdefault("mentions", [])
+    out.setdefault("annotations", [])
     out.setdefault("status_change", None)
     out["expanded"] = False
     out["body"] = _read_item_body(workspace, item.get("file") or "")
@@ -1128,6 +1206,20 @@ def _render_item(
             mm["body"] = resolve_text(mm["body"], resolver)
         resolved_mentions.append(mm)
     out["mentions"] = resolved_mentions
+    # Annotations: resolve author_display / author_view; no @-targets to
+    # render (annotations have no explicit recipient list — stakeholders
+    # are derived at write time and don't surface in the entry itself).
+    resolved_annotations = []
+    for a in out.get("annotations") or []:
+        aa = dict(a)
+        author = aa.get("author")
+        if author:
+            aa["author_display"] = resolve_id(author, resolver)
+            aa["author_view"] = author_view(author, resolver)
+        if aa.get("body"):
+            aa["body"] = resolve_text(aa["body"], resolver)
+        resolved_annotations.append(aa)
+    out["annotations"] = resolved_annotations
     return out
 
 

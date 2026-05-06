@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from server.matter_validator import OK, validate_append
+from server.matter_validator import (
+    ANNOTATION_BODY_MAX,
+    OK,
+    validate_annotation,
+    validate_append,
+)
 
 
 def _matter(status: str) -> dict:
@@ -358,3 +363,62 @@ def test_client_cannot_set_verifications_received_on_any_type():
             f"type={doc_type} should be rejected for verifications_received, "
             f"got {r}"
         )
+
+
+# ---------- annotations (Phase 6) ----------
+
+
+def test_annotation_evaluation_ok():
+    r = validate_annotation({"type": "evaluation", "body": "好"})
+    assert r == OK
+
+
+def test_annotation_unknown_type_rejected():
+    r = validate_annotation({"type": "follow_up_question", "body": "good?"})
+    assert not r.ok and r.code == "unknown_annotation_type"
+    assert r.field == "type"
+
+
+def test_annotation_missing_type_rejected():
+    r = validate_annotation({"body": "good"})
+    assert not r.ok and r.code == "type_missing"
+
+
+def test_annotation_empty_body_rejected():
+    r = validate_annotation({"type": "evaluation", "body": ""})
+    assert not r.ok and r.code == "body_too_short"
+
+
+def test_annotation_missing_body_rejected():
+    r = validate_annotation({"type": "evaluation"})
+    assert not r.ok and r.code == "body_required"
+
+
+def test_annotation_overlong_body_rejected():
+    r = validate_annotation({
+        "type": "evaluation",
+        "body": "x" * (ANNOTATION_BODY_MAX + 1),
+    })
+    assert not r.ok and r.code == "body_too_long"
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["weight", "rating", "dimension", "sentiment", "score_delta"],
+)
+def test_annotation_derived_field_rejected(field):
+    """Each AI-derived field must surface as derived_field_not_allowed.
+    These are intentionally NOT client-writable in v1 to prevent schema
+    anchoring before the AI scoring layer is designed."""
+    r = validate_annotation({"type": "evaluation", "body": "x", field: 1})
+    assert not r.ok
+    assert r.code == "derived_field_not_allowed"
+    assert r.field == field
+
+
+def test_annotation_non_dict_rejected():
+    """Defensive belt for callers that hand us a non-dict (e.g. a list
+    accidentally passed through MCP) — return a precise error instead of
+    KeyError."""
+    r = validate_annotation(["not", "a", "dict"])  # type: ignore[arg-type]
+    assert not r.ok and r.code == "annotation_not_object"

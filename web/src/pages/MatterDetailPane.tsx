@@ -36,7 +36,6 @@ import {
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import { AIPane } from "@/components/AIPane";
-import { CopyForAIButton } from "@/components/CopyForAIButton";
 import { useMarkdownStyle } from "@/components/markdown/MarkdownStyleProvider";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TimelineStrip } from "@/components/matter/TimelineStrip";
@@ -1005,7 +1004,6 @@ export function MatterDetailPane() {
                     可见范围
                   </Button>
                 )}
-                <CopyForAIButton matterId={matter.id} />
                 {matter_id && (
                   <Button
                     variant="ghost"
