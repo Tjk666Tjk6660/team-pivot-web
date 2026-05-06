@@ -140,6 +140,23 @@ export type TimelineMention = {
   mention_unread_for_me?: boolean;
 };
 
+/** Annotation = a structured evaluation attached to a file (Phase 6).
+ *
+ * Distinct from a mention: there are no @-targets, the body is the
+ * evaluation itself, and recipients are derived stakeholders rather than
+ * an explicit list. v1 only ships ``type='evaluation'``; future flavors
+ * (e.g. follow-up question) will require a server-side whitelist bump.
+ *
+ * No edit / delete on the wire — corrections come as fresh entries. */
+export type TimelineAnnotation = {
+  type: "evaluation";
+  author: string;
+  author_display?: string;
+  author_view?: AuthorView | null;
+  created_at: string;
+  body: string;
+};
+
 // File-level relevance reasons. Mention-level @-targets are tracked
 // separately via TimelineMention.mention_unread_for_me, not by this enum.
 export type FileRelevanceReason =
@@ -174,6 +191,7 @@ export type TimelineFileItem = {
   quote: string | null;
   refer: string[];
   mentions: TimelineMention[];
+  annotations: TimelineAnnotation[];
   status_change: StatusChange | null;
   expanded: boolean;
   body: string;
@@ -744,6 +762,30 @@ export async function appendMatterMention(
     throw new Error(detail);
   }
   return (await r.json()) as { item: TimelineItem };
+}
+
+export async function appendMatterAnnotation(
+  matterId: string,
+  body: { target_file: string; type: "evaluation"; body: string },
+): Promise<{ matter_id: string; target_file: string; at: string }> {
+  const r = await fetch(
+    `/api/matters/${encodeURIComponent(matterId)}/annotations`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!r.ok) {
+    await throwIfSessionExpired(r);
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    const detail = typeof d.detail === "string"
+      ? d.detail
+      : d.detail?.message || d.detail?.code || `append annotation failed: ${r.status}`;
+    throw new Error(detail);
+  }
+  return (await r.json()) as { matter_id: string; target_file: string; at: string };
 }
 
 export type WorkspaceStatus = {

@@ -31,6 +31,7 @@ from typing import Callable
 
 from server.events import (
     Event,
+    TOPIC_ANNOTATION_APPENDED,
     TOPIC_FILE_APPENDED,
     TOPIC_MATTER_OWNER_CHANGED,
     TOPIC_MENTION_APPENDED,
@@ -64,6 +65,8 @@ def install(
                 _handle_file_appended(workspace, users_repo, repo, event)
             elif event.topic == TOPIC_MENTION_APPENDED:
                 _handle_mention_appended(users_repo, bindings, repo, event)
+            elif event.topic == TOPIC_ANNOTATION_APPENDED:
+                _handle_annotation_appended(users_repo, bindings, repo, event)
             elif event.topic == TOPIC_MATTER_OWNER_CHANGED:
                 _handle_matter_owner_changed(users_repo, bindings, repo, event)
         except Exception:
@@ -174,6 +177,43 @@ def _handle_mention_appended(
     log.info(
         "relevance mention rows written matter=%s file=%s inserted=%d/%d",
         event.matter_id, filename, inserted, len(recipients),
+    )
+
+
+def _handle_annotation_appended(
+    users_repo: PivotUserRepo,
+    bindings: ExternalBindingRepo | None,
+    repo: RelevanceEventsRepo,
+    event: Event,
+) -> None:
+    payload = event.payload or {}
+    target_file = payload.get("target_file") or ""
+    stakeholder_open_ids = list(payload.get("stakeholder_open_ids") or [])
+    if not target_file or not stakeholder_open_ids:
+        return
+
+    filename = target_file.rsplit("/", 1)[-1]
+    actor_pinyin = str(event.actor or "")
+
+    inserted = 0
+    for recipient_id in stakeholder_open_ids:
+        target = _resolve_user_ref(str(recipient_id), users_repo, bindings)
+        if target is None:
+            continue
+        if target.pinyin and target.pinyin == actor_pinyin:
+            continue  # actor self-exclusion (publish helper already drops; defensive)
+        if repo.insert_annotation(
+            target.open_id,
+            event.matter_id,
+            filename,
+            annotation_at=event.at,
+            actor_pinyin=actor_pinyin,
+        ):
+            inserted += 1
+
+    log.info(
+        "relevance annotation rows written matter=%s file=%s inserted=%d/%d",
+        event.matter_id, filename, inserted, len(stakeholder_open_ids),
     )
 
 

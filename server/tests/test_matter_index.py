@@ -5,6 +5,7 @@ import yaml
 
 from server.matter_index import (
     ValidationError,
+    append_annotation,
     append_comment,
     append_file_item,
     apply_owner_change,
@@ -1024,3 +1025,93 @@ def test_apply_owner_change_yaml_key_order(tmp_path):
         idx = oc_block.find(marker)
         assert idx > last_idx, f"{marker} out of order"
         last_idx = idx
+
+
+# ---------- annotations (Phase 6) ----------
+
+
+def test_append_annotation_attaches_to_target_file(tmp_path):
+    path = _bootstrap(tmp_path)
+    target = "discussions/auth-redesign/001_dengke_think_aaa.md"
+    append_annotation(
+        path,
+        target_file=target,
+        annotation={"type": "evaluation", "body": "结构清楚", "author": "huang"},
+        now_iso="2026-04-23T11:00:00+08:00",
+    )
+    data = read_matter_index(path)
+    annotations = data["timeline"][0]["annotations"]
+    assert len(annotations) == 1
+    assert annotations[0] == {
+        "created_at": "2026-04-23T11:00:00+08:00",
+        "type": "evaluation",
+        "author": "huang",
+        "body": "结构清楚",
+    }
+
+
+def test_append_annotation_canonical_key_order_on_disk(tmp_path):
+    """v1 annotation key order: created_at → type → author → body.
+    Locked so a future careless edit to _canonical_annotation surfaces here."""
+    path = _bootstrap(tmp_path)
+    target = "discussions/auth-redesign/001_dengke_think_aaa.md"
+    # Pass keys in deliberately wrong order to confirm reorder works.
+    append_annotation(
+        path,
+        target_file=target,
+        annotation={
+            "body": "结构清楚",
+            "author": "huang",
+            "type": "evaluation",
+        },
+        now_iso="2026-04-23T11:00:00+08:00",
+    )
+    raw = path.read_text(encoding="utf-8")
+    block = raw.split("annotations:", 1)[1]
+    expected_order = ["created_at:", "type:", "author:", "body:"]
+    last_idx = -1
+    for marker in expected_order:
+        idx = block.find(marker)
+        assert idx > last_idx, f"{marker} out of order"
+        last_idx = idx
+
+
+def test_append_annotation_accumulates_multiple(tmp_path):
+    """Each annotation is a new entry — annotations[] grows monotonically.
+    No edit / delete path exists; corrections come as fresh entries."""
+    path = _bootstrap(tmp_path)
+    target = "discussions/auth-redesign/001_dengke_think_aaa.md"
+    for i, body in enumerate(["第一次评价", "改一下：第二次评价"]):
+        append_annotation(
+            path, target_file=target,
+            annotation={"type": "evaluation", "body": body, "author": "huang"},
+            now_iso=f"2026-04-23T11:0{i}:00+08:00",
+        )
+    annotations = read_matter_index(path)["timeline"][0]["annotations"]
+    assert [a["body"] for a in annotations] == ["第一次评价", "改一下：第二次评价"]
+
+
+def test_append_annotation_unknown_target_file_raises(tmp_path):
+    path = _bootstrap(tmp_path)
+    with pytest.raises(ValueError):
+        append_annotation(
+            path,
+            target_file="discussions/auth-redesign/does-not-exist.md",
+            annotation={"type": "evaluation", "body": "x", "author": "huang"},
+            now_iso="2026-04-23T11:00:00+08:00",
+        )
+
+
+def test_append_annotation_does_not_bump_matter_updated_at(tmp_path):
+    """Annotations are reflective metadata, not progress. matter.updated_at
+    must stay at whatever the last *file* event set it to."""
+    path = _bootstrap(tmp_path)
+    target = "discussions/auth-redesign/001_dengke_think_aaa.md"
+    before = read_matter_index(path)["matter"].get("updated_at")
+    append_annotation(
+        path, target_file=target,
+        annotation={"type": "evaluation", "body": "ok", "author": "huang"},
+        now_iso="2026-04-23T11:00:00+08:00",
+    )
+    after = read_matter_index(path)["matter"].get("updated_at")
+    assert after == before

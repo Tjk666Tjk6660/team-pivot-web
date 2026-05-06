@@ -8,6 +8,7 @@ log = logging.getLogger(__name__)
 
 from server.file_reads import FileReadRepo
 from server.events import (
+    TOPIC_ANNOTATION_APPENDED,
     TOPIC_FILE_APPENDED,
     TOPIC_MATTER_CREATED,
     TOPIC_MATTER_OWNER_CHANGED,
@@ -23,6 +24,7 @@ from server.index_files import (
 )
 from server.matter_index import (
     ValidationError as MatterIndexValidationError,
+    append_annotation as matter_append_annotation,
     append_comment as matter_append_comment,
     append_file_item as matter_append_file_item,
     apply_owner_change as matter_apply_owner_change,
@@ -30,6 +32,7 @@ from server.matter_index import (
     matter_index_path,
     read_matter_index,
 )
+from server.matter_validator import validate_annotation
 from server.visibility_scopes import CategoryVisibilityScope, VisibilityScope
 from server.visibility_store import write_category_visibility
 from server.notify import Notifier
@@ -1098,6 +1101,107 @@ def publish_matter_mention(
             mention_open_ids=notify_open_ids,
             mention_comments=body,
             dm_extra_open_ids=dm_stakeholder_open_ids or None,
+        )
+
+    return {"matter_id": matter_id, "target_file": target_file, "at": now}
+
+
+def publish_matter_annotation(
+    workspace: Workspace,
+    user: PivotUser,
+    *,
+    matter_id: str,
+    target_file: str,
+    type: str,
+    body: str,
+    notifier: Notifier | None = None,
+    pivot_users: PivotUserRepo | None = None,
+    bindings: ExternalBindingRepo | None = None,
+) -> dict:
+    """Append an annotation (a structured evaluation) to a timeline file.
+
+    Distinct from a mention: there are no @-targets, the body is the
+    evaluation itself, and the only recipients are the inline stakeholders
+    (file.creator + matter.owner + matter.creator) — they get a DM only,
+    no group card. v1 only supports adding; there is no edit / delete.
+
+    Author and ``created_at`` are injected by this function — clients
+    cannot supply them. Type is gated by ``matter_validator`` whitelist
+    so a future flavor (e.g. follow-up question) requires an explicit
+    schema bump rather than silent passthrough.
+    """
+    if not user.pinyin:
+        raise PublishError("profile setup required")
+
+    annotation = {
+        "type": type,
+        "body": body,
+        "author": user.pinyin,
+    }
+    # Writer-side schema gate. Mirrors the API Pydantic guard so a dict
+    # bypassing the route still cannot land derived fields on disk.
+    result = validate_annotation(annotation)
+    if not result.ok:
+        raise MatterIndexValidationError(result)
+
+    index_path = matter_index_path(workspace.index_dir, matter_id)
+    data = read_matter_index(index_path)
+    if data is None:
+        raise MatterNotFoundError(matter_id)
+
+    # No explicit @-targets in annotations — the recipients ARE the three
+    # stakeholders. Reuse Phase-3's helper so notify / relevance behavior
+    # exactly matches the mention path (any future fix to stakeholder
+    # resolution propagates to both flows).
+    stakeholder_open_ids = _resolve_inline_stakeholders(
+        data, target_file, actor=user, pivot_users=pivot_users, bindings=bindings,
+    )
+
+    now = _now_iso()
+    with workspace.write_session(
+        message=f"chore: annotation on {matter_id}",
+        author_name=user.name,
+        author_email=f"{user.pinyin}@pivot.local",
+    ):
+        matter_append_annotation(
+            index_path,
+            target_file=target_file,
+            annotation=annotation,
+            now_iso=now,
+        )
+
+    emit(
+        TOPIC_ANNOTATION_APPENDED,
+        matter_id=matter_id,
+        actor=user.pinyin,
+        at=now,
+        payload={
+            "target_file": target_file,
+            "type": type,
+            "body": body,
+            "stakeholder_open_ids": stakeholder_open_ids,
+        },
+    )
+
+    # DM-only — annotations are not group-broadcast (product decision: a
+    # public evaluation card invites pile-on; keep it 1:1 between author
+    # and stakeholders). Filter to feishu open_ids; non-feishu refs still
+    # get a relevance row above.
+    dm_stakeholder_open_ids = [
+        ref for ref in stakeholder_open_ids if ref.startswith(("ou_", "on_"))
+    ]
+    if notifier is not None and dm_stakeholder_open_ids:
+        matter_meta = data.get("matter") or {}
+        matter_title = matter_meta.get("title") or matter_id
+        category = _derive_category_from_timeline(data) or "matters"
+        target_basename = (target_file or "").rsplit("/", 1)[-1] or target_file
+        notifier.notify_annotation(
+            category=category, slug=matter_id, thread_title=matter_title,
+            target_filename=target_basename,
+            author_name=user.name,
+            annotation_type=type,
+            annotation_body=body,
+            stakeholder_open_ids=dm_stakeholder_open_ids,
         )
 
     return {"matter_id": matter_id, "target_file": target_file, "at": now}

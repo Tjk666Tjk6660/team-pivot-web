@@ -5,6 +5,8 @@ import remarkGfm from "remark-gfm";
 import { MermaidBlock } from "./MermaidBlock";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
+
+import { AnnotationPopover } from "./AnnotationDialog";
 import {
   markFileRead,
   type DocType,
@@ -15,7 +17,6 @@ import {
   type TimelineFileItem,
 } from "@/api";
 import { Button } from "@/components/ui/button";
-import { CopyForAIButton } from "@/components/CopyForAIButton";
 import {
   MentionField,
   emptyMention,
@@ -291,7 +292,14 @@ export function FileCard({
           </span>
           <RelevanceChip reason={item.relevance_reason} />
         </div>
-        <MentionPopover onSubmit={onAddComment} align="right" />
+        <div className="flex items-center gap-1.5">
+          <AnnotationPopover
+            matterId={matterId}
+            targetFile={item.file}
+            align="right"
+          />
+          <MentionPopover onSubmit={onAddComment} align="right" />
+        </div>
       </div>
       <div className="mt-1 break-all font-mono text-xs text-[var(--text-soft)]">
         {shortFile(item.file)}
@@ -426,6 +434,11 @@ export function FileCard({
       {/* mentions (read-only; "添加评论" was removed — use the @ 提及 button at the top to leave a note instead) */}
       <CommentsBlock item={item} />
 
+      {/* annotations (Phase 6, evaluation entries). Read-only; v1 has no
+          edit / delete — corrections come as fresh entries. Visually
+          separated from mentions so users don't conflate the two. */}
+      <AnnotationsBlock item={item} />
+
       <ReadersRow readers={readers} />
 
       {/* 三入口 */}
@@ -448,7 +461,6 @@ export function FileCard({
           active={activeType === "verify"}
           onClick={() => onCreate("verify", item.file)}
         />
-        <CopyForAIButton matterId={matterId} filePath={item.file} />
         <div className="ml-auto text-[10px] text-[var(--text-fade)]">
           点按钮 · 新文件 quote 自动写入{" "}
           <span className="font-mono">{shortFile(item.file)}</span>
@@ -671,6 +683,61 @@ function CommentsBlock({ item }: { item: TimelineFileItem }) {
               ) : (
                 <span className="ml-0.5 text-[var(--text-fade)]">
                   未填写提及内容
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+
+/** Read-only render of annotations attached to a file (Phase 6).
+ *
+ * Visually distinct from CommentsBlock: left rule + neutral chip color
+ * so users don't confuse "提及"(讨论) with "评价"(评估). v1 has no edit /
+ * delete affordance — there is intentionally no "X" button on each row.
+ * If the user wrote one in error, the recourse is to add a new
+ * annotation that corrects it; the original stays as audit trail. */
+function AnnotationsBlock({ item }: { item: TimelineFileItem }) {
+  if (!item.annotations || item.annotations.length === 0) return null;
+
+  return (
+    <div className="mt-3 border-l-2 border-[var(--line)] pl-3">
+      <ul className="space-y-2">
+        {item.annotations.map((a, i) => {
+          const author =
+            ((a.author_display || a.author) ?? "").trim() || "未知用户";
+          const body = a.body?.trim();
+          return (
+            <li
+              key={i}
+              className="rounded-[var(--r-sm)] bg-[var(--surface-alt)] px-3 py-2 text-[12.5px] leading-6 text-[var(--text-soft)]"
+            >
+              <span className="inline-flex items-center rounded-full border border-[var(--line)] bg-[var(--surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-soft)]">
+                评价{i + 1}
+              </span>
+              <span
+                className="ml-1 text-[var(--text-fade)]"
+                title={formatFullDateTime(a.created_at)}
+              >
+                · {relativeTime(a.created_at)}
+              </span>
+              <span
+                className={`ml-2 font-semibold text-[var(--text)] ${userClassName(a.author_view?.status ?? "active")}`}
+                title={userTooltip(a.author_view?.status ?? "active") ?? undefined}
+                style={userInlineStyle(a.author_view?.status ?? "active")}
+              >
+                {author}
+              </span>
+              <span className="ml-1 text-[var(--text-mute)]">评价:</span>
+              {body ? (
+                <span className="ml-0.5">{body}</span>
+              ) : (
+                <span className="ml-0.5 text-[var(--text-fade)]">
+                  未填写评价内容
                 </span>
               )}
             </li>

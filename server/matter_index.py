@@ -27,6 +27,7 @@ _ITEM_KEY_ORDER = (
     "verifications_received",
     "outcome",
     "mentions",
+    "annotations",
     "status_change",
 )
 
@@ -326,6 +327,43 @@ def append_comment(
     raise ValueError(f"target_file not found in timeline: {target_file!r}")
 
 
+def append_annotation(
+    path: Path,
+    *,
+    target_file: str,
+    annotation: dict[str, Any],
+    now_iso: str,
+) -> None:
+    """Append an annotation (a structured evaluation) to a timeline item.
+
+    Annotations sit alongside mentions on a file but carry distinct
+    semantics: they are author-attributed evaluations of the file (think
+    "good think file" / "skipped a verify step"), not free-form discussion.
+    v1 only supports adding — there is no edit / delete on the writer side
+    (and intentionally no API or MCP path to delete one either). A wrong
+    annotation is corrected by writing a *new* annotation; the original
+    stays as audit trail.
+
+    Like ``append_comment``, this does NOT bump ``matter.updated_at`` —
+    annotations are reflective metadata, not matter progress. Callers
+    must pass an annotation dict already validated by ``matter_validator``
+    (writer schema rejects derived fields like ``weight`` / ``rating``
+    even if they slip past the API Pydantic guard).
+    """
+    p = Path(path)
+    data = read_matter_index(p)
+    if data is None:
+        raise FileNotFoundError(p)
+    for entry in data.get("timeline") or []:
+        if entry.get("file") == target_file:
+            a = dict(annotation)
+            a.setdefault("created_at", now_iso)
+            entry.setdefault("annotations", []).append(_canonical_annotation(a))
+            _atomic_write_yaml(p, data)
+            return
+    raise ValueError(f"target_file not found in timeline: {target_file!r}")
+
+
 # ---------- internals ----------
 
 
@@ -352,6 +390,8 @@ def _normalize_item(item: dict[str, Any], *, now_iso: str) -> dict[str, Any]:
         out["mentions"] = out.pop("comments")
     if out.get("mentions"):
         out["mentions"] = [_canonical_mention(c) for c in out["mentions"]]
+    if out.get("annotations"):
+        out["annotations"] = [_canonical_annotation(a) for a in out["annotations"]]
     return _reorder(out, _ITEM_KEY_ORDER)
 
 
@@ -362,6 +402,14 @@ def _canonical_mention(c: dict[str, Any]) -> dict[str, Any]:
     if "targets" not in out and "mentions" in out:
         out["targets"] = out.pop("mentions")
     return _reorder(out, ("created_at", "body", "targets"))
+
+
+def _canonical_annotation(a: dict[str, Any]) -> dict[str, Any]:
+    """Order keys for an annotation entry. v1 layout pinned at
+    ``created_at, type, author, body`` — other (e.g. derived) keys are
+    rejected by ``matter_validator``; if any sneak through they get
+    appended after this canonical prefix per ``_reorder`` semantics."""
+    return _reorder(dict(a), ("created_at", "type", "author", "body"))
 
 
 def _reorder(d: dict[str, Any], key_order: tuple[str, ...]) -> dict[str, Any]:

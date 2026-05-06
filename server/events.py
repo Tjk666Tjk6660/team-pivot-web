@@ -12,6 +12,7 @@ log = logging.getLogger(__name__)
 TOPIC_MATTER_CREATED = "matter.created"
 TOPIC_FILE_APPENDED = "matter.file_appended"
 TOPIC_MENTION_APPENDED = "matter.mention_appended"
+TOPIC_ANNOTATION_APPENDED = "matter.annotation_appended"
 TOPIC_STATUS_CHANGED = "matter.status_changed"
 TOPIC_RESULT_CREATED = "matter.result_created"
 TOPIC_MATTER_OWNER_CHANGED = "matter.owner_changed"

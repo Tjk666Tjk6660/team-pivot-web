@@ -8,6 +8,7 @@ from server.db import Database
 
 KIND_FILE = "file"
 KIND_MENTION = "mention"
+KIND_ANNOTATION = "annotation"
 # Stored value preserved across the comments → mentions rename: the DB
 # already has many historical rows with reason='comment_mention', and
 # rewriting them all would be a migration with no behavioral payoff.
@@ -15,6 +16,10 @@ KIND_MENTION = "mention"
 # pre-rename "comment with @-mention".
 REASON_COMMENT_MENTION = "comment_mention"
 REASON_MATTER_OWNER_CHANGED = "matter_owner_changed"
+# Reason for kind='annotation' rows. Distinct from REASON_COMMENT_MENTION so
+# the inbox UI / counters can later split "@ 你" vs "评价了你的文件" if
+# product wants different badges; v1 they share kind aggregation.
+REASON_ANNOTATION = "annotation"
 
 # Matter-level events (e.g. owner transfer) aren't tied to a specific file,
 # but the schema requires a filename. Use empty string as the sentinel:
@@ -119,6 +124,30 @@ class RelevanceEventsRepo:
             reason, event_at, actor_pinyin, read_at,
         )
 
+    def insert_annotation(
+        self,
+        pivot_user_id: str,
+        matter_id: str,
+        filename: str,
+        *,
+        annotation_at: str,
+        actor_pinyin: str,
+        read_at: float | None = None,
+    ) -> bool:
+        """INSERT OR IGNORE a kind='annotation' row. Distinct kind from
+        'mention' so future UI can split "@ 你" vs "评价了你的文件" if
+        product wants different badges; v1 the matter-level unread
+        breakdown counts both flavors together (see
+        ``unread_breakdown_per_matter``).
+
+        ``annotation_at`` is the annotation's created_at ISO string;
+        ``actor_pinyin`` is the annotation author's pinyin. ``read_at`` —
+        see ``insert_file`` (None = unread)."""
+        return self._insert_or_ignore(
+            pivot_user_id, matter_id, filename, KIND_ANNOTATION,
+            REASON_ANNOTATION, annotation_at, actor_pinyin, read_at,
+        )
+
     def _insert_or_ignore(
         self,
         pivot_user_id: str,
@@ -186,8 +215,9 @@ class RelevanceEventsRepo:
         filename: str,
     ) -> int:
         """Mark every unread row on (user, matter, filename) as read.
-        Returns the number of rows updated. Both kind='file' and
-        kind='mention' rows on this file are touched.
+        Returns the number of rows updated. All row kinds on this file
+        are touched (kind='file', 'mention', 'annotation') — opening the
+        file is treated as engagement with everything attached to it.
 
         Also clears matter-level event rows (filename=MATTER_EVENT_FILENAME)
         for the same (user, matter): owner-transfer notifications have no
@@ -211,12 +241,20 @@ class RelevanceEventsRepo:
         self, pivot_user_id: str,
     ) -> dict[str, tuple[int, int]]:
         """Returns {matter_id: (red_files_count, red_mentions_count)} for
-        every matter with at least one unread row for the user."""
+        every matter with at least one unread row for the user.
+
+        ``kind='annotation'`` rows are counted alongside ``kind='mention'``
+        in the second slot — at the matter-list level the user just sees
+        "this matter wants attention", and splitting by mention vs
+        annotation flavor only matters in detail. Future UI can break
+        them out into separate counters without touching this writer
+        contract."""
         with self._db.connect() as conn:
             rows = conn.execute(
                 "SELECT matter_id,"
-                "       SUM(CASE WHEN kind='file'    THEN 1 ELSE 0 END) AS files,"
-                "       SUM(CASE WHEN kind='mention' THEN 1 ELSE 0 END) AS mentions"
+                "       SUM(CASE WHEN kind='file' THEN 1 ELSE 0 END) AS files,"
+                "       SUM(CASE WHEN kind IN ('mention','annotation')"
+                "                THEN 1 ELSE 0 END) AS mentions"
                 "  FROM relevance_events"
                 " WHERE pivot_user_id = ? AND read_at IS NULL"
                 " GROUP BY matter_id",

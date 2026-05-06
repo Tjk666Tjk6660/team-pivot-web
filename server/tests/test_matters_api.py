@@ -1506,3 +1506,142 @@ def test_get_matter_detail_includes_readers(client):
     # file2 unaffected (still just the auto-marked author).
     assert by_basename[file2]["readers_count"] == 1
     assert by_basename[file2]["readers"][0]["open_id"] == "ou_1"
+
+
+# ---------- annotations (Phase 6) ----------
+
+
+def test_append_annotation_happy_path(client, event_bucket):
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+    target = r.json()["initial_timeline_item"]["file"]
+
+    r2 = client.post(f"/api/matters/{matter_id}/annotations", json={
+        "target_file": target,
+        "type": "evaluation",
+        "body": "结构清楚",
+    })
+    assert r2.status_code == 200, r2.text
+
+    detail = client.get(f"/api/matters/{matter_id}").json()
+    annotations = detail["timeline"][0]["annotations"]
+    assert len(annotations) == 1
+    a = annotations[0]
+    assert a["type"] == "evaluation"
+    assert a["body"] == "结构清楚"
+    assert a["author"] == "dengke"
+    # _render_item enriches with display + view
+    assert "author_display" in a
+    assert "author_view" in a
+
+    # SSE event emitted
+    assert any(e.topic == "matter.annotation_appended" for e in event_bucket)
+
+
+def test_append_annotation_unknown_type_rejected(client):
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+    target = r.json()["initial_timeline_item"]["file"]
+
+    r2 = client.post(f"/api/matters/{matter_id}/annotations", json={
+        "target_file": target,
+        "type": "follow_up_question",  # not in v1 whitelist
+        "body": "x",
+    })
+    assert r2.status_code == 422, r2.text
+
+
+def test_append_annotation_empty_body_rejected(client):
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+    target = r.json()["initial_timeline_item"]["file"]
+
+    r2 = client.post(f"/api/matters/{matter_id}/annotations", json={
+        "target_file": target,
+        "type": "evaluation",
+        "body": "",
+    })
+    assert r2.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("weight", 1.0),
+        ("rating", 5),
+        ("dimension", "quality"),
+        ("sentiment", "positive"),
+        ("score_delta", 0.5),
+    ],
+)
+def test_append_annotation_derived_field_rejected(client, field, value):
+    """Pydantic guard: each AI-derived field surfaces as 422 with the
+    standard validation-error shape. Mirrors writer-side validate_annotation."""
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+    target = r.json()["initial_timeline_item"]["file"]
+
+    r2 = client.post(f"/api/matters/{matter_id}/annotations", json={
+        "target_file": target,
+        "type": "evaluation",
+        "body": "x",
+        field: value,
+    })
+    assert r2.status_code == 422
+    body = r2.json()
+    assert "derived field" in str(body).lower()
+
+
+def test_append_annotation_missing_target_file_returns_404(client):
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+
+    r2 = client.post(f"/api/matters/{matter_id}/annotations", json={
+        "target_file": "discussions/Pivot/" + matter_id + "/does-not-exist.md",
+        "type": "evaluation",
+        "body": "x",
+    })
+    assert r2.status_code == 404
+    body = r2.json()
+    assert body["detail"]["code"] == "annotation_target_not_found"
+
+
+def test_no_delete_annotation_route_exists(client):
+    """v1 contract: annotations are append-only. A DELETE route would
+    weaken audit semantics + open up "the eval was deleted" disputes.
+    Confirms routing returns 405 (route exists but method not allowed)
+    or 404 (route doesn't exist) rather than 200 — both prove the
+    operation isn't reachable."""
+    r = client.post("/api/matters", json={
+        "category": "Pivot", "title": "T",
+        "initial_file": {"type": "think", "summary": "s", "body": ""},
+    })
+    matter_id = r.json()["matter_id"]
+    target = r.json()["initial_timeline_item"]["file"]
+    r2 = client.post(f"/api/matters/{matter_id}/annotations", json={
+        "target_file": target, "type": "evaluation", "body": "x",
+    })
+    assert r2.status_code == 200
+
+    # Try DELETE on the collection — should be 404 or 405
+    r_del = client.delete(f"/api/matters/{matter_id}/annotations")
+    assert r_del.status_code in (404, 405), r_del.status_code
+
+    # Try DELETE on an item-style path
+    r_del_item = client.delete(f"/api/matters/{matter_id}/annotations/0")
+    assert r_del_item.status_code in (404, 405), r_del_item.status_code

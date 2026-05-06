@@ -10,6 +10,7 @@ from __future__ import annotations
 from server.api.matters_events import _make_sse_event
 from server.events import (
     Event,
+    TOPIC_ANNOTATION_APPENDED,
     TOPIC_FILE_APPENDED,
     TOPIC_MATTER_CREATED,
     TOPIC_MATTER_VISIBILITY_CHANGED,
@@ -59,6 +60,16 @@ def test_make_sse_event_maps_visibility_changed_to_updated():
     assert sse is not None
     assert sse["event"] == "matter.updated"
     assert sse["data"]["reason"] == "visibility_changed"
+
+
+def test_make_sse_event_maps_annotation_appended_to_updated():
+    """Annotation events ride the same matter.updated SSE name so the
+    frontend's existing matter-list refetch on `matter.updated` covers
+    the new path without a new subscription wire."""
+    sse = _make_sse_event(_evt(TOPIC_ANNOTATION_APPENDED))
+    assert sse is not None
+    assert sse["event"] == "matter.updated"
+    assert sse["data"]["reason"] == "annotation_appended"
 
 
 def test_make_sse_event_drops_status_changed_and_result():
