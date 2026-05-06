@@ -97,7 +97,7 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
                     "Filters: `status` accepts planning/executing/paused/"
                     "finished/reviewed/cancelled; `owner` accepts pinyin "
                     "(e.g. 'dengke'); `q` does fuzzy title search; "
-                    "`filter='mine'` keeps only matters with red unread > 0 "
+                    "`filter='mine'` keeps only matters with unread items relevant to you"
                     "(\"我的待办\" / \"我有未读吗\" / \"看看跟我相关的\" / "
                     "\"what's pending for me\" / \"matters with my unread\"). "
                     "Note: `filter='mine'` is NOT \"matters I created/own\" — "
