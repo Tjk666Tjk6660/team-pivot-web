@@ -326,6 +326,27 @@ class PivotUserRepo:
             rows = conn.execute(sql, params).fetchall()
         return [_row_to_user(r) for r in rows]
 
+    def list_by_name_or_pinyin_exact(self, value: str) -> list[PivotUser]:
+        """Exact-match lookup for @-mention resolution from MCP / publish path.
+
+        Replaces the legacy ``ContactRepo.lookup_candidates`` exact-match
+        branch (name / en_name / pinyin). pivot_user has no en_name column,
+        so we match against display_name + pinyin only — both COLLATE NOCASE
+        for forgiving "ZhangBo" vs "zhangbo" input. Returns a list because
+        display_name is not unique by schema; callers MUST handle
+        ambiguity rather than silently picking the first row.
+        """
+        if not value:
+            return []
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM pivot_user"
+                " WHERE display_name = ? COLLATE NOCASE"
+                "    OR pinyin = ? COLLATE NOCASE",
+                (value, value),
+            ).fetchall()
+        return [_row_to_user(r) for r in rows]
+
     def search_mentionable(
         self,
         *,

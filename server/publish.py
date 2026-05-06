@@ -6,7 +6,6 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-from server.contacts import ContactRepo
 from server.file_reads import FileReadRepo
 from server.events import (
     TOPIC_COMMENT_APPENDED,
@@ -42,7 +41,7 @@ from server.threads import (
     sanitize_slug,
 )
 from server.external_bindings import ExternalBindingRepo
-from server.pivot_users import PivotUserRepo
+from server.pivot_users import PivotUser, PivotUserRepo
 from server.users import User, UserRepo
 from server.workspace import Workspace
 
@@ -68,7 +67,8 @@ def publish_proposal(
     body: str,
     mention_open_ids: list[str] | None = None,
     mention_comments: str | None = None,
-    contacts: ContactRepo | None = None,
+    pivot_users: PivotUserRepo | None = None,
+    bindings: ExternalBindingRepo | None = None,
     notifier: Notifier | None = None,
 ) -> dict:
     if not user.pinyin:
@@ -84,7 +84,9 @@ def publish_proposal(
     )
     fm = {"type": "proposal", "author": user.pinyin, "created": now}
     final_body = _ensure_h1(body, title)
-    mention_block = _resolve_mentions(mention_open_ids, mention_comments, contacts)
+    mention_block = _resolve_mentions(
+        mention_open_ids, mention_comments, pivot_users, bindings,
+    )
 
     with workspace.write_session(
         message=f"feat: new discussion - {title}",
@@ -124,7 +126,8 @@ def publish_reply(
     body: str,
     mention_open_ids: list[str] | None = None,
     mention_comments: str | None = None,
-    contacts: ContactRepo | None = None,
+    pivot_users: PivotUserRepo | None = None,
+    bindings: ExternalBindingRepo | None = None,
     notifier: Notifier | None = None,
     reply_to: str | None = None,
     references: list[str] | None = None,
@@ -143,7 +146,9 @@ def publish_reply(
         user.pinyin, category, slug, filename,
     )
     fm = {"type": "reply", "author": user.pinyin, "created": now}
-    mention_block = _resolve_mentions(mention_open_ids, mention_comments, contacts)
+    mention_block = _resolve_mentions(
+        mention_open_ids, mention_comments, pivot_users, bindings,
+    )
 
     with workspace.write_session(
         message=f"chore: reply to {slug}",
@@ -186,7 +191,8 @@ def add_standalone_mention(
     target_filename: str,
     mention_open_ids: list[str],
     mention_comments: str,
-    contacts: ContactRepo | None = None,
+    pivot_users: PivotUserRepo | None = None,
+    bindings: ExternalBindingRepo | None = None,
     notifier: Notifier | None = None,
 ) -> dict:
     if not user.pinyin:
@@ -201,7 +207,9 @@ def add_standalone_mention(
         raise PublishError("target post not found")
 
     now = _now_iso()
-    mention_block = _resolve_mentions(mention_open_ids, mention_comments, contacts)
+    mention_block = _resolve_mentions(
+        mention_open_ids, mention_comments, pivot_users, bindings,
+    )
     assert mention_block is not None
 
     with workspace.write_session(
@@ -233,19 +241,55 @@ def add_standalone_mention(
 def _resolve_mentions(
     open_ids: list[str] | None,
     comments: str | None,
-    contacts: ContactRepo | None,
+    pivot_users: PivotUserRepo | None = None,
+    bindings: ExternalBindingRepo | None = None,
 ) -> dict | None:
     if not open_ids:
         return None
     users: list[dict] = []
-    resolved = contacts.get_many(open_ids) if contacts else {}
     for oid in open_ids:
-        c = resolved.get(oid)
-        users.append({"user": c.name if c else oid, "open_id": oid})
+        name = oid
+        if pivot_users is not None and bindings is not None:
+            b = bindings.lookup_any_provider(oid)
+            if b is not None:
+                u = pivot_users.get(b.pivot_user_id)
+                if u is not None:
+                    name = u.display_name
+        users.append({"user": name, "open_id": oid})
     block: dict = {"users": users}
     if comments:
         block["comments"] = comments
     return block
+
+
+def _lookup_pivot_user_candidates(
+    ref: str,
+    pivot_users: PivotUserRepo,
+    bindings: ExternalBindingRepo,
+) -> list[tuple[PivotUser, str | None]]:
+    """Resolve a user reference (ULID / open_id / pinyin / display_name) to
+    pivot_user candidates. Returns ``[(user, feishu_open_id_or_None), ...]``.
+
+    Replaces ContactRepo.lookup_candidates: pivot_user + external_binding is
+    now the canonical source. The 4-step probe mirrors the legacy contact
+    chain (id → binding → pinyin → name) but without going through contacts.
+    """
+    if not ref:
+        return []
+    u = pivot_users.get(ref)
+    if u is not None:
+        return [(u, _get_feishu_open_id_for_user(u.id, bindings))]
+    b = bindings.lookup_any_provider(ref)
+    if b is not None:
+        u = pivot_users.get(b.pivot_user_id)
+        if u is not None:
+            feishu_oid = (
+                b.external_id if b.provider == "feishu"
+                else _get_feishu_open_id_for_user(u.id, bindings)
+            )
+            return [(u, feishu_oid)]
+    matches = pivot_users.list_by_name_or_pinyin_exact(ref)
+    return [(u, _get_feishu_open_id_for_user(u.id, bindings)) for u in matches]
 
 
 def _resolve_mentions_for_index(
@@ -281,20 +325,19 @@ def _normalize_mentions_to_pivot_user_ids(
     refs: list[str] | None,
     pivot_users: PivotUserRepo,
     bindings: ExternalBindingRepo,
-    contacts: ContactRepo | None = None,
 ) -> list[str] | None:
     """Per design §7.1.1: resolve any inbound mention reference (ULID,
-    feishu open_id, or contact name/pinyin) to ``pivot_user.id`` for
+    feishu open_id, or pinyin / display_name) to ``pivot_user.id`` for
     persistence in matter index / frontmatter.
 
-    Resolution order matches the read-side ``DisplayResolver``:
-      1. direct ULID hit on ``pivot_user`` — frontend new-version controls
-         already submit ULIDs
-      2. feishu open_id → external_binding → pivot_user.id
-      3. contact name/pinyin → ContactRepo lookup → open_id → binding
-      4. unresolved (external feishu user with no binding yet) → preserve
-         the original open_id string; the read-side resolver will fall
-         back to ``contacts`` and render a name + status='unknown'
+    Resolution order:
+      1. direct ULID hit on ``pivot_user``
+      2. feishu open_id / union_id → external_binding → pivot_user.id
+      3. exact pinyin / display_name match → pivot_user.id (single match
+         only; ambiguous matches preserve the original ref so callers
+         can disambiguate elsewhere)
+      4. unresolved → preserve the original string; the read-side
+         resolver echoes it back with status='unknown'
 
     Returns ``None`` for empty input so callers can drop the field cleanly.
     """
@@ -312,14 +355,10 @@ def _normalize_mentions_to_pivot_user_ids(
         if b is not None:
             out.append(b.pivot_user_id)
             continue
-        if contacts is not None and not ref.startswith(("ou_", "on_")):
-            cands = contacts.lookup_candidates(ref)
+        if not ref.startswith(("ou_", "on_")):
+            cands = pivot_users.list_by_name_or_pinyin_exact(ref)
             if len(cands) == 1:
-                resolved = bindings.lookup_any_provider(cands[0].open_id)
-                if resolved is not None:
-                    out.append(resolved.pivot_user_id)
-                    continue
-                out.append(cands[0].open_id)
+                out.append(cands[0].id)
                 continue
         out.append(ref)
     return out
@@ -361,7 +400,8 @@ def _ulids_to_feishu_open_ids(
 def _resolve_comments_mentions(
     comments: list[dict] | None,
     users: UserRepo | None,
-    contacts: ContactRepo | None,
+    pivot_users: PivotUserRepo | None,
+    bindings: ExternalBindingRepo | None,
     *,
     author: str,
 ) -> list[dict] | None:
@@ -372,10 +412,9 @@ def _resolve_comments_mentions(
     - resolve each comment's mentions[] via _resolve_mentions_for_index.
     Returns a new list; does not mutate input.
 
-    Note: Web 前端 MentionField 总是发真 open_id；MCP 客户端可能直接发 name/
-    pinyin。先经 contacts 转成 open_id，再走"已注册→pinyin / 未注册→保留
-    open_id"的分流，否则未注册联系人的拼音会被原样落盘、渲染兜底成拼音。
-    与 publish_matter_comment 的做法一致。"""
+    MCP clients may send display_name / pinyin instead of open_id; we
+    funnel through ``_resolve_mention_strings_to_open_ids`` so the index
+    always stores pinyin (registered) or open_id (unregistered)."""
     if not comments:
         return comments
     out: list[dict] = []
@@ -383,7 +422,9 @@ def _resolve_comments_mentions(
         cc = dict(c)
         cc["author"] = author
         if cc.get("mentions"):
-            open_ids = _resolve_mention_strings_to_open_ids(cc["mentions"], contacts)
+            open_ids = _resolve_mention_strings_to_open_ids(
+                cc["mentions"], pivot_users, bindings,
+            )
             cc["mentions"] = _resolve_mentions_for_index(open_ids, users)
         out.append(cc)
     return out
@@ -404,49 +445,58 @@ class AmbiguousMentionError(PublishError):
 
 def _resolve_mention_strings_to_open_ids(
     values: list[str] | None,
-    contacts: ContactRepo | None,
+    pivot_users: PivotUserRepo | None,
+    bindings: ExternalBindingRepo | None,
 ) -> list[str]:
-    """Convert any user-supplied mention strings (open_id / union_id / name /
-    en_name) to actual Feishu open_ids for the notifier.
+    """Convert user-supplied mention strings (open_id / pinyin / display_name)
+    into Feishu open_ids for the notifier.
 
-    Web's MentionField always emits real open_ids, so this used to be a no-op
-    pass-through — but MCP tools accept name/en_name from AI, and the Feishu
-    notifier silently dropped every DM whose `<at id="…">` payload wasn't a
-    real open_id. We resolve via ContactRepo (the table also covers users
-    who only exist as Feishu contacts and never logged into Pivot).
+    Web's MentionField always emits real open_ids; MCP clients may send
+    pinyin / display_name. We resolve through pivot_user + external_binding
+    so the Feishu notifier's ``<at id="…">`` payload is always a real
+    open_id (or the call is dropped with a warning if no DM is possible).
 
     Resolution policy:
-      - Unique match → use that contact's open_id.
+      - Unique match with a feishu binding → use that binding's open_id.
+      - Unique match without a feishu binding → drop (invite-only user
+        has no Feishu account to DM).
       - Multiple matches (e.g. 两个"刘宇") → raise AmbiguousMentionError so
-        the caller can ask the user to pick. We never silently pick one,
-        because @-pinging the wrong person is worse than no DM at all.
-      - No match but value looks like a Feishu ID (`ou_…` / `on_…`) → pass
-        through, guards against stale contact sync.
-      - No match and not an ID → drop with a warning. Lenient like
-        _resolve_mentions_for_index — one bad name shouldn't fail the
-        whole publish call.
+        the caller asks the user to pick. We never silently pick one —
+        @-pinging the wrong person is worse than no DM at all.
+      - No match but value looks like a Feishu ID (``ou_…`` / ``on_…``) →
+        pass through; legacy frontmatter may carry such ids.
+      - No match and not an ID → drop with a warning.
 
-    Multiple ambiguous inputs are collected first, then raised together so
-    the user can resolve them all in one round-trip.
+    Multiple ambiguous inputs are collected, then raised together so the
+    user can resolve them all in one round-trip.
     """
     if not values:
         return []
-    if contacts is None:
+    if pivot_users is None or bindings is None:
         return [v for v in values if v]
     out: list[str] = []
     ambiguous: list[dict] = []
     for v in values:
         if not v:
             continue
-        candidates = contacts.lookup_candidates(v)
+        candidates = _lookup_pivot_user_candidates(v, pivot_users, bindings)
         if len(candidates) == 1:
-            out.append(candidates[0].open_id)
+            user, feishu_oid = candidates[0]
+            if feishu_oid:
+                out.append(feishu_oid)
+            elif v.startswith(("ou_", "on_")):
+                out.append(v)
+            else:
+                log.info(
+                    "mention has no feishu binding user_id=%s skipped",
+                    user.id,
+                )
         elif len(candidates) > 1:
             ambiguous.append({
                 "input": v,
                 "candidates": [
-                    {"open_id": c.open_id, "name": c.name}
-                    for c in candidates
+                    {"open_id": fo or u.id, "name": u.display_name}
+                    for u, fo in candidates
                 ],
             })
         elif v.startswith(("ou_", "on_")):
@@ -621,7 +671,6 @@ def publish_matter_create(
     title: str,
     initial_item: dict,
     matter_owner_open_id: str | None = None,
-    contacts: ContactRepo | None = None,
     notifier: Notifier | None = None,
     users: UserRepo | None = None,
     pivot_users: PivotUserRepo | None = None,
@@ -688,7 +737,7 @@ def publish_matter_create(
     item_input = dict(initial_item)
     if item_input.get("comments"):
         item_input["comments"] = _resolve_comments_mentions(
-            item_input["comments"], users, contacts, author=user.pinyin,
+            item_input["comments"], users, pivot_users, bindings, author=user.pinyin,
         )
 
     # Frontend (CreateFileDialog) bundles 圈人 + 留言 into comments[0] because
@@ -707,7 +756,7 @@ def publish_matter_create(
     # ambiguous @ aborts the create with a 422 + candidate list rather than
     # leaving a half-written matter on disk.
     notify_mention_resolved = _resolve_mention_strings_to_open_ids(
-        notify_mention_open_ids, contacts,
+        notify_mention_open_ids, pivot_users, bindings,
     )
 
     item = _build_timeline_item(
@@ -791,7 +840,6 @@ def publish_matter_append(
     *,
     matter_id: str,
     item_body: dict,
-    contacts: ContactRepo | None = None,
     notifier: Notifier | None = None,
     users: UserRepo | None = None,
     pivot_users: PivotUserRepo | None = None,
@@ -834,7 +882,7 @@ def publish_matter_append(
     item_input = dict(item_body)
     if item_input.get("comments"):
         item_input["comments"] = _resolve_comments_mentions(
-            item_input["comments"], users, contacts, author=user.pinyin,
+            item_input["comments"], users, pivot_users, bindings, author=user.pinyin,
         )
 
     # Same mention bundling extraction as publish_matter_create — frontend
@@ -844,7 +892,7 @@ def publish_matter_append(
     )
     # Resolve before write — see publish_matter_comment for rationale.
     notify_mention_resolved = _resolve_mention_strings_to_open_ids(
-        notify_mention_open_ids, contacts,
+        notify_mention_open_ids, pivot_users, bindings,
     )
 
     item = _build_timeline_item(
@@ -930,9 +978,10 @@ def publish_matter_comment(
     target_file: str,
     body: str,
     mentions: list[str] | None = None,
-    contacts: ContactRepo | None = None,
     notifier: Notifier | None = None,
     users: UserRepo | None = None,
+    pivot_users: PivotUserRepo | None = None,
+    bindings: ExternalBindingRepo | None = None,
 ) -> dict:
     """Append a comment to a specific timeline item in a matter."""
     if not user.pinyin:
@@ -946,11 +995,11 @@ def publish_matter_comment(
         raise MatterNotFoundError(matter_id)
 
     # Resolve @-mentions BEFORE any disk write — if a name/pinyin matches
-    # multiple contacts (e.g. 张博 / 张菠 both → "zhangbo"), we raise
+    # multiple users (e.g. 张博 / 张菠 both → "zhangbo"), we raise
     # AmbiguousMentionError here so the route returns 422 with the candidate
     # list and no half-written comment lingers in the matter index.
     notify_open_ids = _resolve_mention_strings_to_open_ids(
-        list(mentions) if mentions else None, contacts,
+        list(mentions) if mentions else None, pivot_users, bindings,
     )
 
     # File author / owner deserve a notification when someone comments on
@@ -1030,7 +1079,6 @@ def publish_matter_owner_change(
     to_owner_open_id: str,
     reason: str,
     status_change: dict | None = None,
-    contacts: ContactRepo | None = None,
     notifier: Notifier | None = None,
     users: UserRepo | None = None,
     pivot_users: PivotUserRepo | None = None,
