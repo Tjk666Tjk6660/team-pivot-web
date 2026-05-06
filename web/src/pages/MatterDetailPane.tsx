@@ -484,7 +484,7 @@ export function MatterDetailPane() {
     });
   }, [pendingCreate]);
 
-  // 从 /admin/scoring 的 EvidenceDialog 跳过来时, URL 形如 /m/X#file=001_xx.md。
+  // 从评分管理页 (/admin/scoring) 的 EvidenceDialog 跳过来时, URL 形如 /m/X#file=001_xx.md。
   // 数据加载完后按 basename 找到对应 timeline 文件,调 onJump 滚动+高亮,
   // 然后清掉 hash 避免后续渲染重复触发。
   useEffect(() => {
