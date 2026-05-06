@@ -17,9 +17,8 @@ import { AdminLayout } from "@/pages/admin/AdminLayout";
 import { AdminMarkdown } from "@/pages/admin/AdminMarkdown";
 import { AdminRoles } from "@/pages/admin/AdminRoles";
 import { AdminScoring } from "@/pages/admin/AdminScoring";
-import { ConfigTab as AdminScoringConfigTab } from "@/pages/admin/scoring/ConfigTab";
 import { RunsListTab as AdminScoringRunsTab } from "@/pages/admin/scoring/RunsListTab";
-import { WeightsTab as AdminScoringWeightsTab } from "@/pages/admin/scoring/WeightsTab";
+import { SettingsTab as AdminScoringSettingsTab } from "@/pages/admin/scoring/SettingsTab";
 import { AdminUsers } from "@/pages/admin/AdminUsers";
 import { AdminWorkspace } from "@/pages/admin/AdminWorkspace";
 import { MatterDetailEmpty, MatterDetailPane } from "@/pages/MatterDetailPane";
@@ -96,8 +95,7 @@ export function App() {
             <Route path="ai" element={<AdminAI />} />
             <Route path="scoring" element={<AdminScoring />}>
               <Route index element={<AdminScoringRunsTab />} />
-              <Route path="config" element={<AdminScoringConfigTab />} />
-              <Route path="weights" element={<AdminScoringWeightsTab />} />
+              <Route path="settings" element={<AdminScoringSettingsTab />} />
             </Route>
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

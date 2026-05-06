@@ -237,16 +237,16 @@ export function RunsListTab() {
 
 /** Shown when there are zero runs in the system AND no filter is set —
  *  helps a fresh admin understand why the list is empty + nudges them to
- *  the config tab if scoring isn't enabled yet. */
+ *  the settings tab if scoring isn't enabled yet. */
 function EmptyOnboarding() {
   return (
     <div className="flex flex-col items-center gap-3 px-4 py-12 text-center text-sm">
       <p className="text-[var(--text-mute)]">还没有评分任务</p>
       <p className="text-xs text-[var(--text-mute)] max-w-md">
-        Matter 进入 finished 状态后会自动入队评分。如果功能尚未启用，请先到「配置」开启。
+        Matter 进入 finished 状态后会自动入队评分。如果功能尚未启用，请先到「设置」开启。
       </p>
       <Button asChild variant="outline" size="sm">
-        <Link to="config">前往配置</Link>
+        <Link to="settings">前往设置</Link>
       </Button>
     </div>
   );

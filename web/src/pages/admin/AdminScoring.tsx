@@ -4,18 +4,16 @@ import { PageShell } from "./_PageShell";
 
 /** Top-level shell for /admin/scoring/*.
  *
- *  Three tabs (path-based, bookmarkable):
- *    /admin/scoring           → 评分     (RunsListTab, default landing)
- *    /admin/scoring/config    → 配置     (ConfigTab)
- *    /admin/scoring/weights   → 权重     (WeightsTab)
+ *  Two tabs (path-based, bookmarkable):
+ *    /admin/scoring            → 评分     (RunsListTab, default landing)
+ *    /admin/scoring/settings   → 设置     (SettingsTab — config + weights)
  *
  *  Default = runs list because admin's daily use case is monitoring task
- *  status / re-running failed runs, not adjusting config.
+ *  status / re-running failed runs, not adjusting settings.
  */
 const TABS: { to: string; label: string; end?: boolean }[] = [
   { to: ".", label: "评分", end: true },
-  { to: "config", label: "配置" },
-  { to: "weights", label: "权重" },
+  { to: "settings", label: "设置" },
 ];
 
 export function AdminScoring() {
