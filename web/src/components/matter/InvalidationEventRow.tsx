@@ -15,7 +15,7 @@ export function InvalidationEventRow({
   item: TimelineInvalidationEventItem;
 }) {
   const isRestore = item.reason === "restored";
-  const verb = isRestore ? "恢复了" : "撤回了";
+  const verb = isRestore ? "恢复了" : "失效了";
   const Icon = isRestore ? RotateCcw : Ban;
   const reasonText = isRestore ? null : REASON_LABEL[item.reason] ?? item.reason;
 

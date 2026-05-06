@@ -470,7 +470,7 @@ export function FileCard({
         />
         <CopyForAIButton matterId={matterId} filePath={item.file} />
         {/* Author-only invalidate / restore. The button label switches by
-            current state: 撤回 (when not yet invalidated) ↔ 恢复 (when
+            current state: 失效 (when not yet invalidated) ↔ 恢复 (when
             invalidated). The actual permission check is enforced server-side
             (event_creator_mismatch → 403), this gating is just UI hygiene. */}
         {isAuthor &&
@@ -488,9 +488,9 @@ export function FileCard({
               type="button"
               onClick={() => setInvalidateDialog("invalidate")}
               className="rounded-[var(--r-sm)] border border-[var(--line)] bg-transparent px-2 py-1 text-[11px] font-semibold text-[var(--text-mute)] hover:border-[var(--warn-500,#f59e0b)] hover:text-[var(--warn-700,#b45309)]"
-              title="作者撤回此文档"
+              title="作者失效此文档"
             >
-              ⊘ 撤回
+              ⊘ 失效
             </button>
           ))}
         <div className="ml-auto text-[10px] text-[var(--text-fade)]">

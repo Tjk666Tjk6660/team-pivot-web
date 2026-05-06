@@ -43,7 +43,7 @@ export function InvalidateDialog({
         reason: apiReason,
         summary: summary.trim() || null,
       });
-      toast.success(mode === "restore" ? "已恢复" : "已撤回");
+      toast.success(mode === "restore" ? "已恢复" : "已失效");
       onDone();
       onClose();
     } catch (e) {
@@ -64,7 +64,7 @@ export function InvalidateDialog({
     >
       <div className="w-full max-w-md rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] p-5 shadow-lg">
         <h2 className="mb-3 text-base font-semibold">
-          {mode === "restore" ? "恢复此文档" : "撤回此文档"}
+          {mode === "restore" ? "恢复此文档" : "失效此文档"}
         </h2>
 
         {mode === "invalidate" && (
@@ -114,7 +114,7 @@ export function InvalidateDialog({
             placeholder={
               mode === "restore"
                 ? "可附一句恢复理由"
-                : "可附一句撤回说明"
+                : "可附一句失效说明"
             }
             className="rounded-md border border-[var(--line-strong,var(--line))] bg-white p-2 text-sm"
           />
@@ -143,7 +143,7 @@ export function InvalidateDialog({
               ? "提交中…"
               : mode === "restore"
               ? "确认恢复"
-              : "确认撤回"}
+              : "确认失效"}
           </Button>
         </div>
       </div>

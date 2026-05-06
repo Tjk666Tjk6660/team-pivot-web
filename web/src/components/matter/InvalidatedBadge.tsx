@@ -26,7 +26,7 @@ export function InvalidatedBadge({
       className="inline-flex items-center gap-1 rounded-md bg-[color-mix(in_srgb,var(--warn-500)_12%,var(--surface))] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--warn-700)] ring-1 ring-[color-mix(in_srgb,var(--warn-500)_24%,var(--line))]"
       title={
         by
-          ? `已失效${label ? `(${label})` : ""}・由 ${by} 撤回`
+          ? `已失效${label ? `(${label})` : ""}・由 ${by} 操作`
           : `已失效${label ? `(${label})` : ""}`
       }
     >
