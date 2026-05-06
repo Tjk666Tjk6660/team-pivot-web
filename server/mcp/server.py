@@ -192,7 +192,7 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
                     "first call `list_visibility_options` with the same "
                     "`category` to fetch valid role / user candidates, then "
                     "echo the resolved scope (with display names) back to the "
-                    "user for confirmation, then call create_matter. If the "
+                    "user for confirmation, then call `create_matter`. If the "
                     "category does not yet exist AND the matter is restricted, "
                     "you MUST also include `new_category_visibility`; the "
                     "backend rejects with 422 `missing_category_visibility` "
