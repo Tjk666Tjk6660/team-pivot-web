@@ -6,14 +6,8 @@
   - N 条 pending 折叠成一次 git push（push 状态本身就是聚合的）
   - 失败时按 attempts 阶梯退避；超过 max_attempts 进 'failed' 终态、不再阻塞用户
 
-唤醒模型：
-  混合 push/poll —— enqueue 端通过 GitWorker.notify() 触发 asyncio.Event.set
-  立即唤醒；同时 _run() 每 poll_interval_s 兜底醒一次（应对漏通知 / 启动后
-  的崩溃恢复 / 远端被人推过新提交后我们也想顺带 sync 等场景）。
-
-线程模型：
-  outbox / 实际的 git push 都是 sync 调用（subprocess.run 阻塞），全部走
-  asyncio.to_thread 卸载到 threadpool，不会卡 event loop。
+实现：方案 C 骨架的 WorkerTask 子类。父类负责 start/stop/notify 生命周期 +
+错误吞咽 + poll 兜底；本类只关心 git 特定逻辑（claim → push → mark + backoff）。
 """
 from __future__ import annotations
 
@@ -23,6 +17,7 @@ from pathlib import Path
 from typing import Callable
 
 from server.git_outbox import GitPushOutbox
+from server.jobs.runner import WorkerTask
 
 log = logging.getLogger(__name__)
 
@@ -40,19 +35,15 @@ PushFn = Callable[[str], None]
 _BACKOFF_SCHEDULE = (2.0, 5.0, 15.0, 30.0, 60.0)
 
 
-class GitWorker:
-    """Single background task that pushes whenever the outbox has pending rows.
+class GitWorker(WorkerTask):
+    """Pushes whenever the outbox has pending rows.
 
-    Lifecycle:
-        worker = GitWorker(outbox=..., push_fn=..., repo_dir=...)
-        await worker.start()                # in lifespan startup
-        ...
-        outbox.enqueue(...); worker.notify()  # called by write_session
-        ...
-        await worker.stop()                 # in lifespan shutdown
-
-    Reentrancy: start() / stop() are safe to call multiple times.
+    One round = `claim_batch` → `git push` → `mark_succeeded`. Multiple
+    pending rows fold into a single push because git push is a state-
+    aggregating operation; we treat the whole batch atomically.
     """
+
+    name = "git-worker"
 
     def __init__(
         self,
@@ -64,105 +55,28 @@ class GitWorker:
         poll_interval_s: float = 30.0,
         tenant_id: str = "default",
     ) -> None:
+        super().__init__()
         self._outbox = outbox
         self._push_fn = push_fn
         self._repo_dir = str(repo_dir)
         self._max_attempts = max_attempts
-        self._poll_interval_s = poll_interval_s
+        # Override class-level default with the constructor param so
+        # different repos can have different cadences.
+        self.poll_interval_s = poll_interval_s
         self._tenant_id = tenant_id
 
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._wake: asyncio.Event | None = None
-        self._task: asyncio.Task | None = None
-        self._stopping = False
+    # ── WorkerTask hooks ────────────────────────────────────────────────────
 
-    # ── lifecycle ──────────────────────────────────────────────────────────
-
-    async def start(self) -> None:
-        if self._task is not None and not self._task.done():
-            return
-        self._loop = asyncio.get_running_loop()
-        self._wake = asyncio.Event()
-        self._stopping = False
-        # Crash recovery: any rows the previous run claimed but didn't ack
-        # are reset to pending so this run picks them up on the first tick.
+    async def _on_start_hook(self) -> None:
+        """Crash recovery: any rows the previous run claimed but didn't ack
+        are reset to pending so this run picks them up on the first tick.
+        Re-pushing an already-uploaded commit is a no-op on the remote, so
+        the retry is idempotent."""
         try:
             n = await asyncio.to_thread(self._outbox.sweep_in_flight)
+            log.info("git_worker swept %d in_flight rows on boot", n)
         except Exception:
             log.exception("git_worker sweep_in_flight failed; continuing")
-            n = 0
-        # Kick the worker once on boot so any pre-existing pending rows
-        # (server restarted between enqueue and push) get drained immediately.
-        self._wake.set()
-        self._task = asyncio.create_task(self._run(), name="git-worker")
-        log.info(
-            "git_worker started repo=%s swept_in_flight=%d poll=%.1fs",
-            self._repo_dir, n, self._poll_interval_s,
-        )
-
-    async def stop(self) -> None:
-        self._stopping = True
-        if self._wake is not None:
-            self._wake.set()
-        if self._task is not None:
-            try:
-                await asyncio.wait_for(self._task, timeout=10.0)
-            except asyncio.TimeoutError:
-                log.warning("git_worker did not stop within 10s; cancelling")
-                self._task.cancel()
-                try:
-                    await self._task
-                except (asyncio.CancelledError, Exception):
-                    pass
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                log.exception("git_worker raised during stop")
-            finally:
-                self._task = None
-                self._wake = None
-                self._loop = None
-        log.info("git_worker stopped")
-
-    # ── notification (called from any thread) ──────────────────────────────
-
-    def notify(self) -> None:
-        """Threadsafe wakeup. write_session calls this right after enqueue.
-
-        No-op if the worker hasn't started yet (early boot) or has stopped —
-        the next poll-interval tick will pick the row up regardless."""
-        loop = self._loop
-        wake = self._wake
-        if loop is None or wake is None:
-            return
-        try:
-            loop.call_soon_threadsafe(wake.set)
-        except RuntimeError:
-            # Loop may be closing; harmless to skip.
-            pass
-
-    # ── main loop ──────────────────────────────────────────────────────────
-
-    async def _run(self) -> None:
-        assert self._wake is not None
-        while not self._stopping:
-            try:
-                await asyncio.wait_for(
-                    self._wake.wait(), timeout=self._poll_interval_s,
-                )
-            except asyncio.TimeoutError:
-                pass
-            self._wake.clear()
-            if self._stopping:
-                return
-            try:
-                await self._drain_once()
-            except Exception:
-                # Defensive: _drain_once should already swallow + record errors,
-                # but a bug here MUST NOT kill the worker loop.
-                log.exception("git_worker drain iteration crashed")
-                # Backoff before next attempt to avoid hot-loop on systemic bugs.
-                await asyncio.sleep(5.0)
 
     async def _drain_once(self) -> None:
         batch = await asyncio.to_thread(
@@ -183,6 +97,8 @@ class GitWorker:
             return
         await asyncio.to_thread(self._outbox.mark_succeeded, ids)
         log.info("git_worker pushed batch_size=%d", len(ids))
+
+    # ── failure handling ────────────────────────────────────────────────────
 
     async def _handle_push_failure(
         self,
@@ -206,6 +122,6 @@ class GitWorker:
         idx = max(idx, 0)
         await asyncio.sleep(_BACKOFF_SCHEDULE[idx])
         # Wake the loop so the next tick happens immediately after backoff
-        # rather than waiting another full poll interval.
-        if self._wake is not None:
-            self._wake.set()
+        # rather than waiting another full poll interval. notify() is a
+        # no-op safe to call from any context.
+        self.notify()

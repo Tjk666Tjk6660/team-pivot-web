@@ -54,6 +54,7 @@ from server.git_ops import push as git_push
 from server.git_outbox import GitPushOutbox
 from server.git_worker import GitWorker
 from server.invites import InviteRepo
+from server.jobs.runner import JobRunner
 from server.join_applications import JoinApplicationRepo
 from server.logging_setup import configure_logging
 from server.mcp.server import build_mcp_app
@@ -140,6 +141,13 @@ def create_app() -> FastAPI:
     )
     workspace.attach_outbox(outbox=git_outbox, worker_notify=git_worker.notify)
 
+    # 方案 C 骨架: register all WorkerTask-style background workers in one
+    # bundle so lifespan can start/stop them together. ScoringWorker has a
+    # different (queue-based) shape and stays separate for now — it can
+    # migrate to WorkerTask when next touched.
+    job_runner = JobRunner()
+    job_runner.register(git_worker)
+
     notifier: Notifier
     if cfg.notify_enabled:
         notifier = FeishuNotifier(
@@ -196,11 +204,10 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI):
         await daily_report_scheduler.start()
         await scoring_worker.start()
-        # Start the git push worker AFTER the workspace.recover() has run
-        # synchronously inside WorkspaceRuntime construction. The worker
-        # itself sweeps any 'in_flight' rows back to 'pending' on start, so
-        # crash-mid-push is safe.
-        await git_worker.start()
+        # Start every WorkerTask-style worker through JobRunner. Currently
+        # holds GitWorker only; future image / batch workers register at
+        # construction time and lifespan picks them up automatically.
+        await job_runner.start_all()
 
         if workspace.configured():
             try:
@@ -254,11 +261,11 @@ def create_app() -> FastAPI:
                 await hourly_task
             except (asyncio.CancelledError, Exception):
                 pass
-            # Stop the git worker BEFORE scoring/daily-report so any in-flight
-            # push has a chance to finish + ack its outbox row. Workers further
-            # downstream (scoring) don't enqueue to git_outbox so this order
-            # only matters for clean shutdown logs, not correctness.
-            await git_worker.stop()
+            # Stop JobRunner-managed workers BEFORE scoring/daily-report so
+            # any in-flight push has a chance to ack its outbox row. The
+            # ordering only matters for clean shutdown logs (correctness is
+            # preserved by the outbox + crash-recovery sweep on next boot).
+            await job_runner.stop_all()
             await scoring_worker.stop()
             scoring_unsubscribe()
             await daily_report_scheduler.stop()
