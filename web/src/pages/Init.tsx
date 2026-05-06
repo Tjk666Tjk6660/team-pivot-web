@@ -184,7 +184,7 @@ export function Init() {
         <Field
           id="pinyin"
           label="拼音名"
-          hint="用作 git author 和分支名。例：dengke / keller.koh"
+          hint="用作 git author 和分支名。例：lihua / alice.chen"
           required
           input={
             <Input
@@ -193,7 +193,7 @@ export function Init() {
               onChange={(e) => setPinyin(e.target.value)}
               required
               pattern="^[a-z][a-z0-9._-]+$"
-              placeholder="dengke"
+              placeholder="lihua"
               className="h-10 rounded-[var(--r-sm)] font-mono text-[14px]"
               style={{
                 ...inputStyle,

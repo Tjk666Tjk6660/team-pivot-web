@@ -99,7 +99,7 @@ export function ProfileSetup({ me, onDone }: { me: Me; onDone: (m: Me) => void }
               id="pinyin"
               value={pinyin}
               onChange={(e) => setPinyin(e.target.value)}
-              placeholder="dengke / keller.koh"
+              placeholder="lihua / alice.chen"
               required
               className="h-10 rounded-[var(--r-sm)] font-mono text-[14px]"
               style={{
