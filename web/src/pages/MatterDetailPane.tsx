@@ -1096,6 +1096,7 @@ export function MatterDetailPane() {
                 <OwnerChangeRow
                   key={`owner-${item.created_at}-${i}`}
                   item={item}
+                  matterId={matter.id}
                 />
               );
             })}
