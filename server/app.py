@@ -184,7 +184,7 @@ def create_app() -> FastAPI:
     )
     scoring_unsubscribe = install_scoring_trigger(
         workspace=workspace, settings=settings, pivot_users=pivot_users,
-        queue=scoring_queue,
+        queue=scoring_queue, store=scoring_store,
     )
 
     # Build MCP sub-app once; FastAPI does not propagate lifespan to mounted

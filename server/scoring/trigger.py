@@ -7,8 +7,14 @@ FastAPI sync route in the threadpool). It does ONLY:
   3. Resolve owner pinyin → pivot_user.id
   4. Enqueue ScoringJob (thread-safe via ScoringQueue)
 
-Per design §1.1 决策 A 枝节边界, an unresolvable owner does NOT create a run
-row — only logged + dropped. Run rows track only what we actually attempt.
+Phase 1 of "未评分诊断" (2026-05-07): instead of silently `return`ing on
+each guard failure, persist a `skipped` row with a structured reason
+(`trigger:no_owner`, `trigger:owner_unresolved`, etc.) so admin/scoring
+list shows WHY a finished matter never got an evaluation. Exception:
+`scoring_disabled` fires once per finished matter when the global toggle
+is off — that would create one row per matter and pollute the table, so
+we still log-only there. The "需关注" admin view infers that case by
+checking is_enabled(settings) at render time.
 
 Per design §1.3 决策 C, only outcome='finished' triggers; 'cancelled' is
 ignored (semantically "决定不做了" — not the owner's fault).
@@ -22,7 +28,7 @@ from server.events import TOPIC_RESULT_CREATED, Event, subscribe
 from server.matter_index import matter_index_path, read_matter_index
 from server.pivot_users import PivotUserRepo
 from server.scoring.resolve import PinyinResolver
-from server.scoring.store import ScoringJob
+from server.scoring.store import ScoringJob, ScoringStore
 from server.settings import SettingsRepo
 from server.workspace import Workspace
 
@@ -34,6 +40,16 @@ KEY_VISIBILITY = "scoring.visibility"
 KEY_MODEL = "scoring.model"
 KEY_TIMEOUT_SECONDS = "scoring.timeout_seconds"
 
+# Trigger-level skip reasons. Stored verbatim in matter_scoring_runs.error
+# (with status='skipped') so the admin "需关注" view can show actionable
+# guidance per reason. Pin the prefix so admin UI can reliably split
+# trigger-level reasons from worker-level (race_lost / orphan / etc.).
+REASON_INDEX_MISSING = "trigger:matter_index_missing"
+REASON_NO_OWNER = "trigger:no_owner"
+REASON_OWNER_UNRESOLVED = "trigger:owner_unresolved"
+REASON_NO_CATEGORY = "trigger:no_category"
+REASON_NO_CANDIDATES = "trigger:no_candidates"
+
 
 def install(
     *,
@@ -41,12 +57,13 @@ def install(
     settings: SettingsRepo,
     pivot_users: PivotUserRepo,
     queue,                # ScoringQueue (avoid circular import; duck-typed .enqueue())
+    store: ScoringStore,
 ) -> Callable[[], None]:
     """Subscribe to the event bus. Returns an unsubscribe callable."""
 
     def on_event(event: Event) -> None:
         try:
-            _handle(event, workspace, settings, pivot_users, queue)
+            _handle(event, workspace, settings, pivot_users, queue, store)
         except Exception:
             # Swallow + log: trigger errors must never break publish flow.
             log.exception(
@@ -72,15 +89,20 @@ def _handle(
     settings: SettingsRepo,
     pivot_users: PivotUserRepo,
     queue,
+    store: ScoringStore,
 ) -> None:
     if event.topic != TOPIC_RESULT_CREATED:
         return
     if not is_enabled(settings):
+        # Don't persist — would create one skipped row per finished matter
+        # while the toggle is off. The "需关注" admin view infers this case
+        # globally by checking is_enabled() at render time.
         return
 
     payload = event.payload or {}
     if payload.get("outcome") != "finished":
-        # Decision C: cancelled doesn't trigger
+        # Decision C: cancelled doesn't trigger (and we don't surface it as
+        # "needs attention" — user explicitly chose to cancel).
         return
 
     index = read_matter_index(matter_index_path(workspace.index_dir, event.matter_id))
@@ -88,7 +110,22 @@ def _handle(
         log.warning(
             "scoring trigger: matter index missing matter=%s", event.matter_id,
         )
+        _persist_trigger_skip(
+            store, event,
+            matter_category="",
+            timeline_hash="",
+            reason=REASON_INDEX_MISSING,
+        )
         return
+
+    # Lazy import: server.scoring.worker imports KEY_* from this module, so a
+    # top-level `from server.scoring.worker import ...` would create a circular
+    # import. Pulling it in inside the handler is fine — it runs once at first
+    # event and is cached by Python's module table.
+    from server.scoring.worker import compute_timeline_hash
+
+    matter_category = _derive_category(index) or ""
+    timeline_hash = compute_timeline_hash(index)
 
     matter = index.get("matter") or {}
     owner_pinyin = matter.get("owner") or ""
@@ -96,6 +133,12 @@ def _handle(
         log.info(
             "scoring trigger skipped: matter.owner empty matter=%s",
             event.matter_id,
+        )
+        _persist_trigger_skip(
+            store, event,
+            matter_category=matter_category,
+            timeline_hash=timeline_hash,
+            reason=REASON_NO_OWNER,
         )
         return
 
@@ -108,13 +151,25 @@ def _handle(
             "scoring trigger skipped: owner pinyin not resolved matter=%s pinyin=%s",
             event.matter_id, owner_pinyin,
         )
+        _persist_trigger_skip(
+            store, event,
+            matter_category=matter_category,
+            timeline_hash=timeline_hash,
+            reason=f"{REASON_OWNER_UNRESOLVED}:{owner_pinyin}",
+        )
         return
 
-    matter_category = _derive_category(index)
     if not matter_category:
         log.warning(
             "scoring trigger: cannot derive category from timeline matter=%s",
             event.matter_id,
+        )
+        _persist_trigger_skip(
+            store, event,
+            matter_category="",
+            timeline_hash=timeline_hash,
+            reason=REASON_NO_CATEGORY,
+            subject_user_id=owner.id,
         )
         return
 
@@ -146,6 +201,14 @@ def _handle(
             "scoring trigger skipped: no resolvable candidates matter=%s",
             event.matter_id,
         )
+        _persist_trigger_skip(
+            store, event,
+            matter_category=matter_category,
+            timeline_hash=timeline_hash,
+            reason=REASON_NO_CANDIDATES,
+            subject_user_id=owner.id,
+            triggered_actor_id=actor_id,
+        )
         return
 
     job = ScoringJob(
@@ -161,6 +224,49 @@ def _handle(
         "scoring trigger enqueued matter=%s primary=%s candidates=%d actor=%s",
         event.matter_id, owner.id, len(candidate_ids), event.actor,
     )
+
+
+def _persist_trigger_skip(
+    store: ScoringStore,
+    event: Event,
+    *,
+    matter_category: str,
+    timeline_hash: str,
+    reason: str,
+    subject_user_id: str = "(unknown)",
+    triggered_actor_id: str | None = None,
+) -> None:
+    """Write a skipped row so admin UI can surface the reason.
+
+    schema requires subject_user_id NOT NULL — when we couldn't resolve owner
+    (the typical trigger-skip case) we use the sentinel "(unknown)". That
+    string never collides with a real ULID, and the rendering layer can
+    detect it and show "未知" instead of trying to look up the user.
+
+    timeline_hash uses the same canonical hash the worker would compute, so
+    a follow-up successful run on the same content collapses cleanly into
+    the matter group's history (admin "需关注" view dedupes by matter).
+    """
+    job = ScoringJob(
+        matter_id=event.matter_id,
+        matter_category=matter_category,
+        subject_user_id=subject_user_id,
+        triggered_by="auto",
+        triggered_actor_id=triggered_actor_id,
+    )
+    try:
+        store.mark_skipped(
+            job,
+            timeline_hash=timeline_hash,
+            reason=reason,
+        )
+    except Exception:
+        # Defensive: persist failure must never crash the trigger; the log
+        # warning above is enough for diagnosis.
+        log.exception(
+            "scoring trigger: persist skip failed matter=%s reason=%s",
+            event.matter_id, reason,
+        )
 
 
 def resolve_candidates(index: dict, resolver: PinyinResolver) -> list[str]:

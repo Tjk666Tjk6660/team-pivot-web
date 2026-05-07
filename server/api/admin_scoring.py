@@ -46,6 +46,7 @@ from server.scoring.trigger import (
     KEY_MODEL,
     KEY_TIMEOUT_SECONDS,
     KEY_VISIBILITY,
+    is_enabled,
     resolve_candidates,
 )
 from server.settings import SettingsRepo
@@ -162,6 +163,56 @@ def build_router(
             "items": items,
             "total": total,
             "has_more": offset + len(items) < total,
+        }
+
+    @router.get("/matters/unscored")
+    def list_unscored_matters(
+        matter_query: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        _: PivotUser = Depends(admin_user_dep),
+    ):
+        """List finished matters that don't have a successful scoring run.
+
+        Phase 2 of "未评分诊断" (2026-05-07): admin can't tell why some
+        finished matters never got scored. We walk index/*.yaml on disk to
+        find finished matters, left-join with matter_scoring_runs to
+        identify which lack a success run, and surface the most recent
+        skip/failure reason so admin can act.
+
+        scoring_disabled flag rides on the response so the UI can show a
+        single "评分功能未启用" banner instead of N rows — when toggle is
+        off, no matter ever gets a row written by trigger.py (Phase 1
+        intentionally skips persistence in that case).
+
+        matter_query: case-insensitive substring match on matter_id and
+        matter_title; matches either field. Pre-pagination so total reflects
+        filtered count.
+        """
+        if limit < 1 or limit > 200:
+            raise HTTPException(400, "limit must be in [1, 200]")
+        if offset < 0:
+            raise HTTPException(400, "offset must be ≥ 0")
+
+        rows = _collect_unscored(workspace, store)
+        if matter_query:
+            q = matter_query.strip().lower()
+            if q:
+                rows = [
+                    r for r in rows
+                    if q in r["matter_id"].lower()
+                    or q in (r.get("matter_title") or "").lower()
+                ]
+        # Sort by finished_at desc — admins look at most-recent-finished
+        # matters first when triaging the backlog.
+        rows.sort(key=lambda r: r.get("finished_at") or 0, reverse=True)
+        total = len(rows)
+        page = rows[offset: offset + limit]
+        return {
+            "items": page,
+            "total": total,
+            "has_more": offset + len(page) < total,
+            "scoring_disabled": not is_enabled(settings),
         }
 
     @router.get("/matters")
@@ -771,6 +822,145 @@ def _weight_to_dict(
         "user_pinyin": user.pinyin if user else None,
         "user_status": user.status if user else None,
     }
+
+
+def _collect_unscored(workspace: Workspace, store: ScoringStore) -> list[dict]:
+    """Walk index/*.yaml → keep finished matters with no successful run.
+
+    Returns one dict per matter, sorted later by caller. Reason classification
+    from the latest run's status/error: trigger:* → "trigger" prefix carries
+    actionable detail (no_owner / owner_unresolved / no_candidates / etc.);
+    worker-level errors (race_lost / orphan / superseded_by_rerun /
+    schema_error / ai_*) keep their raw error for admin to read; "no run row
+    at all" → reason_code='never_triggered' (matter finished BEFORE scoring
+    was enabled, or queue lost the job on a crash).
+    """
+    out: list[dict] = []
+    for path in workspace.index_dir.glob("*.index.yaml"):
+        matter_id = path.name.removesuffix(".index.yaml")
+        try:
+            index = read_matter_index(path)
+        except Exception:
+            continue
+        if index is None:
+            continue
+        matter = index.get("matter") or {}
+        if matter.get("current_status") != "finished":
+            continue
+
+        # Look up runs for this matter; if any success exists, skip.
+        runs = store.list_runs_for_matter(matter_id)
+        if any(r.status == "success" for r in runs):
+            continue
+
+        latest = runs[0] if runs else None
+        reason = _classify_reason(latest)
+        category = _derive_category(index) or ""
+        out.append({
+            "matter_id": matter_id,
+            "matter_title": matter.get("title"),
+            "matter_category": category,
+            "owner": matter.get("owner") or "",
+            # finished_at: prefer matter.finished_at if persisted; otherwise
+            # fall back to latest result-file's created_at by walking timeline.
+            "finished_at": _resolve_finished_at(index),
+            "latest_run": (
+                {
+                    "run_id": latest.run_id,
+                    "status": latest.status,
+                    "error": latest.error,
+                    "started_at": latest.started_at,
+                }
+                if latest is not None
+                else None
+            ),
+            **reason,
+        })
+    return out
+
+
+# Reason classification: maps raw status+error to a UI-renderable shape
+# {reason_code, reason_label, action_hint}. reason_code is stable for
+# downstream filtering / analytics; reason_label is the short Chinese
+# string admin sees in the row.
+_TRIGGER_REASON_LABELS: dict[str, tuple[str, str]] = {
+    # code → (label, action_hint)
+    "matter_index_missing": (
+        "matter 索引文件缺失",
+        "检查 workspace 数据完整性",
+    ),
+    "no_owner": (
+        "缺少 Owner",
+        "为 matter 设置 Owner 后点击重跑",
+    ),
+    "owner_unresolved": (
+        "Owner 解析失败",
+        "Owner 对应用户已删除或拼音变更，更新 Owner 后重跑",
+    ),
+    "no_category": (
+        "无法解析 category",
+        "检查 timeline 文件路径格式",
+    ),
+    "no_candidates": (
+        "无可评分候选人",
+        "Matter 内 think/act 文件作者无法解析，重新整理后重跑",
+    ),
+}
+
+
+def _classify_reason(latest_run) -> dict:
+    """Turn a run row (or None) into UI fields."""
+    if latest_run is None:
+        return {
+            "reason_code": "never_triggered",
+            "reason_label": "未触发评分",
+            "reason_detail": None,
+            "action_hint": "评分启用前已结束、或服务重启时队列丢失。点击重跑即可入队",
+        }
+
+    err = (latest_run.error or "").strip()
+    # Trigger-level: "trigger:<code>" or "trigger:<code>:<detail>"
+    if err.startswith("trigger:"):
+        rest = err[len("trigger:"):]
+        code, _, detail = rest.partition(":")
+        label, hint = _TRIGGER_REASON_LABELS.get(
+            code, (f"触发器跳过：{code}", "查看后端日志"),
+        )
+        return {
+            "reason_code": code,
+            "reason_label": label,
+            "reason_detail": detail or None,
+            "action_hint": hint,
+        }
+    # Worker-level: race_lost / orphan / superseded_by_rerun / schema_error /
+    # ai_timeout / pydantic_invalid 等 — admin 看 error 原文 + 通用建议
+    if err.startswith(("race_lost", "orphan", "superseded_by_rerun")):
+        return {
+            "reason_code": err.split(":")[0],
+            "reason_label": "运行中断",
+            "reason_detail": err,
+            "action_hint": "点击重跑",
+        }
+    return {
+        "reason_code": "worker_error",
+        "reason_label": "评分失败",
+        "reason_detail": err or None,
+        "action_hint": "点击重跑",
+    }
+
+
+def _resolve_finished_at(index: dict) -> float | None:
+    """Best-effort timestamp for "matter 何时结束"。matter.updated_at 是稳定
+    fallback; result 文件的 created_at 更准但要 ISO 解析，简单起见用 updated_at。"""
+    matter = index.get("matter") or {}
+    raw = matter.get("updated_at")
+    if not raw:
+        return None
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
 
 
 def _matter_title(workspace: Workspace, matter_id: str) -> str | None:

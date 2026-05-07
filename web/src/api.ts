@@ -2354,6 +2354,65 @@ export type MatterScoringGroupList = {
   has_more: boolean;
 };
 
+// ── Unscored finished matters (Phase 2 "需关注" view) ──────────────────────
+
+/** Why this matter doesn't have a successful score yet, classified for UI. */
+export type UnscoredMatterReasonCode =
+  | "never_triggered"
+  | "matter_index_missing"
+  | "no_owner"
+  | "owner_unresolved"
+  | "no_category"
+  | "no_candidates"
+  | "race_lost"
+  | "orphan"
+  | "superseded_by_rerun"
+  | "worker_error";
+
+export type UnscoredMatter = {
+  matter_id: string;
+  matter_title: string | null;
+  matter_category: string;
+  owner: string;
+  finished_at: number | null;
+  latest_run: {
+    run_id: string;
+    status: ScoringRunSummary["status"];
+    error: string | null;
+    started_at: number;
+  } | null;
+  reason_code: UnscoredMatterReasonCode | string;
+  reason_label: string;
+  reason_detail: string | null;
+  action_hint: string;
+};
+
+export type UnscoredMatterList = {
+  items: UnscoredMatter[];
+  total: number;
+  has_more: boolean;
+  /** Global toggle off → UI shows a single "评分功能未启用" banner instead
+   *  of repeating the same reason on every row. */
+  scoring_disabled: boolean;
+};
+
+export async function fetchUnscoredMatters(params: {
+  matter_query?: string;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<UnscoredMatterList> {
+  const qs = new URLSearchParams();
+  if (params.matter_query) qs.set("matter_query", params.matter_query);
+  if (params.limit !== undefined) qs.set("limit", String(params.limit));
+  if (params.offset !== undefined) qs.set("offset", String(params.offset));
+  const url = `/api/admin/scoring/matters/unscored${qs.toString() ? `?${qs}` : ""}`;
+  const r = await adminFetch(url);
+  if (!r.ok)
+    throw new Error(`/api/admin/scoring/matters/unscored failed: ${r.status}`);
+  return (await r.json()) as UnscoredMatterList;
+}
+
+
 export async function fetchMatterScoringGroups(params: {
   matter_query?: string;
   limit?: number;

@@ -570,6 +570,185 @@ def test_list_matter_groups_matter_query(client, store, pivot_users, workspace):
     assert body["items"][0]["matter_id"] == "测试评分"
 
 
+# ---------- unscored finished matters (Phase 2 "需关注" view) ----------
+
+
+def _write_finished_matter(workspace, matter_id, *, owner="zhangsan"):
+    """Helper that defaults to current_status=finished for unscored tests."""
+    _write_matter(workspace, matter_id, owner_pinyin=owner)
+
+
+def test_unscored_empty_when_all_scored(
+    client, store, settings, pivot_users, workspace,
+):
+    """No finished matter is unscored if every one has a success run."""
+    settings.set(KEY_ENABLED, "1")
+    owner = pivot_users.create(
+        display_name="zs", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    _write_finished_matter(workspace, "m1")
+    rid = store.start_run(_job(owner.id, matter_id="m1"), timeline_hash="h", model="m")
+    store.finish_run(rid, "success")
+
+    r = client.get(
+        "/api/admin/scoring/matters/unscored", headers=_admin_headers(),
+    )
+    body = r.json()
+    assert body["total"] == 0
+    assert body["items"] == []
+    assert body["scoring_disabled"] is False
+
+
+def test_unscored_returns_never_triggered_for_finished_without_run(
+    client, workspace,
+):
+    """Finished matter, no run row at all → reason_code='never_triggered'.
+    Most common case: matter finished BEFORE scoring was enabled."""
+    _write_finished_matter(workspace, "m1")
+    r = client.get(
+        "/api/admin/scoring/matters/unscored", headers=_admin_headers(),
+    )
+    body = r.json()
+    assert body["total"] == 1
+    item = body["items"][0]
+    assert item["matter_id"] == "m1"
+    assert item["reason_code"] == "never_triggered"
+    assert item["latest_run"] is None
+
+
+def test_unscored_returns_trigger_skip_reason(
+    client, store, pivot_users, workspace,
+):
+    """Trigger persisted a skipped row → return its reason classified."""
+    _write_finished_matter(workspace, "m1")
+    # Simulate trigger writing a skipped row.
+    job = ScoringJob(
+        matter_id="m1", matter_category="eng",
+        subject_user_id="(unknown)", triggered_by="auto",
+        triggered_actor_id=None,
+    )
+    store.mark_skipped(job, timeline_hash="h", reason="trigger:no_owner")
+
+    r = client.get(
+        "/api/admin/scoring/matters/unscored", headers=_admin_headers(),
+    )
+    body = r.json()
+    assert body["total"] == 1
+    item = body["items"][0]
+    assert item["reason_code"] == "no_owner"
+    assert item["reason_label"] == "缺少 Owner"
+    assert item["latest_run"]["status"] == "skipped"
+
+
+def test_unscored_excludes_matters_with_any_success_run(
+    client, store, pivot_users, workspace,
+):
+    """Even if there are multiple skipped/failed reruns, presence of one
+    success means the matter is "scored" → not in unscored list."""
+    owner = pivot_users.create(
+        display_name="zs", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    _write_finished_matter(workspace, "m1")
+    failed = store.start_run(_job(owner.id, matter_id="m1"), timeline_hash="h1", model="m")
+    store.finish_run(failed, "failed", error="ai_timeout")
+    success = store.start_run(_job(owner.id, matter_id="m1"), timeline_hash="h2", model="m")
+    store.finish_run(success, "success")
+
+    r = client.get(
+        "/api/admin/scoring/matters/unscored", headers=_admin_headers(),
+    )
+    assert r.json()["total"] == 0
+
+
+def test_unscored_signals_scoring_disabled(
+    client, settings, workspace,
+):
+    """When global toggle is off, response carries the flag so UI can
+    show a single banner instead of N rows of "未触发评分"."""
+    settings.set(KEY_ENABLED, "0")
+    _write_finished_matter(workspace, "m1")
+    _write_finished_matter(workspace, "m2")
+    r = client.get(
+        "/api/admin/scoring/matters/unscored", headers=_admin_headers(),
+    )
+    body = r.json()
+    assert body["scoring_disabled"] is True
+    # Matters still listed — admin can see what would be scored once enabled.
+    assert body["total"] == 2
+
+
+def test_unscored_excludes_non_finished_matters(client, workspace):
+    """current_status != finished → not in unscored list."""
+    data = {
+        "matter": {
+            "id": "m1", "title": "in progress",
+            "current_status": "executing",
+            "created_at": "2026-04-20T10:00:00+08:00",
+            "updated_at": "2026-04-29T18:30:00+08:00",
+        },
+        "timeline": [
+            {
+                "file": "discussions/eng/m1/001.md",
+                "type": "act", "creator": "zhangsan",
+                "summary": "x", "created_at": "2026-04-20T10:00:00+08:00",
+            },
+        ],
+    }
+    (workspace.index_dir / "m1.index.yaml").write_text(
+        yaml.safe_dump(data, allow_unicode=True), encoding="utf-8",
+    )
+    r = client.get(
+        "/api/admin/scoring/matters/unscored", headers=_admin_headers(),
+    )
+    assert r.json()["total"] == 0
+
+
+def test_unscored_pagination(client, workspace):
+    for i in range(5):
+        _write_finished_matter(workspace, f"m{i}")
+    r = client.get(
+        "/api/admin/scoring/matters/unscored?limit=2&offset=0",
+        headers=_admin_headers(),
+    )
+    body = r.json()
+    assert body["total"] == 5
+    assert len(body["items"]) == 2
+    assert body["has_more"] is True
+
+
+def test_unscored_matter_query_filters_by_id_or_title(client, workspace):
+    """matter_query is substring (case-insensitive) match against
+    matter_id OR matter_title."""
+    _write_matter(workspace, "客户验收流程", title="客户验收流程优化")
+    _write_matter(workspace, "测试评分", title="测试评分体系")
+    _write_matter(workspace, "browser-automation", title="浏览器自动化验证")
+
+    # Match by id substring
+    r = client.get(
+        "/api/admin/scoring/matters/unscored?matter_query=评分",
+        headers=_admin_headers(),
+    )
+    body = r.json()
+    assert body["total"] == 1
+    assert body["items"][0]["matter_id"] == "测试评分"
+
+    # Match by title substring (case-insensitive English)
+    r = client.get(
+        "/api/admin/scoring/matters/unscored?matter_query=BROWSER",
+        headers=_admin_headers(),
+    )
+    body = r.json()
+    assert body["total"] == 1
+    assert body["items"][0]["matter_id"] == "browser-automation"
+
+    # No match → empty
+    r = client.get(
+        "/api/admin/scoring/matters/unscored?matter_query=nonexistent",
+        headers=_admin_headers(),
+    )
+    assert r.json()["total"] == 0
+
+
 # ---------- run detail ----------
 
 

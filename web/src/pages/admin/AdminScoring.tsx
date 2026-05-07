@@ -4,8 +4,9 @@ import { PageShell } from "./_PageShell";
 
 /** Top-level shell for /admin/scoring/*.
  *
- *  Two tabs (path-based, bookmarkable):
+ *  Three tabs (path-based, bookmarkable):
  *    /admin/scoring            → 评分     (RunsListTab, default landing)
+ *    /admin/scoring/unscored   → 未评分   (UnscoredMattersTab — finished but not scored)
  *    /admin/scoring/settings   → 设置     (SettingsTab — config + weights)
  *
  *  Default = runs list because admin's daily use case is monitoring task
@@ -13,6 +14,7 @@ import { PageShell } from "./_PageShell";
  */
 const TABS: { to: string; label: string; end?: boolean }[] = [
   { to: ".", label: "评分", end: true },
+  { to: "unscored", label: "未评分" },
   { to: "settings", label: "设置" },
 ];
 

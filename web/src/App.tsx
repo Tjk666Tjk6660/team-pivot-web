@@ -19,6 +19,7 @@ import { AdminRoles } from "@/pages/admin/AdminRoles";
 import { AdminScoring } from "@/pages/admin/AdminScoring";
 import { RunsListTab as AdminScoringRunsTab } from "@/pages/admin/scoring/RunsListTab";
 import { SettingsTab as AdminScoringSettingsTab } from "@/pages/admin/scoring/SettingsTab";
+import { UnscoredMattersTab as AdminScoringUnscoredTab } from "@/pages/admin/scoring/UnscoredMattersTab";
 import { AdminUsers } from "@/pages/admin/AdminUsers";
 import { AdminWorkspace } from "@/pages/admin/AdminWorkspace";
 import { MatterDetailEmpty, MatterDetailPane } from "@/pages/MatterDetailPane";
@@ -95,6 +96,7 @@ export function App() {
             <Route path="ai" element={<AdminAI />} />
             <Route path="scoring" element={<AdminScoring />}>
               <Route index element={<AdminScoringRunsTab />} />
+              <Route path="unscored" element={<AdminScoringUnscoredTab />} />
               <Route path="settings" element={<AdminScoringSettingsTab />} />
             </Route>
           </Route>

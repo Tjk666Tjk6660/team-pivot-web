@@ -13,7 +13,7 @@ from server.events import (
     emit,
 )
 from server.pivot_users import PivotUserRepo
-from server.scoring.store import ScoringJob
+from server.scoring.store import ScoringJob, ScoringStore
 from server.scoring.trigger import KEY_ENABLED, install
 from server.settings import SettingsRepo
 
@@ -78,10 +78,15 @@ def queue():
 
 
 @pytest.fixture
-def trigger_installed(workspace, settings, pivot_users, queue):
+def store(db):
+    return ScoringStore(db)
+
+
+@pytest.fixture
+def trigger_installed(workspace, settings, pivot_users, queue, store):
     unsub = install(
         workspace=workspace, settings=settings, pivot_users=pivot_users,
-        queue=queue,
+        queue=queue, store=store,
     )
     yield queue
     unsub()
@@ -347,7 +352,7 @@ def test_does_not_enqueue_when_no_candidates_resolvable(
 # ---------- filtering ----------
 
 
-def test_does_not_enqueue_when_disabled(workspace, settings, pivot_users, queue):
+def test_does_not_enqueue_when_disabled(workspace, settings, pivot_users, queue, store):
     """scoring.enabled=0 → no enqueue even if everything else is set up."""
     settings.set(KEY_ENABLED, "0")
     pivot_users.create(
@@ -357,7 +362,7 @@ def test_does_not_enqueue_when_disabled(workspace, settings, pivot_users, queue)
 
     unsub = install(
         workspace=workspace, settings=settings, pivot_users=pivot_users,
-        queue=queue,
+        queue=queue, store=store,
     )
     try:
         _emit_result_finished("m")
@@ -368,7 +373,7 @@ def test_does_not_enqueue_when_disabled(workspace, settings, pivot_users, queue)
 
 
 def test_does_not_enqueue_when_disabled_via_falsy_strings(
-    workspace, settings, pivot_users, queue,
+    workspace, settings, pivot_users, queue, store,
 ):
     for v in ["0", "false", "False", "off", "no", ""]:
         settings.set(KEY_ENABLED, v)
@@ -384,7 +389,7 @@ def test_does_not_enqueue_when_disabled_via_falsy_strings(
 
     unsub = install(
         workspace=workspace, settings=settings, pivot_users=pivot_users,
-        queue=queue,
+        queue=queue, store=store,
     )
     try:
         _emit_result_finished("m")
@@ -492,3 +497,138 @@ def test_trigger_does_not_raise_on_corrupt_index(trigger_installed, workspace):
     bad.write_text("not: [valid: yaml", encoding="utf-8")
     _emit_result_finished("m")
     assert queue.jobs == []  # silently dropped
+
+
+# ---------- Phase 1: persistent skip reasons ("未评分" 诊断) ----------
+
+
+def test_skip_persists_when_index_missing(trigger_installed, workspace, store):
+    """No index file on disk → 'trigger:matter_index_missing' row, no enqueue."""
+    queue = trigger_installed
+    _emit_result_finished("ghost-matter")
+    assert queue.jobs == []
+    runs = store.list_runs(matter_id="ghost-matter")
+    assert len(runs) == 1
+    assert runs[0].status == "skipped"
+    assert runs[0].error == "trigger:matter_index_missing"
+    assert runs[0].subject_user_id == "(unknown)"
+
+
+def test_skip_persists_when_owner_empty(
+    trigger_installed, workspace, store, pivot_users,
+):
+    """matter.owner = '' → 'trigger:no_owner', timeline_hash computed,
+    so a follow-up rerun on the same content can collapse cleanly."""
+    queue = trigger_installed
+    _write_matter(workspace, "m", owner=None)  # no owner field
+
+    _emit_result_finished("m")
+    assert queue.jobs == []
+    runs = store.list_runs(matter_id="m")
+    assert len(runs) == 1
+    assert runs[0].status == "skipped"
+    assert runs[0].error == "trigger:no_owner"
+    assert runs[0].matter_category == "eng"
+    assert runs[0].timeline_hash != ""  # hash computed even without owner
+
+
+def test_skip_persists_when_owner_unresolvable(
+    trigger_installed, workspace, store, pivot_users,
+):
+    """owner pinyin not in pivot_user → 'trigger:owner_unresolved:<pinyin>'.
+    Pinyin appended so admin can see who failed to resolve."""
+    queue = trigger_installed
+    _write_matter(workspace, "m", owner="ghost-pinyin")
+
+    _emit_result_finished("m")
+    assert queue.jobs == []
+    runs = store.list_runs(matter_id="m")
+    assert len(runs) == 1
+    assert runs[0].status == "skipped"
+    assert runs[0].error == "trigger:owner_unresolved:ghost-pinyin"
+
+
+def test_skip_does_not_persist_when_globally_disabled(
+    workspace, settings, pivot_users, queue, store,
+):
+    """scoring.enabled=0 → no row written (would create one per finished
+    matter when toggle is off; admin "需关注" view infers globally instead)."""
+    settings.set(KEY_ENABLED, "0")
+    pivot_users.create(
+        display_name="张三", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    _write_matter(workspace, "m", owner="zhangsan")
+
+    unsub = install(
+        workspace=workspace, settings=settings, pivot_users=pivot_users,
+        queue=queue, store=store,
+    )
+    try:
+        _emit_result_finished("m")
+    finally:
+        unsub()
+    assert queue.jobs == []
+    assert store.list_runs(matter_id="m") == []
+
+
+def test_skip_does_not_persist_for_cancelled_outcome(
+    trigger_installed, workspace, store, pivot_users,
+):
+    """outcome=cancelled is intentional, not 'unscored' → no row."""
+    queue = trigger_installed
+    pivot_users.create(
+        display_name="zs", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    _write_matter(workspace, "m", owner="zhangsan")
+
+    emit(
+        TOPIC_RESULT_CREATED,
+        matter_id="m", actor="zhangsan",
+        at="2026-04-29T18:30:00+08:00",
+        payload={"file": "discussions/eng/m/x.md", "outcome": "cancelled"},
+    )
+    assert queue.jobs == []
+    assert store.list_runs(matter_id="m") == []
+
+
+def test_skip_persists_when_no_candidates_resolvable(
+    trigger_installed, workspace, store, pivot_users,
+):
+    """Owner exists but every think/act creator pinyin is unknown →
+    'trigger:no_candidates'."""
+    queue = trigger_installed
+    pivot_users.create(
+        display_name="zs", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    # Write matter where the only think/act is by someone NOT in pivot_users.
+    path = workspace.index_dir / "m.index.yaml"
+    data = {
+        "matter": {
+            "id": "m", "title": "t", "current_status": "finished",
+            "owner": "zhangsan",
+            "created_at": "2026-04-20T10:00:00+08:00",
+            "updated_at": "2026-04-29T18:30:00+08:00",
+        },
+        "timeline": [
+            # Owner zhangsan has no think/act; only "ghost" (unresolvable) does.
+            {
+                "file": "discussions/eng/m/001_ghost_think.md",
+                "type": "think", "creator": "ghost-pinyin",
+                "summary": "x", "created_at": "2026-04-20T10:00:00+08:00",
+            },
+            {
+                "file": "discussions/eng/m/002_zhangsan_result.md",
+                "type": "result", "creator": "zhangsan",
+                "summary": "done", "outcome": "finished",
+                "created_at": "2026-04-29T18:30:00+08:00",
+            },
+        ],
+    }
+    path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+    _emit_result_finished("m")
+    assert queue.jobs == []
+    runs = store.list_runs(matter_id="m")
+    assert len(runs) == 1
+    assert runs[0].status == "skipped"
+    assert runs[0].error == "trigger:no_candidates"
