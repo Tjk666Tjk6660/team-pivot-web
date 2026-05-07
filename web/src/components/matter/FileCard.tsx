@@ -284,11 +284,28 @@ export function FileCard({
         registerRef?.(el as HTMLDivElement | null);
       }}
       className={cn(
-        "min-w-0 scroll-mt-24 overflow-hidden rounded-[var(--r-md)] border border-[var(--line)] border-l-[6px] bg-[var(--surface)] p-4 shadow-[var(--shadow-sm)] sm:p-5",
+        "relative min-w-0 scroll-mt-24 overflow-hidden rounded-[var(--r-md)] border border-[var(--line)] border-l-[6px] bg-[var(--surface)] p-4 shadow-[var(--shadow-sm)] sm:p-5",
         cfg.side,
         highlighted && "ring-2 ring-[var(--accent-soft)]",
       )}
     >
+      {/* Invalidate stamp — diagonally across the card like a rubber
+          "VOID" mark. Larger and more visible than the timeline-strip
+          version since the card surface area allows it. Type color
+          (left rail) + InvalidatedBadge (in-header info chip) +
+          strike-through summary together carry id/state/title; this
+          stamp is the glanceable "this whole card is withdrawn"
+          signal. pointer-events-none so it never blocks click on
+          buttons / mention chips / readers below. */}
+      {isInvalidated && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 -rotate-[14deg] whitespace-nowrap rounded-[4px] border-[3px] border-[var(--danger-600)] bg-[var(--surface)]/40 px-4 py-1 text-[26px] font-black tracking-[0.15em] text-[var(--danger-600)] shadow-sm backdrop-blur-[1px]"
+        >
+          失效
+        </span>
+      )}
+
       {/* header */}
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2 text-[11px] text-[var(--text-mute)]">
@@ -334,7 +351,14 @@ export function FileCard({
         {shortFile(item.file)}
       </div>
 
-      <p className="mt-3 text-[14px] font-medium text-[var(--text)]">
+      <p
+        className={cn(
+          "mt-3 text-[14px] font-medium",
+          isInvalidated
+            ? "text-[var(--text-mute)] line-through decoration-[var(--text-fade)]"
+            : "text-[var(--text)]",
+        )}
+      >
         {item.summary}
       </p>
 
@@ -702,9 +726,11 @@ function CommentsBlock({ item }: { item: TimelineFileItem }) {
 
   const COLLAPSED = 3;
   const overflow = total > COLLAPSED;
-  const startIndex = overflow && !expanded ? total - COLLAPSED : 0;
+  // Show the first COLLAPSED entries by default; the toggle reveals
+  // the later (newer) ones. startIndex stays 0 either way so the
+  // displayed sequence number matches the chronological position.
   const visible =
-    overflow && !expanded ? item.mentions.slice(-COLLAPSED) : item.mentions;
+    overflow && !expanded ? item.mentions.slice(0, COLLAPSED) : item.mentions;
 
   return (
     <div className="mt-4">
@@ -720,13 +746,12 @@ function CommentsBlock({ item }: { item: TimelineFileItem }) {
             onClick={() => setExpanded((v) => !v)}
             className="text-[11px] font-medium text-[var(--accent)] hover:underline"
           >
-            {expanded ? "收起 ↑" : `展开更早的 ${total - COLLAPSED} 条 ↑`}
+            {expanded ? "收起 ↑" : `展开后面的 ${total - COLLAPSED} 条 ↓`}
           </button>
         )}
       </div>
       <ul className="space-y-1.5">
-        {visible.map((c, vi) => {
-          const i = startIndex + vi;
+        {visible.map((c, i) => {
           const author =
             ((c.author_display || c.author) ?? "").trim() || "未知用户";
           const targetNames = c.targets_display ?? c.targets ?? [];
@@ -805,9 +830,11 @@ function AnnotationsBlock({ item }: { item: TimelineFileItem }) {
 
   const COLLAPSED = 3;
   const overflow = total > COLLAPSED;
-  const startIndex = overflow && !expanded ? total - COLLAPSED : 0;
+  // Show the first COLLAPSED entries by default; the toggle reveals
+  // the later (newer) ones. startIndex stays 0 either way so the
+  // displayed sequence number matches the chronological position.
   const visible =
-    overflow && !expanded ? item.annotations.slice(-COLLAPSED) : item.annotations;
+    overflow && !expanded ? item.annotations.slice(0, COLLAPSED) : item.annotations;
 
   return (
     <div className="mt-4">
@@ -823,13 +850,12 @@ function AnnotationsBlock({ item }: { item: TimelineFileItem }) {
             onClick={() => setExpanded((v) => !v)}
             className="text-[11px] font-medium text-[var(--accent)] hover:underline"
           >
-            {expanded ? "收起 ↑" : `展开更早的 ${total - COLLAPSED} 条 ↑`}
+            {expanded ? "收起 ↑" : `展开后面的 ${total - COLLAPSED} 条 ↓`}
           </button>
         )}
       </div>
       <ul className="space-y-1.5">
-        {visible.map((a, vi) => {
-          const i = startIndex + vi;
+        {visible.map((a, i) => {
           const author =
             ((a.author_display || a.author) ?? "").trim() || "未知用户";
           const body = a.body?.trim();

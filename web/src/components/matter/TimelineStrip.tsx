@@ -322,61 +322,43 @@ export function TimelineStrip({
               >
                 <span
                   className={cn(
-                    "flex h-6 w-6 items-center justify-center rounded-full border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-sm)] transition-transform",
+                    "relative flex h-6 w-6 items-center justify-center rounded-full border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-sm)] transition-transform",
                     active && "scale-125 shadow-[var(--shadow-lg)]",
                   )}
                 >
-                  <span
-                    className={cn(
-                      "block h-3.5 w-3.5 rounded-full",
-                      // Invalidated files lose their type color and turn grey
-                      // — matches the InvalidatedBadge on the file card and
-                      // signals "this entry is withdrawn" at strip glance.
-                      isInvalidated
-                        ? "bg-[var(--text-fade)] opacity-60"
-                        : cfg.dot,
-                    )}
-                  />
+                  {/* Type color stays even when invalidated — color
+                      encodes type/stage identity (think/act/verify/...),
+                      which doesn't change on withdrawal. The "失效"
+                      rubber-stamp overlay is the invalidate signal:
+                      slightly rotated, danger-colored, semi-transparent
+                      surface so the underlying type dot still peeks
+                      through for stage identification. */}
+                  <span className={cn("block h-3.5 w-3.5 rounded-full", cfg.dot)} />
+                  {isInvalidated && (
+                    <span
+                      aria-hidden
+                      className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 -rotate-[14deg] whitespace-nowrap rounded-[2px] border-[1.5px] border-[var(--danger-600)] bg-[var(--surface)]/85 px-[3px] py-[1px] text-[9px] font-black uppercase tracking-[0.05em] text-[var(--danger-600)] shadow-sm"
+                    >
+                      失效
+                    </span>
+                  )}
                 </span>
                 <span
                   className={cn(
                     "mt-1 text-[10px] font-semibold uppercase tracking-wide",
-                    isInvalidated
-                      ? "text-[var(--text-fade)] line-through"
-                      : cfg.pill,
+                    cfg.pill,
                   )}
                 >
                   {item.type} #{i + 1}
                 </span>
-                <span
-                  className={cn(
-                    "max-w-full truncate text-[10px] font-medium",
-                    isInvalidated
-                      ? "text-[var(--text-fade)]"
-                      : "text-[var(--text-soft)]",
-                  )}
-                >
+                <span className="max-w-full truncate text-[10px] font-medium text-[var(--text-soft)]">
                   {item.creator}
                 </span>
-                <span
-                  className={cn(
-                    "text-[10px]",
-                    isInvalidated
-                      ? "text-[var(--text-fade)]"
-                      : "text-[var(--text-mute)]",
-                  )}
-                >
+                <span className="text-[10px] text-[var(--text-mute)]">
                   {relativeTime(item.created_at)}
                 </span>
                 {item.status_change && (
-                  <span
-                    className={cn(
-                      "mt-0.5 inline-flex max-w-full items-center truncate rounded-full px-1.5 py-0.5 text-[10px] ring-1",
-                      isInvalidated
-                        ? "bg-[var(--surface-alt)] text-[var(--text-fade)] ring-[var(--line)]"
-                        : "bg-[var(--status-project-bg)] text-[var(--status-project-fg)] ring-[var(--accent-soft)]",
-                    )}
-                  >
+                  <span className="mt-0.5 inline-flex max-w-full items-center truncate rounded-full bg-[var(--status-project-bg)] px-1.5 py-0.5 text-[10px] text-[var(--status-project-fg)] ring-1 ring-[var(--accent-soft)]">
                     {item.status_change.from} → {item.status_change.to}
                   </span>
                 )}
@@ -384,9 +366,7 @@ export function TimelineStrip({
                   <span
                     className={cn(
                       "mt-0.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] ring-1",
-                      isInvalidated
-                        ? "bg-[var(--surface-alt)] text-[var(--text-fade)] ring-[var(--line)]"
-                        : item.outcome === "finished"
+                      item.outcome === "finished"
                         ? "bg-[var(--status-concluded-bg)] text-[var(--status-concluded-fg)] ring-[var(--line)]"
                         : "bg-[var(--surface-alt)] text-[var(--text-soft)] ring-[var(--line-strong)]",
                     )}
