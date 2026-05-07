@@ -7,7 +7,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from server.auth.auto_pinyin import assign_pinyin
 from server.external_bindings import ExternalBindingRepo
+from server.invites import InviteRepo
 from server.join_applications import (
     JoinApplication,
     JoinApplicationRepo,
@@ -31,6 +33,7 @@ def build_router(
     bindings: ExternalBindingRepo,
     notifier: Notifier,
     admin_user_dep,
+    invites: InviteRepo | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/admin/applications")
 
@@ -44,7 +47,7 @@ def build_router(
         else:
             apps = applications.list_pending()
         return JSONResponse({
-            "items": [_app_dict(a, bindings, pivot_users) for a in apps],
+            "items": [_app_dict(a, bindings, pivot_users, invites) for a in apps],
         })
 
     @router.get("/{application_id}/match-candidates")
@@ -81,9 +84,14 @@ def build_router(
 
         if body.target_pivot_user_id is None:
             try:
+                pinyin = assign_pinyin(
+                    name=a.raw_profile.get("name") or "",
+                    open_id=a.external_id,
+                    repo=pivot_users,
+                )
                 user = pivot_users.create(
                     display_name=a.raw_profile.get("name") or "Unknown",
-                    pinyin=None,
+                    pinyin=pinyin,
                     email=a.raw_profile.get("email"),
                     avatar_url=a.raw_profile.get("avatar_url") or "",
                     role="member",
@@ -172,6 +180,7 @@ def _app_dict(
     a: JoinApplication,
     bindings: ExternalBindingRepo,
     pivot_users: PivotUserRepo,
+    invites: InviteRepo | None = None,
 ) -> dict:
     return {
         "id": a.id,
@@ -191,6 +200,29 @@ def _app_dict(
         # merged into 张三 (zhangsan@x.com)" without leaving the page.
         # `merged_into` is None for pending / rejected rows.
         "merged_into": _resolve_merged_into(a, bindings, pivot_users),
+        "via_invite": _via_invite_info(a.via_invite_id, invites, pivot_users),
+    }
+
+
+def _via_invite_info(
+    via_invite_id: str | None,
+    invites: InviteRepo | None,
+    pivot_users: PivotUserRepo,
+) -> dict | None:
+    if via_invite_id is None or invites is None:
+        return None
+    invite = invites.get(via_invite_id)
+    if invite is None:
+        return {
+            "invite_id": via_invite_id,
+            "invited_by_pinyin": None,
+            "invited_by_display_name": None,
+        }
+    inviter = pivot_users.get(invite.created_by)
+    return {
+        "invite_id": invite.id,
+        "invited_by_pinyin": inviter.pinyin if inviter else None,
+        "invited_by_display_name": inviter.display_name if inviter else None,
     }
 
 

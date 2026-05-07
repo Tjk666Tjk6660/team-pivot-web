@@ -67,6 +67,16 @@ class InviteRepo:
         assert row is not None
         return token, _row_to_invite(row)
 
+    def get(self, invite_id: str) -> Invite | None:
+        """Lookup by invite id (NOT token). Returns the record regardless
+        of used / expired status — callers like the admin applications
+        list need to display 'invited by X' even after the invite is gone."""
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM invite WHERE id=?", (invite_id,)
+            ).fetchone()
+        return _row_to_invite(row) if row else None
+
     def resolve_token(self, plaintext_token: str) -> Invite | None:
         token_hash = _hash_token(plaintext_token)
         with self._db.connect() as conn:

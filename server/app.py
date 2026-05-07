@@ -357,6 +357,7 @@ def create_app() -> FastAPI:
     app.include_router(
         build_admin_applications_router(
             applications, pivot_users, bindings, notifier, admin_user_cookie_dep,
+            invites=invites,
         )
     )
     app.include_router(
