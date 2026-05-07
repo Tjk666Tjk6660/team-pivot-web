@@ -237,7 +237,7 @@ class RelevanceEventsRepo:
 
     def mark_matter_events_read(
         self,
-        user_open_id: str,
+        pivot_user_id: str,
         matter_id: str,
     ) -> int:
         """Mark matter-level event rows (filename=MATTER_EVENT_FILENAME) as
@@ -248,9 +248,9 @@ class RelevanceEventsRepo:
         with self._db.connect() as conn:
             cur = conn.execute(
                 "UPDATE relevance_events SET read_at = ?"
-                " WHERE user_open_id = ? AND matter_id = ?"
+                " WHERE pivot_user_id = ? AND matter_id = ?"
                 "   AND filename = ? AND read_at IS NULL",
-                (now, user_open_id, matter_id, MATTER_EVENT_FILENAME),
+                (now, pivot_user_id, matter_id, MATTER_EVENT_FILENAME),
             )
             return cur.rowcount
 
@@ -301,7 +301,7 @@ class RelevanceEventsRepo:
             (r["filename"], r["event_at"], r["actor_pinyin"]) for r in rows
         }
 
-    def matter_ids_for_user(self, user_open_id: str) -> set[str]:
+    def matter_ids_for_user(self, pivot_user_id: str) -> set[str]:
         """Distinct matter_ids where the user has any relevance row (read or
         unread, kind=file or kind=mention). Used by GET /api/matters?scope=
         relevant: combined with a timeline scan in matters._is_matter_relevant_to_user
@@ -310,8 +310,8 @@ class RelevanceEventsRepo:
         with self._db.connect() as conn:
             rows = conn.execute(
                 "SELECT DISTINCT matter_id FROM relevance_events"
-                " WHERE user_open_id = ?",
-                (user_open_id,),
+                " WHERE pivot_user_id = ?",
+                (pivot_user_id,),
             ).fetchall()
         return {r["matter_id"] for r in rows}
 
