@@ -570,17 +570,25 @@ class ScoringStore:
     def sweep_orphans(
         self, *, timeout_seconds: float = _DEFAULT_ORPHAN_TIMEOUT_SECONDS,
     ) -> int:
-        """Mark 'running' rows older than timeout as failed/orphan.
+        """Mark abandoned 'running' / 'queued' rows as failed/orphan.
 
-        Called from app.py lifespan on boot to catch crashes mid-run. Returns
-        number of rows touched.
+        Called from app.py lifespan on boot to catch crashes mid-run. Both
+        statuses are considered orphan because:
+          * 'running' — worker died mid-AI-call and never wrote success/failed.
+          * 'queued'  — admin pre-created via rerun endpoint; in-memory queue
+            was lost on restart and worker never picked up.
+
+        On startup callers pass `timeout_seconds=0` so every active row from
+        the previous process gets swept immediately (single-worker
+        deployment — no in-flight run can legitimately survive a restart).
+        Returns number of rows touched.
         """
         cutoff = time() - timeout_seconds
         with self._db.connect() as conn:
             cur = conn.execute(
                 "UPDATE matter_scoring_runs"
                 " SET status='failed', error='orphan', finished_at=?"
-                " WHERE status='running' AND started_at < ?",
+                " WHERE status IN ('running', 'queued') AND started_at < ?",
                 (time(), cutoff),
             )
             return cur.rowcount or 0

@@ -174,7 +174,11 @@ def create_app() -> FastAPI:
     # worker → AI eval → matter_scores rows. v1 admin-only (decision B);
     # disabled by default (settings 'scoring.enabled' = '0').
     scoring_store = ScoringStore(db)
-    swept_runs = scoring_store.sweep_orphans()
+    # Aggressive sweep: any 'running' / 'queued' row from a previous process
+    # is by definition stale (single-worker deployment, in-memory queue
+    # doesn't survive restart). Without timeout=0 we'd wait up to 10 min for
+    # the default cutoff, leaving the UI showing "运行中" for a stuck run.
+    swept_runs = scoring_store.sweep_orphans(timeout_seconds=0)
     if swept_runs > 0:
         log.info("scoring orphan runs swept on startup purged=%d", swept_runs)
     scoring_queue = ScoringQueue()

@@ -951,7 +951,17 @@ def _classify_reason(latest_run) -> dict:
         }
     # Worker-level: race_lost / orphan / superseded_by_rerun / schema_error /
     # ai_timeout / pydantic_invalid 等 — admin 看 error 原文 + 通用建议
-    if err.startswith(("race_lost", "orphan", "superseded_by_rerun")):
+    if err.startswith("orphan"):
+        # orphan rows come from sweep_orphans() — server restart killed the
+        # in-memory worker mid-run (or admin pre-created a queued row that
+        # never got picked up). Friendlier label than the raw "orphan".
+        return {
+            "reason_code": "orphan",
+            "reason_label": "服务重启中断",
+            "reason_detail": None,
+            "action_hint": "点击重跑",
+        }
+    if err.startswith(("race_lost", "superseded_by_rerun")):
         return {
             "reason_code": err.split(":")[0],
             "reason_label": "运行中断",

@@ -303,6 +303,51 @@ def test_sweep_orphans_skips_recent_running(store, owner):
     assert store.get_run(run_id).status == "running"
 
 
+def test_sweep_orphans_with_zero_timeout_clears_active_immediately(
+    store, owner,
+):
+    """On startup we call sweep_orphans(timeout_seconds=0) so any active row
+    from the previous process is cleared — no waiting 10 min for the cutoff.
+    Covers both running and queued."""
+    running_id = store.start_run(
+        _job(owner.id, matter_id="m-running"), timeline_hash="hR", model="m",
+    )
+    store.transition_running(running_id)
+    queued_id = store.start_run(
+        _job(owner.id, matter_id="m-queued"), timeline_hash="hQ", model="m",
+    )
+
+    swept = store.sweep_orphans(timeout_seconds=0)
+    assert swept == 2
+
+    r1 = store.get_run(running_id)
+    r2 = store.get_run(queued_id)
+    assert r1.status == "failed"
+    assert r1.error == "orphan"
+    assert r2.status == "failed"
+    assert r2.error == "orphan"
+
+
+def test_sweep_orphans_includes_queued_rows(store, owner):
+    """queued rows from admin pre-create that never got worker pickup are
+    orphans too — the in-memory queue lost them on restart."""
+    queued_id = store.start_run(
+        _job(owner.id), timeline_hash="h", model="m",
+    )
+    # Force into the past
+    with store._db.connect() as conn:
+        conn.execute(
+            "UPDATE matter_scoring_runs SET started_at=started_at-3600 WHERE run_id=?",
+            (queued_id,),
+        )
+
+    swept = store.sweep_orphans(timeout_seconds=60)
+    assert swept == 1
+    r = store.get_run(queued_id)
+    assert r.status == "failed"
+    assert r.error == "orphan"
+
+
 def test_supersede_active_runs_clears_queued_and_running(store, owner):
     """Admin rerun must clear any stuck queued/running rows so the new run
     doesn't race-lost against the idempotency partial unique index."""
