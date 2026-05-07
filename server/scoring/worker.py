@@ -280,16 +280,31 @@ def _run_scoring_once_inner(
     resolver = PinyinResolver(pivot_users._db)
     candidate_pinyins = _candidate_pinyins(job, resolver, fallback={owner_pinyin})
 
-    # 6. Start the run (atomic with idempotency check via partial unique idx).
-    # Stamp schema_version=2 so the frontend knows to expect multi-row output.
-    run_id = _try_start_run(
-        store, job, timeline_hash=timeline_hash, model=model,
-        schema_version=2,
-    )
-    if run_id is None:
-        # Lost the idempotency race — another run is in flight
-        store.mark_skipped(job, timeline_hash=timeline_hash, reason="race_lost")
-        return
+    # 6. Get the run row.
+    # - admin rerun creates the 'queued' row synchronously in the API handler
+    #   (so the UI sees the run immediately) and stamps job.run_id; we just
+    #   verify it's still queued, then transition.
+    # - auto-trigger path leaves job.run_id None and we create the row here,
+    #   atomically gated by the (matter_id, timeline_hash) idempotency idx.
+    if job.run_id is not None:
+        existing = store.get_run(job.run_id)
+        if existing is None or existing.status != "queued":
+            log.info(
+                "scoring: pre-created run no longer queued matter=%s run=%s status=%s",
+                job.matter_id, job.run_id,
+                existing.status if existing else "(missing)",
+            )
+            return
+        run_id = job.run_id
+    else:
+        run_id = _try_start_run(
+            store, job, timeline_hash=timeline_hash, model=model,
+            schema_version=2,
+        )
+        if run_id is None:
+            # Lost the idempotency race — another run is in flight
+            store.mark_skipped(job, timeline_hash=timeline_hash, reason="race_lost")
+            return
 
     store.transition_running(run_id)
 
