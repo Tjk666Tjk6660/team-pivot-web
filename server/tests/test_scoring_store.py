@@ -303,6 +303,68 @@ def test_sweep_orphans_skips_recent_running(store, owner):
     assert store.get_run(run_id).status == "running"
 
 
+def test_supersede_active_runs_clears_queued_and_running(store, owner):
+    """Admin rerun must clear any stuck queued/running rows so the new run
+    doesn't race-lost against the idempotency partial unique index."""
+    run_a = store.start_run(
+        _job(owner.id, matter_id="m-a"), timeline_hash="hA", model="m",
+    )
+    run_b = store.start_run(
+        _job(owner.id, matter_id="m-b"), timeline_hash="hB", model="m",
+    )
+    store.transition_running(run_a)
+    # run_b stays in queued state
+
+    superseded = store.supersede_active_runs("m-a")
+    assert superseded == 1
+    a = store.get_run(run_a)
+    b = store.get_run(run_b)
+    assert a.status == "failed"
+    assert a.error == "superseded_by_rerun"
+    assert a.finished_at is not None
+    # Other matter unaffected
+    assert b.status == "queued"
+    assert b.error is None
+
+
+def test_supersede_active_runs_clears_queued_only(store, owner):
+    """Plain queued (no transition_running) is also superseded."""
+    run_q = store.start_run(
+        _job(owner.id, matter_id="m-q"), timeline_hash="hQ", model="m",
+    )
+    superseded = store.supersede_active_runs("m-q")
+    assert superseded == 1
+    assert store.get_run(run_q).status == "failed"
+    assert store.get_run(run_q).error == "superseded_by_rerun"
+
+
+def test_supersede_active_runs_ignores_terminal_runs(store, owner):
+    """Already-finished runs (success / failed) must not be touched."""
+    success_run = store.start_run(
+        _job(owner.id, matter_id="m-t"), timeline_hash="h1", model="m",
+    )
+    store.transition_running(success_run)
+    store.finish_run(success_run, "success")
+
+    failed_run = store.start_run(
+        _job(owner.id, matter_id="m-t"), timeline_hash="h2", model="m",
+    )
+    store.transition_running(failed_run)
+    store.finish_run(failed_run, "failed", error="something")
+
+    superseded = store.supersede_active_runs("m-t")
+    assert superseded == 0
+
+    assert store.get_run(success_run).status == "success"
+    assert store.get_run(failed_run).status == "failed"
+    assert store.get_run(failed_run).error == "something"
+
+
+def test_supersede_active_runs_no_match_returns_zero(store, owner):
+    """No queued/running runs for the matter → no-op."""
+    assert store.supersede_active_runs("nonexistent-matter") == 0
+
+
 # ── Scores + evidence ────────────────────────────────────────────────
 
 
