@@ -220,7 +220,7 @@ def test_get_config_defaults(client):
         "enabled": False,
         "visibility": "admin_only",
         "model": "",
-        "timeout_seconds": 180,
+        "timeout_seconds": 300,
     }
 
 
@@ -246,7 +246,7 @@ def test_get_config_falls_back_for_invalid_visibility(client, settings):
 def test_get_config_falls_back_for_invalid_timeout(client, settings):
     settings.set(KEY_TIMEOUT_SECONDS, "not-a-number")
     r = client.get("/api/admin/scoring/config", headers=_admin_headers())
-    assert r.json()["timeout_seconds"] == 180
+    assert r.json()["timeout_seconds"] == 300
 
 
 # ---------- config PUT ----------

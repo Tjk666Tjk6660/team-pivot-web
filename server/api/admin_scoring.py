@@ -54,7 +54,7 @@ from server.workspace import Workspace
 log = logging.getLogger(__name__)
 
 DEFAULT_VISIBILITY = "admin_only"
-DEFAULT_TIMEOUT_SECONDS = 180
+DEFAULT_TIMEOUT_SECONDS = 300
 
 
 # --------------------------------------------------------------------------- #
@@ -66,7 +66,7 @@ class ScoringConfig(BaseModel):
     enabled: bool = False
     visibility: Literal["admin_only", "subjects", "all"] = "admin_only"
     model: str = ""  # empty = inherit from main ai.model
-    timeout_seconds: int = Field(default=120, ge=1, le=600)
+    timeout_seconds: int = Field(default=300, ge=1, le=600)
 
 
 class CommenterWeightIn(BaseModel):
@@ -331,7 +331,7 @@ def build_router(
             ok=True,
             matter_id=matter_id,
             queued=True,
-            message="已入队，等待 worker 处理（约 1-3 分钟）",
+            message="已入队，等待 worker 处理（约 1-5 分钟）",
         )
 
     @router.post("/scores/{run_id}/override")

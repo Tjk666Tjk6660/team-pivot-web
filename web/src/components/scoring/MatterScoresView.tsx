@@ -140,7 +140,7 @@ export function MatterScoresView({
                 />
               ) : detail.run.status === "queued" ||
                 detail.run.status === "running" ? (
-                <EmptyScoreNotice message="评分生成中…（约 1-3 分钟）" />
+                <EmptyScoreNotice message="评分生成中…（约 1-5 分钟）" />
               ) : detail.run.status === "skipped" ? (
                 <EmptyScoreNotice
                   message={`run 跳过（${detail.run.error || "未知原因"}）`}

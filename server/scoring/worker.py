@@ -50,7 +50,7 @@ _AI_KEY_API_KEY = "ai.openrouter_api_key"
 _AI_KEY_BASE_URL = "ai.base_url"
 _AI_KEY_MODEL = "ai.model"
 
-DEFAULT_TIMEOUT_SECONDS = 180.0
+DEFAULT_TIMEOUT_SECONDS = 300.0
 
 
 # ---------- queue ----------

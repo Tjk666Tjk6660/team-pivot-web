@@ -157,11 +157,11 @@ export function ConfigTab() {
               max={600}
               value={config.timeout_seconds}
               onChange={(e) =>
-                update({ timeout_seconds: Number(e.target.value) || 180 })
+                update({ timeout_seconds: Number(e.target.value) || 300 })
               }
             />
             <p className="text-xs text-muted-foreground">
-              AI 调用超时后 run 标 failed
+              推荐 300 秒（≈5 分钟），范围 1-600。AI 调用超时后 run 标 failed
             </p>
           </div>
         </div>
