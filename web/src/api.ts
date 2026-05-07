@@ -2290,6 +2290,82 @@ export async function updateScoringConfig(body: ScoringConfig): Promise<void> {
   }
 }
 
+// ── Matter-grouped admin list (Phase 2 rollup view) ────────────────────────
+
+/** One scored subject inside a matter's latest successful run, used as an
+ *  inline chip in the matter row. Avatar/display resolved server-side. */
+export type MatterGroupSubjectScore = {
+  subject_user_id: string;
+  subject_display: string | null;
+  subject_avatar_url: string | null;
+  overall: number;
+  override_overall: number | null;
+  confidence: string;
+};
+
+/** A subject the AI explicitly skipped (insufficient evidence) on the
+ *  same run that produced subject_scores. */
+export type MatterGroupSkipped = {
+  pinyin: string;
+  display: string | null;
+};
+
+/** Compact per-run record shown in the expandable history row. */
+export type MatterGroupRunBrief = {
+  run_id: string;
+  status: ScoringRunSummary["status"];
+  error: string | null;
+  started_at: number;
+  finished_at: number | null;
+  triggered_by: string;
+};
+
+export type MatterScoringGroup = {
+  matter_id: string;
+  matter_title: string | null;
+  matter_category: string;
+  schema_version: number;
+  /** Most recent run by started_at — drives status badge + timestamp. */
+  latest_run: {
+    run_id: string;
+    status: ScoringRunSummary["status"];
+    error: string | null;
+    started_at: number;
+    finished_at: number | null;
+    triggered_by: string;
+  } | null;
+  /** Inline score chips. Empty when no successful run yet. Pulled from the
+   *  most recent successful run, not necessarily the latest run — admins
+   *  want to see real numbers when they exist. */
+  subject_scores: MatterGroupSubjectScore[];
+  skipped_subjects: MatterGroupSkipped[];
+  /** Full rerun history, latest first. Used by the row expander. */
+  history: MatterGroupRunBrief[];
+  /** Aggregate counts by status. Renders the "8 次 rerun (2/3/2/1)" hint. */
+  history_counts: Partial<Record<ScoringRunSummary["status"], number>>;
+};
+
+export type MatterScoringGroupList = {
+  items: MatterScoringGroup[];
+  total: number;
+  has_more: boolean;
+};
+
+export async function fetchMatterScoringGroups(params: {
+  matter_query?: string;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<MatterScoringGroupList> {
+  const qs = new URLSearchParams();
+  if (params.matter_query) qs.set("matter_query", params.matter_query);
+  if (params.limit !== undefined) qs.set("limit", String(params.limit));
+  if (params.offset !== undefined) qs.set("offset", String(params.offset));
+  const url = `/api/admin/scoring/matters${qs.toString() ? `?${qs}` : ""}`;
+  const r = await adminFetch(url);
+  if (!r.ok) throw new Error(`/api/admin/scoring/matters failed: ${r.status}`);
+  return (await r.json()) as MatterScoringGroupList;
+}
+
 export async function fetchScoringRuns(params: {
   status?: string;
   /** Exact matter_id match — use matter_query for substring search instead. */

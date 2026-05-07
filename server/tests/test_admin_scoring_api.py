@@ -419,6 +419,157 @@ def test_list_runs_rejects_bad_pagination(client):
     assert r.status_code == 400
 
 
+# ---------- matter group list (Phase 2 multi-subject rollup) ----------
+
+
+def test_list_matter_groups_empty(client):
+    r = client.get("/api/admin/scoring/matters", headers=_admin_headers())
+    body = r.json()
+    assert body == {"items": [], "total": 0, "has_more": False}
+
+
+def test_list_matter_groups_collapses_reruns_per_matter(
+    client, store, pivot_users, workspace,
+):
+    """Three reruns of the same matter render as a single matter row with
+    history of 3 (counts.success=1, counts.failed=2)."""
+    owner = pivot_users.create(
+        display_name="张三", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    _write_matter(workspace, "m", title="客户验收")
+    a = store.start_run(_job(owner.id, matter_id="m"), timeline_hash="h1", model="m")
+    store.finish_run(a, "failed", error="ai_timeout")
+    b = store.start_run(_job(owner.id, matter_id="m"), timeline_hash="h2", model="m")
+    store.finish_run(b, "failed", error="schema")
+    c = store.start_run(_job(owner.id, matter_id="m"), timeline_hash="h3", model="m")
+    store.finish_run(c, "success")
+
+    r = client.get("/api/admin/scoring/matters", headers=_admin_headers())
+    body = r.json()
+    assert body["total"] == 1
+    assert len(body["items"]) == 1
+    item = body["items"][0]
+    assert item["matter_id"] == "m"
+    assert item["matter_title"] == "客户验收"
+    # latest_run is whatever has the most recent started_at — c here.
+    assert item["latest_run"]["run_id"] == c
+    assert item["latest_run"]["status"] == "success"
+    # history covers all 3 runs, latest first
+    assert len(item["history"]) == 3
+    assert item["history_counts"]["success"] == 1
+    assert item["history_counts"]["failed"] == 2
+
+
+def test_list_matter_groups_separates_distinct_matters(
+    client, store, pivot_users, workspace,
+):
+    owner = pivot_users.create(
+        display_name="zs", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    _write_matter(workspace, "m1")
+    _write_matter(workspace, "m2")
+    store.start_run(
+        _job(owner.id, matter_id="m1"), timeline_hash="h1", model="m",
+    )
+    store.start_run(
+        _job(owner.id, matter_id="m2"), timeline_hash="h2", model="m",
+    )
+
+    r = client.get("/api/admin/scoring/matters", headers=_admin_headers())
+    body = r.json()
+    assert body["total"] == 2
+    matter_ids = {item["matter_id"] for item in body["items"]}
+    assert matter_ids == {"m1", "m2"}
+
+
+def test_list_matter_groups_subject_scores_from_latest_success(
+    client, store, pivot_users, workspace,
+):
+    """subject_scores comes from the most recent successful run, even if
+    a more recent run failed afterward — admins want to see real numbers."""
+    from server.scoring.store import EvidenceWrite, ScoreWrite
+
+    owner = pivot_users.create(
+        display_name="张三", pinyin="zhangsan", email=None, avatar_url="https://a/zs.png",
+    )
+    _write_matter(workspace, "m")
+
+    # Older successful run with one subject score.
+    success = store.start_run(_job(owner.id, matter_id="m"), timeline_hash="h1", model="m")
+    store.transition_running(success)
+    store.write_results(
+        success,
+        ScoreWrite(
+            subject_user_id=owner.id, overall=4.5, confidence="high",
+            rationale="r", delivery=4.5,
+        ),
+        [
+            EvidenceWrite(
+                dimension="delivery", polarity="positive", confidence="high",
+                source_kind="file",
+                source_filename="discussions/eng/m/001_zhangsan_act_xx.md",
+                source_file_type="act",
+                quote="q", explanation="e",
+            ),
+        ],
+    )
+    store.finish_run(success, "success")
+
+    # Newer failed run after — shouldn't override the subject_scores.
+    later = store.start_run(_job(owner.id, matter_id="m"), timeline_hash="h2", model="m")
+    store.finish_run(later, "failed", error="ai_timeout")
+
+    r = client.get("/api/admin/scoring/matters", headers=_admin_headers())
+    item = r.json()["items"][0]
+    assert item["latest_run"]["status"] == "failed"  # latest is the later one
+    assert len(item["subject_scores"]) == 1
+    assert item["subject_scores"][0]["subject_display"] == "张三"
+    assert item["subject_scores"][0]["overall"] == 4.5
+    assert item["subject_scores"][0]["subject_avatar_url"] == "https://a/zs.png"
+
+
+def test_list_matter_groups_pagination(client, store, pivot_users, workspace):
+    owner = pivot_users.create(
+        display_name="zs", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    for i in range(5):
+        mid = f"m{i}"
+        _write_matter(workspace, mid)
+        store.start_run(
+            _job(owner.id, matter_id=mid), timeline_hash=f"h{i}", model="m",
+        )
+
+    r = client.get(
+        "/api/admin/scoring/matters?limit=2&offset=0", headers=_admin_headers(),
+    )
+    body = r.json()
+    assert body["total"] == 5
+    assert len(body["items"]) == 2
+    assert body["has_more"] is True
+
+
+def test_list_matter_groups_matter_query(client, store, pivot_users, workspace):
+    owner = pivot_users.create(
+        display_name="zs", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    _write_matter(workspace, "客户验收流程")
+    _write_matter(workspace, "测试评分")
+    store.start_run(
+        _job(owner.id, matter_id="客户验收流程"), timeline_hash="h1", model="m",
+    )
+    store.start_run(
+        _job(owner.id, matter_id="测试评分"), timeline_hash="h2", model="m",
+    )
+
+    r = client.get(
+        "/api/admin/scoring/matters?matter_query=评分",
+        headers=_admin_headers(),
+    )
+    body = r.json()
+    assert body["total"] == 1
+    assert body["items"][0]["matter_id"] == "测试评分"
+
+
 # ---------- run detail ----------
 
 

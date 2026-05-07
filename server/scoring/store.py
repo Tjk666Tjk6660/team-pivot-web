@@ -420,6 +420,70 @@ class ScoringStore:
             ).fetchone()
         return _row_to_run(row) if row else None
 
+    def list_matter_groups(
+        self,
+        *,
+        matter_query: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[list[str], int]:
+        """Matter-centric pagination for the admin list view.
+
+        Returns (matter_ids_for_this_page, total_distinct_matter_count).
+        Matters are sorted by their most-recent run's started_at desc — so
+        the user sees freshly-active matters first, regardless of how many
+        reruns each has accumulated.
+
+        Status filter is intentionally left out: at the matter level, a
+        single status (e.g. "失败") is misleading — a matter typically has
+        a mix of run statuses across reruns. Status filtering belongs on
+        the per-run history view (kept on list_runs).
+        """
+        where = ""
+        params: list[object] = []
+        if matter_query:
+            escaped = (
+                matter_query.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+            )
+            where = " WHERE matter_id LIKE ? ESCAPE '\\'"
+            params.append(f"%{escaped}%")
+
+        with self._db.connect() as conn:
+            t0 = _time.perf_counter()
+            count_row = conn.execute(
+                f"SELECT COUNT(DISTINCT matter_id) AS n"
+                f"  FROM matter_scoring_runs{where}",
+                params,
+            ).fetchone()
+            total = int(count_row["n"])
+
+            page_rows = conn.execute(
+                f"SELECT matter_id, MAX(started_at) AS latest"
+                f"  FROM matter_scoring_runs{where}"
+                f" GROUP BY matter_id"
+                f" ORDER BY latest DESC"
+                f" LIMIT ? OFFSET ?",
+                [*params, limit, offset],
+            ).fetchall()
+            _warn_if_slow(
+                "list_matter_groups", t0, matter_query=matter_query,
+            )
+        return [r["matter_id"] for r in page_rows], total
+
+    def list_runs_for_matter(self, matter_id: str) -> list[ScoringRun]:
+        """All runs for a single matter, latest first. Used by the matter
+        rollup view to render rerun history under each matter row."""
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM matter_scoring_runs"
+                " WHERE matter_id=?"
+                " ORDER BY started_at DESC",
+                (matter_id,),
+            ).fetchall()
+        return [_row_to_run(r) for r in rows]
+
     def list_runs(
         self,
         *,

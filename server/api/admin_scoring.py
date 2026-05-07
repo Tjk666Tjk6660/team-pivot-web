@@ -164,6 +164,38 @@ def build_router(
             "has_more": offset + len(items) < total,
         }
 
+    @router.get("/matters")
+    def list_matter_groups(
+        matter_query: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+        _: PivotUser = Depends(admin_user_dep),
+    ):
+        """Matter-centric pagination for the admin list view.
+
+        Returns one entry per matter (not per run): each entry rolls up the
+        latest run + all rerun history + multi-subject score chips. Replaces
+        the per-run flat list as the default UI shape — drilling into rerun
+        history is one click on the row, drilling into a specific run's
+        evidence is one click on a history item.
+        """
+        if limit < 1 or limit > 100:
+            raise HTTPException(400, "limit must be in [1, 100]")
+        if offset < 0:
+            raise HTTPException(400, "offset must be ≥ 0")
+        matter_ids, total = store.list_matter_groups(
+            matter_query=matter_query, limit=limit, offset=offset,
+        )
+        items = [
+            _matter_group(mid, store, workspace, pivot_users)
+            for mid in matter_ids
+        ]
+        return {
+            "items": items,
+            "total": total,
+            "has_more": offset + len(items) < total,
+        }
+
     @router.get("/runs/{run_id}")
     def get_run_detail(
         run_id: str,
@@ -523,6 +555,110 @@ def _run_summary(
         # this to decide whether to render single-card or multi-row layout.
         "schema_version": run.schema_version,
         "score": score_brief,
+    }
+
+
+def _matter_group(
+    matter_id: str,
+    store: ScoringStore,
+    workspace: Workspace,
+    pivot_users: PivotUserRepo,
+) -> dict:
+    """Roll up all runs for one matter into a single list entry.
+
+    Shape:
+        {
+          matter_id, matter_title, matter_category,
+          schema_version,                    # from latest_run
+          latest_run: {run_id, status, error, started_at, finished_at,
+                       triggered_by},
+          subject_scores: [{...}],          # latest successful run if any,
+                                             # else empty list
+          skipped_subjects: [{...}],        # from same run as subject_scores
+          history: [{run_id, status, error, started_at, triggered_by}, ...],
+          history_counts: {success, failed, skipped, queued, running},
+        }
+
+    "Latest" for header data is by started_at desc; "successful" for the
+    subject_scores chips means the most recent run with status='success' so
+    the user always sees real numbers when they exist (otherwise chips fall
+    back to empty + the latest run's error surfaces in the row).
+    """
+    runs = store.list_runs_for_matter(matter_id)
+    title = _matter_title(workspace, matter_id)
+    if not runs:
+        return {
+            "matter_id": matter_id,
+            "matter_title": title,
+            "matter_category": "",
+            "schema_version": 1,
+            "latest_run": None,
+            "subject_scores": [],
+            "skipped_subjects": [],
+            "history": [],
+            "history_counts": {},
+        }
+    latest = runs[0]
+    success_run = next((r for r in runs if r.status == "success"), None)
+
+    subject_scores: list[dict] = []
+    skipped_subjects_payload: list[dict] = []
+    if success_run is not None:
+        all_pairs = store.get_scores(success_run.run_id)
+        for score, _evidence in all_pairs:
+            subject_scores.append({
+                "subject_user_id": score.subject_user_id,
+                "subject_display": _resolve_subject_display(
+                    score.subject_user_id, pivot_users,
+                ),
+                "subject_avatar_url": _resolve_subject_avatar(
+                    score.subject_user_id, pivot_users,
+                ),
+                "overall": score.overall,
+                "override_overall": score.human_override_overall,
+                "confidence": score.confidence,
+            })
+        skipped_subjects_payload = [
+            {
+                "pinyin": pinyin,
+                "display": _pinyin_to_display(pinyin, pivot_users),
+            }
+            for pinyin in success_run.skipped_subjects
+        ]
+
+    counts: dict[str, int] = {}
+    for r in runs:
+        counts[r.status] = counts.get(r.status, 0) + 1
+
+    history = [
+        {
+            "run_id": r.run_id,
+            "status": r.status,
+            "error": r.error,
+            "started_at": r.started_at,
+            "finished_at": r.finished_at,
+            "triggered_by": r.triggered_by,
+        }
+        for r in runs
+    ]
+
+    return {
+        "matter_id": matter_id,
+        "matter_title": title,
+        "matter_category": latest.matter_category,
+        "schema_version": latest.schema_version,
+        "latest_run": {
+            "run_id": latest.run_id,
+            "status": latest.status,
+            "error": latest.error,
+            "started_at": latest.started_at,
+            "finished_at": latest.finished_at,
+            "triggered_by": latest.triggered_by,
+        },
+        "subject_scores": subject_scores,
+        "skipped_subjects": skipped_subjects_payload,
+        "history": history,
+        "history_counts": counts,
     }
 
 
