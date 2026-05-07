@@ -479,7 +479,9 @@ def test_fails_on_invalid_ai_json(store, workspace, settings, pivot_users, owner
 def test_fails_when_subject_not_owner(store, workspace, settings, pivot_users, owner):
     _write_matter(workspace, "m")
 
-    # AI returns a score for "lisi" but matter.owner is "zhangsan"
+    # AI returns a score for "lisi" but matter.owner is "zhangsan"; Phase 1
+    # worker passes {owner_pinyin} as the candidate set, so any other subject
+    # is rejected as not-in-candidates (post-v2.1 wording).
     def fake_ai(**k):
         return _good_ai_output(subject="lisi")
 
@@ -489,7 +491,7 @@ def test_fails_when_subject_not_owner(store, workspace, settings, pivot_users, o
     )
     runs = store.list_runs()
     assert runs[0].status == "failed"
-    assert "subject_not_owner" in runs[0].error
+    assert "subject_not_in_candidates" in runs[0].error
 
 
 def test_fails_on_fabricated_filename(store, workspace, settings, pivot_users, owner):

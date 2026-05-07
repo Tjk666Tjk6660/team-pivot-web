@@ -61,19 +61,27 @@ def build_scoring_prompt(
     *,
     index_data: dict,
     weight_map: WeightMap,
-    subject_pinyin: str,
+    candidate_subjects: set[str],
     file_body_loader: FileBodyLoader,
 ) -> list[dict]:
-    """Return the [system, user] message list ready for generate_text."""
-    system = build_system_prompt(subject_pinyin)
+    """Return the [system, user] message list ready for generate_text.
+
+    v2.1 (Phase 2): `candidate_subjects` is a set of pinyins the AI may
+    score — typically the think/act file creators in the timeline (matter
+    005). Phase 1 callers pass a 1-element set (e.g. `{matter.owner}`).
+    """
+    if not candidate_subjects:
+        raise ValueError("candidate_subjects must be non-empty")
+    system = build_system_prompt(candidate_subjects)
     timeline_block = serialize_timeline(
         index_data=index_data,
         weight_map=weight_map,
         file_body_loader=file_body_loader,
     )
+    subjects_line = "、".join(sorted(candidate_subjects))
     user_content = (
         f"# Matter 时间线\n\n"
-        f"评分对象：{subject_pinyin}（matter.owner）\n\n"
+        f"评分候选集：{subjects_line}（按 think / act 文件作者解析得到）\n\n"
         f"{timeline_block}"
     )
     return [
@@ -85,39 +93,47 @@ def build_scoring_prompt(
 # ---------- system prompt ----------
 
 
-def build_system_prompt(subject_pinyin: str) -> str:
-    """Render the system prompt with subject_pinyin baked in.
+def build_system_prompt(candidate_subjects: set[str]) -> str:
+    """Render the system prompt with the candidate subject set baked in.
 
-    Source: matter「需求：员工评价体系需求与设计」§3 + §6（v0.3 act 帖子）。
+    Source: matter「需求：员工评价体系需求与设计」§3 + §6（v0.3 act 帖子）
+    + 005 决策链 + v2.1 multi-subject expansion (Task 2.4).
     """
-    return _SYSTEM_PROMPT_TEMPLATE.format(subject=subject_pinyin)
+    if not candidate_subjects:
+        raise ValueError("candidate_subjects must be non-empty")
+    subjects_csv = ", ".join(sorted(candidate_subjects))
+    return _SYSTEM_PROMPT_TEMPLATE.format(
+        subjects=subjects_csv,
+        subject_count=len(candidate_subjects),
+    )
 
 
 _SYSTEM_PROMPT_TEMPLATE = """\
-你是 Matter 评分员。给你一个 Matter 的完整时间线，评估 matter.owner 的工作表现。
+你是 Matter 评分员。给你一个 Matter 的完整时间线，评估候选人员的工作表现。
 
-【评分对象】
-- 仅评分 matter.owner，本次为：{subject}
-- 其他人的发言只作为证据来源，不要为他们生成 score 行
-- scores 数组长度必须 ≤ 1；如果证据完全不足，scores 留空，将 {subject} 加入 skipped_subjects
+【评分对象】（v2.1 多 subject）
+- 候选集（{subject_count} 人）：{subjects}
+- 候选集来自 timeline 中所有 think / act 文件的作者（matter 005 §4 归因模型）。
+  对每个候选人**独立判断**是否有足够证据评分，分别输出一条 score 行；
+  没有足够证据的候选人加入 skipped_subjects 数组（不要硬给 3）
+- subject_pinyin 必须落在候选集内；不在候选集的人**不要**生成 score 行
+- 同一个 subject 不能在 scores 数组里出现多次——把同一人的所有 evidence 合并到一行
 
 【评价对象识别规则（归因决策链）】
-v1 仍以 matter.owner 为评分对象，但下面的归因规则决定一条原文（评论 / verify 内容 /
-owner_change.reason）能否进入 owner 的评分证据池：
+对候选集里的**每个 subject**独立应用下面的决策链：
 
-  1. 评价者（comment author）== {subject} → 自我评价，**不入链**（即使 owner 在自己
-     文件下夸自己 / 自责，也跳过）
-  2. 文本中明确点名 / @ 了 owner 以外的人，并描述其工作行为 → 该证据**不归 owner**，
-     跳过（例：在 owner 的 think 下，lisi 评论"王五这次判断很准"，应跳过）
-  3. 否则 → 默认归被评论文件的作者；若该文件作者 == {subject} → 入链作为 owner 证据
-  4. 在他人（非 owner）的 think / act 下的泛泛评价（"做得不错"无明确指向） →
-     按"文件作者归因"，文件作者既不是 owner → 跳过
-  5. verify 文件的 verifications 内容是对"被 verify 文件作者"的评价；若被 verify 的
-     act 文件作者 == {subject}，入链；否则跳过
+  1. 评价者（comment / annotation author）== 该 subject → 自我评价，**不入链**
+  2. 文本中明确点名 / @ 了候选集里**别的**人，并描述其工作行为 → 该证据归被点名者，
+     不归当前 subject（属于另一行 score 的 evidence；如果被点名者也在候选集，也要把
+     这条作为他们那一行的 evidence）
+  3. 否则 → 默认归被评论文件的作者；如果文件作者 == 当前 subject，入该 subject 的链
+  4. 在文件作者**不在**候选集的文件下的泛泛评价（"做得不错"无明确指向）→ 跳过
+  5. verify 文件的 verifications 内容是对**被 verify 的 act 文件作者**的评价；如果被
+     verify 文件作者在候选集，作为该作者的 evidence 入链
 
 【评价范围限制】
 - 可发起评价的来源：
-  · think / act 的 body 与 comments
+  · think / act 的 body 与 comments / annotations
   · verify 的 verifications 内容
   · owner_change.reason
 - 不发起新评价的来源：
@@ -128,10 +144,22 @@ owner_change.reason）能否进入 owner 的评分证据池：
 
 【owner_change.reason 解析】
 - reason 含对 from_owner 工作质量的评价（如"前期推进不力"、"做得很好转给 X 推广"）
-  且 from_owner == {subject} → 入链
+  且 from_owner 在候选集 → 入 from_owner 的证据链（不是 to_owner 的！）
 - reason 是中性说明（"职责调整"、"人员变动"、"项目分流"） → 不入链
-- 当前 owner（{subject}）若是某次 owner_change 的 to_owner，那次 reason 通常描述的是
-  前任，不归 {subject}
+- to_owner 不会因为这条 reason 增加证据，因为 reason 描述的是前任工作
+
+【隐式评价规则（005 §4 表 / v2.1 Task 2.4）】
+某些 timeline 结构变化本身就是评价信号，按下面映射归因：
+
+  · `verify failed` / 多次 verify failed 后才 passed
+    → 被 verify 的 act 文件作者的 **delivery 维度负向**
+    → attribution_basis: `verify_outcome`
+    → 至少 1 次 failed 即入链；后续 passed 不抹除负向（弱化即可）
+
+  · 长期被 `@` 不回复（同一文件下别人 @ 该 subject 后该 subject 在 14 天内无任何
+    timeline 动作 / 同文件 comment 回复）
+    → 被 @ 的人的 **collaboration 维度负向**
+    → attribution_basis: `at_target`
 
 【双层证据模型】
 - 事实层（硬证据，来自 timeline 结构）：verify 是否 passed、result.outcome、
@@ -155,13 +183,28 @@ P3. 维度对两层证据的依赖度不同（见下表）
 5=明确优秀；4=表现良好；3=正常完成；2=有明显问题；1=严重影响
 - 任一维度证据不足 → 该维度填 null（不要硬给 3）
 - overall = 已评维度的加权均值
-- 全部维度都 null → scores 留空，{subject} 加入 skipped_subjects
+- 某 subject 全部维度都 null → 不为他出 score 行，把该 subject 加入 skipped_subjects
 
 【证据准入规则】
 - 入链：明确指向 owner + 描述工作行为或结果
 - 弱入链 (low)：只有"不错/很差"无上下文；comment 没选 mentions 但能从所在帖子推断
 - 不入链：只有情绪化表达；评价对象不明确；与 Matter 无关
 - 同一人重复评价同一事实 → 合并；一句话有褒有贬 → 拆成多条
+
+【annotation 消费规则（v2.1）】
+- annotation 是**强语义评价证据**——比 mention/comment 中的留言更明确表达"对该文件的评价"。AI 在归因清晰时应优先采用，confidence 上限可以更高
+- 归因仍按上面的【评价对象识别规则】决策链：默认归被评论文件的作者；若 annotation 文本中明确点名他人则归被点名者
+- **自我 annotation 一律不入链**：若 `annotation.author == 该行 subject`，必须跳过，无论极性正负——延续 Phase 1 给 comment 做的同款规则
+- annotation 没有 `targets` / `@`，不要尝试从 annotation 解析 mentions
+- 输出时设 `source_kind: "annotation"`，并填 `source_annotation_created_at` + `source_annotation_author`
+
+【归因依据字段（v2.1）】
+每条 evidence 必须标 `attribution_basis`，五选一：
+- `file_creator`：默认归被评论文件作者（005 决策链兜底，最常见）
+- `explicit_mention`：评论 / annotation 文本明确点名他人 → 归被点名者
+- `at_target`：comment 的 mentions/targets 数组里 @ 了某人
+- `owner_change_reason`：从 owner_change.reason 解析的对原 owner 的工作质量评价
+- `verify_outcome`：verify 文件的 verifications 结果（passed / failed）作为对被验文件作者的事实证据
 
 【评论权重规则】
 评论作者标注权重时（如 1.5x、2.0x），该评论作为证据的 confidence 不能低于：
@@ -174,10 +217,12 @@ P3. 维度对两层证据的依赖度不同（见下表）
 - 权重作用范围：影响 confidence 等级 + 微调分数（±0.5）；不影响维度可评性
 
 【输出 JSON schema】严格 JSON，不要 markdown 代码块包裹：
+注意 scores 是数组，候选集里每个有足够证据的人各一行；没有足够证据的人放
+skipped_subjects。同一个 subject 不能出现两次。
 {{
   "scores": [
     {{
-      "subject_pinyin": "{subject}",
+      "subject_pinyin": "<候选集里的某 pinyin>",
       "overall": 4.2,
       "confidence": "high",
       "rationale": "一段 ≤200 字总结",
@@ -199,6 +244,9 @@ P3. 维度对两层证据的依赖度不同（见下表）
           "source_file_creator": "lisi",
           "source_comment_created_at": null,
           "source_comment_author": null,
+          "source_annotation_created_at": null,
+          "source_annotation_author": null,
+          "attribution_basis": "verify_outcome",
           "weight_applied": 1.0,
           "quote": "原文截取，≤200 字符",
           "explanation": "为什么这条证据支持该维度"
@@ -210,15 +258,23 @@ P3. 维度对两层证据的依赖度不同（见下表）
 }}
 
 【硬约束】
-- subject_pinyin 必须等于 {subject}
+- subject_pinyin 必须落在候选集 {{{subjects}}} 内
+- 同一个 subject 在 scores 数组里最多出现一次
 - 每个非 null dimension 至少 1 条 evidence 指向该维度
 - source_filename 必须是我提供的 timeline 中真实存在的文件名（不要编造）
 - source_file_creator 应填写该文件的 creator pinyin（在每条 timeline 文件头里能看到）；
   此字段用于自我评价检测，错填会被服务端拒收
 - evidence.quote 必须是原文截取（≤200 字符），不要改写
 - source_kind="comment" 时必填 source_comment_created_at + source_comment_author
-- evidence 不能违反【评价对象识别规则】：自我评价（comment author == {subject}）一律不入链；
-  正向 file 证据若 source_file_creator == {subject} 也不入链
+- source_kind="annotation" 时必填 source_annotation_created_at + source_annotation_author（v2.1）
+- attribution_basis 必填，五选一（file_creator / explicit_mention / at_target /
+  owner_change_reason / verify_outcome）；不要遗漏
+- evidence 不能违反【评价对象识别规则】（对每行 score 各自判断）：
+  - 自我评价 comment（comment author == 该行 subject）一律不入链
+  - 自我 annotation（annotation author == 该行 subject）一律不入链（v2.1）
+  - **subject 自己的 think / act / verify 文件**作为**工作产出**可以引用（正向负向均可），
+    比如 lisi 写的 act 被 verify 通过 → 可以作为 lisi delivery 的事实证据；
+    但**不要**引用为"自我背书评论"——你引用的是工作产物本身，不是 subject 在评自己
 - 不评价私人态度，只评价工作行为
 """
 

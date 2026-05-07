@@ -35,38 +35,50 @@ def build_score_writes(
     *,
     resolver: PinyinResolver,
     weight_map: WeightMap,
-) -> tuple[ScoreWrite, list[EvidenceWrite]] | None:
-    """Adapt ScoringOutput → (ScoreWrite, [EvidenceWrite]).
+) -> list[tuple[ScoreWrite, list[EvidenceWrite]]] | None:
+    """Adapt ScoringOutput → list of (ScoreWrite, [EvidenceWrite]) per subject.
+
+    v2.1 (Phase 2): returns a list (one entry per scored candidate). Phase 1
+    callers that score a single subject get a 1-element list. Caller iterates
+    and writes each to the store.
 
     Returns None if scores is empty (skipped_subjects path — caller marks
     run as success with 0 score rows).
 
-    Raises AdaptError if the single subject_pinyin can't be resolved to a
-    user_id (caller should fail the run; orphan subject is a hard error).
+    Raises AdaptError if any subject_pinyin can't be resolved to a user_id —
+    treat as hard error (orphan subject) and fail the run; partial-write
+    semantics aren't worth the complexity in v1.
 
     Notes:
     - weight_applied is server-authoritative: AI's value is ignored, we look
-      up commenter weight by source_comment_author pinyin in weight_map.
-    - source_comment_author_id is None when pinyin can't be resolved
+      up commenter weight by source_comment_author / source_annotation_author
+      pinyin in weight_map.
+    - source_*_author_id is None when pinyin can't be resolved
       (already-soft-deleted user / changed pinyin) — evidence still inserted.
     """
     if not parsed.scores:
         return None
-    if len(parsed.scores) > 1:
-        # Defense in depth — schema.py already enforces max_length=1
-        raise AdaptError(f"unexpected scores length {len(parsed.scores)}")
 
-    subj = parsed.scores[0]
-    score = _build_score(subj)
-    evidence = [
-        _build_evidence(e, resolver=resolver, weight_map=weight_map)
-        for e in subj.evidence
-    ]
-    return score, evidence
+    out: list[tuple[ScoreWrite, list[EvidenceWrite]]] = []
+    for subj in parsed.scores:
+        subject_user_id = resolver.resolve_id(subj.subject_pinyin)
+        if subject_user_id is None:
+            raise AdaptError(
+                f"subject pinyin {subj.subject_pinyin!r} could not be resolved "
+                "to pivot_user.id (deleted or never registered)"
+            )
+        score = _build_score(subj, subject_user_id=subject_user_id)
+        evidence = [
+            _build_evidence(e, resolver=resolver, weight_map=weight_map)
+            for e in subj.evidence
+        ]
+        out.append((score, evidence))
+    return out
 
 
-def _build_score(subj: SubjectScore) -> ScoreWrite:
+def _build_score(subj: SubjectScore, *, subject_user_id: str) -> ScoreWrite:
     return ScoreWrite(
+        subject_user_id=subject_user_id,
         overall=subj.overall,
         confidence=subj.confidence,
         rationale=subj.rationale,
@@ -84,23 +96,40 @@ def _build_evidence(
     resolver: PinyinResolver,
     weight_map: WeightMap,
 ) -> EvidenceWrite:
-    # Resolve comment author pinyin → user_id (None if not resolvable)
-    author_id: str | None = None
+    # Resolve comment / annotation author pinyin → user_id (None if not
+    # resolvable). v2.1: annotation joins comment as a kind that carries an
+    # author pinyin; resolution + weight rules apply to both.
+    comment_author_id: str | None = None
+    annotation_author_id: str | None = None
     if e.source_kind == "comment" and e.source_comment_author:
-        resolved = resolver.resolve_id(e.source_comment_author)
-        author_id = resolved
-        if resolved is None:
+        comment_author_id = resolver.resolve_id(e.source_comment_author)
+        if comment_author_id is None:
             log.info(
                 "evidence.source_comment_author %r could not be resolved "
                 "(historical pinyin / soft-deleted) — keeping author_id=None",
                 e.source_comment_author,
             )
+    if e.source_kind == "annotation" and e.source_annotation_author:
+        annotation_author_id = resolver.resolve_id(e.source_annotation_author)
+        if annotation_author_id is None:
+            log.info(
+                "evidence.source_annotation_author %r could not be resolved "
+                "(historical pinyin / soft-deleted) — keeping author_id=None",
+                e.source_annotation_author,
+            )
 
-    # Server-authoritative weight: look up by author pinyin (file-kind
-    # evidence is always 1.0 — weights only apply to comments).
+    # Server-authoritative weight: look up by author pinyin. comment AND
+    # annotation share the commenter_weights table — high-weight contributors
+    # carry the same multiplier whether they leave a comment or an annotation.
+    # File-kind evidence is always 1.0 (no author-derived weight applies).
     weight = 1.0
-    if e.source_kind == "comment" and e.source_comment_author:
-        info = weight_map.get(e.source_comment_author)
+    author_pinyin: str | None = None
+    if e.source_kind == "comment":
+        author_pinyin = e.source_comment_author
+    elif e.source_kind == "annotation":
+        author_pinyin = e.source_annotation_author
+    if author_pinyin:
+        info = weight_map.get(author_pinyin)
         if info is not None:
             weight = info[0]
 
@@ -118,7 +147,10 @@ def _build_evidence(
         source_filename=filename,
         source_file_type=e.source_file_type,
         source_comment_created_at=e.source_comment_created_at,
-        source_comment_author_id=author_id,
+        source_comment_author_id=comment_author_id,
+        source_annotation_created_at=e.source_annotation_created_at,
+        source_annotation_author_id=annotation_author_id,
+        attribution_basis=e.attribution_basis,
         weight_applied=weight,
         quote=e.quote,
         explanation=e.explanation,

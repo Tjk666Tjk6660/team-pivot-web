@@ -96,33 +96,46 @@ def _stub_body_loader(path: str) -> str:
 
 
 def test_system_prompt_bakes_in_subject():
-    s = build_system_prompt("zhangsan")
-    # Subject should be referenced multiple times (rule, hard constraint, schema)
-    assert s.count("zhangsan") >= 3
+    s = build_system_prompt({"zhangsan"})
+    # v2.1: subject appears in the candidate set + hard-constraint listing.
+    # No longer hardcoded throughout the rule sections (they reference
+    # "subject" in the abstract for multi-subject mode).
+    assert "zhangsan" in s
     # Sanity: contains the dimension names
     for dim in ("delivery", "accountability", "judgment", "collaboration", "process"):
         assert dim in s
 
 
 def test_system_prompt_mentions_weight_rules():
-    s = build_system_prompt("anyone")
+    s = build_system_prompt({"anyone"})
     assert "权重" in s or "weight" in s
     assert "2.0" in s
 
 
 def test_system_prompt_does_not_leak_subject_into_template_braces():
     """Defensive: the {{ }} escapes in JSON examples should remain literal braces."""
-    s = build_system_prompt("subj")
-    # The output schema in prompt should have actual { and } characters
-    assert '"subject_pinyin": "subj"' in s
-    # But shouldn't have stray "{subject}" literal placeholders
+    s = build_system_prompt({"subj"})
+    # v2.1: subject is rendered into the {subjects} placeholder; the
+    # JSON-schema example uses a placeholder string, not a baked subject.
+    assert "subj" in s
+    # No stray template placeholders
     assert "{subject}" not in s
+    assert "{subjects}" not in s
     assert "{{" not in s and "}}" not in s
+
+
+def test_system_prompt_handles_multi_subject_set():
+    """v2.1 (Task 2.4): multi-candidate set renders comma-joined."""
+    s = build_system_prompt({"zhangsan", "lisi", "wangwu"})
+    for p in ("zhangsan", "lisi", "wangwu"):
+        assert p in s
+    # subject_count rendered (3 candidates)
+    assert "3 人" in s
 
 
 def test_system_prompt_contains_attribution_rules():
     """Phase 1 / matter 005: prompt must guide AI on归因决策链."""
-    s = build_system_prompt("zhangsan")
+    s = build_system_prompt({"zhangsan"})
     # 三个新章节标题都在
     assert "评价对象识别规则" in s
     assert "评价范围限制" in s
@@ -136,7 +149,7 @@ def test_system_prompt_contains_attribution_rules():
 
 def test_system_prompt_lists_evidence_source_constraints():
     """Phase 1: 范围限制要明确列出 think/act/verify 是来源、result/insight 不是。"""
-    s = build_system_prompt("zhangsan")
+    s = build_system_prompt({"zhangsan"})
     assert "think" in s and "act" in s
     # result / insight 应被显式标"不发起新评价"或类似含义
     assert "result" in s and "insight" in s
@@ -405,7 +418,7 @@ def test_build_scoring_prompt_returns_two_messages(index_data, weight_map):
     msgs = build_scoring_prompt(
         index_data=index_data,
         weight_map=weight_map,
-        subject_pinyin="zhangsan",
+        candidate_subjects={"zhangsan"},
         file_body_loader=_no_body_loader,
     )
     assert len(msgs) == 2
@@ -413,4 +426,35 @@ def test_build_scoring_prompt_returns_two_messages(index_data, weight_map):
     assert msgs[1]["role"] == "user"
     assert "zhangsan" in msgs[0]["content"]
     assert "001_zhangsan_act_xx.md" in msgs[1]["content"]
-    assert "评分对象：zhangsan" in msgs[1]["content"]
+    assert "评分候选集" in msgs[1]["content"]
+
+
+def test_build_scoring_prompt_rejects_empty_candidate_set(index_data, weight_map):
+    """v2.1: empty candidate set is a programmer error."""
+    with pytest.raises(ValueError, match="non-empty"):
+        build_scoring_prompt(
+            index_data=index_data, weight_map=weight_map,
+            candidate_subjects=set(), file_body_loader=_no_body_loader,
+        )
+
+
+def test_build_scoring_prompt_lists_multi_candidates(index_data, weight_map):
+    """v2.1: candidate set is rendered into the user message header."""
+    msgs = build_scoring_prompt(
+        index_data=index_data, weight_map=weight_map,
+        candidate_subjects={"zhangsan", "lisi"},
+        file_body_loader=_no_body_loader,
+    )
+    user = msgs[1]["content"]
+    assert "zhangsan" in user
+    assert "lisi" in user
+
+
+def test_build_system_prompt_includes_implicit_evaluation_rules():
+    """v2.1 (Task 2.4): verify_outcome + long-unanswered-@ rules in prompt."""
+    s = build_system_prompt({"zhangsan"})
+    # Two implicit-eval rules from 005 §4 should both be present
+    assert "verify failed" in s
+    assert "verify_outcome" in s
+    assert "@" in s and "不回复" in s
+    assert "at_target" in s

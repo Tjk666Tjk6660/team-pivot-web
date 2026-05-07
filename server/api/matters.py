@@ -91,7 +91,7 @@ def _reject_legacy_mention_inner_key(data):
 
 
 class MentionIn(BaseModel):
-    body: str = Field(min_length=1, max_length=2000)
+    body: str = Field(min_length=1, max_length=300)
     targets: list[str] | None = None
 
     @model_validator(mode="before")
@@ -124,9 +124,9 @@ class NewMatterBody(BaseModel):
     )
     title: str = Field(min_length=1, max_length=200)
     # Optional matter-level owner (distinct from initial_file.owner which is
-    # the file-level owner of the first think/act). Defaults to the creator
-    # when absent / equal to the creator's open_id.
-    owner_open_id: str | None = Field(default=None, max_length=50)
+    # the file-level owner of the first think/act). Carries pivot_user.id;
+    # defaults to the creator when absent / equal to creator's pivot_user_id.
+    owner_id: str | None = Field(default=None, max_length=50)
     visibility: dict | None = None
     new_category_visibility: dict | None = None
     initial_file: InitialFileIn
@@ -167,7 +167,7 @@ class NewResultBody(BaseModel):
 
 class MentionBody(BaseModel):
     target_file: str = Field(min_length=1, max_length=500)
-    body: str = Field(min_length=1, max_length=2000)
+    body: str = Field(min_length=1, max_length=300)
     targets: list[str] | None = None
 
     @model_validator(mode="before")
@@ -195,7 +195,7 @@ class AnnotationBody(BaseModel):
     type: Literal["evaluation"] = Field(
         description="Annotation flavor; v1 only supports 'evaluation'.",
     )
-    body: str = Field(min_length=1, max_length=2000)
+    body: str = Field(min_length=1, max_length=300)
 
     @model_validator(mode="before")
     @classmethod
@@ -511,7 +511,7 @@ def build_router(
                 category=body.category,
                 title=body.title,
                 initial_item=initial,
-                matter_owner_open_id=body.owner_open_id,
+                matter_owner_id=body.owner_id,
                 notifier=notifier,
                 users=pivot_users,
                 pivot_users=pivot_users,
@@ -534,16 +534,16 @@ def build_router(
                 detail={"code": "ambiguous_mention", "ambiguities": e.ambiguities},
             ) from e
         except PublishError as e:
-            # publish_matter_create raises "matter owner not found: …" when the
-            # supplied owner_open_id can't be resolved. Translate to 422 with
-            # the canonical owner_unknown code.
+            # publish_matter_create raises "matter owner not found: …" when
+            # the supplied owner_id can't be resolved. Translate to
+            # 422 with the canonical owner_unknown code.
             msg = str(e)
             if msg.startswith("matter owner not found"):
                 raise HTTPException(
                     status_code=422,
                     detail={
                         "code": "owner_unknown",
-                        "field": "owner_open_id",
+                        "field": "owner_id",
                         "message": msg,
                     },
                 ) from e
@@ -577,7 +577,7 @@ def build_router(
             result = publish_matter_owner_change(
                 workspace, user,
                 matter_id=matter_id,
-                to_owner_open_id=body.to_owner,
+                to_owner_id=body.to_owner,
                 reason=body.reason,
                 status_change=sc_dict,
                 notifier=notifier,

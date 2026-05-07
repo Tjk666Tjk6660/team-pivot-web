@@ -273,8 +273,19 @@ def _run_scoring_once_inner(
             store.finish_run(run_id, "failed", error="ai_key_missing")
         return
 
-    # 5. Start the run (atomic with idempotency check via partial unique idx)
-    run_id = _try_start_run(store, job, timeline_hash=timeline_hash, model=model)
+    # 5. Resolve candidate pinyin set (think/act file creators) for the
+    # multi-subject prompt + validation. v2.1: when job.candidate_user_ids
+    # is populated by the trigger, use that; otherwise fall back to
+    # {matter.owner} for legacy callers (admin manual rerun, tests).
+    resolver = PinyinResolver(pivot_users._db)
+    candidate_pinyins = _candidate_pinyins(job, resolver, fallback={owner_pinyin})
+
+    # 6. Start the run (atomic with idempotency check via partial unique idx).
+    # Stamp schema_version=2 so the frontend knows to expect multi-row output.
+    run_id = _try_start_run(
+        store, job, timeline_hash=timeline_hash, model=model,
+        schema_version=2,
+    )
     if run_id is None:
         # Lost the idempotency race — another run is in flight
         store.mark_skipped(job, timeline_hash=timeline_hash, reason="race_lost")
@@ -282,8 +293,7 @@ def _run_scoring_once_inner(
 
     store.transition_running(run_id)
 
-    # 6. Build prompt (incl. weight map + file body loader)
-    resolver = PinyinResolver(pivot_users._db)
+    # 7. Build prompt (incl. weight map + file body loader)
     weights = store.list_weights()
     weight_map = build_weight_map(weights, resolver)
 
@@ -294,7 +304,7 @@ def _run_scoring_once_inner(
         messages = build_scoring_prompt(
             index_data=index,
             weight_map=weight_map,
-            subject_pinyin=owner_pinyin,
+            candidate_subjects=candidate_pinyins,
             file_body_loader=file_body_loader,
         )
     except PromptTooLargeError as e:
@@ -340,40 +350,56 @@ def _run_scoring_once_inner(
         job.matter_id, run_id, len(raw),
     )
 
-    # 8. Parse + validate (anti-fabrication)
+    # 8. Parse + validate (anti-fabrication). v2.1 candidate_subjects is the
+    # think/act creator pinyin set; AI rows whose subject_pinyin is outside
+    # the set get rejected. Phase 1 callers degenerate to a 1-element set.
     try:
-        parsed = parse_and_validate(raw, index, expected_subject=owner_pinyin)
+        parsed = parse_and_validate(
+            raw, index, candidate_subjects=candidate_pinyins,
+        )
     except SchemaError as e:
         store.finish_run(run_id, "failed", error=f"schema_error: {e}"[:500])
         return
 
+    # v2.2: persist AI's skipped_subjects so admin UI can show "AI considered
+    # X candidates but skipped Y for insufficient evidence" — distinguishes a
+    # deliberate skip from a silent zero-row outcome.
+    store.set_skipped_subjects(run_id, parsed.skipped_subjects)
+
     # 9. Adapt to store types (pinyin → user_id, server-authoritative weight)
     try:
-        result = build_score_writes(parsed, resolver=resolver, weight_map=weight_map)
+        results = build_score_writes(parsed, resolver=resolver, weight_map=weight_map)
     except AdaptError as e:
         store.finish_run(run_id, "failed", error=f"adapt_error: {e}"[:500])
         return
 
-    if result is None:
-        # AI explicitly skipped (empty scores + subject in skipped_subjects)
+    if results is None:
+        # AI explicitly skipped (empty scores + subjects in skipped_subjects)
         log.info(
-            "scoring: AI skipped subject (insufficient evidence) matter=%s run=%s",
+            "scoring: AI skipped subjects (insufficient evidence) matter=%s run=%s",
             job.matter_id, run_id,
         )
         store.finish_run(run_id, "success")
         return
 
-    score_write, evidence_writes = result
-    try:
-        store.write_results(run_id, score_write, evidence_writes)
-    except ValueError as e:
-        store.finish_run(run_id, "failed", error=f"store_error: {e}"[:500])
-        return
+    # Write each scored subject. If any single write fails, abort the run as
+    # failed — partial multi-subject results are confusing and rare; admin
+    # rerun is the recovery path.
+    for score_write, evidence_writes in results:
+        try:
+            store.write_results(run_id, score_write, evidence_writes)
+        except ValueError as e:
+            store.finish_run(run_id, "failed", error=f"store_error: {e}"[:500])
+            return
 
     store.finish_run(run_id, "success")
+    primary = next(
+        (s for s, _ in results if s.subject_user_id == job.subject_user_id),
+        results[0][0],
+    )
     log.info(
-        "scoring success matter=%s run=%s overall=%.2f confidence=%s",
-        job.matter_id, run_id, score_write.overall, score_write.confidence,
+        "scoring success matter=%s run=%s subjects=%d primary_overall=%.2f",
+        job.matter_id, run_id, len(results), primary.overall,
     )
 
 
@@ -439,6 +465,7 @@ def _try_start_run(
     *,
     timeline_hash: str,
     model: str,
+    schema_version: int = 1,
 ) -> str | None:
     """Attempt to start a run; return None on idempotency-index conflict.
 
@@ -447,9 +474,39 @@ def _try_start_run(
     timeline version. A duplicate insert raises sqlite3.IntegrityError —
     we catch and surface as "race_lost" via the caller."""
     try:
-        return store.start_run(job, timeline_hash=timeline_hash, model=model)
+        return store.start_run(
+            job, timeline_hash=timeline_hash, model=model,
+            schema_version=schema_version,
+        )
     except sqlite3.IntegrityError:
         return None
+
+
+def _candidate_pinyins(
+    job: ScoringJob,
+    resolver: PinyinResolver,
+    *,
+    fallback: set[str],
+) -> set[str]:
+    """Resolve job.candidate_user_ids → set of current pinyins for the prompt
+    + parse_and_validate. Drops users whose pinyin can't be resolved (deleted
+    after trigger). When candidate_user_ids is empty (legacy admin rerun),
+    use the provided fallback (typically {matter.owner_pinyin}).
+    """
+    if not job.candidate_user_ids:
+        return set(fallback)
+    out: set[str] = set()
+    for uid in job.candidate_user_ids:
+        u = resolver.get_by_id(uid)
+        if u and u.pinyin:
+            out.add(u.pinyin)
+    if not out:
+        log.warning(
+            "scoring worker: no candidate pinyins resolvable; falling back to %r",
+            sorted(fallback),
+        )
+        return set(fallback)
+    return out
 
 
 def compute_timeline_hash(index: dict) -> str:

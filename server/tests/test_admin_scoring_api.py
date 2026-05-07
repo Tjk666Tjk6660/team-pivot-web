@@ -220,7 +220,7 @@ def test_get_config_defaults(client):
         "enabled": False,
         "visibility": "admin_only",
         "model": "",
-        "timeout_seconds": 120,
+        "timeout_seconds": 180,
     }
 
 
@@ -246,7 +246,7 @@ def test_get_config_falls_back_for_invalid_visibility(client, settings):
 def test_get_config_falls_back_for_invalid_timeout(client, settings):
     settings.set(KEY_TIMEOUT_SECONDS, "not-a-number")
     r = client.get("/api/admin/scoring/config", headers=_admin_headers())
-    assert r.json()["timeout_seconds"] == 120
+    assert r.json()["timeout_seconds"] == 180
 
 
 # ---------- config PUT ----------
@@ -462,6 +462,7 @@ def test_get_run_detail_returns_score_and_evidence(
     store.write_results(
         rid,
         ScoreWrite(
+            subject_user_id=owner.id,
             overall=4.2, confidence="high", rationale="...",
             delivery=4.5, accountability=4.0, process=4.0,
         ),
@@ -503,6 +504,87 @@ def test_get_run_detail_returns_score_and_evidence(
     comment_e = next(e for e in body["evidence"] if e["source_kind"] == "comment")
     assert comment_e["source_comment_author_display"] == "李四"
     assert comment_e["weight_applied"] == 1.5
+    # v2.1: new evidence fields present (NULL for legacy / single-subject)
+    assert comment_e["source_annotation_created_at"] is None
+    assert comment_e["source_annotation_author_id"] is None
+    assert comment_e["attribution_basis"] is None
+    # v2.1: schema_version exposed in run summary
+    assert body["run"]["schema_version"] == 1
+    # v2.1: subject_scores array always present (back-compat with single-subject)
+    assert len(body["subject_scores"]) == 1
+    primary = body["subject_scores"][0]
+    assert primary["score"]["subject_user_id"] == owner.id
+    assert primary["subject_display"] == "zs"
+    assert len(primary["evidence"]) == 3
+
+
+def test_get_run_detail_multi_subject_returns_subject_scores(
+    client, store, pivot_users, workspace,
+):
+    """v2.1: a run with multiple matter_scores rows surfaces them all in
+    subject_scores; top-level `score` returns the primary (matter.owner)."""
+    from server.scoring.store import EvidenceWrite, ScoreWrite
+    owner = pivot_users.create(
+        display_name="zs", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    lisi = pivot_users.create(
+        display_name="李四", pinyin="lisi", email=None, avatar_url="",
+    )
+    _write_matter(workspace, "m")
+    rid = store.start_run(
+        _job(owner.id), timeline_hash="h", model="m", schema_version=2,
+    )
+    # Owner score
+    store.write_results(
+        rid,
+        ScoreWrite(
+            subject_user_id=owner.id,
+            overall=4.2, confidence="high", rationale="owner",
+            delivery=4.5,
+        ),
+        [EvidenceWrite(
+            dimension="delivery", polarity="positive", confidence="high",
+            source_kind="file", source_filename="001.md",
+            source_file_type="act", quote="z", explanation="...",
+            attribution_basis="file_creator",
+        )],
+    )
+    # lisi score
+    store.write_results(
+        rid,
+        ScoreWrite(
+            subject_user_id=lisi.id,
+            overall=3.8, confidence="medium", rationale="lisi",
+            collaboration=4.0,
+        ),
+        [EvidenceWrite(
+            dimension="collaboration", polarity="positive", confidence="medium",
+            source_kind="annotation", source_filename="002.md",
+            source_file_type="act",
+            source_annotation_created_at="2026-04-22T14:00:00+08:00",
+            source_annotation_author_id=owner.id,
+            attribution_basis="file_creator",
+            quote="lisi 协作好", explanation="...",
+        )],
+    )
+    store.finish_run(rid, "success")
+
+    r = client.get(f"/api/admin/scoring/runs/{rid}", headers=_admin_headers())
+    body = r.json()
+    assert body["run"]["schema_version"] == 2
+    # Top-level primary = owner
+    assert body["score"]["subject_user_id"] == owner.id
+    # subject_scores has both rows; primary first
+    sub = body["subject_scores"]
+    assert len(sub) == 2
+    assert sub[0]["score"]["subject_user_id"] == owner.id
+    assert sub[1]["score"]["subject_user_id"] == lisi.id
+    assert sub[1]["subject_display"] == "李四"
+    # lisi's evidence shows annotation fields populated
+    ann_e = sub[1]["evidence"][0]
+    assert ann_e["source_kind"] == "annotation"
+    assert ann_e["source_annotation_author_display"] == "zs"
+    assert ann_e["attribution_basis"] == "file_creator"
 
 
 # ---------- rerun ----------
@@ -575,6 +657,7 @@ def _setup_run_with_score(client, store, pivot_users, workspace, owner):
     store.write_results(
         rid,
         ScoreWrite(
+            subject_user_id=owner.id,
             overall=4.2, confidence="high", rationale="...",
             delivery=4.5, accountability=4.0, process=4.0,
         ),

@@ -39,6 +39,7 @@ import {
   shortFile,
 } from "./timeline-config";
 import { ReadersRow } from "./ReadersRow";
+import { InlineUserAvatar } from "./InlineUserAvatar";
 import { RelevanceChip } from "./RelevanceChip";
 import { publishListRefresh } from "@/events/listRefresh";
 
@@ -84,6 +85,7 @@ export function FileCard({
   activeType,
   onCreate,
   onAddComment,
+  onAnnotationSubmitted,
   onJump,
   registerRef,
   highlighted,
@@ -97,6 +99,7 @@ export function FileCard({
   activeType: DocType | null;
   onCreate: (type: DocType, quote: string) => void;
   onAddComment: (body: string, targets?: string[]) => Promise<void>;
+  onAnnotationSubmitted?: () => void | Promise<void>;
   onJump: (file: string) => void;
   registerRef?: (el: HTMLDivElement | null) => void;
   highlighted?: boolean;
@@ -297,6 +300,7 @@ export function FileCard({
             matterId={matterId}
             targetFile={item.file}
             align="right"
+            onSubmitted={onAnnotationSubmitted}
           />
           <MentionPopover onSubmit={onAddComment} align="right" />
         </div>
@@ -657,23 +661,31 @@ function CommentsBlock({ item }: { item: TimelineFileItem }) {
               >
                 · {relativeTime(c.created_at)}
               </span>
-              <span
-                className={`ml-2 font-semibold text-[var(--text)] ${userClassName(c.author_view?.status ?? "active")}`}
-                title={userTooltip(c.author_view?.status ?? "active") ?? undefined}
-                style={userInlineStyle(c.author_view?.status ?? "active")}
-              >
-                {author}
+              <span className="ml-2 inline-flex items-center gap-1 align-baseline">
+                <InlineUserAvatar view={c.author_view} name={author} />
+                <span
+                  className={`font-semibold text-[var(--text)] ${userClassName(c.author_view?.status ?? "active")}`}
+                  title={userTooltip(c.author_view?.status ?? "active") ?? undefined}
+                  style={userInlineStyle(c.author_view?.status ?? "active")}
+                >
+                  {author}
+                </span>
               </span>
               {targetNames.map((name, mi) => {
                 const view = c.targets_view?.[mi];
                 return (
                   <span
                     key={mi}
-                    className={`ml-1 text-[var(--accent)] ${userClassName(view?.status ?? "active")}`}
-                    title={userTooltip(view?.status ?? "active") ?? undefined}
-                    style={userInlineStyle(view?.status ?? "active")}
+                    className="ml-1 inline-flex items-center gap-1 align-baseline"
                   >
-                    @{name}
+                    <InlineUserAvatar view={view} name={name} />
+                    <span
+                      className={`text-[var(--accent)] ${userClassName(view?.status ?? "active")}`}
+                      title={userTooltip(view?.status ?? "active") ?? undefined}
+                      style={userInlineStyle(view?.status ?? "active")}
+                    >
+                      @{name}
+                    </span>
                   </span>
                 );
               })}
@@ -725,12 +737,15 @@ function AnnotationsBlock({ item }: { item: TimelineFileItem }) {
               >
                 · {relativeTime(a.created_at)}
               </span>
-              <span
-                className={`ml-2 font-semibold text-[var(--text)] ${userClassName(a.author_view?.status ?? "active")}`}
-                title={userTooltip(a.author_view?.status ?? "active") ?? undefined}
-                style={userInlineStyle(a.author_view?.status ?? "active")}
-              >
-                {author}
+              <span className="ml-2 inline-flex items-center gap-1 align-baseline">
+                <InlineUserAvatar view={a.author_view} name={author} />
+                <span
+                  className={`font-semibold text-[var(--text)] ${userClassName(a.author_view?.status ?? "active")}`}
+                  title={userTooltip(a.author_view?.status ?? "active") ?? undefined}
+                  style={userInlineStyle(a.author_view?.status ?? "active")}
+                >
+                  {author}
+                </span>
               </span>
               <span className="ml-1 text-[var(--text-mute)]">评价:</span>
               {body ? (

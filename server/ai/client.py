@@ -146,9 +146,18 @@ async def stream_chat(
     # our own asyncio.wait_for-based control. Connect timeout stays small.
     httpx_read_buffer_s = hard_timeout + 30.0
 
+    # Skip system / env proxies when the upstream is on the loopback interface
+    # (dev mocks, sidecars). Local proxy clients (Clash / v2ray / etc) on
+    # Windows commonly intercept `http://localhost:*` traffic and 404 it,
+    # which surfaced as a parse_error during real-flow validation. Hitting
+    # a real OpenRouter endpoint over the public internet still respects
+    # the user's proxy because that's where it usually lives.
+    is_loopback_upstream = hostname in ("localhost", "127.0.0.1", "::1")
+
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(_CONNECT_TIMEOUT_S, read=httpx_read_buffer_s),
+            trust_env=not is_loopback_upstream,
         ) as client:
             async with client.stream(
                 "POST",
@@ -229,72 +238,109 @@ async def _iter_with_heartbeat(
     upstream sends a finish_reason (caller stores it for the final yield)
     and a `_SENTINEL_FINISHED` when we receive `data: [DONE]`.
 
-    Splitting this out keeps `stream_chat` readable and lets us unit-test
-    the heartbeat / timeout behaviour in isolation later.
+    Implementation note (the trap we hit during 方案 B real-flow validation):
+        `asyncio.wait_for(line_iter.__anext__(), timeout=...)` does NOT play
+        well with async generators — on timeout it CANCELS the inner
+        coroutine, which destroys the generator's frame, and the next call
+        to `__anext__()` raises StopAsyncIteration immediately. That made
+        the very first heartbeat event silently terminate the upstream
+        stream. We instead launch `__anext__()` as a Task and use
+        `asyncio.wait(..., timeout=...)` to peek at it without cancelling
+        on timeout — when timeout fires the Task stays alive and we
+        re-await it on the next iteration.
     """
     line_iter = resp.aiter_lines()
     last_event_at = time.monotonic()
+    next_line_task: asyncio.Task | None = None
 
-    while True:
-        try:
-            line = await asyncio.wait_for(
-                line_iter.__anext__(), timeout=heartbeat_interval_s,
+    try:
+        while True:
+            if next_line_task is None:
+                next_line_task = asyncio.ensure_future(line_iter.__anext__())
+
+            done, _ = await asyncio.wait(
+                {next_line_task},
+                timeout=heartbeat_interval_s,
+                return_when=asyncio.FIRST_COMPLETED,
             )
-        except StopAsyncIteration:
-            return
-        except asyncio.TimeoutError:
-            elapsed = time.monotonic() - last_event_at
-            if elapsed >= hard_timeout_s:
-                raise AIError(
-                    f"upstream silent for {elapsed:.0f}s (hard_timeout={hard_timeout_s:.0f}s)",
-                    code=ERROR_CODE_UPSTREAM_TIMEOUT,
+            if not done:
+                # Heartbeat path: leave next_line_task running, fire a
+                # heartbeat event, and loop back to wait again.
+                elapsed = time.monotonic() - last_event_at
+                if elapsed >= hard_timeout_s:
+                    raise AIError(
+                        f"upstream silent for {elapsed:.0f}s (hard_timeout={hard_timeout_s:.0f}s)",
+                        code=ERROR_CODE_UPSTREAM_TIMEOUT,
+                    )
+                yield {
+                    "type": "heartbeat",
+                    "since_last_token_ms": int(elapsed * 1000),
+                }
+                continue
+
+            # next_line_task completed — pick up its result and reset the slot.
+            try:
+                line = next_line_task.result()
+            except StopAsyncIteration:
+                next_line_task = None
+                return
+            finally:
+                # Whether success or StopAsyncIteration, the task is consumed;
+                # null the slot so the next iteration creates a fresh one.
+                next_line_task = None
+
+            # We received a line — reset the silence timer regardless of whether
+            # the line is meaningful (could be an SSE keep-alive blank).
+            last_event_at = time.monotonic()
+
+            if not line.startswith("data: "):
+                continue
+            data = line[6:]
+            if data == "[DONE]":
+                yield _SENTINEL_FINISHED
+                return
+            try:
+                chunk = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            try:
+                choice = chunk["choices"][0]
+            except (KeyError, IndexError):
+                continue
+
+            delta = choice.get("delta") or {}
+            fr = choice.get("finish_reason")
+            if fr:
+                yield _FinishMarker(fr)
+
+            text = delta.get("content")
+            if text:
+                yield {"type": "text", "delta": text}
+
+            for tc in delta.get("tool_calls") or []:
+                idx = tc.get("index", 0)
+                slot = pending_tool_calls.setdefault(
+                    idx, {"id": "", "name": "", "arguments": ""}
                 )
-            yield {
-                "type": "heartbeat",
-                "since_last_token_ms": int(elapsed * 1000),
-            }
-            continue
-
-        # We received a line — reset the silence timer regardless of whether
-        # the line is meaningful (could be an SSE keep-alive blank).
-        last_event_at = time.monotonic()
-
-        if not line.startswith("data: "):
-            continue
-        data = line[6:]
-        if data == "[DONE]":
-            yield _SENTINEL_FINISHED
-            return
-        try:
-            chunk = json.loads(data)
-        except json.JSONDecodeError:
-            continue
-        try:
-            choice = chunk["choices"][0]
-        except (KeyError, IndexError):
-            continue
-
-        delta = choice.get("delta") or {}
-        fr = choice.get("finish_reason")
-        if fr:
-            yield _FinishMarker(fr)
-
-        text = delta.get("content")
-        if text:
-            yield {"type": "text", "delta": text}
-
-        for tc in delta.get("tool_calls") or []:
-            idx = tc.get("index", 0)
-            slot = pending_tool_calls.setdefault(
-                idx, {"id": "", "name": "", "arguments": ""}
-            )
-            if tc.get("id"):
-                slot["id"] = tc["id"]
-            fn = tc.get("function") or {}
-            if fn.get("name"):
-                slot["name"] = fn["name"]
-            if fn.get("arguments"):
-                slot["arguments"] += fn["arguments"]
+                if tc.get("id"):
+                    slot["id"] = tc["id"]
+                fn = tc.get("function") or {}
+                if fn.get("name"):
+                    slot["name"] = fn["name"]
+                if fn.get("arguments"):
+                    slot["arguments"] += fn["arguments"]
+    finally:
+        # Crucial cleanup: if we exit the loop early (AIError raised, generator
+        # closed by caller, etc.), the in-flight __anext__ task is still
+        # pending. Cancel it so the underlying httpx response stream is
+        # released — without this, leftover tasks accumulate and httpx logs
+        # warnings about un-awaited coroutines.
+        if next_line_task is not None and not next_line_task.done():
+            next_line_task.cancel()
+            try:
+                await next_line_task
+            except (asyncio.CancelledError, StopAsyncIteration, Exception):
+                pass
 
 
 def _classify_http_error(status_code: int, body: bytes) -> AIError:

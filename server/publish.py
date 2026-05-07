@@ -694,7 +694,7 @@ def publish_matter_create(
     category: str,
     title: str,
     initial_item: dict,
-    matter_owner_open_id: str | None = None,
+    matter_owner_id: str | None = None,
     notifier: Notifier | None = None,
     users: PivotUserRepo | None = None,
     pivot_users: PivotUserRepo | None = None,
@@ -712,7 +712,7 @@ def publish_matter_create(
         owner: str  (optional; defaults to creator)
         mentions: list[dict]  (optional)
 
-    `matter_owner_open_id` (matter-level owner, distinct from item-level
+    `matter_owner_id` (matter-level owner, distinct from item-level
     initial_item.owner) is resolved through the same _resolve_owner_for_index
     chain as creator/owner. None means "default to creator". Reaching here with
     an unknown id raises PublishError so the API layer can return 422.
@@ -722,20 +722,22 @@ def publish_matter_create(
     if not title.strip():
         raise PublishError("title required")
 
-    # Resolve matter-level owner. None / empty / equals creator's open_id
-    # all collapse to "owner = creator" so the on-disk owner field is
-    # always a valid pinyin/open_id, never the literal `me.open_id`.
-    # When pointing to someone else, require them to be a registered Pivot
-    # user (has a pinyin). Stricter than file-level owner — matter-level owner
-    # drives "我负责的 Matter" filters and scheduler views, so keeping the
-    # identifier space tight to known users avoids dangling references.
+    # Resolve matter-level owner. None / empty / equals creator's pivot_user_id
+    # all collapse to "owner = creator" so the on-disk owner field is always a
+    # valid pinyin, never the raw user-id sentinel. When pointing to someone
+    # else, require them to be a registered Pivot user (has a pinyin).
+    # Stricter than file-level owner — matter-level owner drives "我负责的
+    # Matter" filters and scheduler views, so keeping the identifier space
+    # tight to known users avoids dangling references.
     matter_owner_pinyin = user.pinyin
-    if matter_owner_open_id and matter_owner_open_id != user.open_id:
+    if matter_owner_id and matter_owner_id != user.open_id:
         matter_owner_pinyin = _resolve_pivot_owner_for_index(
-            matter_owner_open_id, pivot_users,
+            matter_owner_id, pivot_users,
         )
         if matter_owner_pinyin is None:
-            raise PublishError(f"matter owner not found: {matter_owner_open_id}")
+            raise PublishError(
+                f"matter owner not found: {matter_owner_id}"
+            )
 
     slug = _make_unique_matter_slug(workspace, title)
     matter_id = slug
@@ -773,8 +775,8 @@ def publish_matter_create(
         initial_item.get("mentions")
     )
     owner_notify_open_id = (
-        _get_feishu_open_id_for_user(matter_owner_open_id, bindings)
-        if matter_owner_open_id else None
+        _get_feishu_open_id_for_user(matter_owner_id, bindings)
+        if matter_owner_id else None
     ) or _get_feishu_open_id_for_user(user.open_id, bindings)
     # Resolve before write (see publish_matter_mention for rationale): an
     # ambiguous @ aborts the create with a 422 + candidate list rather than
@@ -1212,7 +1214,7 @@ def publish_matter_owner_change(
     user: PivotUser,
     *,
     matter_id: str,
-    to_owner_open_id: str,
+    to_owner_id: str,
     reason: str,
     status_change: dict | None = None,
     notifier: Notifier | None = None,
@@ -1243,12 +1245,13 @@ def publish_matter_owner_change(
     # (with pinyin), otherwise reject. Permissive contact fallback isn't
     # appropriate for matter-level owner — see publish_matter_create for why.
     target_user = (
-        pivot_users.get(to_owner_open_id) or pivot_users.get_by_pinyin(to_owner_open_id)
+        pivot_users.get(to_owner_id)
+        or pivot_users.get_by_pinyin(to_owner_id)
         if pivot_users is not None
         else None
     )
     if target_user is None or target_user.status != "active" or not target_user.pinyin:
-        raise PublishError(f"owner_unknown:{to_owner_open_id}")
+        raise PublishError(f"owner_unknown:{to_owner_id}")
     to_owner = target_user.pinyin
 
     now = _now_iso()
@@ -1291,8 +1294,10 @@ def publish_matter_owner_change(
         },
     )
     if notifier is not None:
-        to_owner_open_id = _get_feishu_open_id_for_user(target_user.id, bindings)
-        if to_owner_open_id:
+        to_owner_feishu_open_id = _get_feishu_open_id_for_user(
+            target_user.id, bindings,
+        )
+        if to_owner_feishu_open_id:
             from_owner_name = _resolve_pivot_owner_display_name(
                 from_owner, pivot_users,
             )
@@ -1303,7 +1308,7 @@ def publish_matter_owner_change(
                 actor_name=user.name,
                 from_owner_name=from_owner_name,
                 to_owner_name=target_user.display_name,
-                to_owner_open_id=to_owner_open_id,
+                to_owner_open_id=to_owner_feishu_open_id,
                 reason=reason,
                 status_change=dict(status_change) if status_change else None,
             )

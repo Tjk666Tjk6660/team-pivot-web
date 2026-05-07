@@ -405,7 +405,7 @@ export type NewMatterResponse = {
 export async function createMatter(body: {
   category: string;
   title: string;
-  owner_open_id?: string;
+  owner_id?: string;
   visibility?: VisibilityScope;
   new_category_visibility?: CategoryVisibilityScope;
   initial_file: InitialFileIn;
@@ -1801,6 +1801,9 @@ export type ScoringRunSummary = {
   started_at: number;
   finished_at: number | null;
   timeline_hash: string;
+  /** v2.1: 1 = Phase 1 single-subject; 2 = Phase 2 multi-subject. Used by
+   *  the detail UI to choose between single-card and multi-row layouts. */
+  schema_version: number;
   score: {
     overall: number;
     confidence: string;
@@ -1824,37 +1827,84 @@ export type ScoringDimensions = {
   process: number | null;
 };
 
+// v2.1: 005 决策链 attribution_basis enum + verify_outcome
+export type ScoringAttributionBasis =
+  | "file_creator"
+  | "explicit_mention"
+  | "at_target"
+  | "owner_change_reason"
+  | "verify_outcome";
+
 export type ScoringEvidenceItem = {
   id: number;
+  // AI-derived (matter 003 §4 / 007 §1.3 boundary):
   dimension: keyof ScoringDimensions;
   polarity: "positive" | "negative" | "neutral";
   confidence: "low" | "medium" | "high";
-  source_kind: "file" | "comment";
+  // User original input (sourced from timeline / annotation YAML):
+  source_kind: "file" | "comment" | "annotation";
   source_filename: string;
   source_file_type: string;
   source_comment_created_at: string | null;
   source_comment_author_id: string | null;
   source_comment_author_display: string | null;
+  // v2.1: annotation evidence parallel to comment fields
+  source_annotation_created_at: string | null;
+  source_annotation_author_id: string | null;
+  source_annotation_author_display: string | null;
+  // v2.1: which 005 决策链 path attached this evidence to its subject
+  attribution_basis: ScoringAttributionBasis | null;
   weight_applied: number;
   quote: string;
   explanation: string;
 };
 
+export type ScoringScoreRow = {
+  run_id: string;
+  subject_user_id: string;
+  matter_id: string;
+  overall: number;
+  confidence: string;
+  rationale: string;
+  dimensions: ScoringDimensions;
+  human_override:
+    | { overall: number | null; note: string | null; by: string | null; at: number | null }
+    | null;
+};
+
+// v2.1 (Phase 2 / Task 2.4): per-subject score + evidence group, plus the
+// resolved display name & avatar so the UI doesn't need to round-trip via
+// pivot_users for every candidate row.
+export type ScoringSubjectScore = {
+  score: ScoringScoreRow;
+  evidence: ScoringEvidenceItem[];
+  subject_display: string | null;
+  subject_avatar_url: string | null;
+};
+
+// v2.2: candidates the AI considered but skipped (all dimensions null).
+// Surfaced so admin UI can show "AI 跳过了 X 人" instead of leaving them
+// silently absent — distinguishes "evidence insufficient" from "trigger
+// didn't pick them up".
+export type ScoringSkippedSubject = {
+  pinyin: string;
+  /** Resolved display_name; null if user no longer exists / pinyin renamed. */
+  display: string | null;
+};
+
 export type ScoringRunDetail = {
   run: ScoringRunSummary;
-  score: {
-    run_id: string;
-    subject_user_id: string;
-    matter_id: string;
-    overall: number;
-    confidence: string;
-    rationale: string;
-    dimensions: ScoringDimensions;
-    human_override:
-      | { overall: number | null; note: string | null; by: string | null; at: number | null }
-      | null;
-  } | null;
+  // Back-compat: the run's primary subject's score (matter.owner if scored,
+  // else first available row). Single-subject runs read from this directly.
+  score: ScoringScoreRow | null;
   evidence: ScoringEvidenceItem[];
+  // v2.1: full list of scored subjects. Phase 1 / single-subject runs return
+  // a 1-element list (same data as `score` + `evidence` above). Phase 2
+  // multi-subject runs (run.schema_version === 2) return N rows.
+  subject_scores: ScoringSubjectScore[];
+  // v2.2: AI-skipped candidates with resolved names. Empty array on legacy
+  // runs that didn't capture this.
+  skipped_subjects: ScoringSkippedSubject[];
 };
 
 export type CommenterWeight = {

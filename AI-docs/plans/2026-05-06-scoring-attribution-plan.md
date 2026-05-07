@@ -15,6 +15,10 @@
     - 把 005 §4 第 2 条"长期 @ 不回 → 协作贡献负向"显式编入 prompt 规则
     - schema 层显式标注哪些字段是"用户原始输入"、哪些是"AI 派生解释"（dengke 003 §4 强调的边界）
 
+- **2026-05-06 v2.1**：annotation matter V2 设计稿确认 annotation 写入侧"全员开放"（无权限 gate / 无开关）。评分系统在**消费侧**强制把"自我 annotation"排除在证据外——把 Phase 1 已对 comment / file 做的自我评价拒收规则扩展到 `source_kind="annotation"`：
+  - schema：`source_kind` 加 `"annotation"` 枚举值；`_validate_no_self_evaluation` 增加分支——`source_annotation_author == subject_pinyin` 时拒收
+  - prompt：annotation 作为强语义证据，但归因仍按 005 决策链；annotation_author == subject 的 evidence 必须跳过
+
 ---
 
 ## 总体策略
@@ -128,6 +132,7 @@
 - [ ] 历史数据如何处理（schema_version 标记）
 - [ ] 与 annotation matter 的接入点：评分模块从哪个字段读 annotation、读哪些状态、向后兼容窗口
 - [ ] 决策：annotation 缺失时（老 matter / 新 matter 但没人评论）是否仍走 owner-only 兜底
+- [ ] **annotation 写入权限**：annotation matter V2 默认"全员开放"（任何能看到 matter 的用户都能写）；本 phase 不试图在评分侧二次 gate——所有合法落库的 annotation 都参与评分。仅在消费侧强制排除"自我 annotation"（见 §2.4 / §2.5）
 
 **已剥离至 annotation matter（不在本 phase 范围）：**
 - 数据模型：comments → mention + annotation 拆分（涉及 [server/publish.py](../../server/publish.py)、[server/notify.py](../../server/notify.py)、[server/matter_index.py](../../server/matter_index.py)）
@@ -159,6 +164,10 @@
 - [ ] **prompt 规则补全（007 §1.2）**：把 005 §4 表里的两条隐式评价显式编入 system prompt：
   - `verify failed` / 多次 verify failed 后才 passed → 被 verify 文件作者的 **delivery 维度负向**
   - 长期被 `@` 不回复 → 被 `@` 的人的 **collaboration 维度负向**
+- [ ] **annotation 消费规则（v2.1 新增）**：
+  - annotation 是**强语义证据**——比 mention 中的 body 更明确表达"对该文件的评价"，AI 在归因清晰的前提下应优先采用
+  - 归因仍按 005 决策链：默认归被评论文件的作者（attribution_basis = `file_creator`）；annotation body 中明确点名他人 → 归被点名者（`explicit_mention`）
+  - **自我 annotation 一律不入链**：若 `annotation.author == subject_pinyin`，AI 必须跳过该 evidence，无论极性正负——延续 Phase 1 给 comment 做的自我评价拒收逻辑
 
 ### Task 2.5：annotation 归因依据落库 + 派生层边界
 
@@ -168,8 +177,13 @@
   - **`verify_outcome`（007 §1.1）** 覆盖 005 §4 表里 "verify failed → 被验文件作者交付质量" 的隐式归因——之前 4 个值都不适用
 - [ ] 落到 `matter_score_evidence` 新列 `attribution_basis`
 - [ ] AI prompt 要求每条 evidence 标 attribution_basis（按 005 决策链 + verify 隐式归因）
+- [ ] **`source_kind` 加 `"annotation"` 枚举值（v2.1 新增）**——目前是 `Literal["file", "comment"]`，annotation 是独立的第三类来源（强语义评价），需要在 schema 显式区分：
+  - 加配套字段 `source_annotation_created_at: str | None` + `source_annotation_author: str | None`（与现有 comment 同款元数据，用于回链）
+  - `_validate_business_rules` 内 annotation 完整性校验：`source_kind == "annotation"` 时必填 created_at + author（若 publish 端写入约定 author 由 writer 注入，annotation 一定有 author，缺失即视为伪造）
+- [ ] **`_validate_no_self_evaluation` 扩展（v2.1 新增）**：在现有 comment / file 两条路径之外，新增 annotation 分支——`source_kind == "annotation"` 且 `source_annotation_author == subject_pinyin` → 抛 `SelfEvaluationError`，无论极性
+- [ ] `matter_score_evidence` 表增加列 `source_annotation_created_at TEXT NULL` + `source_annotation_author_id TEXT NULL`（与 comment 同款 schema_version 升级，老行 NULL）
 - [ ] **派生层边界声明（007 §1.3 / 003 §4）**：在 [server/scoring/store.py](../../server/scoring/store.py) `EvidenceWrite` / `MatterScoreEvidence` 上加注释，显式标注：
-  - **用户原始输入**：`source_filename` / `source_comment_author_id` / `quote`（mention/annotation body 原文）
+  - **用户原始输入**：`source_filename` / `source_comment_author_id` / `source_annotation_author_id` / `quote`（mention/annotation body 原文）
   - **AI 派生解释**：`dimension` / `polarity` / `confidence` / `attribution_basis` / `weight_applied` / `explanation`
   - 注释里点出"派生字段不能伪装成原始输入"——避免后续 admin override 等功能误把派生分当用户填的分
 
@@ -183,6 +197,8 @@
 
 - [ ] 单行 → 多行展示，每行一个 candidate
 - [ ] 增加"为什么是这些人？"提示，列出 candidate 集合的来源（think / act 作者）
+- [ ] EvidenceDialog 增加 **来源类型**列（source_kind），渲染：
+  - `file` → "文件" · `comment` → "评论" · `annotation` → "评价"
 - [ ] EvidenceDialog 增加 **归因依据**列，渲染 attribution_basis：
   - `file_creator` → "文件作者"
   - `explicit_mention` → "文本点名"
@@ -202,11 +218,11 @@
 ### Task 2.9：测试
 
 - [ ] [test_scoring_trigger.py](../../server/tests/test_scoring_trigger.py)：candidate 集合解析（含 owner_change 前后的作者）
-- [ ] [test_scoring_schema.py](../../server/tests/test_scoring_schema.py)：多行评分通过、attribution_basis 校验（含 `verify_outcome`）
-- [ ] [test_scoring_prompt.py](../../server/tests/test_scoring_prompt.py)：candidate 集合注入 prompt 正确；隐式评价规则（verify failed / 长期 @ 不回）出现在 system prompt
+- [ ] [test_scoring_schema.py](../../server/tests/test_scoring_schema.py)：多行评分通过、attribution_basis 校验（含 `verify_outcome`）；**annotation 自我评价拒收**（v2.1：source_kind=annotation + source_annotation_author == subject → SelfEvaluationError）
+- [ ] [test_scoring_prompt.py](../../server/tests/test_scoring_prompt.py)：candidate 集合注入 prompt 正确；隐式评价规则（verify failed / 长期 @ 不回）出现在 system prompt；**annotation 消费规则**（自我 annotation 跳过、annotation 作为强语义证据）也在 prompt
 - [ ] [test_admin_scoring_api.py](../../server/tests/test_admin_scoring_api.py)：管理页跨 matter 列表多行展示
-- [ ] [test_e2e_scoring.py](../../server/tests/test_e2e_scoring.py)：扩 multi-subject 用例 + verify failed 场景
-- [ ] 端到端：用一个真实 multi-author 的 finished matter 跑通
+- [ ] [test_e2e_scoring.py](../../server/tests/test_e2e_scoring.py)：扩 multi-subject 用例 + verify failed 场景 + **annotation evidence happy path + 自我 annotation 拒收**
+- [ ] 端到端：用一个真实 multi-author 的 finished matter 跑通（含 annotation 数据）
 
 ### 验收清单（Phase 2）
 
@@ -217,6 +233,8 @@
 - [ ] **wangwu 的 act 被 lisi verify failed → 自动归 wangwu delivery 负向**（`attribution_basis=verify_outcome`）
 - [ ] **被 `@` 的人长期未回 → 该人 collaboration 维度负向**
 - [ ] mention 仅作弱证据，annotation 作为强语义证据（依赖 annotation matter 落地）
+- [ ] **dengke 在 lisi 的 act 下写 annotation "判断很准、收口干净" → 入 lisi 证据链**（source_kind=annotation, attribution_basis=file_creator）
+- [ ] **lisi 在自己的 act 下写 annotation "做得不错" → 不入 lisi 证据链**（v2.1 自我 annotation 拒收）
 - [ ] 历史 v1 的 run 仍能正常浏览
 
 ---
@@ -225,12 +243,9 @@
 
 | # | 议题 | 风险 | 决策建议 |
 |---|---|---|---|
-| 1 | **跨 matter 协调**：annotation 数据模型由独立 matter 推进 | 接口约定不一致 / 时序错配（评分先于 annotation 落地） | 评分 phase 2 启动前，annotation matter 先 act 一份"对外接口契约"（YAML 字段名、publish API 形态、向后兼容窗口）；评分 phase 2 设计稿引用该契约 |
-| 2 | 老 matter 没 annotation 字段 | 历史 matter 进 finished 时如何评 | annotation 缺失时回退到"用 comments 当弱 annotation"，新 matter 走正式 annotation 路径——具体策略由 §2.1 决定 |
-| 3 | AI 输出多人评分 token 成本 | 一次评分从 1 行变 N 行，prompt 也变长 | 留监控；如果超 50k 字符 truncation，按 think / insight 优先丢 |
-| 4 | annotation 创建入口对用户的心理影响 | 让团队"评价别人"可能改变协作行为（参考 v0.3 决策 B） | 评分结果继续 admin-only；annotation 入口是否对全员开放由 annotation matter 决定 |
-| 5 | Phase 1 与 Phase 2 之间的版本号 | 上线后 schema 一次小改一次大改 | Phase 1 不动 schema_version；Phase 2 才升 v2 |
-| 6 | **派生层 vs 原始输入混淆**（007 §1.3） | admin override / 后续 audit 误把 AI 派生分当用户原始输入 | §2.5 在 schema/store 层显式注释字段归类；前端 EvidenceDialog 也要分两栏展示 |
+| 1 | 老 matter 没 annotation 字段 | 历史 matter 进 finished 时如何评 | annotation 缺失时回退到"用 comments 当弱 annotation"，新 matter 走正式 annotation 路径——具体策略由 §2.1 决定 |
+| 2 | AI 输出多人评分 token 成本 | 一次评分从 1 行变 N 行，prompt 也变长 | 留监控；如果超 50k 字符 truncation，按 think / insight 优先丢 |
+| 3 | annotation 创建入口对用户的心理影响 | 让团队"评价别人"可能改变协作行为（参考 v0.3 决策 B） | 评分结果继续 admin-only；annotation 入口是否对全员开放由 annotation matter 决定 |
 
 ---
 

@@ -127,7 +127,7 @@ export function MentionField({
           id="mention-comments"
           value={value.comments}
           onChange={(e) => onChange({ ...value, comments: e.target.value })}
-          maxLength={500}
+          maxLength={300}
           placeholder="这个方案希望你们 review"
         />
       </div>

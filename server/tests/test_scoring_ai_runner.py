@@ -25,6 +25,16 @@ def users(db):
     return PivotUserRepo(db)
 
 
+@pytest.fixture(autouse=True)
+def zhangsan(users):
+    """v2.1: build_score_writes resolves subject pinyin → user_id, so all
+    happy-path tests need a registered zhangsan in the pivot_users table.
+    autouse so individual tests don't need to declare the fixture."""
+    return users.create(
+        display_name="张三", pinyin="zhangsan", email=None, avatar_url="",
+    )
+
+
 @pytest.fixture
 def resolver(db):
     return PinyinResolver(db)
@@ -93,10 +103,11 @@ def _output(**overrides):
 
 
 def test_build_score_writes_basic(resolver, index_data):
-    parsed = parse_and_validate(_output(), index_data, expected_subject="zhangsan")
+    parsed = parse_and_validate(_output(), index_data, candidate_subjects={"zhangsan"})
     result = build_score_writes(parsed, resolver=resolver, weight_map={})
     assert result is not None
-    score, evidence = result
+    assert len(result) == 1
+    score, evidence = result[0]
     assert score.overall == 4.2
     assert score.delivery == 4.5
     assert score.accountability == 4.0
@@ -106,7 +117,7 @@ def test_build_score_writes_basic(resolver, index_data):
 
 def test_build_score_writes_returns_none_for_skipped(resolver, index_data):
     raw = json.dumps({"scores": [], "skipped_subjects": ["zhangsan"]})
-    parsed = parse_and_validate(raw, index_data, expected_subject="zhangsan")
+    parsed = parse_and_validate(raw, index_data, candidate_subjects={"zhangsan"})
     result = build_score_writes(parsed, resolver=resolver, weight_map={})
     assert result is None
 
@@ -116,8 +127,8 @@ def test_build_score_writes_resolves_comment_author(resolver, users, index_data)
     wangwu = users.create(
         display_name="王五", pinyin="wangwu", email=None, avatar_url="",
     )
-    parsed = parse_and_validate(_output(), index_data, expected_subject="zhangsan")
-    _, evidence = build_score_writes(parsed, resolver=resolver, weight_map={})
+    parsed = parse_and_validate(_output(), index_data, candidate_subjects={"zhangsan"})
+    [(_, evidence)] = build_score_writes(parsed, resolver=resolver, weight_map={})
     # Find the comment-kind evidence
     comment_e = next(e for e in evidence if e.source_kind == "comment")
     assert comment_e.source_comment_author_id == wangwu.id
@@ -126,8 +137,8 @@ def test_build_score_writes_resolves_comment_author(resolver, users, index_data)
 def test_build_score_writes_unresolvable_author_keeps_none(resolver, index_data):
     """Unresolvable comment author (deleted user / pinyin renamed) → None,
     NOT an error."""
-    parsed = parse_and_validate(_output(), index_data, expected_subject="zhangsan")
-    _, evidence = build_score_writes(parsed, resolver=resolver, weight_map={})
+    parsed = parse_and_validate(_output(), index_data, candidate_subjects={"zhangsan"})
+    [(_, evidence)] = build_score_writes(parsed, resolver=resolver, weight_map={})
     comment_e = next(e for e in evidence if e.source_kind == "comment")
     assert comment_e.source_comment_author_id is None
 
@@ -137,8 +148,8 @@ def test_build_score_writes_applies_weight_for_high_weight_commenter(
 ):
     """When a comment author is in weight_map, weight_applied set to that weight."""
     weight_map = {"wangwu": (1.5, "技术负责人")}
-    parsed = parse_and_validate(_output(), index_data, expected_subject="zhangsan")
-    _, evidence = build_score_writes(
+    parsed = parse_and_validate(_output(), index_data, candidate_subjects={"zhangsan"})
+    [(_, evidence)] = build_score_writes(
         parsed, resolver=resolver, weight_map=weight_map,
     )
     comment_e = next(e for e in evidence if e.source_kind == "comment")
@@ -150,9 +161,9 @@ def test_build_score_writes_overrides_ai_supplied_weight(resolver, index_data):
     raw_dict = json.loads(_output())
     raw_dict["scores"][0]["evidence"][1]["weight_applied"] = 4.5  # AI lying
     raw = json.dumps(raw_dict)
-    parsed = parse_and_validate(raw, index_data, expected_subject="zhangsan")
+    parsed = parse_and_validate(raw, index_data, candidate_subjects={"zhangsan"})
     # weight_map empty → must default to 1.0, ignoring AI's 4.5
-    _, evidence = build_score_writes(parsed, resolver=resolver, weight_map={})
+    [(_, evidence)] = build_score_writes(parsed, resolver=resolver, weight_map={})
     comment_e = next(e for e in evidence if e.source_kind == "comment")
     assert comment_e.weight_applied == 1.0
 
@@ -160,8 +171,8 @@ def test_build_score_writes_overrides_ai_supplied_weight(resolver, index_data):
 def test_build_score_writes_file_evidence_weight_always_1(resolver, index_data):
     """File-kind evidence has no commenter; weight stays 1.0 regardless."""
     weight_map = {"lisi": (1.5, "CTO")}  # Even if lisi is weighted
-    parsed = parse_and_validate(_output(), index_data, expected_subject="zhangsan")
-    _, evidence = build_score_writes(
+    parsed = parse_and_validate(_output(), index_data, candidate_subjects={"zhangsan"})
+    [(_, evidence)] = build_score_writes(
         parsed, resolver=resolver, weight_map=weight_map,
     )
     file_e = next(e for e in evidence if e.source_kind == "file")
@@ -174,8 +185,8 @@ def test_build_score_writes_strips_path_from_filename(resolver, index_data):
     raw_dict["scores"][0]["evidence"][0]["source_filename"] = (
         "discussions/x/m/002_lisi_verify_xx.md"
     )
-    parsed = parse_and_validate(json.dumps(raw_dict), index_data, expected_subject="zhangsan")
-    _, evidence = build_score_writes(parsed, resolver=resolver, weight_map={})
+    parsed = parse_and_validate(json.dumps(raw_dict), index_data, candidate_subjects={"zhangsan"})
+    [(_, evidence)] = build_score_writes(parsed, resolver=resolver, weight_map={})
     assert evidence[0].source_filename == "002_lisi_verify_xx.md"
 
 
@@ -231,14 +242,126 @@ def test_build_weight_map_skips_dangling_user_id(resolver, store):
     assert weight_map == {}
 
 
-def test_build_score_writes_invariant_max_one_score(resolver, index_data):
-    """Defense in depth — even though pydantic enforces it, AdaptError raises
-    when scores has unexpected length. We can't easily test this through
-    parse_and_validate (it would reject first), so we synthesize a parsed
-    object directly."""
+def test_build_score_writes_resolves_annotation_author(resolver, users, index_data):
+    """v2.1: annotation author pinyin is resolved to user_id, mirroring comments."""
+    dengke = users.create(
+        display_name="邓柯", pinyin="dengke", email=None, avatar_url="",
+    )
+    raw = json.dumps({
+        "scores": [{
+            "subject_pinyin": "zhangsan",
+            "overall": 4.0,
+            "confidence": "high",
+            "rationale": "...",
+            "dimensions": {"delivery": 4.0},
+            "evidence": [{
+                "dimension": "delivery", "polarity": "positive", "confidence": "high",
+                "source_kind": "annotation",
+                "source_filename": "001_zhangsan_act_xx.md",
+                "source_file_type": "act",
+                "source_annotation_created_at": "2026-04-22T14:00:00+08:00",
+                "source_annotation_author": "dengke",
+                "attribution_basis": "file_creator",
+                "quote": "判断很准",
+                "explanation": "annotation 评价",
+                "weight_applied": 1.0,
+            }],
+        }],
+        "skipped_subjects": [],
+    })
+    parsed = parse_and_validate(raw, index_data, candidate_subjects={"zhangsan"})
+    result = build_score_writes(parsed, resolver=resolver, weight_map={})
+    assert result is not None
+    [(_, evidence)] = result
+    e = evidence[0]
+    assert e.source_kind == "annotation"
+    assert e.source_annotation_author_id == dengke.id
+    assert e.source_annotation_created_at == "2026-04-22T14:00:00+08:00"
+    assert e.attribution_basis == "file_creator"
+    assert e.source_comment_author_id is None  # comment fields stay NULL
+
+
+def test_build_score_writes_applies_weight_to_annotation_author(
+    resolver, users, store, index_data,
+):
+    """v2.1: high-weight commenters carry the same multiplier on annotations
+    as on comments. The weight_map is keyed by author pinyin regardless of
+    source_kind."""
+    ceo = users.create(display_name="CEO", pinyin="ceo", email=None, avatar_url="")
+    admin = users.create(display_name="A", pinyin="a", email=None, avatar_url="")
+    store.upsert_weight(
+        pivot_user_id=ceo.id, weight=2.0, label="CEO",
+        note=None, updated_by=admin.id,
+    )
+    weight_map = build_weight_map(store.list_weights(), resolver)
+
+    raw = json.dumps({
+        "scores": [{
+            "subject_pinyin": "zhangsan",
+            "overall": 4.5,
+            "confidence": "high",
+            "rationale": "...",
+            "dimensions": {"delivery": 4.5},
+            "evidence": [{
+                "dimension": "delivery", "polarity": "positive", "confidence": "high",
+                "source_kind": "annotation",
+                "source_filename": "001_zhangsan_act_xx.md",
+                "source_file_type": "act",
+                "source_annotation_created_at": "2026-04-22T14:00:00+08:00",
+                "source_annotation_author": "ceo",
+                "attribution_basis": "file_creator",
+                "quote": "case 很好",
+                "explanation": "ceo annotation",
+                "weight_applied": 1.0,
+            }],
+        }],
+        "skipped_subjects": [],
+    })
+    parsed = parse_and_validate(raw, index_data, candidate_subjects={"zhangsan"})
+    result = build_score_writes(parsed, resolver=resolver, weight_map=weight_map)
+    assert result is not None
+    [(_, evidence)] = result
+    # CEO weight 2.0x applied to annotation evidence (server-authoritative)
+    assert evidence[0].weight_applied == 2.0
+
+
+def test_build_score_writes_passes_through_attribution_basis(resolver, index_data):
+    """attribution_basis from EvidenceItem reaches EvidenceWrite verbatim."""
+    raw = json.dumps({
+        "scores": [{
+            "subject_pinyin": "zhangsan",
+            "overall": 3.0,
+            "confidence": "medium",
+            "rationale": "...",
+            "dimensions": {"delivery": 3.0},
+            "evidence": [{
+                "dimension": "delivery", "polarity": "negative", "confidence": "medium",
+                "source_kind": "file",
+                "source_filename": "002_lisi_verify_xx.md",
+                "source_file_type": "verify",
+                "attribution_basis": "verify_outcome",
+                "quote": "verify failed",
+                "explanation": "...",
+                "weight_applied": 1.0,
+            }],
+        }],
+        "skipped_subjects": [],
+    })
+    parsed = parse_and_validate(raw, index_data, candidate_subjects={"zhangsan"})
+    result = build_score_writes(parsed, resolver=resolver, weight_map={})
+    assert result is not None
+    [(_, evidence)] = result
+    assert evidence[0].attribution_basis == "verify_outcome"
+
+
+def test_build_score_writes_rejects_unresolvable_subject(resolver, index_data):
+    """v2.1: build_score_writes proactively resolves each subject pinyin.
+    An unknown pinyin (not in pivot_users) is a hard failure — orphan
+    subject would land bad data; admin should re-trigger after the user
+    is provisioned."""
     from server.scoring.schema import EvidenceItem, ScoringOutput, SubjectScore
-    s1 = SubjectScore(
-        subject_pinyin="x", overall=4.0, confidence="high",
+    s = SubjectScore(
+        subject_pinyin="ghost_user", overall=4.0, confidence="high",
         rationale="...", dimensions={"delivery": 4.0},
         evidence=[EvidenceItem(
             dimension="delivery", polarity="positive", confidence="high",
@@ -246,7 +369,56 @@ def test_build_score_writes_invariant_max_one_score(resolver, index_data):
             quote="...", explanation="...",
         )],
     )
-    # Bypass pydantic max_length=1 by directly constructing
-    out = ScoringOutput.model_construct(scores=[s1, s1], skipped_subjects=[])
-    with pytest.raises(AdaptError, match="length"):
+    out = ScoringOutput.model_construct(scores=[s], skipped_subjects=[])
+    with pytest.raises(AdaptError, match="ghost_user.*could not be resolved"):
         build_score_writes(out, resolver=resolver, weight_map={})
+
+
+def test_build_score_writes_handles_multi_subject(resolver, users, index_data):
+    """v2.1 (Task 2.4): adapter handles N-subject AI output, returns N pairs."""
+    lisi = users.create(display_name="李四", pinyin="lisi", email=None, avatar_url="")
+    raw = json.dumps({
+        "scores": [
+            {
+                "subject_pinyin": "zhangsan",
+                "overall": 4.2, "confidence": "high",
+                "rationale": "owner perspective",
+                "dimensions": {"delivery": 4.5},
+                "evidence": [{
+                    "dimension": "delivery", "polarity": "positive",
+                    "confidence": "high", "source_kind": "file",
+                    "source_filename": "002_lisi_verify_xx.md",
+                    "source_file_type": "verify",
+                    "quote": "verify pass", "explanation": "..",
+                    "weight_applied": 1.0,
+                }],
+            },
+            {
+                "subject_pinyin": "lisi",
+                "overall": 3.8, "confidence": "medium",
+                "rationale": "verifier perspective",
+                "dimensions": {"collaboration": 4.0},
+                "evidence": [{
+                    "dimension": "collaboration", "polarity": "positive",
+                    "confidence": "medium", "source_kind": "file",
+                    "source_filename": "002_lisi_verify_xx.md",
+                    "source_file_type": "verify",
+                    "quote": "lisi verified", "explanation": "..",
+                    "weight_applied": 1.0,
+                }],
+            },
+        ],
+        "skipped_subjects": [],
+    })
+    parsed = parse_and_validate(
+        raw, index_data, candidate_subjects={"zhangsan", "lisi"},
+    )
+    result = build_score_writes(parsed, resolver=resolver, weight_map={})
+    assert result is not None
+    assert len(result) == 2
+    # Each pair carries its subject_user_id resolved from pinyin
+    by_subject = {s.subject_user_id: (s, ev) for s, ev in result}
+    # zhangsan fixture provides zhangsan's id; lisi created above
+    assert lisi.id in by_subject
+    lisi_score, _ = by_subject[lisi.id]
+    assert lisi_score.collaboration == 4.0

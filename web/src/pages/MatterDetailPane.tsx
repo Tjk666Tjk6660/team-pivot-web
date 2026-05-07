@@ -136,6 +136,7 @@ function sameDetail(
     if (
       x.file !== y.file ||
       x.mentions.length !== y.mentions.length ||
+      (x.annotations?.length ?? 0) !== (y.annotations?.length ?? 0) ||
       (x.status_change?.to ?? null) !== (y.status_change?.to ?? null)
     ) {
       return false;
@@ -1115,6 +1116,7 @@ export function MatterDetailPane() {
                   onAddComment={(body, targets) =>
                     submitMention(item.file, body, targets)
                   }
+                  onAnnotationSubmitted={refreshDetailSilently}
                   onJump={onJump}
                   registerRef={(el) => {
                     cardRefs.current[item.file] = el;
@@ -1200,7 +1202,7 @@ export function MatterDetailPane() {
                         }
                   }
                   matterStatus={matter.current_status}
-                  sessionOpenId={sessionOpenId}
+                  sessionPivotUserId={sessionOpenId}
                   sessionName={sessionName || sessionOpenId}
                   timeline={timeline}
                   initial={pendingInitial ?? undefined}
@@ -1390,7 +1392,7 @@ export function MatterDetailPane() {
         <TransferOwnerDialog
           open={transferOpen}
           matter={data.matter}
-          sessionOpenId={sessionOpenId}
+          sessionPivotUserId={sessionOpenId}
           sessionName={sessionName}
           onClose={() => setTransferOpen(false)}
           onTransferred={(result) => {
