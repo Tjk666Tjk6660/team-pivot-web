@@ -13,8 +13,10 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 from pydantic import BaseModel, Field
 
 from server.auth.feishu_oauth import FeishuOAuth, FeishuOAuthError
+from server.auth.invite_state import InviteStateError, decode_invite_state
 from server.auth.session import SessionStore
 from server.external_bindings import ExternalBindingRepo
+from server.invites import Invite, InviteRepo
 from server.join_applications import JoinApplicationRepo, compute_match_candidates
 from server.notify import Notifier
 from server.pivot_users import PivotUser, PivotUserRepo
@@ -64,6 +66,7 @@ def build_router(
     applications: JoinApplicationRepo,
     notifier: Notifier,
     session_secret: str,
+    invites: InviteRepo | None = None,
     post_login_redirect: str = "/",
     secure_cookie: bool = False,
 ) -> APIRouter:
@@ -141,7 +144,18 @@ def build_router(
 
     @router.get("/auth/callback")
     def callback(code: str, state: str) -> RedirectResponse:
-        next_url = _verify_state(state)
+        # State is either a regular login envelope (itsdangerous-signed dict
+        # carrying {nonce, next}) or an invite-flow envelope (v1.<token>.<sig>
+        # from /api/invite/{token}/start). Try invite first since it has a
+        # distinct prefix; fall back to the legacy verifier on mismatch.
+        invite_record: Invite | None = None
+        try:
+            invite_token = decode_invite_state(state, secret=session_secret)
+            if invites is not None:
+                invite_record = invites.resolve_token(invite_token)
+            next_url = post_login_redirect
+        except InviteStateError:
+            next_url = _verify_state(state)
         try:
             token = oauth.exchange_code(code)
             info = oauth.get_user_info(token.access_token)
@@ -177,6 +191,11 @@ def build_router(
             if updates:
                 pivot_users.update_profile(user.id, **updates)
             pivot_users.touch_last_login(user.id)
+            # Invite-flow that landed on an already-active user: still mark
+            # the invite consumed so it can't be reused (admin's intent —
+            # "this link admits one user" — applies even on re-bind).
+            if invite_record is not None and invites is not None:
+                invites.mark_used(invite_id=invite_record.id, used_by_user_id=user.id)
             sid = sessions.create(
                 pivot_user_id=user.id, user_access_token=token.access_token
             )
@@ -227,6 +246,16 @@ def build_router(
         blocking = applications.lookup_blocking("feishu", info.open_id)
         if blocking is not None:
             if blocking.status == "pending":
+                # If the user came from an invite link this time, credit the
+                # admin who sent the invite — the application existed already
+                # but didn't yet know who invited them.
+                if invite_record is not None and invites is not None:
+                    if blocking.via_invite_id is None:
+                        applications.set_via_invite(
+                            application_id=blocking.id,
+                            via_invite_id=invite_record.id,
+                        )
+                    invites.mark_used(invite_id=invite_record.id, used_by_user_id="")
                 return RedirectResponse(
                     f"{post_login_redirect}?reason=pending_approval",
                     status_code=302,
@@ -248,7 +277,10 @@ def build_router(
             provider="feishu", external_id=info.open_id,
             external_union_id=info.union_id,
             raw_profile=raw_profile, suggested_match_user_id=suggested,
+            via_invite_id=invite_record.id if invite_record else None,
         )
+        if invite_record is not None and invites is not None:
+            invites.mark_used(invite_id=invite_record.id, used_by_user_id="")
         # Notify all active admins
         admin_open_ids = _admin_feishu_open_ids(pivot_users, bindings)
         if admin_open_ids:

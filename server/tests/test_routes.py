@@ -417,3 +417,63 @@ def test_callback_bootstraps_first_feishu_user_as_admin(db):
     assert user.status == "active"
     assert user.pinyin is None  # filled later by ProfileSetup
     assert applications.list_pending() == []
+
+
+def test_callback_with_invite_state_writes_via_invite_and_marks_used(db):
+    """Invite-flow callback: state=v1.<token>.<sig> → backend resolves the
+    invite, creates application with via_invite_id set, and marks the
+    invite consumed."""
+    from server.auth.invite_state import encode_invite_state
+    from server.invites import InviteRepo
+
+    # FakeOAuth returns open_id=ou_1; pre-bind that to an existing user in
+    # _make_app, so we need a fresh setup without the pre-bind to exercise
+    # the "create application" branch.
+    oauth = FakeOAuth()
+    sessions = SessionStore(db)
+    pivot_users = PivotUserRepo(db)
+    bindings = ExternalBindingRepo(db)
+    applications = JoinApplicationRepo(db)
+    invites = InviteRepo(db)
+    notifier = NoOpNotifier()
+
+    # Bootstrap admin so callback's "first feishu = admin" branch doesn't
+    # fire (we want the application-creation branch).
+    admin = pivot_users.create(
+        display_name="Admin",
+        pinyin="admin",
+        email=None,
+        avatar_url="",
+        role="admin",
+    )
+    bindings.bind(
+        pivot_user_id=admin.id,
+        provider="feishu",
+        external_id="ou_admin",
+        external_union_id=None,
+        raw_profile_json=None,
+    )
+
+    # Create invite record + sign state
+    token, invite = invites.create(created_by=admin.id, ttl_sec=3600)
+    state = encode_invite_state(invite_token=token, secret=SECRET)
+
+    app = FastAPI()
+    app.include_router(build_router(
+        oauth, sessions, pivot_users, bindings, applications, notifier,
+        SECRET, invites=invites,
+    ))
+    client = TestClient(app)
+
+    cb = client.get(f"/auth/callback?code=abc&state={state}", follow_redirects=False)
+    assert cb.status_code == 302
+    assert "reason=submitted" in cb.headers["location"]
+
+    # Application created with via_invite_id
+    pending = applications.list_pending()
+    assert len(pending) == 1
+    assert pending[0].via_invite_id == invite.id
+
+    # Invite marked used
+    refreshed = invites.resolve_token(token)
+    assert refreshed is None  # resolve_token returns None for used invites

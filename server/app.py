@@ -282,6 +282,7 @@ def create_app() -> FastAPI:
         build_auth_router(
             oauth, sessions, pivot_users, bindings, applications, notifier,
             cfg.session_secret,
+            invites=invites,
             post_login_redirect=cfg.web_dev_origin + "/",
             secure_cookie=cfg.feishu_redirect_uri.startswith("https://"),
         )
