@@ -66,11 +66,6 @@ class DisplayResolver:
         if u is not None:
             return DisplayInfo(u.display_name, u.avatar_url, u.status)
 
-        legacy = self._pivot_users.get_legacy_display(ref)
-        if legacy is not None:
-            name, avatar_url = legacy
-            return DisplayInfo(name, avatar_url, "active")
-
         binding = self._bindings.lookup_any_provider(ref)
         if binding is not None:
             u = self._pivot_users.get(binding.pivot_user_id)

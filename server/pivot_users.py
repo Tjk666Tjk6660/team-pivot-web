@@ -219,21 +219,6 @@ class PivotUserRepo:
             key=lambda u: u.display_name.lower(),
         )
 
-    def get_legacy_display(self, ref: str) -> tuple[str, str] | None:
-        """Read-only fallback for rows that still exist only in legacy users."""
-        try:
-            with self._db.connect() as conn:
-                row = conn.execute(
-                    "SELECT name, avatar_url FROM users"
-                    " WHERE open_id=? OR union_id=? OR pinyin=?",
-                    (ref, ref, ref),
-                ).fetchone()
-        except sqlite3.OperationalError:
-            return None
-        if row is None:
-            return None
-        return row["name"], row["avatar_url"] or ""
-
     def update_profile(
         self,
         user_id: str,
