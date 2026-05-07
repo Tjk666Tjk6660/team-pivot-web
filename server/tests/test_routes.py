@@ -477,3 +477,67 @@ def test_callback_with_invite_state_writes_via_invite_and_marks_used(db):
     # Invite marked used
     refreshed = invites.resolve_token(token)
     assert refreshed is None  # resolve_token returns None for used invites
+
+
+def test_callback_denial_invite_flow_redirects_to_invite_page(db):
+    """Feishu omits `code` when user clicks 拒绝. Invite-flow callbacks
+    should land back on /invite/<token>?reason=feishu_denied so the user
+    can retry — without consuming the invite."""
+    from server.auth.invite_state import encode_invite_state
+    from server.invites import InviteRepo
+
+    oauth = FakeOAuth()
+    sessions = SessionStore(db)
+    pivot_users = PivotUserRepo(db)
+    bindings = ExternalBindingRepo(db)
+    applications = JoinApplicationRepo(db)
+    invites = InviteRepo(db)
+    notifier = NoOpNotifier()
+
+    admin = pivot_users.create(
+        display_name="Admin", pinyin="admin", email=None, avatar_url="",
+        role="admin",
+    )
+    bindings.bind(
+        pivot_user_id=admin.id, provider="feishu", external_id="ou_admin",
+        external_union_id=None, raw_profile_json=None,
+    )
+
+    token, invite = invites.create(created_by=admin.id, ttl_sec=3600)
+    state = encode_invite_state(invite_token=token, secret=SECRET)
+
+    app = FastAPI()
+    app.include_router(build_router(
+        oauth, sessions, pivot_users, bindings, applications, notifier,
+        SECRET, invites=invites,
+    ))
+    client = TestClient(app)
+
+    # No `code` parameter — simulates Feishu denial (sends error=access_denied).
+    cb = client.get(
+        f"/auth/callback?state={state}&error=access_denied",
+        follow_redirects=False,
+    )
+    assert cb.status_code == 302
+    assert cb.headers["location"] == f"/invite/{token}?reason=feishu_denied"
+
+    # Invite NOT consumed — user can retry.
+    refreshed = invites.resolve_token(token)
+    assert refreshed is not None
+    assert refreshed.id == invite.id
+
+
+def test_callback_denial_login_flow_redirects_with_reason(db):
+    """Non-invite callback denial (regular /login flow) → root with reason."""
+    client, _, _, _, _, _ = _make_app(db)
+
+    # State that's a regular login envelope.
+    login = client.get("/login", follow_redirects=False)
+    state = login.headers["location"].split("state=", 1)[1]
+
+    cb = client.get(
+        f"/auth/callback?state={state}&error=access_denied",
+        follow_redirects=False,
+    )
+    assert cb.status_code == 302
+    assert "reason=feishu_denied" in cb.headers["location"]

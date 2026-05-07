@@ -1,16 +1,20 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { getInvite, startInvite, type InvitePreview } from "@/api";
 import { Button } from "@/components/ui/button";
 
 export function InviteAccept() {
   const { token = "" } = useParams<{ token: string }>();
+  const [searchParams] = useSearchParams();
+  const denied = searchParams.get("reason") === "feishu_denied";
 
   const [invite, setInvite] = useState<InvitePreview | null | undefined>(undefined);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(
+    denied ? "你刚才在飞书页面取消了授权。可以重新点击下面的按钮再试一次。" : null,
+  );
 
   useEffect(() => {
     let alive = true;

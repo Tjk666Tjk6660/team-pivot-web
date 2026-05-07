@@ -143,7 +143,29 @@ def build_router(
         return RedirectResponse(oauth.authorize_url(_issue_state(next_url)))
 
     @router.get("/auth/callback")
-    def callback(code: str, state: str) -> RedirectResponse:
+    def callback(
+        code: str | None = None,
+        state: str = "",
+        error: str | None = None,
+    ) -> RedirectResponse:
+        # Feishu omits `code` when the user denies authorization (sends back
+        # `error=access_denied&state=...`). Land them on the originating page
+        # with a reason so the SPA can show "you cancelled, try again" — the
+        # invite stays unused since we never reached exchange_code.
+        if code is None:
+            try:
+                invite_token = decode_invite_state(state, secret=session_secret)
+                log.info("oauth callback denied invite flow error=%s", error)
+                return RedirectResponse(
+                    f"/invite/{invite_token}?reason=feishu_denied",
+                    status_code=302,
+                )
+            except InviteStateError:
+                log.info("oauth callback denied login flow error=%s", error)
+                return RedirectResponse(
+                    f"{post_login_redirect}?reason=feishu_denied",
+                    status_code=302,
+                )
         # State is either a regular login envelope (itsdangerous-signed dict
         # carrying {nonce, next}) or an invite-flow envelope (v1.<token>.<sig>
         # from /api/invite/{token}/start). Try invite first since it has a
