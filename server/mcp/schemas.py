@@ -383,6 +383,15 @@ class CreateMatterOut(BaseModel):
     matter_id: str
     category: str
     title: str
+    owner: str | None = Field(
+        default=None,
+        description=(
+            "Matter-level owner as recorded by the backend after pinyin / "
+            "open_id resolution. AI MUST surface this to the user when an "
+            "owner was requested, so the caller can verify the assignment "
+            "took effect (silent fallback to creator was a previous bug)."
+        ),
+    )
     view_url: str
     first_file: str
     summary_for_ai: str = Field(

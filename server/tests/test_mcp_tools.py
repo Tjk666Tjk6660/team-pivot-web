@@ -466,7 +466,11 @@ def test_create_matter_success_returns_summary_and_view_url():
 
 
 def test_create_matter_flat_input_becomes_nested_api_body():
-    """MCP exposes flat schema; backend wants {category, title, initial_file{...}}."""
+    """MCP exposes flat schema; backend wants {category, title, initial_file{...}}.
+
+    `owner` is matter-level (NewMatterBody.owner_id at the top level), NOT
+    a first-file owner — verified by absence in initial_file.
+    """
     client = MagicMock(spec=MatterApiClient)
     client.post_matter.return_value = {
         "matter_id": "x", "matter": {"id": "x", "title": "X"},
@@ -488,8 +492,10 @@ def test_create_matter_flat_input_becomes_nested_api_body():
     sent_body = client.post_matter.call_args[0][0]
     assert sent_body["category"] == "Pivot"
     assert sent_body["title"] == "X"
+    # owner lands at top-level owner_id (matter-level), not initial_file.owner.
+    assert sent_body["owner_id"] == "alice"
     assert sent_body["initial_file"] == {
-        "type": "think", "summary": "s", "body": "b", "owner": "alice",
+        "type": "think", "summary": "s", "body": "b",
     }
 
 
@@ -506,7 +512,72 @@ def test_create_matter_omits_owner_when_null():
         "https://pivot",
     )
     sent_body = client.post_matter.call_args[0][0]
+    assert "owner_id" not in sent_body
     assert "owner" not in sent_body["initial_file"]
+
+
+def test_create_matter_response_echoes_owner_from_backend():
+    """Output exposes the backend's resolved matter.owner so AI can verify
+    the assignment took effect (silent fallback to creator was a prior bug)."""
+    client = MagicMock(spec=MatterApiClient)
+    client.post_matter.return_value = {
+        "matter_id": "x",
+        "matter": {"id": "x", "title": "X", "owner": "alice"},
+        "file": "f.md",
+        "initial_timeline_item": {"file": "f.md"},
+    }
+    out = tool_create_matter(
+        {"category": "Pivot", "title": "X", "type": "think",
+         "summary": "s", "body": "b", "owner": "alice"},
+        client,
+        "https://pivot",
+    )
+    assert out["owner"] == "alice"
+    # AI-facing summary must relay the actual owner so the user can verify.
+    assert "owner: alice" in out["summary_for_ai"]
+
+
+def test_create_matter_owner_null_when_caller_omits():
+    """When no owner was requested, response.owner stays null and the
+    summary doesn't pretend an owner was set."""
+    client = MagicMock(spec=MatterApiClient)
+    client.post_matter.return_value = {
+        "matter_id": "x",
+        "matter": {"id": "x", "title": "X"},
+        "file": "f.md",
+        "initial_timeline_item": {"file": "f.md"},
+    }
+    out = tool_create_matter(
+        {"category": "Pivot", "title": "X", "type": "think",
+         "summary": "s", "body": "b"},
+        client,
+        "https://pivot",
+    )
+    assert out["owner"] is None
+    assert "owner:" not in out["summary_for_ai"]
+
+
+def test_create_matter_owner_unknown_422_passthrough():
+    """Backend's `owner_unknown` (unresolvable pinyin/open_id) flows through
+    as `errors` payload so AI can ask the user for clarification."""
+    client = MagicMock(spec=MatterApiClient)
+    client.post_matter.return_value = {
+        "__validation_errors__": {
+            "detail": {
+                "code": "owner_unknown",
+                "field": "owner_id",
+                "message": "matter owner not found: ghost",
+            },
+        },
+    }
+    out = tool_create_matter(
+        {"category": "Pivot", "title": "X", "type": "think",
+         "summary": "s", "body": "b", "owner": "ghost"},
+        client,
+        "https://pivot",
+    )
+    assert "errors" in out
+    assert out["errors"]["detail"]["code"] == "owner_unknown"
 
 
 def test_create_matter_validation_errors_returned_as_data():

@@ -566,7 +566,12 @@ def tool_create_matter(
         },
     }
     if input_.owner is not None:
-        api_body["initial_file"]["owner"] = input_.owner
+        # Matter-level owner — backend's NewMatterBody.owner_id, NOT
+        # InitialFileIn.owner (the latter is the first-file creator/owner
+        # and does not drive matter.owner). Pinyin / display / open_id are
+        # all accepted; backend (publish_matter_create) resolves and
+        # raises 422 owner_unknown on miss — surfaced via __validation_errors__.
+        api_body["owner_id"] = input_.owner
     if input_.mentions is not None:
         api_body["initial_file"]["mentions"] = [{
             "body": input_.mentions.say,
@@ -591,16 +596,24 @@ def tool_create_matter(
     view_url = f"{base}/m/{matter_id}"
 
     title = matter.get("title") or input_.title
-    summary_ai = (
-        f"✅ 已创建 matter「{title}」（category: {input_.category}）。"
-        f"点这里查看：{view_url}"
-    )
+    actual_owner = matter.get("owner")
+    if input_.owner is not None and actual_owner:
+        summary_ai = (
+            f"✅ 已创建 matter「{title}」（category: {input_.category}，"
+            f"owner: {actual_owner}）。点这里查看：{view_url}"
+        )
+    else:
+        summary_ai = (
+            f"✅ 已创建 matter「{title}」（category: {input_.category}）。"
+            f"点这里查看：{view_url}"
+        )
 
     return CreateMatterOut(
         ok=True,
         matter_id=matter_id,
         category=input_.category,
         title=title,
+        owner=actual_owner,
         view_url=view_url,
         first_file=first_file,
         summary_for_ai=summary_ai,
