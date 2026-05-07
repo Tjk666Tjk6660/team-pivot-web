@@ -33,9 +33,9 @@ export function userClassName(status: UserStatus): string {
 export function userTooltip(status: UserStatus): string | null {
   switch (status) {
     case "deleted":
-      return "该用户已停用";
+      return "该用户已注销";
     case "suspended":
-      return "该用户已暂停";
+      return "该用户已暂停登录";
     case "unknown":
       return "该用户未在 Pivot 注册";
     default:

@@ -89,7 +89,7 @@ export function AdminUsers() {
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="搜索 display_name / email / pinyin"
+            placeholder="搜索 名字 / email / pinyin"
             className="h-9 w-64 text-[13px]"
           />
           <label
@@ -101,7 +101,7 @@ export function AdminUsers() {
               checked={includeDeleted}
               onChange={(e) => setIncludeDeleted(e.target.checked)}
             />
-            含已停用
+            含已注销
           </label>
         </div>
       </header>
@@ -245,7 +245,7 @@ function UserRow({
                   })}
                 >
                   <Pause className="h-3.5 w-3.5" />
-                  暂停
+                  暂停登录
                 </DropdownMenuItem>
               )}
               {user.status === "suspended" && (
@@ -255,13 +255,13 @@ function UserRow({
                   })}
                 >
                   <Play className="h-3.5 w-3.5" />
-                  恢复
+                  恢复登录
                 </DropdownMenuItem>
               )}
               {user.status === "deleted" && (
                 <DropdownMenuItem onSelect={() => setConfirmKind("restore")}>
                   <Undo2 className="h-3.5 w-3.5" />
-                  撤销停用
+                  重新启用
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem
@@ -286,7 +286,7 @@ function UserRow({
                     style={{ color: "var(--danger-500)" }}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
-                    停用
+                    注销账号
                   </DropdownMenuItem>
                 </>
               )}
@@ -469,9 +469,9 @@ function ConfirmDeleteDialog({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>停用用户</DialogTitle>
+          <DialogTitle>注销账号</DialogTitle>
           <DialogDescription>
-            停用后该用户不能再登录。请输入用户 display_name 确认操作。
+            注销后该用户不能再登录。请输入用户名字确认操作。
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
@@ -495,7 +495,7 @@ function ConfirmDeleteDialog({
             onClick={() => onConfirm(note.trim() || undefined)}
             style={{ background: "var(--danger-500)", color: "white" }}
           >
-            确认停用
+            确认注销
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -527,9 +527,9 @@ function ConfirmRestoreDialog({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>恢复用户</DialogTitle>
+          <DialogTitle>重新启用账号</DialogTitle>
           <DialogDescription>
-            请输入用户 display_name 确认恢复。
+            请输入用户名字确认重新启用。
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
@@ -549,7 +549,7 @@ function ConfirmRestoreDialog({
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>取消</Button>
           <Button disabled={!enabled} onClick={() => onConfirm(note.trim() || undefined)}>
-            确认恢复
+            确认启用
           </Button>
         </DialogFooter>
       </DialogContent>

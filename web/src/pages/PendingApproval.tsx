@@ -15,13 +15,13 @@ const MESSAGES: Record<string, { title: string; body: string; tone: "info" | "wa
     tone: "danger",
   },
   suspended: {
-    title: "账号已暂停",
-    body: "账号已被管理员暂停，登录入口已关闭。请联系管理员了解详情。",
+    title: "账号已暂停登录",
+    body: "账号已被管理员暂停登录，登录入口已关闭。请联系管理员了解详情。",
     tone: "warn",
   },
   deleted: {
-    title: "账号已停用",
-    body: "账号已被管理员标记为已停用，登录入口已关闭。",
+    title: "账号已注销",
+    body: "账号已被管理员注销，登录入口已关闭。",
     tone: "danger",
   },
 };

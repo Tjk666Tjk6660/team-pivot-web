@@ -435,7 +435,7 @@ function MergeDialog({
             id="userSearch"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="按 display_name / email / pinyin"
+            placeholder="按 名字 / email / pinyin"
             autoComplete="off"
           />
           {searchQuery.trim() && (

@@ -2,8 +2,8 @@ import type { AdminUser } from "@/api";
 
 const STATUS_LABEL: Record<AdminUser["status"], string> = {
   active: "活跃",
-  suspended: "已暂停",
-  deleted: "已停用",
+  suspended: "已暂停登录",
+  deleted: "已注销",
 };
 
 const STATUS_COLOR: Record<AdminUser["status"], { bg: string; fg: string; border: string }> = {
