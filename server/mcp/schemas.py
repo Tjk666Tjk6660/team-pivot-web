@@ -371,10 +371,9 @@ class CreateMatterIn(BaseModel):
     new_category_visibility: CategoryVisibilityIn | None = Field(
         default=None,
         description=(
-            "OPTIONAL category-level visibility, ONLY needed when (a) the "
-            "`category` does not yet exist AND (b) the matter `visibility` is "
-            "restricted. Backend returns 422 `missing_category_visibility` "
-            "if absent in that scenario. Leave null in every other case."
+            "OPTIONAL category-level visibility. Leave null by default; new "
+            "categories default to public. Only set this when the user "
+            "explicitly asks to restrict the category itself."
         ),
     )
 

@@ -8,6 +8,7 @@ from server.notify import (
     NoOpNotifier,
     build_annotation_dm_card,
     build_application_card,
+    build_matter_event_card,
     build_mention_dm_card,
     build_owner_change_card,
     build_reply_card,
@@ -963,3 +964,91 @@ def test_noop_notifier_annotation_silent():
         annotation_type="evaluation", annotation_body="x",
         stakeholder_open_ids=["ou_x"],
     )
+
+
+# ─── 失效/恢复事件卡(P3) ────────────────────────────────────────────────
+
+
+def test_matter_event_card_invalidate_misposted():
+    """misposted 失效:header 含'撤回了文档',row 含 actor / 文件 / 说明。"""
+    card = build_matter_event_card(
+        thread_title="登录链路重构",
+        target_filename="003_dengke_act_abc.md",
+        actor_name="邓柯",
+        reason="misposted",
+        summary="误发,撤回此文档",
+        thread_url="http://x/m/auth",
+    )
+    md = card["body"]["elements"][0]["content"]
+    assert card["header"]["title"]["content"] == "作者撤回了文档：登录链路重构"
+    assert card["header"]["template"] == "yellow"
+    assert "**操作**：邓柯（误发）" in md
+    assert "**文件**：003_dengke_act_abc.md" in md
+    assert "**说明**：误发,撤回此文档" in md
+
+
+def test_matter_event_card_invalidate_inaccurate():
+    """inaccurate 失效:理由标签是'信息有误'。"""
+    card = build_matter_event_card(
+        thread_title="X",
+        target_filename="003.md",
+        actor_name="A",
+        reason="inaccurate",
+        summary=None,
+        thread_url="http://x/m/X",
+    )
+    md = card["body"]["elements"][0]["content"]
+    assert "撤回了文档" in card["header"]["title"]["content"]
+    assert "**操作**：A（信息有误）" in md
+    # summary 缺失时,**说明** 行不出现
+    assert "**说明**" not in md
+
+
+def test_matter_event_card_restore_uses_distinct_header_and_template():
+    """restored 用不同的 header verb('恢复了文档') + 不同的 template。"""
+    card = build_matter_event_card(
+        thread_title="X",
+        target_filename="003.md",
+        actor_name="A",
+        reason="restored",
+        summary=None,
+        thread_url="http://x/m/X",
+    )
+    md = card["body"]["elements"][0]["content"]
+    assert card["header"]["title"]["content"] == "作者恢复了文档：X"
+    assert card["header"]["template"] == "turquoise"
+    assert "**操作**：A（恢复）" in md
+
+
+def test_matter_event_card_button_links_to_matter_detail():
+    card = build_matter_event_card(
+        thread_title="X", target_filename="x.md", actor_name="A",
+        reason="misposted", summary=None,
+        thread_url="http://example/auth/entry?next=/m/foo",
+    )
+    body = json.dumps(card, ensure_ascii=False)
+    assert "/m/foo" in body
+
+
+def test_matter_event_card_summary_oneline_collapses_newlines():
+    """summary 中的换行被 _oneline 折叠,卡片 markdown 不被破坏。"""
+    card = build_matter_event_card(
+        thread_title="X", target_filename="x.md", actor_name="A",
+        reason="misposted",
+        summary="第一行\n第二行\r\n第三行",
+        thread_url="http://x/m/X",
+    )
+    md = card["body"]["elements"][0]["content"]
+    # 折叠后单行,不含原始换行符
+    assert "第一行" in md
+    assert "第二行" in md
+    assert "\n第二行" not in md  # _oneline 应该把内嵌换行去掉
+
+
+def test_noop_notifier_matter_event_silent():
+    """NoOpNotifier 收到 notify_matter_event 不报错(即便没参数)。"""
+    n = NoOpNotifier()
+    n.notify_matter_event(
+        category="Pivot", slug="m", thread_title="t", target_filename="f.md",
+        actor_name="a", reason="misposted", summary=None,
+    )  # 不抛异常即通过

@@ -14,6 +14,11 @@ VERSION = 1
 
 # Canonical key order for timeline items, matching pivot-product.md §八 example.
 # Keys not in this list are appended in their original insertion order.
+#
+# `invalidated_*` reverse-write fields slot between verifications_received and
+# outcome — they describe the file's current state but are written by the
+# invalidation event handler, not authored by the file's creator.
+# See AI-docs/invalidate-self/product-design.md §2.1.
 _ITEM_KEY_ORDER = (
     "file",
     "created_at",
@@ -25,6 +30,10 @@ _ITEM_KEY_ORDER = (
     "refer",
     "verifications",
     "verifications_received",
+    "invalidated",
+    "invalidated_at",
+    "invalidated_reason",
+    "invalidated_by",
     "outcome",
     "mentions",
     "annotations",
@@ -42,6 +51,18 @@ _OWNER_CHANGE_KEY_ORDER = (
     "to_owner",
     "reason",
     "status_change",
+)
+
+# Invalidation/restoration event entries: no `type` field (distinguished from
+# file items by absence of `type`, and from owner_change by absence of `type`
+# as well — owner_change has type=owner_change). Carries `reason` to encode
+# event subtype (misposted / inaccurate / restored) per design §2.2.
+_INVALIDATION_EVENT_KEY_ORDER = (
+    "creator",
+    "created_at",
+    "quote",
+    "reason",
+    "summary",
 )
 
 # Canonical matter block key order: keep new optional fields (owner) slotted
@@ -370,9 +391,14 @@ def append_annotation(
 def _normalize_item(item: dict[str, Any], *, now_iso: str) -> dict[str, Any]:
     """Apply defaults + reorder keys for stable on-disk layout.
 
-    Branches at type level: file-type entries get the file-type key order
-    + creator→owner fallback; event-type entries (owner_change) get their
-    own key order and skip the file-only fallbacks (they have no creator).
+    Four timeline entry shapes are dispatched here:
+      1. File items (think/act/verify/result/insight): have `type` ∈ VALID_DOC_TYPES,
+         get _ITEM_KEY_ORDER + creator→owner fallback + mention normalization.
+      2. Owner change events: have `type=owner_change`, get _OWNER_CHANGE_KEY_ORDER,
+         skip file-only fallbacks (no creator concept).
+      3. Invalidation/restoration events: **no `type` field**, identified by
+         presence of `reason`, get _INVALIDATION_EVENT_KEY_ORDER. See
+         AI-docs/invalidate-self/product-design.md §2.2.
 
     Callers may submit items with the legacy ``comments`` field name;
     they are coerced to the new ``mentions`` field (and inner
@@ -383,6 +409,8 @@ def _normalize_item(item: dict[str, Any], *, now_iso: str) -> dict[str, Any]:
     out.setdefault("created_at", now_iso)
     if out.get("type") == "owner_change":
         return _reorder(out, _OWNER_CHANGE_KEY_ORDER)
+    if "type" not in out and "reason" in out:
+        return _reorder(out, _INVALIDATION_EVENT_KEY_ORDER)
     creator = out.get("creator")
     if creator and not out.get("owner"):
         out["owner"] = creator
@@ -465,6 +493,84 @@ def _reverse_write_verifications(
             "judgement": v.get("judgement"),
             "comment": v.get("comment"),
         })
+
+
+def _reverse_write_invalidation(
+    index: dict[str, Any], event_item: dict[str, Any]
+) -> None:
+    """For a freshly-appended invalidation/restoration event, mirror the effect
+    onto the target file's `invalidated_*` reverse-write fields.
+
+    Behavior per AI-docs/invalidate-self/product-design.md §2.2:
+      - reason ∈ {misposted, inaccurate} → set invalidated=True + 3 metadata fields
+      - reason == restored → set invalidated=False; keep the other 3 fields as
+        audit trail (so the timeline tells the full story when paired with the
+        new event entry)
+
+    Cross-matter / missing targets are silently skipped — the validator already
+    ensures the target exists in this matter timeline before write.
+    """
+    # Identify invalidation events: no `type` field, has `reason`. owner_change
+    # has type=owner_change so it's filtered out by the first guard.
+    if "type" in event_item or "reason" not in event_item:
+        return
+    reason = event_item.get("reason")
+    if reason not in ("misposted", "inaccurate", "restored"):
+        return
+    target_path = event_item.get("quote")
+    if not target_path:
+        return
+    timeline = index.get("timeline") or []
+    target_item = None
+    for it in timeline:
+        if it.get("file") == target_path:
+            target_item = it
+            break
+    if target_item is None:
+        return
+    if reason == "restored":
+        target_item["invalidated"] = False
+        # Keep invalidated_at / invalidated_reason / invalidated_by as audit trail.
+    else:
+        target_item["invalidated"] = True
+        target_item["invalidated_at"] = event_item.get("created_at")
+        target_item["invalidated_reason"] = reason
+        target_item["invalidated_by"] = event_item.get("creator")
+    # Re-canonicalize key order so the 4 reverse-write fields settle into their
+    # canonical slots (verifications_received → invalidated_* → outcome).
+    reordered = _reorder(target_item, _ITEM_KEY_ORDER)
+    target_item.clear()
+    target_item.update(reordered)
+
+
+def append_event(
+    path: Path,
+    *,
+    event: dict[str, Any],
+    now_iso: str,
+) -> None:
+    """Append an invalidation/restoration event entry to a matter's timeline,
+    and reverse-write its effect onto the target file's invalidated_* fields.
+
+    Atomic: validate → append entry → reverse-write → atomic yaml write. If
+    validation fails, no partial state hits disk.
+
+    Does NOT bump matter.updated_at — invalidation is a "declarative withdrawal",
+    not matter progress (per design §5.5: keep timeline and status machine as
+    independent fact streams). The frontend gets notified via SSE
+    `matter.updated` (reason=event_appended) and refetches.
+    """
+    p = Path(path)
+    data = read_matter_index(p)
+    if data is None:
+        raise FileNotFoundError(p)
+    normalized = _normalize_item(event, now_iso=now_iso)
+    result = validate_append(data, normalized)
+    if not result.ok:
+        raise ValidationError(result)
+    data.setdefault("timeline", []).append(normalized)
+    _reverse_write_invalidation(data, normalized)
+    _atomic_write_yaml(p, data)
 
 
 def _atomic_write_yaml(path: Path, data: dict[str, Any]) -> None:

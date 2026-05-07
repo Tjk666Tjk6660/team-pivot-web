@@ -10,7 +10,6 @@ import {
   streamAIChat,
   type DocType,
   type Me,
-  type CategoryVisibilityScope,
   type VisibilityScope,
 } from "@/api";
 import { Button } from "@/components/ui/button";
@@ -46,27 +45,6 @@ const CATEGORY_PATTERN = /^[^/\\:*?"<>|\t\n\r]{1,20}$/;
 // than looking up the matter; we keep a stable string for log readability.
 const NEW_MATTER_PSEUDO_ID = "_new_matter_";
 const PUBLIC_VISIBILITY: VisibilityScope = { mode: "public", roles: [], user_ids: [] };
-const PUBLIC_CATEGORY_VISIBILITY: CategoryVisibilityScope = {
-  mode: "public",
-  authorized_roles: [],
-};
-
-function categoryScopeToVisibility(scope: CategoryVisibilityScope): VisibilityScope {
-  return {
-    mode: scope.mode,
-    roles: scope.mode === "restricted" ? scope.authorized_roles : [],
-    user_ids: [],
-  };
-}
-
-function visibilityToCategoryScope(scope: VisibilityScope): CategoryVisibilityScope {
-  return {
-    mode: scope.mode === "restricted" && scope.roles.length > 0
-      ? "restricted"
-      : "public",
-    authorized_roles: scope.mode === "restricted" ? scope.roles : [],
-  };
-}
 
 export function NewMatter({ me }: { me: Me }) {
   // Two paths: guided AI conversation (default, mirrors AICraft demo) and the
@@ -133,10 +111,6 @@ function NewMatterClassicForm({
   const [createdCategory, setCreatedCategory] = useState<string | null>(
     () => initialSnapshot?.createdCategory ?? null,
   );
-  const [categoryVisibility, setCategoryVisibility] =
-    useState<CategoryVisibilityScope>(
-      () => initialSnapshot?.categoryVisibility ?? PUBLIC_CATEGORY_VISIBILITY,
-    );
   const [availableCategories, setAvailableCategories] = useState<string[]>([]);
   const [title, setTitle] = useState(() => initialSnapshot?.title ?? "");
   const [initialType, setInitialType] = useState<DocType>(
@@ -175,10 +149,10 @@ function NewMatterClassicForm({
 
   useEffect(() => {
     Promise.all([fetchMatters(), fetchDrafts()])
-      .then(([items, drafts]) => {
+      .then(([res, drafts]) => {
         const cats = Array.from(
           new Set(
-            items
+            res.items
               .map((m) => m.category)
               .filter((c): c is string => typeof c === "string" && c.length > 0),
           ),
@@ -263,17 +237,6 @@ function NewMatterClassicForm({
               comments: rawMentions.comments,
             });
           }
-          const rawCategoryVisibility = payload.category_visibility as
-            | CategoryVisibilityScope
-            | undefined;
-          if (
-            rawCategoryVisibility &&
-            (rawCategoryVisibility.mode === "public" ||
-              rawCategoryVisibility.mode === "restricted") &&
-            Array.isArray(rawCategoryVisibility.authorized_roles)
-          ) {
-            setCategoryVisibility(rawCategoryVisibility);
-          }
           const rawMatterVisibility = payload.matter_visibility as
             | VisibilityScope
             | undefined;
@@ -350,7 +313,6 @@ function NewMatterClassicForm({
           ? { body_source_snapshot: bodyState.body_source_snapshot }
           : {}),
         ...(mentions.open_ids.length > 0 ? { mentions } : {}),
-        category_visibility: categoryVisibility,
         matter_visibility: visibility,
         created_category: createdCategory,
       },
@@ -362,7 +324,6 @@ function NewMatterClassicForm({
       matterOwner.pivotUserId, matterOwner.name, owner, ownerDisplayName,
       bodyState.body_source, bodyState.body_source_snapshot,
       mentions.open_ids.length, mentions.comments,
-      categoryVisibility.mode, categoryVisibility.authorized_roles.join("|"),
       visibility.mode, visibility.roles.join("|"), visibility.user_ids.join("|"),
       createdCategory,
     ],
@@ -398,16 +359,9 @@ function NewMatterClassicForm({
     setAvailableCategories((current) => (current.includes(next) ? current : [...current, next]));
     setCategory(next);
     setCreatedCategory(next);
-    setCategoryVisibility(PUBLIC_CATEGORY_VISIBILITY);
     setCategoryMode("select");
     setNewCategory("");
   };
-
-  const isNewCategory = !!createdCategory && category.trim() === createdCategory;
-  const categoryAllowedRoles =
-    isNewCategory && categoryVisibility.mode === "restricted"
-      ? categoryVisibility.authorized_roles
-      : undefined;
 
   const generateSummaryFromBody = async (): Promise<string> => {
     const userMsg = [
@@ -459,10 +413,6 @@ function NewMatterClassicForm({
         title: title.trim(),
         owner_id: matterOwner.pivotUserId || me.id,
         visibility,
-        new_category_visibility:
-          isNewCategory
-            ? categoryVisibility
-            : undefined,
         initial_file: {
           type: initialType,
           summary,
@@ -507,18 +457,6 @@ function NewMatterClassicForm({
       return toast.error("圈人后必须填一句话");
     }
 
-    if (isNewCategory && categoryVisibility.mode === "restricted") {
-      if (categoryVisibility.authorized_roles.length === 0) {
-        return toast.error("Category 指定角色可见时，至少选择一个角色");
-      }
-      if (
-        visibility.mode === "restricted" &&
-        visibility.roles.some((role) => !categoryVisibility.authorized_roles.includes(role))
-      ) {
-        return toast.error("Matter 可见范围不能超过 Category");
-      }
-    }
-
     const finalSource = computeAtPublish(bodyState, body);
     const gate = await confirmPublishQuality({
       bodySource: finalSource,
@@ -537,7 +475,6 @@ function NewMatterClassicForm({
         docType: initialType,
         matterOwner,
         mentions,
-        categoryVisibility,
         matterVisibility: visibility,
         createdCategory,
       });
@@ -623,7 +560,6 @@ function NewMatterClassicForm({
                             current.filter((item) => item !== createdCategory),
                           );
                           setCreatedCategory(null);
-                          setCategoryVisibility(PUBLIC_CATEGORY_VISIBILITY);
                         }
                         setCategoryMode("create");
                         setNewCategory("");
@@ -637,7 +573,6 @@ function NewMatterClassicForm({
                           current.filter((item) => item !== createdCategory),
                         );
                         setCreatedCategory(null);
-                        setCategoryVisibility(PUBLIC_CATEGORY_VISIBILITY);
                       }
                     }}
                     required
@@ -678,33 +613,6 @@ function NewMatterClassicForm({
                 </div>
               </div>
 
-              {isNewCategory && (
-                <>
-                  <div className="editor-divider border-t" />
-
-                  <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
-                    <div className="space-y-2">
-                      <div className="section-kicker">Category 可见范围</div>
-                      <p className="text-sm leading-6 text-[var(--text-mute)]">
-                        新 Category 的可见范围会成为下面 Matter 可见范围的上限。
-                      </p>
-                    </div>
-                    <VisibilityScopePicker
-                      value={categoryScopeToVisibility(categoryVisibility)}
-                      onChange={(next) => {
-                        setCategoryVisibility(visibilityToCategoryScope(next));
-                        setVisibility(PUBLIC_VISIBILITY);
-                      }}
-                      disabled={submitting}
-                      allowUsers={false}
-                      publicLabel="公开"
-                      restrictedLabel="指定角色"
-                      dialogTitle="设置 Category 可见范围"
-                    />
-                  </div>
-                </>
-              )}
-
               <div className="editor-divider border-t" />
 
               <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
@@ -719,7 +627,6 @@ function NewMatterClassicForm({
                   value={visibility}
                   onChange={setVisibility}
                   disabled={submitting}
-                  allowedRoles={categoryAllowedRoles}
                   requiredUserId={me.open_id}
                 />
               </div>

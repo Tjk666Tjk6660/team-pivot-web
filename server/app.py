@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,7 +21,7 @@ from server.api.app_home import build_router as build_app_home_router
 from server.api.auth_email_password import build_router as build_email_login_router
 from server.api.auth_invite import build_router as build_invite_router
 from server.api.contacts import build_router as build_contacts_router
-from server.api.daily_report import build_router as build_daily_report_router
+from server.api.daily_report_v2 import build_router as build_daily_report_v2_router
 from server.api.discussions import build_router as build_discussions_router
 from server.api.drafts import build_router as build_drafts_router
 from server.api.inbox import build_router as build_inbox_router
@@ -39,7 +40,9 @@ from server.auth.deps import (
     make_current_user_cookie_only,
     make_require_admin_user_cookie,
 )
-from server.daily_report.scheduler import DailyReportScheduler
+from server.daily_report.job_scheduler import JobScheduler
+from server.daily_report.jobs_repo import JobsRepo
+from server.daily_report.runs_repo import RunsRepo
 from server.auth.feishu_oauth import FeishuOAuth
 from server.auth.routes import build_router as build_auth_router
 from server.auth.session import SessionStore
@@ -193,11 +196,36 @@ def create_app() -> FastAPI:
     api_base_url = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
     mcp_app = build_mcp_app(api_tokens, pivot_users, api_base_url, cfg.web_dev_origin)
 
-    daily_report_scheduler = DailyReportScheduler(
+    jobs_repo = JobsRepo(db)
+    runs_repo = RunsRepo(db)
+
+    # Dev-time daily-report overrides(.env 控制):仅影响日报路径,业务其他
+    # 路径完全不动。
+    # - DAILY_REPORT_INDEX_DIR_OVERRIDE:让日报读指定 matter index 目录
+    #   (通常指向已克隆好的生产数据快照),其余业务仍用 /admin 配置的 dev workspace
+    # - DAILY_REPORT_USERS_DB_PATH:让日报通过 mode=ro 只读打开此 sqlite 取
+    #   users(personal 视角全员列表),AI 配置 / sessions / runs 仍走主 data.db
+    dr_index_override = cfg.daily_report_index_dir_override
+    dr_users_db = cfg.daily_report_users_db_path
+
+    def _dr_index_dir() -> Path:
+        if dr_index_override is not None:
+            return dr_index_override
+        return workspace.path / "index"
+
+    if dr_index_override is not None:
+        log.info("daily-report index dir overridden: %s", dr_index_override)
+    if dr_users_db is not None:
+        log.info("daily-report users db overridden: %s (read-only)", dr_users_db)
+
+    daily_report_scheduler = JobScheduler(
         db_path=cfg.data_dir / "data.db",
-        workspace_index_dir_provider=lambda: workspace.path / "index",
+        workspace_index_dir_provider=_dr_index_dir,
+        jobs_repo=jobs_repo,
+        runs_repo=runs_repo,
         settings=settings,
         notifier=notifier,
+        users_db_path=dr_users_db,
     )
 
     @asynccontextmanager
@@ -331,10 +359,17 @@ def create_app() -> FastAPI:
         workspace, settings, current_user_dep, current_user_cookie_dep,
         admin_user_cookie_dep,
     ))
-    app.include_router(build_daily_report_router(
-        workspace, settings, notifier,
-        cfg.data_dir / "data.db",
-        admin_user_cookie_dep,
+    app.include_router(build_daily_report_v2_router(
+        workspace=workspace,
+        settings=settings,
+        notifier=notifier,
+        db_path=cfg.data_dir / "data.db",
+        jobs_repo=jobs_repo,
+        runs_repo=runs_repo,
+        current_user_cookie_only=current_user_cookie_dep,
+        admin_dep=admin_user_cookie_dep,
+        index_dir_provider=_dr_index_dir,
+        users_db_path=dr_users_db,
     ))
     app.include_router(build_drafts_router(
         workspace, drafts, pivot_users, bindings, notifier, current_user_dep,

@@ -26,11 +26,14 @@ Phase 2（v2.1）演进：
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
+
+log = logging.getLogger(__name__)
 
 # Re-export commonly used dimension list for prompt + tests
 DIMENSIONS = ("delivery", "accountability", "collaboration", "judgment", "process")
@@ -277,7 +280,16 @@ def _validate_business_rules(
 
 
 def _validate_dimensions_have_evidence(s: SubjectScore) -> None:
-    """Each non-null dimension score requires ≥1 evidence pointing to it."""
+    """Each non-null dimension score should have ≥1 evidence pointing to it.
+
+    AI sometimes scores a dimension without tagging supporting evidence to
+    it (e.g. judgment=4.0 but no evidence.dimension=='judgment'). Hard-failing
+    the whole run on this is too brittle — the AI is non-deterministic and
+    one row's drift kills work that's otherwise correct. Treat it as graceful
+    degradation: drop the ungrounded score to None and log a warning. The
+    other rules in this validator (score range, unknown dim keys, evidence
+    purity) stay strict — those signal real corruption rather than drift.
+    """
     for dim in DIMENSIONS:
         score = s.dimensions.get(dim)
         if score is None:
@@ -288,10 +300,12 @@ def _validate_dimensions_have_evidence(s: SubjectScore) -> None:
             )
         has = any(e.dimension == dim for e in s.evidence)
         if not has:
-            raise SchemaError(
-                f"{s.subject_pinyin}.{dim} scored {score} but no evidence "
-                f"references this dimension"
+            log.warning(
+                "scoring: dropping ungrounded dimension subject=%s dim=%s "
+                "score=%s (no evidence tagged to this dimension)",
+                s.subject_pinyin, dim, score,
             )
+            s.dimensions[dim] = None
     # Reject unknown dimension keys that aren't in DIMENSIONS — defends against
     # AI inventing new categories.
     extra = set(s.dimensions.keys()) - set(DIMENSIONS)

@@ -206,15 +206,18 @@ def test_parse_rejects_fabricated_filename(index_data):
 # ---------- dimension/evidence consistency ----------
 
 
-def test_parse_rejects_dimension_without_evidence(index_data):
-    """dimensions.judgment=4 but no evidence with dimension=judgment → reject."""
+def test_parse_drops_dimension_without_evidence(index_data):
+    """dimensions.judgment=4 but no evidence with dimension=judgment →
+    silently drop to None (graceful degradation, see schema.py rationale)."""
     bad_dict = json.loads(_good_output())
     bad_dict["scores"][0]["dimensions"]["judgment"] = 4.0
     # evidence list still doesn't contain a judgment entry
-    with pytest.raises(SchemaError, match="judgment.*no evidence"):
-        parse_and_validate(
-            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
-        )
+    parsed = parse_and_validate(
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+    )
+    # The ungrounded dimension is nulled out; other dimensions survive.
+    assert parsed.scores[0].dimensions["judgment"] is None
+    assert parsed.scores[0].dimensions["delivery"] is not None
 
 
 def test_parse_rejects_dimension_score_out_of_range(index_data):

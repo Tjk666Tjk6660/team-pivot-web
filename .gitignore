@@ -34,3 +34,4 @@ web/tsconfig.tsbuildinfo
 # migration test/prod env files (test has GH_TOKEN; prod has machine-local paths)
 scripts/migration-test/env.init
 scripts/migration-prod/env.init
+package-lock.json

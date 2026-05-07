@@ -18,7 +18,6 @@ import {
   searchContacts,
   streamAIChat,
   type ChatMessage,
-  type CategoryVisibilityScope,
   type DocType,
   type Me,
   type MentionBlock,
@@ -45,7 +44,6 @@ export type ClassicBridgeSnapshot = {
   docType: DocType;
   matterOwner: { pivotUserId: string; name: string };
   mentions: MentionBlock;
-  categoryVisibility: CategoryVisibilityScope;
   matterVisibility: VisibilityScope;
   createdCategory?: string | null;
 };
@@ -58,27 +56,6 @@ const NEW_CATEGORY_OPTION = "__new_category__";
 const CATEGORY_PATTERN = /^[^/\\:*?"<>|\t\n\r]{1,20}$/;
 const NEW_MATTER_PSEUDO_ID = "_new_matter_";
 const PUBLIC_VISIBILITY: VisibilityScope = { mode: "public", roles: [], user_ids: [] };
-const PUBLIC_CATEGORY_VISIBILITY: CategoryVisibilityScope = {
-  mode: "public",
-  authorized_roles: [],
-};
-
-function categoryScopeToVisibility(scope: CategoryVisibilityScope): VisibilityScope {
-  return {
-    mode: scope.mode,
-    roles: scope.mode === "restricted" ? scope.authorized_roles : [],
-    user_ids: [],
-  };
-}
-
-function visibilityToCategoryScope(scope: VisibilityScope): CategoryVisibilityScope {
-  return {
-    mode: scope.mode === "restricted" && scope.roles.length > 0
-      ? "restricted"
-      : "public",
-    authorized_roles: scope.mode === "restricted" ? scope.roles : [],
-  };
-}
 
 type Phase =
   | "topic"
@@ -119,7 +96,6 @@ type StepData = {
   title: string;
   matterOwner: { pivotUserId: string; name: string };
   mentions: MentionBlock;
-  categoryVisibility: CategoryVisibilityScope;
   matterVisibility: VisibilityScope;
   body: string;
   summary: string;
@@ -132,7 +108,6 @@ const initialData = (me: Me): StepData => ({
   title: "",
   matterOwner: { pivotUserId: me.id, name: me.name },
   mentions: emptyMention(),
-  categoryVisibility: PUBLIC_CATEGORY_VISIBILITY,
   matterVisibility: PUBLIC_VISIBILITY,
   body: "",
   summary: "",
@@ -172,7 +147,6 @@ export function NewMatterGuidedFlow({
           title: initialBridge!.title,
           matterOwner: initialBridge!.matterOwner,
           mentions: initialBridge!.mentions,
-          categoryVisibility: initialBridge!.categoryVisibility,
           matterVisibility: initialBridge!.matterVisibility,
           body: "",
           summary: "",
@@ -216,10 +190,10 @@ export function NewMatterGuidedFlow({
   // Initial categories load.
   useEffect(() => {
     fetchMatters()
-      .then((items) => {
+      .then((res) => {
         const cats = Array.from(
           new Set(
-            items
+            res.items
               .map((m) => m.category)
               .filter((c): c is string => typeof c === "string" && !!c),
           ),
@@ -256,11 +230,6 @@ export function NewMatterGuidedFlow({
 
   const phaseIndex = PHASE_ORDER.indexOf(phase);
   const phaseDisplayIndex = phase === "review" ? 7 : phaseIndex + 1;
-  const isNewCategory = !!createdCategory && data.category.trim() === createdCategory;
-  const categoryAllowedRoles =
-    isNewCategory && data.categoryVisibility.mode === "restricted"
-      ? data.categoryVisibility.authorized_roles
-      : undefined;
   const draftBody = data.body || streamingBody;
   const hasDraftContent =
     data.topic.trim().length > 0 ||
@@ -284,7 +253,6 @@ export function NewMatterGuidedFlow({
       ...(draftBody.trim() ? { body_source_snapshot: draftBody } : {}),
       ...(data.topic.trim() ? { topic: data.topic.trim() } : {}),
       ...(data.mentions.open_ids.length > 0 ? { mentions: data.mentions } : {}),
-      category_visibility: data.categoryVisibility,
       matter_visibility: data.matterVisibility,
       created_category: createdCategory,
     },
@@ -308,8 +276,6 @@ export function NewMatterGuidedFlow({
       data.mentions.comments,
       data.body,
       data.summary,
-      data.categoryVisibility.mode,
-      data.categoryVisibility.authorized_roles.join("|"),
       data.matterVisibility.mode,
       data.matterVisibility.roles.join("|"),
       data.matterVisibility.user_ids.join("|"),
@@ -337,7 +303,6 @@ export function NewMatterGuidedFlow({
     docType: data.docType,
     matterOwner: data.matterOwner,
     mentions: data.mentions,
-    categoryVisibility: data.categoryVisibility,
     matterVisibility: data.matterVisibility,
     createdCategory,
   });
@@ -393,8 +358,6 @@ export function NewMatterGuidedFlow({
     setData((d) => ({
       ...d,
       category: trimmed,
-      categoryVisibility:
-        wasNewCategory ? PUBLIC_CATEGORY_VISIBILITY : d.categoryVisibility,
       matterVisibility: PUBLIC_VISIBILITY,
     }));
     setAvailableCategories((cats) =>
@@ -629,19 +592,6 @@ export function NewMatterGuidedFlow({
     if (!data.title.trim()) return toast.error("标题必填");
     if (!data.body.trim()) return toast.error("正文必填");
     if (!data.summary.trim()) return toast.error("摘要必填");
-    if (isNewCategory && data.categoryVisibility.mode === "restricted") {
-      if (data.categoryVisibility.authorized_roles.length === 0) {
-        return toast.error("Category 指定角色可见时，至少选择一个角色");
-      }
-      if (
-        data.matterVisibility.mode === "restricted" &&
-        data.matterVisibility.roles.some(
-          (role) => !data.categoryVisibility.authorized_roles.includes(role),
-        )
-      ) {
-        return toast.error("Matter 可见范围不能超过 Category");
-      }
-    }
     setSubmitting(true);
     try {
       const r = await createMatter({
@@ -649,9 +599,6 @@ export function NewMatterGuidedFlow({
         title: data.title.trim(),
         owner_id: data.matterOwner.pivotUserId || me.id,
         visibility: data.matterVisibility,
-        new_category_visibility: isNewCategory
-          ? data.categoryVisibility
-          : undefined,
         initial_file: {
           type: data.docType,
           summary: data.summary.trim(),
@@ -790,38 +737,15 @@ export function NewMatterGuidedFlow({
               <div className="space-y-3">
                 <ReviseStep onSend={runRevision} busy={revising} />
                 <div className="space-y-3 rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface-alt)] p-3">
-                  {isNewCategory && (
-                    <div className="space-y-2">
-                      <Label className="text-xs font-semibold text-[var(--text-soft)]">
-                        Category 可见范围
-                      </Label>
-                      <VisibilityScopePicker
-                        value={categoryScopeToVisibility(data.categoryVisibility)}
-                        onChange={(next) => {
-                          setData((d) => ({
-                            ...d,
-                            categoryVisibility: visibilityToCategoryScope(next),
-                            matterVisibility: PUBLIC_VISIBILITY,
-                          }));
-                        }}
-                        disabled={submitting || revising}
-                        allowUsers={false}
-                        publicLabel="公开"
-                        restrictedLabel="指定角色"
-                        dialogTitle="设置 Category 可见范围"
-                      />
-                    </div>
-                  )}
                   <div className="space-y-2">
                     <Label className="text-xs font-semibold text-[var(--text-soft)]">
                       讨论可见范围
                     </Label>
                     <VisibilityScopePicker
-                      category={isNewCategory ? undefined : data.category}
+                      category={data.category}
                       value={data.matterVisibility}
                       onChange={(next) => setData((d) => ({ ...d, matterVisibility: next }))}
                       disabled={submitting || revising}
-                      allowedRoles={categoryAllowedRoles}
                       requiredUserId={me.open_id}
                     />
                   </div>

@@ -17,6 +17,10 @@ TOPIC_STATUS_CHANGED = "matter.status_changed"
 TOPIC_RESULT_CREATED = "matter.result_created"
 TOPIC_MATTER_OWNER_CHANGED = "matter.owner_changed"
 TOPIC_MATTER_VISIBILITY_CHANGED = "matter.visibility_changed"
+# Invalidation/restoration events on a matter's timeline. Emitted by
+# publish_matter_event when an author withdraws or restores their own file.
+# SSE layer maps this to "matter.updated" with reason="event_appended" (thin SSE).
+TOPIC_MATTER_EVENT_APPENDED = "matter.event_appended"
 
 
 @dataclass(frozen=True)

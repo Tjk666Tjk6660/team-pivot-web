@@ -51,6 +51,7 @@ team-pivot-web/
 │   │   ├── ai.py               # AI 助手: /api/ai/{settings,threads/*/conversation,/chat}
 │   │   ├── tokens.py           # PAT 管理: /api/tokens (cookie-only)
 │   │   ├── workspace.py        # /api/workspace/{status,refresh,mirror} + /api/admin/workspace-config
+│   │   ├── daily_report_v2.py  # ★ 日报 v2 admin API: jobs CRUD / run-now / manual-trigger / runs / admin-notify / feishu-chats
 │   │   └── app_home.py         # /api/app/home (版本号 + HOME.md + CHANGELOG.md 聚合)
 │   ├── matter_index.py         # ★ <matter_id>.index.yaml 读写, create/append_file_item/append_comment
 │   │                           #   _normalize_item 维护 canonical key order
@@ -64,7 +65,21 @@ team-pivot-web/
 │   │   ├── client.py           # OpenAI-compatible SSE 流式（默认 OpenRouter，可配 base_url）
 │   │   ├── context.py          # build_context_from_files
 │   │   ├── tools.py            # ★ 工具函数: list_matters / read_matter_index / search_indexes 等(tool-use)
+│   │   ├── oneshot.py          # 同步包装 stream_chat 的"一发即合"接口(daily_report 用)
 │   │   └── prompts.py          # 系统提示词（[[GENERATE_REPLY_DRAFT]] 强约束）
+│   ├── daily_report/           # ★ 日报 v2(多任务)
+│   │   ├── jobs_repo.py        # daily_report_jobs 表 CRUD + 状态机
+│   │   ├── runs_repo.py        # daily_report_runs 表 CRUD + 365 天清理(分批 DELETE)
+│   │   ├── job_scheduler.py    # asyncio scheduler:每 60s poll;漏跑/重试/365 天清理状态机
+│   │   ├── runner.py           # run_daily_report_for_job(job, ...) 唯一入口
+│   │   ├── window.py           # compute_window(now, push_hour, push_minute, window_hours)
+│   │   ├── types.py            # TimeWindow / MatterEvent / UserActivity / TeamSummary
+│   │   ├── collect_matter.py   # 扫 index/*.index.yaml 收事件
+│   │   ├── aggregate.py        # 按用户聚合 + TeamSummary
+│   │   ├── shared_facts.py     # 公司/个人共用的事实层
+│   │   ├── company_narrate.py  # 公司视角 AI 叙事(tone + summary, fallback 兜底)
+│   │   ├── personal_narrate.py # 个人视角 AI 叙事(逐人简评)
+│   │   └── render.py           # build_{company,personal,admin_alert}_card
 │   ├── ai_conversations.py     # 每用户×matter 对话持久化 (列名仍叫 thread_key,值是 matter_id)
 │   ├── api_tokens.py           # PAT repo（pvt_<urlsafe44>，DB 只存 sha256）
 │   ├── favorites.py            # per-user 收藏状态
@@ -122,7 +137,9 @@ team-pivot-web/
         ├── HomeWelcomePane.tsx        # 主页欢迎
         ├── SettingsPage.tsx           # /settings: PAT 管理
         ├── SettingsExternalAI.tsx     # /settings/external-ai: 外部 AI MCP 接入说明
-        └── AdminPage.tsx              # /admin: 数据仓库 + AI + 联系人同步
+        ├── AdminPage.tsx              # /admin 外壳:左侧 nav + scroll-spy + 数据仓库/AI/Markdown/日报/联系人 5 个 section
+        └── admin/
+            └── DailyReportSection.tsx # ★ 日报 v2 UI:任务列表 + 编辑抽屉 + 历史抽屉 + 手动触发卡 + 系统通知
 
 var/
   data.db                       # SQLite
@@ -350,6 +367,7 @@ with workspace.write_session(message, author_name, author_email):
 - workspace 配置迁移到 DB + `/api/workspace/mirror`
 - 欢迎首页（`HOME.md` + `CHANGELOG.md` + 版本号聚合）
 - 左栏分类树导航 + per-user 收藏
+- **团队日报 v2(多任务)** — 管理员可建多条 job(view × 推送时刻 × 接收人),内嵌 asyncio scheduler 每 60s poll;支持漏跑容忍 30 分钟、失败重试 3 次、365 天历史保留;系统通知 fallback;手动触发独立卡。完整设计见 [`AI-docs/daily-report/`](./daily-report/),管理 UI 见 `web/src/pages/admin/DailyReportSection.tsx`
 
 **暂缓（有意为之）：**
 附件上传 / 多 tenant / 权限分级（PAT 当前 = 全权限）/ 全文搜索 / 键盘快捷键 / 飞书真实 email 收集

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 
 from server.acl_cache import rebuild_acl_cache
@@ -44,6 +44,7 @@ from server.publish import (
     publish_matter_annotation,
     publish_matter_append,
     publish_matter_create,
+    publish_matter_event,
     publish_matter_mention,
     publish_matter_owner_change,
 )
@@ -236,6 +237,20 @@ class MatterVisibilityBody(BaseModel):
     user_ids: list[str] | None = None
 
 
+class MatterEventBody(BaseModel):
+    """Body for POST /api/matters/{id}/events — invalidate / restore a file.
+
+    See AI-docs/invalidate-self/product-design.md §2.2. reason encodes both
+    event type and (when invalidating) cause:
+      - misposted / inaccurate → invalidate
+      - restored → restore
+    Pydantic Literal rejects any other value with 422 (validator never runs).
+    """
+    target_file: str = Field(min_length=1, max_length=500)
+    reason: Literal["misposted", "inaccurate", "restored"]
+    summary: str | None = Field(default=None, max_length=500)
+
+
 # ---------- Router ----------
 
 
@@ -256,9 +271,12 @@ def build_router(
 
     @router.get("/matters")
     def list_matters(
-        status: str | None = None,
-        owner: str | None = None,
+        status: list[str] = Query(default_factory=list),
+        owner: list[str] = Query(default_factory=list),
         q: str | None = None,
+        scope: str = Query(default="all", pattern="^(all|relevant)$"),
+        limit: int = Query(default=200, ge=1, le=1000),
+        offset: int = Query(default=0, ge=0),
         user: PivotUser = Depends(current_user),
     ):
         # Per-user overlays: unread counts + favorites. Keyed by category/slug
@@ -269,8 +287,19 @@ def build_router(
             user.open_id, read_states, relevance_repo,
         )
         favorite_keys = favorites.all_for_user(user.open_id)
+        # For scope=relevant: relevance_events covers owner_assigned / reply_*
+        # / verify_* / in_my_matter / in_my_owned_matter / mention. But
+        # relevance.compute_relevance has a self-exclusion (creator == me
+        # writes no row) so a matter populated only by me is missing from
+        # the table. _is_matter_relevant_to_user falls back to scanning the
+        # timeline / comments to catch that case.
+        relevant_set = (
+            relevance_repo.matter_ids_for_user(user.open_id)
+            if scope == "relevant" else set()
+        )
 
-        items = []
+        me = user.pinyin
+        items: list[dict] = []
         for path in _list_index_files(workspace.index_dir):
             data = read_matter_index(path)
             if data is None:
@@ -278,11 +307,15 @@ def build_router(
             if not _can_read_matter(data, user, db, workspace):
                 continue
             summary = _summarize_matter(data, resolver)
-            if status and summary.get("current_status") != status:
+            if status and summary.get("current_status") not in status:
                 continue
-            if owner and not _matter_has_owner(data, owner):
+            if owner and not any(_matter_has_owner(data, o) for o in owner):
                 continue
             if q and q.lower() not in (summary.get("title") or "").lower():
+                continue
+            if scope == "relevant" and not _is_matter_relevant_to_user(
+                data, me, relevant_set,
+            ):
                 continue
             category = _matter_category(data)
             key = f"{category}/{summary['id']}" if category else summary["id"]
@@ -302,7 +335,13 @@ def build_router(
             summary["last_activity_at"] = _matter_last_activity_at(data)
             items.append(summary)
         items.sort(key=lambda m: m.get("last_activity_at") or "", reverse=True)
-        return {"items": items}
+        total = len(items)
+        page = items[offset : offset + limit]
+        return {
+            "items": page,
+            "total": total,
+            "has_more": offset + len(page) < total,
+        }
 
     @router.get("/matters/{matter_id}")
     def get_matter(matter_id: str, user: PivotUser = Depends(current_user)):
@@ -344,6 +383,21 @@ def build_router(
             "filename": filename,
             "first_read_at": _ts_to_iso(entry.first_read_at),
         }
+
+    @router.post("/matters/{matter_id}/events/read")
+    def mark_matter_events_read(
+        matter_id: str,
+        user: PivotUser = Depends(current_user),
+    ):
+        """Clear matter-level relevance event rows (e.g. owner_change) that
+        have no file to bind to. Triggered by OwnerChangeRow's visibility
+        observer on the frontend."""
+        if read_matter_index(
+            matter_index_path(workspace.index_dir, matter_id),
+        ) is None:
+            raise HTTPException(status_code=404, detail={"code": "matter_not_found"})
+        cleared = relevance_repo.mark_matter_events_read(user.open_id, matter_id)
+        return {"matter_id": matter_id, "cleared": cleared}
 
     @router.post("/matters/{matter_id}/read")
     def mark_read(matter_id: str, user: PivotUser = Depends(current_user)):
@@ -485,16 +539,6 @@ def build_router(
                 if body.new_category_visibility is not None
                 else None
             )
-            category_visibility_path = workspace.path / "categories" / f"{body.category}.yaml"
-            if (
-                not category_visibility_path.is_file()
-                and visibility.mode == "restricted"
-                and new_category_visibility is None
-            ):
-                raise HTTPException(
-                    status_code=422,
-                    detail={"code": "missing_category_visibility"},
-                )
             if (
                 new_category_visibility is not None
                 and new_category_visibility.mode == "restricted"
@@ -626,6 +670,58 @@ def build_router(
             "matter": rendered_detail["matter"],
             "item": rendered_detail["timeline"][0],
         }
+
+    @router.post("/matters/{matter_id}/events")
+    def append_matter_event(
+        matter_id: str,
+        body: MatterEventBody,
+        user: PivotUser = Depends(current_user),
+    ):
+        """Append an invalidation/restoration event entry.
+
+        Status code mapping (per AI-docs/invalidate-self/implementation-plan.md P2):
+          target_not_found              → 404
+          event_creator_mismatch        → 403
+          target_already_invalidated    → 409
+          target_not_invalidated        → 409
+          target_not_file_item          → 422 (defensive; client gave a non-file path)
+          invalid_reason / quote_required / creator_required → 422
+        """
+        require_profile(user)
+        try:
+            result = publish_matter_event(
+                workspace, user,
+                matter_id=matter_id,
+                target_file=body.target_file,
+                reason=body.reason,
+                summary=body.summary,
+                notifier=notifier,
+            )
+        except MatterNotFoundError as e:
+            raise HTTPException(
+                status_code=404, detail={"code": "matter_not_found"}
+            ) from e
+        except MatterIndexValidationError as e:
+            code = e.result.code or "validation_error"
+            if code == "target_not_found":
+                status = 404
+            elif code == "event_creator_mismatch":
+                status = 403
+            elif code in ("target_already_invalidated", "target_not_invalidated"):
+                status = 409
+            else:
+                status = 422
+            raise HTTPException(
+                status_code=status,
+                detail={
+                    "code": code,
+                    "field": e.result.field,
+                    "message": e.result.message,
+                },
+            ) from e
+        except PublishError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return result
 
     @router.post("/matters/{matter_id}/files")
     def append_file(
@@ -887,10 +983,12 @@ def _summarize_matter(
 ) -> dict:
     matter = data.get("matter") or {}
     timeline = data.get("timeline") or []
-    # file_count / last_file_type / last_summary are file-only. Skip event-type
-    # entries (owner_change) so a recent transfer doesn't mask the actual last
-    # file in the list.
-    file_items = [t for t in timeline if t.get("type") not in {"owner_change"}]
+    # file_count / last_file_type / last_summary are file-only. We identify
+    # file items by the presence of a `file` field, which excludes both
+    # owner_change events (have type, no file) and invalidation/restoration
+    # events (no type, no file). Using `t.get("type") not in {...}` would
+    # miss invalidation events because `None not in {...}` evaluates to True.
+    file_items = [t for t in timeline if t.get("file")]
     last_file = file_items[-1] if file_items else {}
     out: dict = {
         "id": matter.get("id"),
@@ -923,13 +1021,39 @@ def _summarize_matter(
     return out
 
 
-def _matter_has_owner(data: dict, owner: str) -> bool:
-    matter_owner = _effective_matter_owner(data)
-    if matter_owner == owner:
+def _is_matter_relevant_to_user(
+    data: dict,
+    me: str | None,
+    relevant_matter_ids: set[str],
+) -> bool:
+    """Spec §2.1: matter is "relevant to me" if any of:
+      1. matter-level owner is me
+      2. I'm tagged via relevance_events (owner_assigned / reply_* / verify_* /
+         in_my_matter / in_my_owned_matter / mention) — covers being @-ed and
+         most participation cases
+      3. I created any timeline file or comment in the matter
+
+    Branch 3 exists to backfill the self-exclusion gap in relevance.py:
+    compute_relevance returns False when ``creator == me``, so a matter
+    populated only by me has no relevance_events rows. Scanning the timeline
+    catches that case.
+    """
+    if not me:
+        return False
+    matter_id = str((data.get("matter") or {}).get("id") or "")
+    if matter_id and matter_id in relevant_matter_ids:
+        return True
+    if _effective_matter_owner(data) == me:
         return True
     for item in data.get("timeline") or []:
-        if item.get("owner") == owner:
+        # owner_change events: actor / to_owner are pinyin-typed signals too,
+        # but a transfer to me is already covered by branch 1 once the index
+        # is updated; we only check creator/comment authorship here.
+        if item.get("creator") == me:
             return True
+        for c in item.get("comments") or []:
+            if c.get("author") == me:
+                return True
     return False
 
 
@@ -1086,6 +1210,15 @@ def _refresh_acl_cache(db: Database | None, workspace: Workspace) -> None:
     )
 
 
+def _matter_has_owner(data: dict, owner: str) -> bool:
+    """Owner filter compares against the *matter-level* owner only — the
+    "current owner" of the matter per spec §1.2 of the matter-view-improvement
+    plan. The previous implementation also matched any per-file owner inside
+    the timeline, which over-included matters where someone briefly authored
+    one file but isn't the matter's owner."""
+    return _effective_matter_owner(data) == owner
+
+
 def _matter_category(data: dict) -> str | None:
     timeline = data.get("timeline") or []
     if not timeline:
@@ -1126,8 +1259,11 @@ def _render_matter_detail(
     for item in data.get("timeline") or []:
         rendered = _render_item(workspace, item, resolver)
         timeline_out.append(rendered)
-    # last_file_type / last_summary skip owner_change events (no summary).
-    file_items = [t for t in timeline_out if t.get("type") not in {"owner_change"}]
+    # File items are identified by having a `file` field. Event entries
+    # (owner_change with type=owner_change, or invalidation events with no
+    # type but a reason) have no file field and are excluded from file-stat
+    # aggregations like file_count / last_file_type.
+    file_items = [t for t in timeline_out if t.get("file")]
     last_file = file_items[-1] if file_items else None
     # Resolve matter-level owner display + avatar via the same fallback as
     # _summarize_matter (matter.owner → first file owner/creator → null).
@@ -1168,6 +1304,10 @@ def _render_item(
     # pollute event entries.
     if item.get("type") == "owner_change":
         return _render_owner_change_item(item, resolver)
+    # Invalidation/restoration events: no `type`, has `reason`. No file body /
+    # comments / readers; just creator + quote + reason (+ optional summary).
+    if "type" not in item and "reason" in item:
+        return _render_invalidation_event_item(item, resolver)
     out = dict(item)
     # Per pivot-interface.md: every timeline entry carries `expanded: false` and `body`.
     out.setdefault("quote", None)
@@ -1264,6 +1404,29 @@ def _render_owner_change_item(
     # at 0 (consistent with FileCard's empty state) so consumers don't have to
     # special-case missing keys.
     out.setdefault("status_change", None)
+    out["readers_count"] = 0
+    out["readers"] = []
+    return out
+
+
+def _render_invalidation_event_item(
+    item: dict,
+    resolver: DisplayResolver,
+) -> dict:
+    """Render an invalidation/restoration event entry.
+
+    Distinct shape from file-type entries: no file / body / quote (well, has
+    `quote` pointing to target file path) / refer / comments / readers, but
+    has creator / quote / reason / optional summary.
+    """
+    out = dict(item)
+    creator = out.get("creator")
+    out["creator_display"] = resolve_id(creator, resolver) if creator else None
+    out["creator_avatar_url"] = (
+        resolve_avatar_url(creator, resolver) if creator else None
+    )
+    # Empty placeholders so heterogeneous timeline renderers don't have to
+    # special-case missing keys (mirrors owner_change shape).
     out["readers_count"] = 0
     out["readers"] = []
     return out

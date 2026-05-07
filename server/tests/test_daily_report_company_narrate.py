@@ -161,8 +161,8 @@ def test_empty_api_key_returns_fallback():
 def test_happy_ai_path_returns_ai_status():
     facts = _facts_with_activity()
     fake_response = (
-        '{"summary": "团队聚焦于 Pivot 与 enclaws 两个方向,主链路有实质闭环动作,'
-        '整体节奏健康。", "tone": "active"}'
+        "团队聚焦于 Pivot 与 enclaws 两个方向,主链路有实质闭环动作,整体节奏健康。\n"
+        "[tone: active]"
     )
     with patch(
         "server.daily_report.company_narrate.generate_text",
@@ -172,13 +172,18 @@ def test_happy_ai_path_returns_ai_status():
     assert result.status == "ai"
     assert result.tone == "active"
     assert "聚焦于 Pivot" in result.summary
+    # tone 标签不应留在 summary 里
+    assert "[tone:" not in result.summary
 
 
-def test_ai_response_with_json_fence_is_parsed():
+def test_ai_response_with_markdown_fence_is_stripped():
+    """LLM 偶尔会无视'不要 markdown 包裹'指令把整段裹进 ```...``` 里;解析器
+    应当剥掉 fence 再处理 tone 标签。"""
     facts = _facts_with_activity()
     fake_response = (
-        "```json\n"
-        '{"summary": "整体平稳推进。", "tone": "steady"}\n'
+        "```\n"
+        "整体平稳推进。\n"
+        "[tone: steady]\n"
         "```"
     )
     with patch(
@@ -188,6 +193,7 @@ def test_ai_response_with_json_fence_is_parsed():
         result = narrate_company(facts, ai_settings=_ai())
     assert result.status == "ai"
     assert result.tone == "steady"
+    assert result.summary.startswith("整体平稳推进")
 
 
 # --------------------------------------------------------------------------- #
@@ -240,48 +246,58 @@ def test_empty_response_returns_fallback():
     assert "parse_error" in (result.fallback_reason or "")
 
 
-def test_non_json_response_returns_fallback():
+def test_response_without_tone_tag_uses_derived_tone():
+    """LLM 忘了写 [tone: ...] 标签时,不应浪费它写好的叙事;
+    用代码侧 facts 推断 tone 兜底,status 仍为 'ai'。"""
     facts = _facts_with_activity()
     with patch(
         "server.daily_report.company_narrate.generate_text",
-        return_value="this is not json at all",
+        return_value="今天团队主要在一个方向上工作,整体推进有限。",
     ):
         result = narrate_company(facts, ai_settings=_ai())
-    assert result.status == "fallback"
+    assert result.status == "ai"
+    assert result.tone in ("active", "steady", "stalled")
+    assert result.summary.startswith("今天团队")
 
 
-def test_missing_summary_returns_fallback():
+def test_summary_only_whitespace_returns_fallback():
+    """LLM 只输出空白(或仅 tone 标签 + 无正文)时,summary 为空 → fallback。"""
     facts = _facts_with_activity()
     with patch(
         "server.daily_report.company_narrate.generate_text",
-        return_value='{"tone": "active"}',
+        return_value="   \n\n[tone: active]\n",
     ):
         result = narrate_company(facts, ai_settings=_ai())
     assert result.status == "fallback"
-    assert "schema_error" in (result.fallback_reason or "")
+    assert "parse_error" in (result.fallback_reason or "")
 
 
-def test_invalid_tone_returns_fallback():
+def test_invalid_tone_in_tag_falls_back_to_derived_tone():
+    """LLM 在标签里写了非法 tone 值(如 [tone: amazing]):
+    标签正则不匹配 → tone 按 facts 推断,叙事仍用 LLM 输出,status='ai'。"""
     facts = _facts_with_activity()
     with patch(
         "server.daily_report.company_narrate.generate_text",
-        return_value='{"summary": "ok", "tone": "amazing"}',
+        return_value="叙事正文。\n[tone: amazing]",
     ):
         result = narrate_company(facts, ai_settings=_ai())
-    assert result.status == "fallback"
-    assert "schema_error" in (result.fallback_reason or "")
+    assert result.status == "ai"
+    assert result.tone in ("active", "steady", "stalled")
+    # 非法 tone 标签不被识别,会原样留在 summary 里 —— 可接受,因为
+    # LLM 写错了协议,我们尽量保住 ai 路径而不是降级到 fallback
+    assert "叙事正文" in result.summary
 
 
 def test_excessively_long_summary_is_truncated():
     facts = _facts_with_activity()
-    long_text = "a" * 600
+    long_text = "a" * 2400
     with patch(
         "server.daily_report.company_narrate.generate_text",
-        return_value=f'{{"summary": "{long_text}", "tone": "active"}}',
+        return_value=f"{long_text}\n[tone: active]",
     ):
         result = narrate_company(facts, ai_settings=_ai())
     assert result.status == "ai"
-    assert len(result.summary) <= 401   # 400 + ellipsis
+    assert len(result.summary) <= 2201   # 2200 + ellipsis
     assert result.summary.endswith("…")
 
 

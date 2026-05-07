@@ -297,14 +297,14 @@ def test_update_matter_visibility_rejects_scope_exceeding_category(tmp_path):
     assert r.json()["detail"]["code"] == "visibility_scope_exceeds_category"
 
 
-def test_create_restricted_matter_requires_new_category_visibility(tmp_path):
-    client, _workspace, _users, _sessions, _db = _client(tmp_path)
+def test_create_restricted_matter_defaults_new_category_public(tmp_path):
+    client, workspace, _users, _sessions, _db = _client(tmp_path)
 
     r = client.post(
         "/api/matters",
         json={
             "category": "NewCat",
-            "title": "Missing Category Visibility",
+            "title": "Default Category Visibility",
             "visibility": {
                 "mode": "restricted",
                 "roles": ["tech"],
@@ -318,8 +318,18 @@ def test_create_restricted_matter_requires_new_category_visibility(tmp_path):
         },
     )
 
-    assert r.status_code == 422
-    assert r.json()["detail"]["code"] == "missing_category_visibility"
+    assert r.status_code == 200
+    assert not (workspace.path / "categories" / "NewCat.yaml").exists()
+    matter_yaml = yaml.safe_load(
+        (workspace.index_dir / f"{r.json()['matter_id']}.index.yaml").read_text(
+            encoding="utf-8",
+        )
+    )
+    assert matter_yaml["matter"]["visibility"] == {
+        "mode": "restricted",
+        "roles": ["tech"],
+        "user_ids": [],
+    }
 
 
 def test_update_matter_visibility_emits_event(tmp_path):

@@ -202,6 +202,31 @@ export type TimelineFileItem = {
   // File-level relevance reason for the current user. null / missing means
   // not relevant. Populated by detail interface from relevance_events table.
   relevance_reason?: FileRelevanceReason | null;
+  // Invalidation reverse-write fields (P1). All four come together; missing
+  // means the file was never invalidated. After a restore, `invalidated`
+  // flips back to false but the other three persist as audit trail.
+  // See AI-docs/invalidate-self/product-design.md §2.1.
+  invalidated?: boolean;
+  invalidated_at?: string;
+  invalidated_reason?: InvalidationReason;
+  invalidated_by?: string;
+};
+
+export type InvalidationReason = "misposted" | "inaccurate" | "restored";
+
+export type TimelineInvalidationEventItem = {
+  // No `type` field — distinguished from file items by absence of `type`,
+  // and from owner_change events by presence of `reason` ∈ InvalidationReason.
+  // See AI-docs/invalidate-self/product-design.md §2.2.
+  created_at: string;
+  creator: string;
+  creator_display: string | null;
+  creator_avatar_url: string | null;
+  quote: string;       // target file path
+  reason: InvalidationReason;
+  summary?: string;
+  readers_count?: number;
+  readers?: Reader[];
 };
 
 export type TimelineOwnerChangeItem = {
@@ -225,10 +250,28 @@ export type TimelineOwnerChangeItem = {
   readers?: Reader[];
 };
 
-export type TimelineItem = TimelineFileItem | TimelineOwnerChangeItem;
+export type TimelineItem =
+  | TimelineFileItem
+  | TimelineOwnerChangeItem
+  | TimelineInvalidationEventItem;
 
 export function isTimelineFileItem(item: TimelineItem): item is TimelineFileItem {
-  return item.type !== "owner_change";
+  // File items carry a `type` field in the file-type whitelist. Owner_change
+  // also has `type` but equals "owner_change". Invalidation events have no
+  // `type` field at all (per design §2.2).
+  return "type" in item && item.type !== "owner_change";
+}
+
+export function isTimelineOwnerChangeItem(
+  item: TimelineItem,
+): item is TimelineOwnerChangeItem {
+  return "type" in item && item.type === "owner_change";
+}
+
+export function isTimelineInvalidationEventItem(
+  item: TimelineItem,
+): item is TimelineInvalidationEventItem {
+  return !("type" in item);
 }
 
 export type MatterSummary = {
@@ -302,21 +345,45 @@ export type VisibilityOptions = {
   users: VisibilityUserOption[];
 };
 
-export async function fetchMatters(query?: {
-  status?: MatterStatus;
-  owner?: string;
+export type MatterScope = "all" | "relevant";
+
+export type FetchMattersQuery = {
+  status?: MatterStatus[];
+  owner?: string[];
   q?: string;
-}): Promise<MatterSummary[]> {
+  scope?: MatterScope;
+  limit?: number;
+  offset?: number;
+};
+
+export type FetchMattersResult = {
+  items: MatterSummary[];
+  total: number;
+  has_more: boolean;
+};
+
+export async function fetchMatters(
+  query?: FetchMattersQuery,
+): Promise<FetchMattersResult> {
   const params = new URLSearchParams();
-  if (query?.status) params.set("status", query.status);
-  if (query?.owner) params.set("owner", query.owner);
+  for (const s of query?.status ?? []) params.append("status", s);
+  for (const o of query?.owner ?? []) params.append("owner", o);
   if (query?.q) params.set("q", query.q);
+  if (query?.scope) params.set("scope", query.scope);
+  if (query?.limit != null) params.set("limit", String(query.limit));
+  if (query?.offset != null) params.set("offset", String(query.offset));
   const qs = params.toString() ? `?${params}` : "";
   const r = await fetch(`/api/matters${qs}`, { credentials: "include" });
   await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`/api/matters failed: ${r.status}`);
-  const body = (await r.json()) as { items: MatterSummary[] };
-  return body.items;
+  const body = (await r.json()) as Partial<FetchMattersResult> & {
+    items: MatterSummary[];
+  };
+  return {
+    items: body.items,
+    total: body.total ?? body.items.length,
+    has_more: body.has_more ?? false,
+  };
 }
 
 export async function fetchMatter(matterId: string): Promise<MatterDetail> {
@@ -661,6 +728,70 @@ export async function transferMatterOwner(
   return (await r.json()) as TransferMatterOwnerResponse;
 }
 
+export type PostMatterEventResponse = {
+  matter_id: string;
+  matter: { id: string; title: string; current_status: MatterStatus };
+  event: {
+    creator: string;
+    created_at: string;
+    quote: string;
+    reason: InvalidationReason;
+    summary?: string;
+  };
+  target: {
+    file: string;
+    invalidated: boolean;
+    invalidated_at: string | null;
+    invalidated_reason: InvalidationReason | null;
+    invalidated_by: string | null;
+  } | null;
+};
+
+/** Invalidate or restore a file the current user authored.
+ *
+ * Per AI-docs/invalidate-self/product-design.md:
+ *   - reason ∈ {misposted, inaccurate}: invalidate
+ *   - reason === "restored": restore (only allowed on already-invalidated files)
+ *
+ * Server enforces author-only (creator must equal target file's creator)
+ * and same-matter (quote must point to a file in this matter timeline).
+ */
+export async function postMatterEvent(
+  matterId: string,
+  body: {
+    target_file: string;
+    reason: InvalidationReason;
+    summary?: string | null;
+  },
+): Promise<PostMatterEventResponse> {
+  const r = await fetch(
+    `/api/matters/${encodeURIComponent(matterId)}/events`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!r.ok) {
+    await throwIfSessionExpired(r);
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    const detail = d.detail;
+    const code =
+      detail && typeof detail === "object" && "code" in detail
+        ? (detail as { code?: string }).code
+        : undefined;
+    const message =
+      (detail && typeof detail === "object" && "message" in detail
+        ? (detail as { message?: string }).message
+        : null) ||
+      (typeof detail === "string" ? detail : null) ||
+      r.statusText;
+    throw new Error(code ? `${code}: ${message}` : String(message));
+  }
+  return (await r.json()) as PostMatterEventResponse;
+}
+
 export async function appendMatterResult(
   matterId: string,
   body: {
@@ -711,6 +842,24 @@ export async function markFileRead(
     const detail = typeof d.detail === "string"
       ? d.detail
       : d.detail?.message || d.detail?.code || `mark file read failed: ${r.status}`;
+    throw new Error(detail);
+  }
+  return await r.json();
+}
+
+export async function markMatterEventsRead(
+  matterId: string,
+): Promise<{ matter_id: string; cleared: number }> {
+  const r = await fetch(
+    `/api/matters/${encodeURIComponent(matterId)}/events/read`,
+    { method: "POST", credentials: "include" },
+  );
+  if (!r.ok) {
+    await throwIfSessionExpired(r);
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    const detail = typeof d.detail === "string"
+      ? d.detail
+      : d.detail?.message || d.detail?.code || `mark matter events read failed: ${r.status}`;
     throw new Error(detail);
   }
   return await r.json();
@@ -909,6 +1058,18 @@ export async function searchContacts(q: string): Promise<Contact[]> {
   });
   await throwIfSessionExpired(r);
   if (!r.ok) throw new Error(`/api/contacts failed: ${r.status}`);
+  const body = (await r.json()) as { items: Contact[] };
+  return body.items;
+}
+
+export async function fetchContactsByIds(open_ids: string[]): Promise<Contact[]> {
+  if (open_ids.length === 0) return [];
+  const ids = open_ids.join(",");
+  const r = await fetch(`/api/contacts/by-ids?ids=${encodeURIComponent(ids)}`, {
+    credentials: "include",
+  });
+  await throwIfSessionExpired(r);
+  if (!r.ok) throw new Error(`/api/contacts/by-ids failed: ${r.status}`);
   const body = (await r.json()) as { items: Contact[] };
   return body.items;
 }
@@ -1194,68 +1355,239 @@ export async function updateAdminMarkdownSettings(body: {
 
 // ── Daily report admin (Phase 5) ─────────────────────────────────────────────
 
-export type DailyReportConfig = {
-  enabled: boolean;
-  company_enabled: boolean;
-  personal_enabled: boolean;
-  time_window_hours: number;
-  push_time: string;                // "HH:MM" Asia/Shanghai
-  push_freq: "daily" | "weekdays";  // 默认 weekdays(仅周一到周五)
+// ── Daily Report v2 (multi-job) ─────────────────────────────────────────────
+
+export type DailyReportPushFreq =
+  | "daily"
+  | "weekdays"
+  | "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun"
+  | "month_start"
+  | "month_end";
+
+export type DailyReportJob = {
+  id: number;
+  name: string;
+  view: "company" | "personal";
+  status: "active" | "paused" | "archived";
+  push_time: string;                          // "HH:MM"
+  push_freq: DailyReportPushFreq;
+  window_hours: number;
+  channel: "feishu";
+  receiver_type: "groups" | "users";
+  receiver_ids: string[] | null;              // null = 默认全部 bot 群
+  next_run_at: string | null;                 // ISO
+  last_run_id: number | null;
+  last_status: string | null;
+  retry_count: number;
+  last_notified_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
-export type DailyReportLastRun = {
-  run_id: string | null;
-  started_at: string | null;
+export type DailyReportRun = {
+  id: number;
+  job_id: number | null;                      // null = 手动触发
+  trigger_type: "scheduled" | "manual" | "retry" | "makeup";
+  view: string;
+  started_at: string;
   finished_at: string | null;
+  status: "running" | "succeeded" | "failed" | "partial" | "skipped";
   rc: number | null;
-  debug: Record<string, unknown> | null;
+  cards_sent: number | null;
+  cards_total: number | null;
+  ai_tokens_in: number | null;
+  ai_tokens_out: number | null;
   error: string | null;
 };
 
-export async function fetchDailyReportConfig(): Promise<DailyReportConfig> {
-  const r = await adminFetch("/api/admin/daily-report/config");
-  if (!r.ok) {
-    const d = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(d.detail || `/api/admin/daily-report/config failed: ${r.status}`);
-  }
-  return (await r.json()) as DailyReportConfig;
+export type DailyReportRunDetail = DailyReportRun & {
+  debug_json: string | null;
+};
+
+export type DailyReportRunsPage = {
+  items: DailyReportRun[];
+  page: number;
+  size: number;
+  total: number;
+};
+
+export type FeishuChat = {
+  chat_id: string;
+  name: string;
+  avatar: string | null;
+};
+
+export type DailyReportJobIn = {
+  name: string;
+  view: "company" | "personal";
+  push_time: string;
+  push_freq?: DailyReportPushFreq;
+  window_hours?: number;
+  receiver_type: "groups" | "users";
+  receiver_ids?: string[] | null;
+  status?: "active" | "paused";
+};
+
+export type DailyReportJobUpdate = Partial<{
+  name: string;
+  view: "company" | "personal";
+  push_time: string;
+  push_freq: DailyReportPushFreq;
+  window_hours: number;
+  receiver_type: "groups" | "users";
+  receiver_ids: string[] | null;
+}>;
+
+const V2_BASE = "/api/admin/daily-report";
+
+export async function fetchDailyReportJobs(
+  includeArchived = false,
+): Promise<DailyReportJob[]> {
+  const url = `${V2_BASE}/jobs${includeArchived ? "?include_archived=true" : ""}`;
+  const r = await adminFetch(url);
+  if (!r.ok) throw new Error(`list jobs failed: ${r.status}`);
+  return (await r.json()) as DailyReportJob[];
 }
 
-export async function updateDailyReportConfig(body: DailyReportConfig): Promise<void> {
-  const r = await adminFetch("/api/admin/daily-report/config", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) {
-    const d = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(d.detail || `update daily-report config failed: ${r.status}`);
-  }
-}
-
-export async function triggerDailyReport(body: {
-  dry_run: boolean;
-  no_ai: boolean;
-}): Promise<{ ok: boolean; run_id: string; started_at: string }> {
-  const r = await adminFetch("/api/admin/daily-report/trigger", {
+export async function createDailyReportJob(
+  body: DailyReportJobIn,
+): Promise<DailyReportJob> {
+  const r = await adminFetch(`${V2_BASE}/jobs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   if (!r.ok) {
     const d = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(d.detail || `trigger daily-report failed: ${r.status}`);
+    throw new Error(d.detail || `create job failed: ${r.status}`);
   }
-  return r.json();
+  return (await r.json()) as DailyReportJob;
 }
 
-export async function fetchDailyReportLastRun(): Promise<DailyReportLastRun> {
-  const r = await adminFetch("/api/admin/daily-report/last-run");
+export async function updateDailyReportJob(
+  id: number,
+  body: DailyReportJobUpdate,
+): Promise<DailyReportJob> {
+  const r = await adminFetch(`${V2_BASE}/jobs/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   if (!r.ok) {
     const d = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(d.detail || `last-run failed: ${r.status}`);
+    throw new Error(d.detail || `update job failed: ${r.status}`);
   }
-  return (await r.json()) as DailyReportLastRun;
+  return (await r.json()) as DailyReportJob;
+}
+
+export async function setDailyReportJobStatus(
+  id: number,
+  status: "active" | "paused" | "archived",
+): Promise<DailyReportJob> {
+  const r = await adminFetch(`${V2_BASE}/jobs/${id}/status`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status }),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `set status failed: ${r.status}`);
+  }
+  return (await r.json()) as DailyReportJob;
+}
+
+export async function deleteDailyReportJob(id: number): Promise<void> {
+  const r = await adminFetch(`${V2_BASE}/jobs/${id}`, { method: "DELETE" });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `delete job failed: ${r.status}`);
+  }
+}
+
+export type DailyReportTriggerResponse = {
+  ok: boolean;
+  run_id: number;
+  started_at: string;
+};
+
+export async function runDailyReportJobNow(
+  id: number,
+  body: { dry_run?: boolean; no_ai?: boolean } = {},
+): Promise<DailyReportTriggerResponse> {
+  const r = await adminFetch(`${V2_BASE}/jobs/${id}/run-now`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `run-now failed: ${r.status}`);
+  }
+  return (await r.json()) as DailyReportTriggerResponse;
+}
+
+export async function manualTriggerDailyReport(body: {
+  view: "company" | "personal";
+  // 模式 A:倒推窗口(默认)
+  window_hours?: number;
+  // 模式 B:显式时间区间(都给则覆盖 window_hours)。ISO8601 字符串
+  since?: string;
+  until?: string;
+  receiver_type: "groups" | "users";
+  receiver_ids?: string[] | null;
+  dry_run?: boolean;
+  no_ai?: boolean;
+}): Promise<DailyReportTriggerResponse> {
+  const r = await adminFetch(`${V2_BASE}/manual-trigger`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `manual-trigger failed: ${r.status}`);
+  }
+  return (await r.json()) as DailyReportTriggerResponse;
+}
+
+export async function fetchDailyReportRunsPage(
+  jobId: number,
+  page = 1,
+  size = 20,
+): Promise<DailyReportRunsPage> {
+  const r = await adminFetch(
+    `${V2_BASE}/jobs/${jobId}/runs?page=${page}&size=${size}`,
+  );
+  if (!r.ok) throw new Error(`runs page failed: ${r.status}`);
+  return (await r.json()) as DailyReportRunsPage;
+}
+
+export async function fetchDailyReportRun(
+  runId: number,
+): Promise<DailyReportRunDetail> {
+  const r = await adminFetch(`${V2_BASE}/runs/${runId}`);
+  if (!r.ok) throw new Error(`get run failed: ${r.status}`);
+  return (await r.json()) as DailyReportRunDetail;
+}
+
+export async function cancelDailyReportRun(runId: number): Promise<void> {
+  // POST /runs/{id}/cancel — 把卡住的 running run 强制标 failed。
+  // 后端是 conditional UPDATE,只对 status='running' 生效。404=run 不存在,
+  // 409=已是终态(前端应停 polling)。
+  const r = await adminFetch(`${V2_BASE}/runs/${runId}/cancel`, {
+    method: "POST",
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(d.detail || `cancel run failed: ${r.status}`);
+  }
+}
+
+export async function fetchFeishuChats(): Promise<FeishuChat[]> {
+  const r = await adminFetch(`${V2_BASE}/feishu-chats`);
+  if (!r.ok) throw new Error(`feishu-chats failed: ${r.status}`);
+  return (await r.json()) as FeishuChat[];
 }
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };

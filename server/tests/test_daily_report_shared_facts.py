@@ -272,14 +272,17 @@ def test_top_active_matters_sorted_by_activity_score_descending():
     assert sf.top_active_matters[0].activity_score > sf.top_active_matters[1].activity_score
 
 
-def test_top_active_matters_caps_at_top_n():
-    """top_n_matters 控制返回上限。"""
+def test_top_active_matters_returns_all_active_no_cap():
+    """**不再限制返回数量** —— 所有 activity_score > 0 的 matter 全部返回。
+
+    设计 2026-05-01 拍板:日报核心问题是"今天团队都干了啥",任何活跃 matter
+    被隐匿都是错。原 `top_n_matters` 上限被去掉。"""
     events = [
         _ev(matter_id=f"m{i}", file=f"discussions/Pivot/m{i}/001.md", file_type="think")
         for i in range(10)
     ]
-    sf = build_shared_facts(events, [], _summary(), _w(), top_n_matters=3)
-    assert len(sf.top_active_matters) == 3
+    sf = build_shared_facts(events, [], _summary(), _w())
+    assert len(sf.top_active_matters) == 10  # 全部返回,不截断
 
 
 def test_top_active_matters_records_status_change():
@@ -290,3 +293,133 @@ def test_top_active_matters_records_status_change():
     sf = build_shared_facts(events, [], _summary(), _w())
     m = sf.top_active_matters[0]
     assert m.status_change == {"from": "planning", "to": "executing"}
+
+
+def test_top_active_matters_carries_title_and_today_summaries():
+    """company narrate 用 title + today_summaries 写"昨天干了什么业务"。"""
+    e1 = _ev(matter_id="m1", file="discussions/Pivot/m1/001.md", file_type="think")
+    e2 = _ev(matter_id="m1", file="discussions/Pivot/m1/002.md", file_type="act")
+    sf = build_shared_facts([e1, e2], [], _summary(), _w())
+    m = sf.top_active_matters[0]
+    # _ev 给的 matter_title=matter_id;summary=f"{matter_id} {file_type}"
+    assert m.title == "m1"
+    assert m.today_summaries == ("m1 think", "m1 act")
+
+
+def test_top_active_matters_dedups_summaries():
+    """同 matter 多个 file 共享同一个 summary 字符串时只保留一份。"""
+    e1 = _ev(matter_id="m1", file="discussions/Pivot/m1/001.md", file_type="think")
+    e2 = _ev(matter_id="m1", file="discussions/Pivot/m1/002.md", file_type="think")
+    sf = build_shared_facts([e1, e2], [], _summary(), _w())
+    m = sf.top_active_matters[0]
+    # 两个 think 的 summary 都是 "m1 think",去重后只剩一条
+    assert m.today_summaries == ("m1 think",)
+
+
+def test_top_active_matters_skips_empty_summaries():
+    """空 summary 不进 today_summaries(避免污染 LLM 输入)。"""
+    e = _ev(matter_id="m1", file="discussions/Pivot/m1/001.md", file_type="think")
+    e_empty = MatterEvent(
+        matter_id="m1", matter_title="m1", matter_current_status="executing",
+        file="discussions/Pivot/m1/002.md", file_type="act",
+        created_at=_w().since + timedelta(hours=3),
+        file_in_window=True, creator="alice", owner="alice",
+        summary="",
+        status_change=None, verifications=(), comments_in_window=(),
+    )
+    sf = build_shared_facts([e, e_empty], [], _summary(), _w())
+    m = sf.top_active_matters[0]
+    assert m.today_summaries == ("m1 think",)
+
+
+def test_top_active_matters_title_falls_back_to_matter_id_when_missing():
+    """matter_title 为空时,标题回落到 matter_id。"""
+    e = MatterEvent(
+        matter_id="m1", matter_title="", matter_current_status="executing",
+        file="discussions/Pivot/m1/001.md", file_type="think",
+        created_at=_w().since + timedelta(hours=2),
+        file_in_window=True, creator="alice", owner="alice",
+        summary="some business note",
+        status_change=None, verifications=(), comments_in_window=(),
+    )
+    sf = build_shared_facts([e], [], _summary(), _w())
+    m = sf.top_active_matters[0]
+    assert m.title == "m1"
+
+
+# --------------------------------------------------------------------------- #
+# lifecycle 派生:closed > just_started > decided > discussing > paused/planning
+# --------------------------------------------------------------------------- #
+
+
+def test_lifecycle_closed_when_status_finished():
+    """current_status=finished → closed,不论文件类型。"""
+    e = _ev(matter_id="m1", matter_status="finished",
+            file="discussions/Pivot/m1/001.md", file_type="think")
+    sf = build_shared_facts([e], [], _summary(), _w())
+    assert sf.top_active_matters[0].lifecycle == "closed"
+
+
+def test_lifecycle_closed_when_result_file_present():
+    """有 result 文件即视为 closed,即便 current_status 未变 finished。"""
+    e = _ev(matter_id="m1", matter_status="executing",
+            file="discussions/Pivot/m1/001.md", file_type="result")
+    sf = build_shared_facts([e], [], _summary(), _w())
+    assert sf.top_active_matters[0].lifecycle == "closed"
+
+
+def test_lifecycle_just_started_on_status_change_to_executing():
+    """窗口内 status_change.to=executing → just_started。"""
+    e = _ev(matter_id="m1", matter_status="executing",
+            file="discussions/Pivot/m1/001.md", file_type="act",
+            has_status_change=True)
+    sf = build_shared_facts([e], [], _summary(), _w())
+    # has_status_change 默认 from=planning, to=executing → just_started
+    assert sf.top_active_matters[0].lifecycle == "just_started"
+
+
+def test_lifecycle_decided_when_executing_with_act():
+    """executing + 有 act 文件 → decided(有共识进入执行)。"""
+    e = _ev(matter_id="m1", matter_status="executing",
+            file="discussions/Pivot/m1/001.md", file_type="act")
+    sf = build_shared_facts([e], [], _summary(), _w())
+    assert sf.top_active_matters[0].lifecycle == "decided"
+
+
+def test_lifecycle_decided_when_executing_with_verify():
+    """executing + 有 verify 文件 → decided(在验证中)。"""
+    e = _ev(matter_id="m1", matter_status="executing",
+            file="discussions/Pivot/m1/001.md", file_type="verify")
+    sf = build_shared_facts([e], [], _summary(), _w())
+    assert sf.top_active_matters[0].lifecycle == "decided"
+
+
+def test_lifecycle_discussing_when_executing_with_only_think():
+    """executing 且只有 think 文件 → discussing。"""
+    e = _ev(matter_id="m1", matter_status="executing",
+            file="discussions/Pivot/m1/001.md", file_type="think")
+    sf = build_shared_facts([e], [], _summary(), _w())
+    assert sf.top_active_matters[0].lifecycle == "discussing"
+
+
+def test_lifecycle_paused():
+    e = _ev(matter_id="m1", matter_status="paused",
+            file="discussions/Pivot/m1/001.md", file_type="think")
+    sf = build_shared_facts([e], [], _summary(), _w())
+    assert sf.top_active_matters[0].lifecycle == "paused"
+
+
+def test_lifecycle_planning():
+    e = _ev(matter_id="m1", matter_status="planning",
+            file="discussions/Pivot/m1/001.md", file_type="think")
+    sf = build_shared_facts([e], [], _summary(), _w())
+    assert sf.top_active_matters[0].lifecycle == "planning"
+
+
+def test_lifecycle_closed_outranks_just_started():
+    """同时有 result 文件 + status_change → closed 优先(收口比启动重要)。"""
+    e = _ev(matter_id="m1", matter_status="executing",
+            file="discussions/Pivot/m1/001.md", file_type="result",
+            has_status_change=True)
+    sf = build_shared_facts([e], [], _summary(), _w())
+    assert sf.top_active_matters[0].lifecycle == "closed"

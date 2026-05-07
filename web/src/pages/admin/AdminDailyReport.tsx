@@ -1,5 +1,5 @@
 import { toast } from "sonner";
-import { DailyReportSection } from "@/pages/AdminPage";
+import { DailyReportSection } from "./DailyReportSection";
 import { PageShell } from "./_PageShell";
 
 export function AdminDailyReport() {

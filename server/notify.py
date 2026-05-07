@@ -106,6 +106,18 @@ class Notifier(Protocol):
         status_change: dict | None = None,
     ) -> None: ...
 
+    def notify_matter_event(
+        self,
+        *,
+        category: str,
+        slug: str,
+        thread_title: str,
+        target_filename: str,
+        actor_name: str,
+        reason: str,                  # misposted | inaccurate | restored
+        summary: str | None = None,
+    ) -> None: ...
+
     def notify_standalone_mention(
         self,
         *,
@@ -164,11 +176,25 @@ class NoOpNotifier:
     def notify_new_reply(self, **_: object) -> None: pass
     def notify_status_change(self, **_: object) -> None: pass
     def notify_owner_change(self, **_: object) -> None: pass
+    def notify_matter_event(self, **_: object) -> None: pass
     def notify_standalone_mention(self, **_: object) -> None: pass
     def notify_annotation(self, **_: object) -> None: pass
     def notify_application_created(self, **_: object) -> None: pass
     def notify_application_approved(self, **_: object) -> None: pass
     def notify_application_rejected(self, **_: object) -> None: pass
+
+    # v2 多任务调度需要的精细化接口(NoOp 实现)
+    def broadcast_card(self, card: dict, *, event: str) -> None: pass
+    def send_card_to_chats(
+        self, card: dict, chat_ids: list[str], *, event: str,
+    ) -> tuple[int, int, list[dict]]:
+        return (len(chat_ids), len(chat_ids), [])
+    def send_card_to_users(
+        self, card: dict, open_ids: list[str], *, event: str,
+    ) -> tuple[int, int, list[dict]]:
+        return (len(open_ids), len(open_ids), [])
+    def send_admin_alert(self, card: dict, *, event: str, **_: object) -> None: pass
+    def list_bot_chats(self) -> list[dict]: return []
 
 
 class FeishuNotifier:
@@ -442,6 +468,35 @@ class FeishuNotifier:
         )
         self._dm_many([to_owner_open_id], card, event=f"owner_change slug={slug}")
 
+    def notify_matter_event(
+        self,
+        *,
+        category: str,
+        slug: str,
+        thread_title: str,
+        target_filename: str,
+        actor_name: str,
+        reason: str,
+        summary: str | None = None,
+    ) -> None:
+        """Broadcast an invalidation/restoration event card to bot groups.
+
+        Same notification level as notify_new_reply (broadcast), per
+        AI-docs/invalidate-self/product-design.md §5.2.
+        """
+        detail_url = self._matter_url(slug)
+        card = build_matter_event_card(
+            thread_title=thread_title,
+            target_filename=target_filename,
+            actor_name=actor_name,
+            reason=reason,
+            summary=summary,
+            thread_url=detail_url,
+        )
+        self._broadcast(
+            card, event=f"matter_event slug={slug} reason={reason}",
+        )
+
     def _thread_url(self, category: str, slug: str) -> str:
         from urllib.parse import urlencode
 
@@ -506,6 +561,116 @@ class FeishuNotifier:
         except Exception:
             log.warning("notify broadcast failed: %s", event, exc_info=True)
 
+    # ---- v2 多任务调度需要的精细化发送接口 -------------------------------- #
+
+    def send_card_to_chats(
+        self, card: dict, chat_ids: list[str], *, event: str,
+    ) -> tuple[int, int, list[dict]]:
+        """指定一组飞书群 chat_id 发卡片。
+        返回 (sent, total, failures)。failures 每条:{"to": chat_id, "error": str}。
+        异常/部分失败不抛,内部日志记录。"""
+        if not chat_ids:
+            return 0, 0, []
+        try:
+            token = self._tokens.get()
+        except Exception as e:
+            log.warning("notify token fetch failed: %s", event, exc_info=True)
+            err = f"token: {type(e).__name__}: {e}"
+            return 0, len(chat_ids), [{"to": cid, "error": err} for cid in chat_ids]
+        sent = 0
+        failures: list[dict] = []
+        for cid in chat_ids:
+            ok, err = self._send(token, cid, "chat_id", card)
+            if ok:
+                sent += 1
+            else:
+                failures.append({"to": cid, "error": err or "unknown"})
+        log.info("notify sent to %d/%d chats: %s", sent, len(chat_ids), event)
+        return sent, len(chat_ids), failures
+
+    def send_card_to_users(
+        self, card: dict, open_ids: list[str], *, event: str,
+    ) -> tuple[int, int, list[dict]]:
+        """指定一组飞书 open_id DM 卡片。
+        返回 (sent, total, failures)。failures 每条:{"to": open_id, "error": str}。"""
+        if not open_ids:
+            return 0, 0, []
+        try:
+            token = self._tokens.get()
+        except Exception as e:
+            log.warning("notify token fetch failed: %s", event, exc_info=True)
+            err = f"token: {type(e).__name__}: {e}"
+            return 0, len(open_ids), [{"to": oid, "error": err} for oid in open_ids]
+        sent = 0
+        failures: list[dict] = []
+        for oid in open_ids:
+            ok, err = self._send(token, oid, "open_id", card)
+            if ok:
+                sent += 1
+            else:
+                failures.append({"to": oid, "error": err or "unknown"})
+        log.info("notify DM sent to %d/%d users: %s", sent, len(open_ids), event)
+        return sent, len(open_ids), failures
+
+    def list_bot_chats(self) -> list[dict]:
+        """返回 bot 所在的所有飞书群,每条 {chat_id, name, avatar}。
+        给 admin UI 多选群组用。失败时返回 []。"""
+        try:
+            token = self._tokens.get()
+            chats: list[dict] = []
+            page_token = ""
+            while True:
+                params: dict[str, object] = {"page_size": 100}
+                if page_token:
+                    params["page_token"] = page_token
+                resp = _http_get_with_retry(
+                    _LIST_CHATS_ENDPOINT, params=params,
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=_TIMEOUT,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                if data.get("code") != 0:
+                    log.warning("list_bot_chats error: %s", data)
+                    break
+                for item in data.get("data", {}).get("items", []):
+                    cid = item.get("chat_id")
+                    if cid:
+                        chats.append({
+                            "chat_id": cid,
+                            "name": item.get("name") or "",
+                            "avatar": item.get("avatar") or "",
+                        })
+                if not data.get("data", {}).get("has_more"):
+                    break
+                page_token = data.get("data", {}).get("page_token", "")
+                if not page_token:
+                    break
+            return chats
+        except Exception:
+            log.warning("list_bot_chats failed", exc_info=True)
+            return []
+
+    def send_admin_alert(
+        self, card: dict, *, event: str,
+        admin_chat_ids: list[str] | None = None,
+        admin_open_ids: list[str] | None = None,
+    ) -> None:
+        """系统级管理员通知(漏跑 / 失败提醒等)。
+        - 同时给 chat / open 两组接收人发送
+        - 如果两组都为空,fallback 到 _broadcast(全部 bot 群)
+        - 不抛错,内部日志记录"""
+        sent_any = False
+        if admin_chat_ids:
+            self.send_card_to_chats(card, admin_chat_ids, event=event)
+            sent_any = True
+        if admin_open_ids:
+            self.send_card_to_users(card, admin_open_ids, event=event)
+            sent_any = True
+        if not sent_any:
+            log.info("admin alert fallback to all bot chats: %s", event)
+            self._broadcast(card, event=event)
+
     def _dm_many(self, open_ids: list[str], card: dict, *, event: str) -> None:
         try:
             token = self._tokens.get()
@@ -539,7 +704,11 @@ class FeishuNotifier:
                 break
         return chats
 
-    def _send(self, token: str, receive_id: str, receive_id_type: str, card: dict) -> bool:
+    def _send(
+        self, token: str, receive_id: str, receive_id_type: str, card: dict,
+    ) -> tuple[bool, str | None]:
+        """发送一条飞书互动卡。返回 (ok, error)。
+        error 是面向 admin 的简短理由(HTTP 状态 / 飞书 code+msg / 异常类型)。"""
         try:
             resp = _http_post_with_retry(
                 _SEND_MESSAGE_ENDPOINT,
@@ -556,17 +725,24 @@ class FeishuNotifier:
                 timeout=_TIMEOUT,
             )
             if resp.status_code != 200:
-                log.warning("send non-200 to=%s status=%d", receive_id, resp.status_code)
-                return False
+                # 把响应体的前 120 字加进来,飞书在 4xx 时通常会带 code+msg
+                detail = (resp.text or "")[:120].replace("\n", " ")
+                err = f"http_{resp.status_code}: {detail}" if detail else f"http_{resp.status_code}"
+                log.warning("send non-200 to=%s status=%d body=%s",
+                            receive_id, resp.status_code, detail)
+                return False, err
             data = resp.json()
             if data.get("code") != 0:
-                log.warning("send error to=%s code=%s msg=%s",
-                            receive_id, data.get("code"), data.get("msg"))
-                return False
-            return True
-        except Exception:
-            log.warning("send exception to=%s", receive_id, exc_info=True)
-            return False
+                code = data.get("code")
+                msg = data.get("msg") or ""
+                err = f"feishu_{code}: {msg}".strip(": ")
+                log.warning("send error to=%s code=%s msg=%s", receive_id, code, msg)
+                return False, err
+            return True, None
+        except Exception as e:
+            err = f"{type(e).__name__}: {e}"
+            log.warning("send exception to=%s err=%s", receive_id, err, exc_info=True)
+            return False, err
 
 
 def build_thread_card(
@@ -699,6 +875,52 @@ def build_owner_change_card(
     return _card_shell(
         header=f"负责人变更：{thread_title}",
         template="yellow",
+        markdown="<br>".join(markdown_rows),
+        button_text="查看讨论",
+        thread_url=thread_url,
+    )
+
+
+_INVALIDATION_REASON_LABEL = {
+    "misposted": "误发",
+    "inaccurate": "信息有误",
+    "restored": "恢复",
+}
+
+
+def build_matter_event_card(
+    *,
+    thread_title: str,
+    target_filename: str,
+    actor_name: str,
+    reason: str,
+    summary: str | None,
+    thread_url: str,
+) -> dict:
+    """Card for an invalidation/restoration event broadcast.
+
+    See AI-docs/invalidate-self/product-design.md §5.2 — same notification
+    level as a new reply (broadcast), but with a header that distinguishes
+    "withdrawn" vs "restored" so readers know it's a withdrawal action and
+    NOT new content. Body shows actor / target file / optional summary.
+    """
+    is_restore = reason == "restored"
+    header_verb = "恢复了文档" if is_restore else "撤回了文档"
+    reason_label = _INVALIDATION_REASON_LABEL.get(reason, reason)
+    rows: list[tuple[str, str]] = [
+        ("操作", f"{actor_name}（{reason_label}）"),
+        ("文件", target_filename),
+    ]
+    if summary and str(summary).strip():
+        rows.append(("说明", _oneline(str(summary))))
+    markdown_rows = [f"**{label}**：{value}" for label, value in rows]
+    # Use yellow for invalidation (caution / withdrawal) and turquoise for
+    # restore (positive). Both differ from default blue so scanning the chat
+    # surface, the read receipt is "this is an event, not new content".
+    template = "turquoise" if is_restore else "yellow"
+    return _card_shell(
+        header=f"作者{header_verb}：{thread_title}",
+        template=template,
         markdown="<br>".join(markdown_rows),
         button_text="查看讨论",
         thread_url=thread_url,
