@@ -2233,6 +2233,8 @@ export type ScoringSkippedSubject = {
   pinyin: string;
   /** Resolved display_name; null if user no longer exists / pinyin renamed. */
   display: string | null;
+  /** Resolved avatar URL; null if user no longer exists / pinyin renamed. */
+  avatar_url: string | null;
 };
 
 export type ScoringRunDetail = {
@@ -2308,6 +2310,7 @@ export type MatterGroupSubjectScore = {
 export type MatterGroupSkipped = {
   pinyin: string;
   display: string | null;
+  avatar_url: string | null;
 };
 
 /** Compact per-run record shown in the expandable history row. */

@@ -236,12 +236,14 @@ def build_router(
         )
 
         # v2.2: surface skipped subjects (AI judged "evidence insufficient
-        # → all dimensions null"). Translate pinyin → display_name where
-        # we can; preserve raw pinyin for unresolved (deleted) users.
+        # → all dimensions null"). Translate pinyin → display_name + avatar
+        # so the UI can render a proper user chip; preserve raw pinyin for
+        # unresolved (deleted) users so the frontend can still fall back.
         skipped_subjects_payload = [
             {
                 "pinyin": pinyin,
                 "display": _pinyin_to_display(pinyin, pivot_users),
+                "avatar_url": _pinyin_to_avatar(pinyin, pivot_users),
             }
             for pinyin in run.skipped_subjects
         ]
@@ -622,6 +624,7 @@ def _matter_group(
             {
                 "pinyin": pinyin,
                 "display": _pinyin_to_display(pinyin, pivot_users),
+                "avatar_url": _pinyin_to_avatar(pinyin, pivot_users),
             }
             for pinyin in success_run.skipped_subjects
         ]
@@ -744,6 +747,12 @@ def _pinyin_to_display(pinyin: str, pivot_users: PivotUserRepo) -> str | None:
     """
     u = pivot_users.get_by_pinyin(pinyin)
     return u.display_name if u else None
+
+
+def _pinyin_to_avatar(pinyin: str, pivot_users: PivotUserRepo) -> str | None:
+    """Companion to _pinyin_to_display: avatar URL or None when unresolved."""
+    u = pivot_users.get_by_pinyin(pinyin)
+    return u.avatar_url if u else None
 
 
 def _weight_to_dict(

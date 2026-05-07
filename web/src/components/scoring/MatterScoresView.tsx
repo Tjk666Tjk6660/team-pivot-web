@@ -326,20 +326,23 @@ function SkippedSubjectsPanel({ detail }: { detail: ScoringRunDetail }) {
         <Users2 className="h-3.5 w-3.5" />
         AI 跳过的候选（证据不足，全维度均无信号）
       </div>
-      <ul className="mt-2 space-y-1 text-sm">
+      <ul className="mt-2 flex flex-wrap gap-1.5">
         {detail.skipped_subjects.map((s) => (
           <li
             key={s.pinyin}
-            className="flex items-center gap-2 text-[var(--text-soft)]"
+            className="inline-flex items-center gap-1.5 rounded-full bg-[var(--surface)] py-0.5 pl-0.5 pr-2 text-xs text-[var(--text-soft)]"
+            title={s.display ? s.pinyin : undefined}
           >
-            <span className="rounded-full bg-[var(--surface)] px-2 py-0.5 text-xs">
-              {s.display ?? s.pinyin}
-            </span>
-            {s.display && s.display !== s.pinyin && (
-              <span className="font-mono text-[10.5px] text-[var(--text-mute)]">
-                {s.pinyin}
-              </span>
+            {s.avatar_url ? (
+              <img
+                src={s.avatar_url}
+                alt=""
+                className="h-5 w-5 rounded-full"
+              />
+            ) : (
+              <span className="h-5 w-5 rounded-full bg-[var(--surface-alt)]" />
             )}
+            <span>{s.display ?? s.pinyin}</span>
           </li>
         ))}
       </ul>

@@ -7,6 +7,7 @@ import {
   fetchMatterScoringGroups,
   triggerScoringRerun,
   type MatterGroupRunBrief,
+  type MatterGroupSkipped,
   type MatterGroupSubjectScore,
   type MatterScoringGroup,
   type ScoringRunSummary,
@@ -370,7 +371,7 @@ function SubjectScoreChips({
   skipped,
 }: {
   scores: MatterGroupSubjectScore[];
-  skipped: { display: string | null; pinyin: string }[];
+  skipped: MatterGroupSkipped[];
 }) {
   if (scores.length === 0 && skipped.length === 0) {
     return <span className="text-xs text-[var(--text-mute)]">—</span>;
@@ -515,7 +516,7 @@ function OverflowPill({
 function SkippedBatchPill({
   subjects,
 }: {
-  subjects: { display: string | null; pinyin: string }[];
+  subjects: MatterGroupSkipped[];
 }) {
   return (
     <span className="relative group inline-flex">
@@ -533,9 +534,18 @@ function SkippedBatchPill({
           {subjects.map((s) => (
             <div
               key={`pop-skip-${s.pinyin}`}
-              className="px-1.5 py-1 text-xs text-[var(--text-soft)]"
+              className="flex items-center gap-2 rounded px-1.5 py-1 text-xs text-[var(--text-soft)]"
             >
-              {s.display ?? s.pinyin}
+              {s.avatar_url ? (
+                <img
+                  src={s.avatar_url}
+                  alt=""
+                  className="h-4 w-4 rounded-full"
+                />
+              ) : (
+                <span className="h-4 w-4 rounded-full bg-[var(--surface-alt)]" />
+              )}
+              <span className="flex-1 truncate">{s.display ?? s.pinyin}</span>
             </div>
           ))}
         </div>
