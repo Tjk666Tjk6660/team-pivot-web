@@ -6,7 +6,7 @@ import pytest
 from server.external_bindings import ExternalBindingRepo
 from server.pivot_users import PivotUser, PivotUserRepo
 from server.publish import (
-    _normalize_mentions_to_pivot_user_ids,
+    _normalize_mentions_to_pinyin,
     _resolve_inline_stakeholders,
     _ulids_to_feishu_open_ids,
 )
@@ -19,17 +19,19 @@ def repos(db):
     return pivot_users, bindings
 
 
-def test_normalize_passes_ulids_through(repos):
+def test_normalize_resolves_ulid_to_pinyin(repos):
+    """ULID input → user's pinyin (matches creator/owner/author format
+    in the index)."""
     pivot_users, bindings = repos
     u = pivot_users.create(
         display_name="Alice", pinyin="alice", email=None, avatar_url="",
         role="member",
     )
-    out = _normalize_mentions_to_pivot_user_ids([u.id], pivot_users, bindings)
-    assert out == [u.id]
+    out = _normalize_mentions_to_pinyin([u.id], pivot_users, bindings)
+    assert out == ["alice"]
 
 
-def test_normalize_resolves_open_id_via_binding(repos):
+def test_normalize_resolves_open_id_via_binding_to_pinyin(repos):
     pivot_users, bindings = repos
     u = pivot_users.create(
         display_name="Bob", pinyin="bob", email=None, avatar_url="",
@@ -40,17 +42,17 @@ def test_normalize_resolves_open_id_via_binding(repos):
         external_id="ou_bob000000000000",
         external_union_id=None, raw_profile_json=None,
     )
-    out = _normalize_mentions_to_pivot_user_ids(
+    out = _normalize_mentions_to_pinyin(
         ["ou_bob000000000000"], pivot_users, bindings,
     )
-    assert out == [u.id]
+    assert out == ["bob"]
 
 
 def test_normalize_preserves_unbound_open_id(repos):
     """Feishu open_id with no pivot_user binding — preserve as-is so the
     read-side resolver echoes it back with status='unknown'."""
     pivot_users, bindings = repos
-    out = _normalize_mentions_to_pivot_user_ids(
+    out = _normalize_mentions_to_pinyin(
         ["ou_external00000000000"], pivot_users, bindings,
     )
     assert out == ["ou_external00000000000"]
@@ -58,42 +60,53 @@ def test_normalize_preserves_unbound_open_id(repos):
 
 def test_normalize_returns_none_for_empty(repos):
     pivot_users, bindings = repos
-    assert _normalize_mentions_to_pivot_user_ids(None, pivot_users, bindings) is None
-    assert _normalize_mentions_to_pivot_user_ids([], pivot_users, bindings) is None
+    assert _normalize_mentions_to_pinyin(None, pivot_users, bindings) is None
+    assert _normalize_mentions_to_pinyin([], pivot_users, bindings) is None
 
 
 def test_normalize_drops_blank_strings(repos):
     pivot_users, bindings = repos
-    out = _normalize_mentions_to_pivot_user_ids(
+    out = _normalize_mentions_to_pinyin(
         ["", None], pivot_users, bindings,  # type: ignore[list-item]
     )
     assert out == []
 
 
-def test_normalize_resolves_display_name_via_pivot_user(repos):
-    """display_name exact match → pivot_user.id (replaces the old
-    contacts-based name resolution)."""
+def test_normalize_resolves_display_name_to_pinyin(repos):
+    """display_name exact match → user's pinyin."""
     pivot_users, bindings = repos
-    u = pivot_users.create(
+    pivot_users.create(
         display_name="Carol", pinyin="carol", email=None, avatar_url="",
         role="member",
     )
-    out = _normalize_mentions_to_pivot_user_ids(
+    out = _normalize_mentions_to_pinyin(
         ["Carol"], pivot_users, bindings,
     )
-    assert out == [u.id]
+    assert out == ["carol"]
 
 
-def test_normalize_resolves_pinyin_via_pivot_user(repos):
-    """pinyin exact match → pivot_user.id."""
+def test_normalize_passes_pinyin_through(repos):
+    """pinyin input → same pinyin (round-trips cleanly)."""
     pivot_users, bindings = repos
-    u = pivot_users.create(
+    pivot_users.create(
         display_name="赵六", pinyin="zhaoliu", email=None, avatar_url="",
         role="member",
     )
-    out = _normalize_mentions_to_pivot_user_ids(
+    out = _normalize_mentions_to_pinyin(
         ["zhaoliu"], pivot_users, bindings,
     )
+    assert out == ["zhaoliu"]
+
+
+def test_normalize_falls_back_to_ulid_when_pinyin_missing(repos):
+    """Profile-incomplete user (no pinyin) → ULID fallback so the row
+    still has a stable identifier; read-side resolver picks it up."""
+    pivot_users, bindings = repos
+    u = pivot_users.create(
+        display_name="Newbie", pinyin=None, email="x@y.com", avatar_url="",
+        role="member",
+    )
+    out = _normalize_mentions_to_pinyin([u.id], pivot_users, bindings)
     assert out == [u.id]
 
 

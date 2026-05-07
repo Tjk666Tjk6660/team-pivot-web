@@ -303,33 +303,39 @@ def _resolve_mentions_for_index(
 ) -> list[str] | None:
     """Convert mention refs into the canonical matter-index form.
 
-    Resolved users are stored as ``pivot_user.id``. Unresolved legacy/contact
-    refs are preserved so older indexes and read-side fallbacks still work.
+    Resolved users are stored as ``pivot_user.pinyin`` so targets[] sits
+    alongside creator / owner / author in the same human-readable format.
+    Users without a pinyin (incomplete profile) fall back to
+    ``pivot_user.id``; unresolved legacy/contact refs (e.g. external
+    feishu open_ids with no binding) are preserved so older indexes and
+    read-side fallbacks still work.
     """
     if not refs:
         return None
     if pivot_users is None or bindings is None:
         return [str(ref) for ref in refs if ref]
-    return _normalize_mentions_to_pivot_user_ids(refs, pivot_users, bindings)
+    return _normalize_mentions_to_pinyin(refs, pivot_users, bindings)
 
 
-def _normalize_mentions_to_pivot_user_ids(
+def _normalize_mentions_to_pinyin(
     refs: list[str] | None,
     pivot_users: PivotUserRepo,
     bindings: ExternalBindingRepo,
 ) -> list[str] | None:
-    """Per design §7.1.1: resolve any inbound mention reference (ULID,
-    feishu open_id, or pinyin / display_name) to ``pivot_user.id`` for
-    persistence in matter index / frontmatter.
+    """Resolve any inbound mention reference (ULID, feishu open_id, or
+    pinyin / display_name) to ``pivot_user.pinyin`` for persistence in
+    matter index / frontmatter — same format as creator / owner / author
+    so the YAML stays uniformly human-readable.
 
     Resolution order:
-      1. direct ULID hit on ``pivot_user``
-      2. feishu open_id / union_id → external_binding → pivot_user.id
-      3. exact pinyin / display_name match → pivot_user.id (single match
-         only; ambiguous matches preserve the original ref so callers
-         can disambiguate elsewhere)
-      4. unresolved → preserve the original string; the read-side
-         resolver echoes it back with status='unknown'
+      1. direct ULID hit on ``pivot_user`` → pinyin (or ULID if pinyin missing)
+      2. feishu open_id / union_id → external_binding → pivot_user → pinyin
+         (or pivot_user.id fallback when pinyin is missing)
+      3. exact pinyin / display_name match → pinyin (single match only;
+         ambiguous matches preserve the original ref so callers can
+         disambiguate elsewhere)
+      4. unresolved → preserve the original string; the read-side resolver
+         echoes it back with status='unknown'
 
     Returns ``None`` for empty input so callers can drop the field cleanly.
     """
@@ -341,16 +347,17 @@ def _normalize_mentions_to_pivot_user_ids(
             continue
         u = pivot_users.get(ref)
         if u is not None:
-            out.append(u.id)
+            out.append(u.pinyin or u.id)
             continue
         b = bindings.lookup_any_provider(ref)
         if b is not None:
-            out.append(b.pivot_user_id)
+            bound = pivot_users.get(b.pivot_user_id)
+            out.append((bound.pinyin if bound and bound.pinyin else b.pivot_user_id))
             continue
         if not ref.startswith(("ou_", "on_")):
             cands = pivot_users.list_by_name_or_pinyin_exact(ref)
             if len(cands) == 1:
-                out.append(cands[0].id)
+                out.append(cands[0].pinyin or cands[0].id)
                 continue
         out.append(ref)
     return out
@@ -361,7 +368,7 @@ def _ulids_to_feishu_open_ids(
     pivot_users: PivotUserRepo,
     bindings: ExternalBindingRepo,
 ) -> list[str]:
-    """Reverse of ``_normalize_mentions_to_pivot_user_ids`` for the notify
+    """Reverse of ``_normalize_mentions_to_pinyin`` for the notify
     side: a Feishu DM card needs concrete open_ids to fill ``<at id="…">``
     tags. Refs that are already open_ids pass through; ULIDs are looked up
     via the user's feishu binding (if any). Refs without a feishu binding
