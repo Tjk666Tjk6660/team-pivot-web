@@ -77,8 +77,8 @@ export function SettingsExternalAI() {
       <main className="mx-auto max-w-3xl space-y-6 px-6 py-8">
         <div>
           <p className="text-sm leading-6 text-muted-foreground">
-            选择你的 AI 客户端，按提示完成连接。连接上之后，在 matter /
-            文件页点「复制给 AI」就能让 AI 读写 Pivot 内容。
+            选择你的 AI 客户端，按提示完成连接。连接上之后，AI 可以通过 MCP
+            读取和写入 Pivot 的 matter 与文件。
           </p>
         </div>
 
@@ -211,8 +211,8 @@ function McpToolsPanel() {
           Pivot MCP 能做什么
         </h2>
         <p className="mt-1 text-sm leading-6 text-[var(--text-mute)]">
-          MCP 是外部 AI 客户端访问 Pivot 的安全通道。接入后，你复制给 AI
-          的 matter / 文件链接不只是文本引用，AI 可以通过工具读取对应内容并协助写回。
+          MCP 是外部 AI 客户端访问 Pivot 的安全通道。接入后，AI 可以通过工具读取
+          matter 与文件内容并协助写回。
         </p>
       </div>
 
@@ -230,10 +230,6 @@ function McpToolsPanel() {
         ))}
       </div>
 
-      <p className="mt-3 rounded-[var(--r-sm)] bg-[var(--accent-bg)] px-3 py-2 text-sm leading-6 text-[var(--accent)]">
-        推荐流程：先在本页完成客户端接入，再回到 matter 或文件页点击「复制给
-        AI」，把链接粘给 AI，并要求它通过 Pivot MCP 读取上下文。
-      </p>
     </Card>
   );
 }
