@@ -56,8 +56,6 @@ def build_router(
             raise HTTPException(status_code=404, detail="invalid_or_expired")
         return JSONResponse(
             {
-                "email": invite.email,
-                "display_name": invite.display_name,
                 "expires_at": invite.expires_at,
             }
         )

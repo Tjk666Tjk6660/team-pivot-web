@@ -33,31 +33,23 @@ def test_create_returns_plaintext_token_and_persists_only_hash(db):
     client, invites, admin = _build_app(db)
     r = client.post(
         "/api/admin/invites",
-        json={"email": "alice@example.com", "display_name": "Alice", "ttl_days": 7},
+        json={"ttl_days": 7},
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["email"] == "alice@example.com"
-    assert body["display_name"] == "Alice"
     assert body["link_path"] == f"/invite/{body['token']}"
     assert body["token"]  # plaintext returned exactly once
 
     # The plaintext token resolves the persisted invite.
     record = invites.resolve_token(body["token"])
     assert record is not None
-    assert record.email == "alice@example.com"
-    assert record.display_name == "Alice"
     assert record.created_by == admin.id
 
 
 def test_list_excludes_used_by_default(db):
     client, invites, admin = _build_app(db)
-    _, alive = invites.create(
-        email="a@x.com", display_name=None, created_by=admin.id, ttl_sec=86400,
-    )
-    _, used = invites.create(
-        email="b@x.com", display_name=None, created_by=admin.id, ttl_sec=86400,
-    )
+    _, alive = invites.create(created_by=admin.id, ttl_sec=86400)
+    _, used = invites.create(created_by=admin.id, ttl_sec=86400)
     invites.mark_used(invite_id=used.id, used_by_user_id="someone")
 
     r = client.get("/api/admin/invites")
@@ -70,12 +62,8 @@ def test_list_excludes_used_by_default(db):
 
 def test_list_with_include_used(db):
     client, invites, admin = _build_app(db)
-    _, alive = invites.create(
-        email="a@x.com", display_name=None, created_by=admin.id, ttl_sec=86400,
-    )
-    _, used = invites.create(
-        email="b@x.com", display_name=None, created_by=admin.id, ttl_sec=86400,
-    )
+    _, alive = invites.create(created_by=admin.id, ttl_sec=86400)
+    _, used = invites.create(created_by=admin.id, ttl_sec=86400)
     invites.mark_used(invite_id=used.id, used_by_user_id="someone")
 
     r = client.get("/api/admin/invites", params={"include_used": True})
@@ -87,9 +75,7 @@ def test_list_with_include_used(db):
 
 def test_revoke_invalidates_invite(db):
     client, invites, admin = _build_app(db)
-    token, record = invites.create(
-        email="a@x.com", display_name=None, created_by=admin.id, ttl_sec=86400,
-    )
+    token, record = invites.create(created_by=admin.id, ttl_sec=86400)
     assert invites.resolve_token(token) is not None
 
     r = client.delete(f"/api/admin/invites/{record.id}")
@@ -100,17 +86,11 @@ def test_revoke_invalidates_invite(db):
     assert invites.resolve_token(token) is None
 
 
-def test_create_rejects_invalid_email(db):
-    client, *_ = _build_app(db)
-    r = client.post("/api/admin/invites", json={"email": "not-an-email"})
-    assert r.status_code == 422
-
-
 def test_create_rejects_invalid_ttl(db):
     client, *_ = _build_app(db)
     r = client.post(
         "/api/admin/invites",
-        json={"email": "a@example.com", "ttl_days": 0},
+        json={"ttl_days": 0},
     )
     assert r.status_code == 422
 
@@ -120,7 +100,7 @@ def test_ttl_days_translates_to_expires_at(db):
     before = time()
     r = client.post(
         "/api/admin/invites",
-        json={"email": "a@example.com", "ttl_days": 3},
+        json={"ttl_days": 3},
     )
     assert r.status_code == 200
     expires_at = r.json()["expires_at"]

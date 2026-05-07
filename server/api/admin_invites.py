@@ -3,15 +3,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 
 from server.invites import InviteRepo
 from server.pivot_users import PivotUser
 
 
 class CreateInviteBody(BaseModel):
-    email: EmailStr
-    display_name: str | None = Field(default=None, max_length=80)
     ttl_days: int = Field(default=7, ge=1, le=90)
 
 
@@ -28,8 +26,6 @@ def build_router(invites: InviteRepo, admin_user_dep) -> APIRouter:
             "items": [
                 {
                     "id": i.id,
-                    "email": i.email,
-                    "display_name": i.display_name,
                     "created_by": i.created_by,
                     "created_at": i.created_at,
                     "expires_at": i.expires_at,
@@ -45,15 +41,11 @@ def build_router(invites: InviteRepo, admin_user_dep) -> APIRouter:
         admin: PivotUser = Depends(admin_user_dep),
     ) -> JSONResponse:
         token, record = invites.create(
-            email=body.email,
-            display_name=body.display_name,
             created_by=admin.id,
             ttl_sec=body.ttl_days * 86400,
         )
         return JSONResponse({
             "id": record.id,
-            "email": record.email,
-            "display_name": record.display_name,
             "created_at": record.created_at,
             "expires_at": record.expires_at,
             "token": token,

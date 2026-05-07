@@ -15,8 +15,6 @@ from server.db import Database
 class Invite:
     id: str
     token_hash: str
-    email: str
-    display_name: str | None
     created_by: str
     created_at: float
     expires_at: float
@@ -32,8 +30,6 @@ def _row_to_invite(row: sqlite3.Row) -> Invite:
     return Invite(
         id=row["id"],
         token_hash=row["token_hash"],
-        email=row["email"],
-        display_name=row["display_name"],
         created_by=row["created_by"],
         created_at=row["created_at"],
         expires_at=row["expires_at"],
@@ -49,8 +45,6 @@ class InviteRepo:
     def create(
         self,
         *,
-        email: str,
-        display_name: str | None,
         created_by: str,
         ttl_sec: int = 86400 * 7,
     ) -> tuple[str, Invite]:
@@ -63,10 +57,9 @@ class InviteRepo:
         with self._db.connect() as conn:
             conn.execute(
                 "INSERT INTO invite"
-                " (id, token_hash, email, display_name, created_by,"
-                "  created_at, expires_at) VALUES (?,?,?,?,?,?,?)",
-                (new_id, token_hash, email, display_name, created_by,
-                 now, now + ttl_sec),
+                " (id, token_hash, created_by, created_at, expires_at)"
+                " VALUES (?,?,?,?,?)",
+                (new_id, token_hash, created_by, now, now + ttl_sec),
             )
             row = conn.execute(
                 "SELECT * FROM invite WHERE id=?", (new_id,)

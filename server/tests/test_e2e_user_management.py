@@ -96,7 +96,7 @@ def test_e2e_full_user_management_flow(client: TestClient):
     # 3. admin creates an invite
     r = client.post(
         "/api/admin/invites",
-        json={"email": "alice@example.com", "display_name": "Alice"},
+        json={"ttl_days": 7},
     )
     assert r.status_code == 200, r.text
     invite_payload = r.json()

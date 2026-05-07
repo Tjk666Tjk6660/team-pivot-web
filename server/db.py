@@ -186,8 +186,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_join_app_pending_unique
 CREATE TABLE IF NOT EXISTS invite (
     id TEXT PRIMARY KEY,
     token_hash TEXT NOT NULL UNIQUE,
-    email TEXT NOT NULL,
-    display_name TEXT,
     created_by TEXT NOT NULL,
     created_at REAL NOT NULL,
     expires_at REAL NOT NULL,
@@ -364,6 +362,23 @@ def _assert_no_legacy_user_open_id(conn) -> None:
 
 def _migrate(conn) -> None:
     _assert_no_legacy_user_open_id(conn)
+    # invite table: dropped email/display_name in IM-binding-required-invite
+    # rework. Existing invite rows are abandoned (per spec — internal 10-user
+    # deployment had no live unused invites at cutover).
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(invite)")}
+    if "email" in cols:
+        conn.execute("DROP TABLE invite")
+        conn.execute("""
+            CREATE TABLE invite (
+                id TEXT PRIMARY KEY,
+                token_hash TEXT NOT NULL UNIQUE,
+                created_by TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                expires_at REAL NOT NULL,
+                used_at REAL,
+                used_by_user_id TEXT
+            )
+        """)
     cols = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
     if "markdown_style" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN markdown_style TEXT")
