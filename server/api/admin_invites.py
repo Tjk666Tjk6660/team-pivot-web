@@ -8,6 +8,9 @@ from pydantic import BaseModel, Field
 from server.invites import InviteRepo
 from server.pivot_users import PivotUser
 
+# Only feishu is supported in this phase. Reserved for future dingtalk / wecom.
+DEFAULT_PROVIDER = "feishu"
+
 
 class CreateInviteBody(BaseModel):
     ttl_days: int = Field(default=7, ge=1, le=90)
@@ -26,6 +29,7 @@ def build_router(invites: InviteRepo, admin_user_dep) -> APIRouter:
             "items": [
                 {
                     "id": i.id,
+                    "provider": DEFAULT_PROVIDER,
                     "created_by": i.created_by,
                     "created_at": i.created_at,
                     "expires_at": i.expires_at,
@@ -46,6 +50,7 @@ def build_router(invites: InviteRepo, admin_user_dep) -> APIRouter:
         )
         return JSONResponse({
             "id": record.id,
+            "provider": DEFAULT_PROVIDER,
             "created_at": record.created_at,
             "expires_at": record.expires_at,
             "token": token,

@@ -57,6 +57,7 @@ def build_router(
         return JSONResponse(
             {
                 "expires_at": invite.expires_at,
+                "provider": "feishu",
             }
         )
 
