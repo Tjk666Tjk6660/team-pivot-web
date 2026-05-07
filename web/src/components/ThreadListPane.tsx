@@ -973,7 +973,7 @@ function MultiSelectDropdown({
             right: pos.right,
             zIndex: 50,
           }}
-          className="max-h-64 min-w-[10rem] max-w-[16rem] w-max overflow-y-auto rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] py-1 shadow-lg"
+          className="max-h-64 w-[12rem] overflow-y-auto rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] py-1 shadow-lg"
         >
           {options.length === 0 && (
             <div className="px-3 py-2 text-[11px] text-[var(--text-fade)]">
@@ -1003,7 +1003,7 @@ function MultiSelectDropdown({
                 >
                   {checked && <span className="text-[10px] leading-none">✓</span>}
                 </span>
-                <span className="truncate">{opt.label}</span>
+                <span className="min-w-0 flex-1 truncate">{opt.label}</span>
               </button>
             );
           })}

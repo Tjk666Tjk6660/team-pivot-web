@@ -438,6 +438,15 @@ def _render_file_item(
         for c in comments:
             lines.append(_render_comment(c, weight_map))
 
+    # Annotations are structured evaluations on the file (Phase 6 data layer).
+    # System prompt §annotation 消费规则 instructs the AI how to attribute them
+    # — we must actually feed them in here for the rules to fire.
+    annotations = item.get("annotations") or []
+    if annotations:
+        lines.append("  annotations:")
+        for a in annotations:
+            lines.append(_render_annotation(a, weight_map))
+
     return "\n".join(lines)
 
 
@@ -470,6 +479,19 @@ def _render_comment(c: dict, weight_map: WeightMap) -> str:
     )
     # Quote body inline; keep line single — multiline comments collapsed.
     return f"    - {author_tag} @ {created_at}{mentions_part}\n      \"{_oneline(body)}\""
+
+
+def _render_annotation(a: dict, weight_map: WeightMap) -> str:
+    """Render an annotation (structured evaluation on a file). Shape mirrors
+    `_render_comment` minus the @-mentions field — annotations are not
+    addressed at anyone, they're a review of the file itself (system prompt
+    `annotation 消费规则: annotation 没有 targets / @`)."""
+    author = str(a.get("author") or "")
+    body = str(a.get("body") or "")
+    created_at = str(a.get("created_at") or "")
+    atype = str(a.get("type") or "evaluation")
+    author_tag = _annotate_actor(author, weight_map)
+    return f"    - {author_tag} @ {created_at} [type={atype}]\n      \"{_oneline(body)}\""
 
 
 def _annotate_actor(pinyin: str, weight_map: WeightMap) -> str:

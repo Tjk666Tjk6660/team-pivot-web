@@ -125,20 +125,21 @@ class EvidenceItem(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _infer_source_kind(cls, data: object) -> object:
-        """Defensive: infer source_kind when AI omits it.
+        """Defensive: infer source_kind when AI omits it OR returns an invalid
+        value (e.g. "mention", "verify", "owner_change", "").
 
-        Inference precedence: annotation > comment > file. Explicit
-        source_kind from AI always wins. Reasoning:
+        Inference precedence: annotation > comment > file. Reasoning:
           - annotation metadata present → it's an annotation
           - else if comment metadata present → it's a comment
           - else → it's a file
-        Models occasionally drop source_kind on later evidence items even
-        though the prompt schema lists it as mandatory. Rather than rejecting
-        an otherwise valid response, we recover via this heuristic.
+        Models occasionally drop source_kind on later evidence items, or
+        emit drift values that aren't in the Literal whitelist. Rather than
+        failing the whole run on AI noise, we recover via this heuristic.
         """
         if not isinstance(data, dict):
             return data
-        if data.get("source_kind"):
+        valid_kinds = ("file", "comment", "annotation")
+        if data.get("source_kind") in valid_kinds:
             return data
         has_annotation_meta = bool(
             str(data.get("source_annotation_created_at") or "").strip()
@@ -271,12 +272,30 @@ def _validate_business_rules(
                 f"more than once — collapse evidence into a single row"
             )
         seen.add(s.subject_pinyin)
-        _validate_dimensions_have_evidence(s)
+        # Filter per-evidence violations gracefully: drop the offending row +
+        # log, but keep the run going. AI is non-deterministic and one stray
+        # evidence (self-eval, fabricated filename, missing comment fields)
+        # shouldn't kill the whole run. Subject-level checks above (candidates,
+        # duplicates) stay strict — those signal run-level corruption.
+        kept: list[EvidenceItem] = []
         for e in s.evidence:
-            _validate_evidence_source(e, valid_filenames)
-            _validate_comment_evidence_completeness(e)
-            _validate_annotation_evidence_completeness(e)
-            _validate_no_self_evaluation(e, s.subject_pinyin)
+            try:
+                _validate_evidence_source(e, valid_filenames)
+                _validate_comment_evidence_completeness(e)
+                _validate_annotation_evidence_completeness(e)
+                _validate_no_self_evaluation(e, s.subject_pinyin)
+            except SchemaError as exc:
+                log.warning(
+                    "scoring: dropping invalid evidence subject=%s dim=%s "
+                    "file=%s reason=%s",
+                    s.subject_pinyin, e.dimension, e.source_filename, exc,
+                )
+                continue
+            kept.append(e)
+        s.evidence = kept
+        # Now check dimension-evidence consistency. Any dimension whose only
+        # supporting evidence we just dropped will get nulled out here.
+        _validate_dimensions_have_evidence(s)
 
 
 def _validate_dimensions_have_evidence(s: SubjectScore) -> None:

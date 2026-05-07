@@ -194,13 +194,22 @@ def test_parse_rejects_empty_candidate_set(index_data):
 # ---------- evidence anti-fabrication ----------
 
 
-def test_parse_rejects_fabricated_filename(index_data):
+def test_parse_drops_fabricated_filename(index_data):
+    """Fabricated filename → drop the bad evidence row, keep the run going.
+    Other valid evidence rows survive; dim that lost its only evidence gets
+    nulled out (graceful-drop, same philosophy as dim-without-evidence)."""
     bad_dict = json.loads(_good_output())
     bad_dict["scores"][0]["evidence"][0]["source_filename"] = "999_fake.md"
-    with pytest.raises(SchemaError, match="fabricated_source_filename"):
-        parse_and_validate(
-            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
-        )
+    parsed = parse_and_validate(
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+    )
+    # evidence[0] (delivery, fabricated) dropped; [1] (accountability) and
+    # [2] (process) survive.
+    filenames = [e.source_filename for e in parsed.scores[0].evidence]
+    assert "999_fake.md" not in filenames
+    assert len(parsed.scores[0].evidence) == 2
+    # delivery dim's only evidence was dropped → null
+    assert parsed.scores[0].dimensions["delivery"] is None
 
 
 # ---------- dimension/evidence consistency ----------
@@ -254,30 +263,34 @@ def test_parse_accepts_all_null_dimensions_with_evidence(index_data):
 # ---------- comment evidence completeness ----------
 
 
-def test_parse_rejects_comment_without_created_at(index_data):
+def test_parse_drops_comment_without_created_at(index_data):
+    """Comment evidence missing created_at → drop, keep run going."""
     bad_dict = json.loads(_good_output())
     bad_dict["scores"][0]["evidence"][0].update({
         "source_kind": "comment",
         "source_comment_created_at": None,
         "source_comment_author": "lisi",
     })
-    with pytest.raises(SchemaError, match="created_at"):
-        parse_and_validate(
-            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
-        )
+    parsed = parse_and_validate(
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+    )
+    assert len(parsed.scores[0].evidence) == 2
+    assert parsed.scores[0].dimensions["delivery"] is None
 
 
-def test_parse_rejects_comment_without_author(index_data):
+def test_parse_drops_comment_without_author(index_data):
+    """Comment evidence missing author → drop, keep run going."""
     bad_dict = json.loads(_good_output())
     bad_dict["scores"][0]["evidence"][0].update({
         "source_kind": "comment",
         "source_comment_created_at": "2026-04-22T14:00:00+08:00",
         "source_comment_author": None,
     })
-    with pytest.raises(SchemaError, match="author"):
-        parse_and_validate(
-            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
-        )
+    parsed = parse_and_validate(
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+    )
+    assert len(parsed.scores[0].evidence) == 2
+    assert parsed.scores[0].dimensions["delivery"] is None
 
 
 def test_parse_accepts_complete_comment_evidence(index_data):
@@ -321,6 +334,26 @@ def test_parse_infers_comment_when_comment_meta_present(index_data):
     assert out.scores[0].evidence[0].source_kind == "comment"
 
 
+def test_parse_recovers_invalid_source_kind_via_inference(index_data):
+    """AI sometimes emits drift values like 'mention' / 'verify' / '' that
+    aren't in the Literal whitelist. Treat them as missing and infer
+    instead of failing the whole run with pydantic_invalid."""
+    for drift_value in ("mention", "verify", "owner_change", ""):
+        bad_dict = json.loads(_good_output())
+        bad_dict["scores"][0]["evidence"][0]["source_kind"] = drift_value
+        # Add comment metadata so inference picks "comment".
+        bad_dict["scores"][0]["evidence"][0].update({
+            "source_comment_created_at": "2026-04-22T14:00:00+08:00",
+            "source_comment_author": "lisi",
+        })
+        out = parse_and_validate(
+            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+        )
+        assert out.scores[0].evidence[0].source_kind == "comment", (
+            f"drift={drift_value!r} should infer to 'comment'"
+        )
+
+
 def test_parse_explicit_source_kind_overrides_inference(index_data):
     """If AI explicitly sets source_kind, trust it even if heuristic disagrees.
 
@@ -337,20 +370,20 @@ def test_parse_explicit_source_kind_overrides_inference(index_data):
 
 def test_parse_inferred_comment_still_validates_completeness(index_data):
     """If we infer 'comment' from one comment field but the other is missing,
-    the comment-completeness check should still reject it."""
+    the comment-completeness check still flags it — but per graceful-drop the
+    bad row is dropped instead of failing the run."""
     bad_dict = json.loads(_good_output())
     bad_dict["scores"][0]["evidence"][0].update({
         # Only set author, not created_at — incomplete
         "source_comment_author": "lisi",
     })
     bad_dict["scores"][0]["evidence"][0].pop("source_kind", None)
-    # Inferred source_kind=comment (because author is set), then
-    # _validate_comment_evidence_completeness should reject due to missing
-    # created_at.
-    with pytest.raises(SchemaError, match="created_at"):
-        parse_and_validate(
-            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
-        )
+    parsed = parse_and_validate(
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+    )
+    # Bad evidence dropped, others survive.
+    assert len(parsed.scores[0].evidence) == 2
+    assert parsed.scores[0].dimensions["delivery"] is None
 
 
 # ---------- enum + range guards (pydantic level) ----------
@@ -425,8 +458,9 @@ def test_self_evaluation_error_is_schema_error_subclass():
     assert issubclass(SelfEvaluationError, SchemaError)
 
 
-def test_parse_rejects_self_comment_evidence(index_data):
-    """Comment authored by subject on any file → cannot be subject's evidence."""
+def test_parse_drops_self_comment_evidence(index_data):
+    """Comment authored by subject on any file → cannot be subject's evidence.
+    Graceful-drop: bad row removed from output, run continues."""
     bad_dict = json.loads(_good_output())
     bad_dict["scores"][0]["evidence"][0].update({
         "source_kind": "comment",
@@ -435,10 +469,15 @@ def test_parse_rejects_self_comment_evidence(index_data):
         "source_comment_created_at": "2026-04-22T14:00:00+08:00",
         "source_comment_author": "zhangsan",  # ← subject 自己写的评论
     })
-    with pytest.raises(SelfEvaluationError, match="self-evaluation"):
-        parse_and_validate(
-            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
-        )
+    parsed = parse_and_validate(
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+    )
+    # Self-eval comment dropped; other evidence kept.
+    assert all(
+        not (e.source_kind == "comment" and e.source_comment_author == "zhangsan")
+        for e in parsed.scores[0].evidence
+    )
+    assert len(parsed.scores[0].evidence) == 2
 
 
 def test_parse_accepts_self_authored_file_evidence_positive(index_data):
@@ -561,39 +600,41 @@ def test_parse_accepts_annotation_evidence(index_data):
     assert e.attribution_basis == "file_creator"
 
 
-def test_parse_rejects_annotation_without_created_at(index_data):
-    """v2.1: annotation evidence must carry created_at (analogous to comment)."""
+def test_parse_drops_annotation_without_created_at(index_data):
+    """v2.1: annotation missing created_at → drop the row (graceful)."""
     bad_dict = json.loads(_good_output())
     bad_dict["scores"][0]["evidence"][0].update({
         "source_kind": "annotation",
         "source_annotation_created_at": None,
         "source_annotation_author": "dengke",
     })
-    with pytest.raises(SchemaError, match="annotation.*created_at"):
-        parse_and_validate(
-            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
-        )
+    parsed = parse_and_validate(
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+    )
+    assert len(parsed.scores[0].evidence) == 2
+    assert parsed.scores[0].dimensions["delivery"] is None
 
 
-def test_parse_rejects_annotation_without_author(index_data):
-    """v2.1: annotation evidence must carry author."""
+def test_parse_drops_annotation_without_author(index_data):
+    """v2.1: annotation missing author → drop the row (graceful)."""
     bad_dict = json.loads(_good_output())
     bad_dict["scores"][0]["evidence"][0].update({
         "source_kind": "annotation",
         "source_annotation_created_at": "2026-04-22T14:00:00+08:00",
         "source_annotation_author": None,
     })
-    with pytest.raises(SchemaError, match="annotation.*author"):
-        parse_and_validate(
-            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
-        )
+    parsed = parse_and_validate(
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+    )
+    assert len(parsed.scores[0].evidence) == 2
+    assert parsed.scores[0].dimensions["delivery"] is None
 
 
-def test_parse_rejects_self_annotation(index_data):
-    """v2.1: annotation by subject on any file → rejected (any polarity).
+def test_parse_drops_self_annotation(index_data):
+    """v2.1: annotation by subject on any file → drop the row.
 
     Mirror of the comment self-eval rule. Even subject's *negative*
-    annotation on their own file is rejected — this is by design, since
+    annotation on their own file is dropped — this is by design, since
     annotation is a conscious evaluative statement (unlike negative file
     evidence that derives from structural mismatch)."""
     bad_dict = json.loads(_good_output())
@@ -604,14 +645,18 @@ def test_parse_rejects_self_annotation(index_data):
         "source_annotation_created_at": "2026-04-22T14:00:00+08:00",
         "source_annotation_author": "zhangsan",  # ← subject 自己写的 annotation
     })
-    with pytest.raises(SelfEvaluationError, match="self-evaluation.*annotation"):
-        parse_and_validate(
-            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
-        )
+    parsed = parse_and_validate(
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+    )
+    assert all(
+        not (e.source_kind == "annotation" and e.source_annotation_author == "zhangsan")
+        for e in parsed.scores[0].evidence
+    )
+    assert len(parsed.scores[0].evidence) == 2
 
 
-def test_parse_rejects_self_annotation_negative(index_data):
-    """Self-annotation rejection is polarity-agnostic (unlike file-evidence)."""
+def test_parse_drops_self_annotation_negative(index_data):
+    """Self-annotation drop is polarity-agnostic (unlike file-evidence)."""
     bad_dict = json.loads(_good_output())
     bad_dict["scores"][0]["evidence"][0].update({
         "source_kind": "annotation",
@@ -619,10 +664,14 @@ def test_parse_rejects_self_annotation_negative(index_data):
         "source_annotation_created_at": "2026-04-22T14:00:00+08:00",
         "source_annotation_author": "zhangsan",
     })
-    with pytest.raises(SelfEvaluationError, match="annotation.*zhangsan"):
-        parse_and_validate(
-            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
-        )
+    parsed = parse_and_validate(
+        json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+    )
+    assert all(
+        e.source_annotation_author != "zhangsan" or e.source_kind != "annotation"
+        for e in parsed.scores[0].evidence
+    )
+    assert len(parsed.scores[0].evidence) == 2
 
 
 def test_parse_infers_annotation_from_metadata(index_data):

@@ -610,6 +610,38 @@ def test_rerun_enqueues_admin_rerun_job(
     assert job.triggered_by == "admin:rerun"
 
 
+def test_rerun_supersedes_stuck_running_run(
+    client, queue, pivot_users, workspace, store,
+):
+    """Admin clicking 重跑 should clear any stuck queued/running run for the
+    same matter so the new attempt doesn't race-lost on the idempotency idx.
+    Regression for the case where a server crash mid-run leaves a 'running'
+    row that sweep_orphans hasn't caught yet (10-min cutoff)."""
+    pivot_users.create(
+        display_name="zs", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    _write_matter(workspace, "m")
+    # Simulate a stuck running run with the same matter_id.
+    stuck_run = store.start_run(
+        ScoringJob(
+            matter_id="m", matter_category="eng",
+            subject_user_id="dummy", triggered_by="auto",
+            triggered_actor_id="dummy",
+        ),
+        timeline_hash="hStuck", model="m",
+    )
+    store.transition_running(stuck_run)
+
+    r = client.post(
+        "/api/admin/scoring/matters/m/rerun", headers=_admin_headers(),
+    )
+    assert r.status_code == 200
+    # Stuck run must be marked failed/superseded so the new run can proceed.
+    after = store.get_run(stuck_run)
+    assert after.status == "failed"
+    assert after.error == "superseded_by_rerun"
+
+
 def test_rerun_404_when_matter_missing(client):
     r = client.post(
         "/api/admin/scoring/matters/ghost/rerun", headers=_admin_headers(),

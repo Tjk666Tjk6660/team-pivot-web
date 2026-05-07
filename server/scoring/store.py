@@ -515,6 +515,27 @@ class ScoringStore:
             )
             return cur.rowcount or 0
 
+    def supersede_active_runs(self, matter_id: str) -> int:
+        """Mark all queued/running runs for a matter as failed/superseded.
+
+        Called by the admin rerun endpoint: clicking "重跑" is an explicit
+        intent to take over from any in-flight run. Without this, a stuck
+        'running' row (e.g. left over from a server crash inside the 10-min
+        sweep window) would block new reruns via the partial unique idx
+        (matter_id, timeline_hash) WHERE status IN ('queued','running',
+        'success') — the new attempt would surface as race_lost.
+
+        Returns number of rows touched.
+        """
+        with self._db.connect() as conn:
+            cur = conn.execute(
+                "UPDATE matter_scoring_runs"
+                " SET status='failed', error='superseded_by_rerun', finished_at=?"
+                " WHERE matter_id=? AND status IN ('queued', 'running')",
+                (time(), matter_id),
+            )
+            return cur.rowcount or 0
+
     # ── Scores + evidence ────────────────────────────────────────────────
 
     def write_results(

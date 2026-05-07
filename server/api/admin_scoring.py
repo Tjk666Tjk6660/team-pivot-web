@@ -267,6 +267,20 @@ def build_router(
         # multi-subject run (otherwise worker falls back to {owner} and we
         # silently regress to Phase 1 single-row scoring on rerun).
         candidate_ids = resolve_candidates(index, resolver)
+
+        # Admin clicking 重跑 is an explicit takeover — fail any stuck queued/
+        # running runs for this matter so the new attempt doesn't race-lost
+        # against a row that's already in the idempotency-protected set
+        # (matter_id, timeline_hash, status IN queued/running/success).
+        # Common case: server crashed mid-run, sweep_orphans hasn't caught it
+        # yet (10-min cutoff), and the user can't get out without this.
+        superseded = store.supersede_active_runs(matter_id)
+        if superseded:
+            log.info(
+                "scoring admin rerun superseded stuck runs matter=%s count=%d admin=%s",
+                matter_id, superseded, admin_user.id,
+            )
+
         # admin_user is already a PivotUser — its id is the audit trail value
         job = ScoringJob(
             matter_id=matter_id,

@@ -279,6 +279,51 @@ def test_serialize_timeline_renders_comments(index_data, weight_map):
     assert "mentions=[zhangsan_open_id]" in out
 
 
+def test_serialize_timeline_renders_annotations(weight_map):
+    """Annotations on think/act files must be rendered into the user prompt
+    so the system-prompt's annotation rules can fire."""
+    index_data = {
+        "matter": {
+            "id": "m", "title": "t", "current_status": "finished",
+            "owner": "zhangsan",
+        },
+        "timeline": [{
+            "file": "discussions/x/m/001_zhangsan_act_xx.md",
+            "type": "act",
+            "creator": "zhangsan",
+            "owner": "zhangsan",
+            "created_at": "2026-04-20T10:00:00+08:00",
+            "summary": "完成接口对接",
+            "annotations": [
+                {
+                    "created_at": "2026-04-22T15:00:00+08:00",
+                    "type": "evaluation",
+                    "author": "ceo",
+                    "body": "字段对齐做得很到位",
+                },
+                {
+                    "created_at": "2026-04-22T16:00:00+08:00",
+                    "type": "evaluation",
+                    "author": "lisi",
+                    "body": "process 上交付节奏比预期快",
+                },
+            ],
+        }],
+    }
+    out = serialize_timeline(
+        index_data=index_data,
+        weight_map=weight_map,
+        file_body_loader=_no_body_loader,
+    )
+    assert "annotations:" in out
+    assert "字段对齐做得很到位" in out
+    assert "process 上交付节奏比预期快" in out
+    # CEO weight tag survives into annotation rendering.
+    assert "ceo (CEO, 权重 2x)" in out
+    # type tag is rendered so AI can distinguish annotation flavors.
+    assert "[type=evaluation]" in out
+
+
 def test_serialize_timeline_loads_body(index_data, weight_map):
     out = serialize_timeline(
         index_data=index_data,
