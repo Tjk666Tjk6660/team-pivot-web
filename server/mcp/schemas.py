@@ -141,9 +141,13 @@ class TimelineItem(BaseModel):
         default=None,
         description="For type=owner_change, the required human reason for the transfer.",
     )
-    comments: list[dict] | None = Field(
+    mentions: list[dict] | None = Field(
         default=None,
-        description="Comments attached to this file (each with author_display, body, mentions_display). Surfaces discussion the AI would otherwise miss.",
+        description="Mentions (留言 + @ 提醒) attached to this file (each with author_display, body, targets_display). Surfaces discussion the AI would otherwise miss.",
+    )
+    annotations: list[dict] | None = Field(
+        default=None,
+        description="Evaluation annotations attached to this file (each with author_display, type, body). v1 only type='evaluation'. Stakeholder DMs are sent server-side; AI-computed scoring fields (rating/weight/...) live separately and are not in this list.",
     )
 
 
@@ -387,10 +391,10 @@ class CreateMatterOut(BaseModel):
     )
 
 
-# ---------- add_comment ----------
+# ---------- add_mention ----------
 
-class AddCommentIn(BaseModel):
-    """Append a comment (optionally with @-mention) to an EXISTING file in a matter.
+class AddMentionIn(BaseModel):
+    """Append a mention (留言 + 可选 @ 提醒) to an EXISTING file in a matter.
 
     Distinct from `create_file` (creates a new timeline item) and from
     `create_matter`'s `mentions` (which rides on the initial file). This is
@@ -414,25 +418,75 @@ class AddCommentIn(BaseModel):
         min_length=1,
         max_length=2000,
         description=(
-            "Comment text. If `mentions` is set, this same text becomes the "
-            "@ DM message delivered to the targets — i.e. body doubles as 'say'."
+            "Mention text (留言). If `targets` is set, this same text becomes "
+            "the @ DM message delivered to those targets — i.e. body doubles as 'say'."
         ),
     )
-    mentions: list[str] | None = Field(
+    targets: list[str] | None = Field(
         default=None,
         description=(
             "OPTIONAL list of @ targets (pinyin / name / open_id). Backend "
             "resolves; unresolvable entries cause 422. Omit / null for a "
-            "plain comment without notification."
+            "plain note without notification."
         ),
     )
 
 
-class AddCommentOut(BaseModel):
+class AddMentionOut(BaseModel):
     ok: bool
     matter_id: str
     target_file: str
-    at: str = Field(description="ISO timestamp the comment was recorded at.")
+    at: str = Field(description="ISO timestamp the mention was recorded at.")
+    view_url: str
+    summary_for_ai: str = Field(
+        description="A human-friendly confirmation message the AI MUST relay verbatim to the user."
+    )
+
+
+# ---------- add_annotation ----------
+
+class AddAnnotationIn(BaseModel):
+    """Append a structured evaluation annotation to an EXISTING file in a matter.
+
+    Distinct from `add_mention` (留言 + @): annotations are first-class
+    evaluations on a file (e.g. "verify 不够细致, 建议补一组 edge case").
+    There are NO @-targets — the file's stakeholders (creator, matter
+    owner, matter creator) are notified by DM automatically. v1 only
+    supports type='evaluation'.
+
+    AI-computed scoring inputs (rating, weight, dimension, sentiment,
+    score_delta) are explicitly NOT writable here; the backend rejects
+    them with 422. Stick to `body` for the natural-language evaluation.
+    """
+
+    matter_id: str = Field(
+        description="ID of the matter that owns the target file. Get from resolve_context / list_matters / get_matter.",
+    )
+    target_file: str = Field(
+        min_length=1,
+        max_length=500,
+        description=(
+            "Full file path within the matter (e.g. "
+            "'discussions/Pivot/some-slug/003_alice_verify_abc.md'). Call "
+            "get_matter first to look up which files exist."
+        ),
+    )
+    type: Literal["evaluation"] = Field(
+        default="evaluation",
+        description="Annotation flavor; v1 only supports 'evaluation'.",
+    )
+    body: str = Field(
+        min_length=1,
+        max_length=2000,
+        description="The evaluation text in natural language.",
+    )
+
+
+class AddAnnotationOut(BaseModel):
+    ok: bool
+    matter_id: str
+    target_file: str
+    at: str = Field(description="ISO timestamp the annotation was recorded at.")
     view_url: str
     summary_for_ai: str = Field(
         description="A human-friendly confirmation message the AI MUST relay verbatim to the user."

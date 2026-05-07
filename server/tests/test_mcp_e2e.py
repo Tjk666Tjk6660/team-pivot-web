@@ -460,10 +460,10 @@ async def _run_mcp_create_matter_with_mention(
                 return _parse_tool_result(cm_res)
 
 
-async def _run_mcp_add_comment(
+async def _run_mcp_add_mention(
     base_url: str, token: str, matter_id: str, target_file: str,
 ) -> dict:
-    """Append a @-mention comment to an existing file via MCP."""
+    """Append a mention (留言 + @ 提醒) to an existing file via MCP."""
     client = httpx.AsyncClient(
         headers={"Authorization": f"Bearer {token}"},
         timeout=httpx.Timeout(10.0, read=30.0),
@@ -476,26 +476,26 @@ async def _run_mcp_add_comment(
             async with ClientSession(r, w) as session:
                 await session.initialize()
                 ac_res = await session.call_tool(
-                    "add_comment",
+                    "add_mention",
                     {
                         "matter_id": matter_id,
                         "target_file": target_file,
                         "body": "请帮我 review 这条",
-                        "mentions": ["dengke"],
+                        "targets": ["dengke"],
                     },
                 )
                 return _parse_tool_result(ac_res)
 
 
-def test_mcp_e2e_add_comment_with_mention(live_server):
-    """add_comment with mentions persists onto an existing file's comments[].
+def test_mcp_e2e_add_mention_with_targets(live_server):
+    """add_mention with targets persists onto an existing file's mentions[].
 
     Reuses the seeded matter from the fixture so we exercise the
     "@ 提及 on an already-existing file" path that the Web's @ 提及 button
     targets.
     """
     info = live_server
-    result = asyncio.run(_run_mcp_add_comment(
+    result = asyncio.run(_run_mcp_add_mention(
         info["mcp_base_url"], info["token"],
         info["matter_id"], info["initial_file"],
     ))
@@ -517,21 +517,23 @@ def test_mcp_e2e_add_comment_with_mention(live_server):
     timeline = data.get("timeline") or []
     initial = next((t for t in timeline if t.get("file") == info["initial_file"]), None)
     assert initial is not None, "seeded initial file missing from timeline"
-    comments = initial.get("comments") or []
-    # The mention round-trips on the file as a new comment with body + mentions.
+    mentions = initial.get("mentions") or []
+    # The mention round-trips on the file with body + at least one target.
+    # Backend canonicalizes target identifiers (pinyin if bound user, else
+    # open_id) so we don't lock the test to a specific representation.
     assert any(
-        c.get("body") == "请帮我 review 这条"
-        and "dengke" in (c.get("mentions") or [])
-        for c in comments
-    ), comments
+        m.get("body") == "请帮我 review 这条"
+        and (m.get("targets") or [])
+        for m in mentions
+    ), mentions
 
 
 def test_mcp_e2e_create_matter_with_mention(live_server):
-    """create_matter with mentions persists the comment + @ on the initial file.
+    """create_matter with mentions persists the note + @ on the initial file.
 
     The seed user (邓柯, pinyin=dengke) is the only resolvable target in the
     fixture, so we @ that user. Proves flat mentions block reaches the backend
-    as a nested `comments[]` and the backend records it on the file.
+    as a nested `mentions[]` and the backend records it on the file.
     """
     info = live_server
     created = asyncio.run(_run_mcp_create_matter_with_mention(
@@ -553,12 +555,12 @@ def test_mcp_e2e_create_matter_with_mention(live_server):
     timeline = data.get("timeline") or []
     assert len(timeline) == 1
     initial = timeline[0]
-    comments = initial.get("comments") or []
-    assert len(comments) == 1
-    assert comments[0]["body"] == "请帮我 review"
-    # Mention round-trips as whatever the AI sent (pinyin/name/open_id),
-    # backend stores it as-is and resolves at read-time for display.
-    assert "dengke" in (comments[0].get("mentions") or [])
+    mentions = initial.get("mentions") or []
+    assert len(mentions) == 1
+    assert mentions[0]["body"] == "请帮我 review"
+    # Backend canonicalizes target id (pinyin if bound user, else open_id),
+    # so we just assert at least one target landed.
+    assert mentions[0].get("targets"), mentions[0]
 
 
 def test_mcp_e2e_full_flow(live_server):
@@ -582,11 +584,12 @@ def test_mcp_e2e_full_flow(live_server):
     # concrete list to walk through during the introduction.
     for tool in [
         "resolve_context", "list_matters", "get_matter", "read_files",
-        "create_matter", "create_file", "add_comment", "list_visibility_options",
+        "create_matter", "create_file", "add_mention", "add_annotation",
+        "list_visibility_options",
     ]:
         assert tool in instructions, (tool, instructions)
     assert {"resolve_context", "list_matters", "get_matter", "read_files",
-            "create_file", "create_matter", "add_comment",
+            "create_file", "create_matter", "add_mention", "add_annotation",
             "list_visibility_options"} <= result["tool_names"]
 
     # resolve_context

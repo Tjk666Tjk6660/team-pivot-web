@@ -7,22 +7,17 @@ export interface McpToolGuide {
 
 export const MCP_TOOLS_GUIDE: McpToolGuide[] = [
   {
-    name: "resolve_context",
-    title: "解析复制链接",
-    body: "AI 收到「复制给 AI」的 matter / 文件 URL 后，用这个工具确认链接对应的 matter、文件和当前状态，并把可读摘要展示给你核对。",
-    examples: [
-      "看一下这个帖子 <粘贴 Pivot 链接>",
-      "对这个 matter 加条评论 <url>",
-    ],
-  },
-  {
     name: "list_matters",
     title: "查找可见 matters",
-    body: "按状态、负责人或关键词列出当前用户能访问的 matters，适合让 AI 先帮你找相关讨论。",
+    body:
+      "按状态、负责人或关键词列出当前用户能访问的 matters。" +
+      "也支持「与我相关」过滤——只看你有未读相关项（被 @、回复你的文件、verify 你的文件等）的 matter。",
     examples: [
       "看一下所有的 matter",
       "最近有什么 matter",
       "列一下 xxx 的 matter",
+      "我的待办",
+      "查看与我相关的帖子",
     ],
   },
   {
@@ -47,7 +42,9 @@ export const MCP_TOOLS_GUIDE: McpToolGuide[] = [
   {
     name: "create_matter",
     title: "新建 matter",
-    body: "在你的明确确认后，AI 可以新建一个 matter，连同首条 timeline 文件（type=think/act）一起落盘。",
+    body:
+      "在你的明确确认后，AI 可以新建一个 matter，连同首条 timeline 文件（type=think/act）一起落盘。" +
+      "如果设置了限制可见范围（matter 或新分类），创建者必须落在范围内——AI 会先校验、不然直接拒，避免发出来连自己都看不见。",
     examples: [
       "在 mcp 下新开一个 matter，标题叫 X，帮我起草内容",
       "起一个 matter 跟踪 X",
@@ -64,13 +61,32 @@ export const MCP_TOOLS_GUIDE: McpToolGuide[] = [
     ],
   },
   {
-    name: "add_comment",
-    title: "评论 / 圈人",
-    body: "在已有文件下追加一条评论（等价于 Web 上的「@ 提及」按钮），可选 @-mention 通知相关同事到飞书。",
+    name: "add_mention",
+    title: "留言 / 圈人",
+    body: "在已有文件下追加一条留言（等价于 Web 上的「@ 提及」按钮），可选 @ 通知相关同事到飞书。",
     examples: [
-      "对这条 think 评论：...，并圈 X 看",
+      "对这条 think 留言：...，并圈 X 看",
       "@ X review 这条",
       "圈一下 X 提醒看这条",
+    ],
+  },
+  {
+    name: "add_annotation",
+    title: "评估 / 评分意见",
+    body: "对某条文件写一条结构化评估（v1 仅 type=evaluation）。无需 @ 谁，文件的相关方（创建者 / matter owner / matter creator）会自动收到飞书 DM。",
+    examples: [
+      "对这条 verify 写个评估",
+      "评一下这条 result",
+      "给 003 这条做个 evaluation",
+    ],
+  },
+  {
+    name: "list_visibility_options",
+    title: "查看可见范围候选",
+    body: "列出可以选作 matter / 分类可见范围的角色和成员名单——通常配合 create_matter 使用，让你 / AI 知道当前能限给谁。",
+    examples: [
+      "哪些角色能选",
+      "看下这个分类能限制给谁",
     ],
   },
 ];

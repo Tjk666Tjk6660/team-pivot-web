@@ -24,7 +24,8 @@ from server.mcp.runtime import (
     set_user_token,
 )
 from server.mcp.schemas import (
-    AddCommentIn,
+    AddAnnotationIn,
+    AddMentionIn,
     CreateFileIn,
     CreateMatterIn,
     GetMatterIn,
@@ -36,7 +37,8 @@ from server.mcp.schemas import (
 from server.mcp.tools import (
     MatterApiClient,
     ToolError,
-    tool_add_comment,
+    tool_add_annotation,
+    tool_add_mention,
     tool_create_file,
     tool_create_matter,
     tool_get_matter,
@@ -217,18 +219,18 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
                 inputSchema=CreateMatterIn.model_json_schema(),
             ),
             Tool(
-                name="add_comment",
+                name="add_mention",
                 description=(
-                    "Append a comment (with optional @-mention) to an EXISTING file "
+                    "Append a mention (留言 + 可选 @ 提醒) to an EXISTING file "
                     "inside a matter. This is the equivalent of the Web's '@ 提及' "
-                    "button — it adds a comment under a file, not a new timeline item. "
+                    "button — it adds a note under a file, not a new timeline item. "
                     "Common user phrasings: \"@ X\", \"圈下 X 看一下这条\", "
                     "\"对 <file> 留言\", \"通知 X review 这条 think\". "
                     "Use `create_file` instead when the user wants to add a new "
                     "timeline item (think/act/verify/result/insight); use `create_matter` "
                     "when they want a brand-new matter. "
                     "PROTOCOL (1/3): BEFORE calling, present the draft (target_file, "
-                    "body, mentions) to the user in chat and wait for explicit approval. "
+                    "body, targets) to the user in chat and wait for explicit approval. "
                     "If you don't know the target_file path yet, call get_matter first "
                     "and ask the user which file. "
                     "PROTOCOL (2/3): If the backend rejects with 422 (`{errors: ...}`), "
@@ -237,7 +239,36 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
                     "PROTOCOL (3/3): After success, relay the returned `summary_for_ai` "
                     "message verbatim to the user, including the view_url."
                 ),
-                inputSchema=AddCommentIn.model_json_schema(),
+                inputSchema=AddMentionIn.model_json_schema(),
+            ),
+            Tool(
+                name="add_annotation",
+                description=(
+                    "Append a structured evaluation annotation to an EXISTING "
+                    "file inside a matter. Distinct from `add_mention`: this "
+                    "is a first-class evaluation on the file (e.g. 'verify "
+                    "不够细致, 建议补一组 edge case'), NOT a chat note. There "
+                    "are no @-targets — the file's stakeholders (creator + "
+                    "matter.owner + matter.creator) are auto-DM'd by the "
+                    "backend. v1 only supports type='evaluation'. "
+                    "Common user phrasings: \"对这条 verify 写个评估\", "
+                    "\"给 003 这条做个 evaluation\", \"评一下这条 result\". "
+                    "Use `add_mention` instead when the user just wants to "
+                    "leave a note or @ someone. "
+                    "PROTOCOL (1/3): BEFORE calling, present the draft "
+                    "(target_file, type, body) to the user in chat and wait "
+                    "for explicit approval. If you don't know target_file, "
+                    "call get_matter first. "
+                    "PROTOCOL (2/3): If the backend rejects with 422 "
+                    "(`{errors: ...}`), surface the field-level errors to the "
+                    "user — do NOT silently retry. Note: derived scoring "
+                    "fields (rating, weight, dimension, sentiment, "
+                    "score_delta) are explicitly rejected — never include "
+                    "them. "
+                    "PROTOCOL (3/3): After success, relay the returned "
+                    "`summary_for_ai` message verbatim, including view_url."
+                ),
+                inputSchema=AddAnnotationIn.model_json_schema(),
             ),
             Tool(
                 name="list_visibility_options",
@@ -300,9 +331,13 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
                         current_user(),
                     )
                 )
-            elif name == "add_comment":
+            elif name == "add_mention":
                 out = await anyio.to_thread.run_sync(
-                    partial(tool_add_comment, arguments, client, web_base_url)
+                    partial(tool_add_mention, arguments, client, web_base_url)
+                )
+            elif name == "add_annotation":
+                out = await anyio.to_thread.run_sync(
+                    partial(tool_add_annotation, arguments, client, web_base_url)
                 )
             elif name == "list_visibility_options":
                 out = await anyio.to_thread.run_sync(

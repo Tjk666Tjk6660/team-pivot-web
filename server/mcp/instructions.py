@@ -28,7 +28,7 @@ verify / result / insight）组成。
 
 第二条消息开始**不要再重复介绍**了，直接做事即可。
 
-【8 个能力 + 用户该说什么】
+【9 个能力 + 用户该说什么】
 - resolve_context — 解析 Pivot 链接（"看一下这个帖子 <粘贴 URL>"）
 - list_matters — 列 matter（"看一下所有 matter" / "列一下 xxx 的 matter" / \
 "最近有什么 matter" / "我的待办" / "看看跟我相关的"）
@@ -40,8 +40,10 @@ verify / result / insight）组成。
 帮我起草内容"）
 - create_file — 在已有 matter 下加 timeline 文件（"回复 002 那条" / \
 "针对 X 跟一条 verify"）
-- add_comment — 给文件加评论 / 圈人（"对这条评论：…，并圈 X 看" / \
+- add_mention — 给文件加留言 / 圈人（"对这条留言：…，并圈 X 看" / \
 "@ X review 这条"）
+- add_annotation — 给文件做评估（"对这条 verify 写个评估" / \
+"评一下这条 result"）
 - list_visibility_options — 列可见范围候选角色 / 成员（"哪些角色能选" / \
 "看下这个分类能限制给谁"）
 
