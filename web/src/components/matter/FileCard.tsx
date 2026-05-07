@@ -3,7 +3,7 @@ import Markdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { MermaidBlock } from "./MermaidBlock";
-import { Plus } from "lucide-react";
+import { AtSign, MessageSquareText, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { AnnotationPopover } from "./AnnotationDialog";
@@ -580,7 +580,7 @@ function MentionPopover({
       await onSubmit(value.comments.trim(), value.open_ids);
       setOpen(false);
       setValue(emptyMention());
-      toast.success("已发送提及");
+      toast.success("已发送提醒");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -593,10 +593,10 @@ function MentionPopover({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        title="圈人留言（追加为本文件的一条 mention）"
+        title="圈人提醒（追加为本文件的一条提醒）"
         className="inline-flex items-center rounded-[var(--r-sm)] border border-[var(--accent-soft)] bg-[var(--surface)] px-2 py-1 text-[11px] font-semibold text-[var(--accent)] hover:bg-[var(--accent-bg)]"
       >
-        @ 提及
+        @ 提醒
       </button>
       {open && (
         <div
@@ -606,7 +606,7 @@ function MentionPopover({
           )}
         >
           <p className="mb-2 text-[10.5px] font-bold uppercase tracking-wider text-[var(--text-mute)]">
-            提及某人
+            提醒某人
           </p>
           <MentionField
             value={value}
@@ -698,12 +698,37 @@ function JudgementChip({ judgement }: { judgement: Judgement }) {
 }
 
 function CommentsBlock({ item }: { item: TimelineFileItem }) {
-  if (item.mentions.length === 0) return null;
+  const [expanded, setExpanded] = useState(false);
+  const total = item.mentions.length;
+  if (total === 0) return null;
+
+  const COLLAPSED = 3;
+  const overflow = total > COLLAPSED;
+  const startIndex = overflow && !expanded ? total - COLLAPSED : 0;
+  const visible =
+    overflow && !expanded ? item.mentions.slice(-COLLAPSED) : item.mentions;
 
   return (
-    <div className="mt-3">
-      <ul className="space-y-2">
-        {item.mentions.map((c, i) => {
+    <div className="mt-4">
+      <div className="mb-2 flex items-center justify-between gap-1.5">
+        <div className="flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wider text-[var(--text-mute)]">
+          <AtSign className="h-3 w-3" />
+          <span>提醒</span>
+          <span className="text-[var(--text-fade)]">· {total}</span>
+        </div>
+        {overflow && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="text-[11px] font-medium text-[var(--accent)] hover:underline"
+          >
+            {expanded ? "收起 ↑" : `展开更早的 ${total - COLLAPSED} 条 ↑`}
+          </button>
+        )}
+      </div>
+      <ul className="space-y-1.5">
+        {visible.map((c, vi) => {
+          const i = startIndex + vi;
           const author =
             ((c.author_display || c.author) ?? "").trim() || "未知用户";
           const targetNames = c.targets_display ?? c.targets ?? [];
@@ -711,19 +736,13 @@ function CommentsBlock({ item }: { item: TimelineFileItem }) {
           return (
             <li
               key={i}
-              className="rounded-[var(--r-sm)] border border-[var(--line)] bg-[var(--surface-alt)] px-3 py-2 text-[12.5px] leading-6 text-[var(--text-soft)]"
+              className="rounded-[var(--r-sm)] border border-[var(--line)] border-l-[3px] border-l-[var(--accent-soft)] bg-[var(--surface-alt)] px-3 py-2 text-[12px] leading-6 text-[var(--text-mute)] break-words transition-colors hover:border-l-[var(--accent)]"
             >
-              <span className="inline-flex items-center rounded-full border border-[var(--line)] bg-[var(--surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-soft)]">
-                提及{i + 1}
+              <span className="mr-1.5 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--accent-bg)] px-1.5 align-middle text-[10px] font-bold text-[var(--accent)] ring-1 ring-[var(--accent-soft)]">
+                {i + 1}
               </span>
-              <span
-                className="ml-1 text-[var(--text-fade)]"
-                title={formatFullDateTime(c.created_at)}
-              >
-                · {relativeTime(c.created_at)}
-              </span>
-              <span className="ml-2 inline-flex items-center gap-1 align-baseline">
-                <InlineUserAvatar view={c.author_view} name={author} />
+              <span className="mr-1.5 inline-flex items-center gap-1 align-middle">
+                <InlineUserAvatar view={c.author_view} name={author} size={16} />
                 <span
                   className={`font-semibold text-[var(--text)] ${userClassName(c.author_view?.status ?? "active")}`}
                   title={userTooltip(c.author_view?.status ?? "active") ?? undefined}
@@ -732,16 +751,23 @@ function CommentsBlock({ item }: { item: TimelineFileItem }) {
                   {author}
                 </span>
               </span>
+              <span
+                className="mr-1.5 whitespace-nowrap text-[var(--text-fade)]"
+                title={formatFullDateTime(c.created_at)}
+              >
+                {relativeTime(c.created_at)}
+              </span>
+              <span>提醒</span>
               {targetNames.map((name, mi) => {
                 const view = c.targets_view?.[mi];
                 return (
                   <span
                     key={mi}
-                    className="ml-1 inline-flex items-center gap-1 align-baseline"
+                    className="ml-1.5 inline-flex items-center gap-1 rounded-full bg-[var(--accent-bg)] py-0.5 pl-0.5 pr-1.5 align-middle text-[var(--accent)] ring-1 ring-[var(--accent-soft)]"
                   >
-                    <InlineUserAvatar view={view} name={name} />
+                    <InlineUserAvatar view={view} name={name} size={14} />
                     <span
-                      className={`text-[var(--accent)] ${userClassName(view?.status ?? "active")}`}
+                      className={`font-medium ${userClassName(view?.status ?? "active")}`}
                       title={userTooltip(view?.status ?? "active") ?? undefined}
                       style={userInlineStyle(view?.status ?? "active")}
                     >
@@ -750,14 +776,14 @@ function CommentsBlock({ item }: { item: TimelineFileItem }) {
                   </span>
                 );
               })}
-              <span className="ml-1 text-[var(--text-mute)]">说:</span>
-              {body ? (
-                <span className="ml-0.5">{body}</span>
-              ) : (
-                <span className="ml-0.5 text-[var(--text-fade)]">
-                  未填写提及内容
-                </span>
-              )}
+              <span className="mx-1.5 text-[var(--text-fade)]">·</span>
+              <span className="text-[13px] text-[var(--text)]">
+                {body || (
+                  <span className="italic text-[var(--text-fade)]">
+                    未填写提醒内容
+                  </span>
+                )}
+              </span>
             </li>
           );
         })}
@@ -775,31 +801,56 @@ function CommentsBlock({ item }: { item: TimelineFileItem }) {
  * If the user wrote one in error, the recourse is to add a new
  * annotation that corrects it; the original stays as audit trail. */
 function AnnotationsBlock({ item }: { item: TimelineFileItem }) {
-  if (!item.annotations || item.annotations.length === 0) return null;
+  const [expanded, setExpanded] = useState(false);
+  const total = item.annotations?.length ?? 0;
+  if (!item.annotations || total === 0) return null;
+
+  const COLLAPSED = 3;
+  const overflow = total > COLLAPSED;
+  const startIndex = overflow && !expanded ? total - COLLAPSED : 0;
+  const visible =
+    overflow && !expanded ? item.annotations.slice(-COLLAPSED) : item.annotations;
 
   return (
-    <div className="mt-3 border-l-2 border-[var(--line)] pl-3">
-      <ul className="space-y-2">
-        {item.annotations.map((a, i) => {
+    <div className="mt-4">
+      <div className="mb-2 flex items-center justify-between gap-1.5">
+        <div className="flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wider text-[var(--text-mute)]">
+          <MessageSquareText className="h-3 w-3" />
+          <span>评价</span>
+          <span className="text-[var(--text-fade)]">· {total}</span>
+        </div>
+        {overflow && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="text-[11px] font-medium text-[var(--accent)] hover:underline"
+          >
+            {expanded ? "收起 ↑" : `展开更早的 ${total - COLLAPSED} 条 ↑`}
+          </button>
+        )}
+      </div>
+      <ul className="space-y-1.5">
+        {visible.map((a, vi) => {
+          const i = startIndex + vi;
           const author =
             ((a.author_display || a.author) ?? "").trim() || "未知用户";
           const body = a.body?.trim();
           return (
             <li
               key={i}
-              className="rounded-[var(--r-sm)] bg-[var(--surface-alt)] px-3 py-2 text-[12.5px] leading-6 text-[var(--text-soft)]"
+              className="rounded-[var(--r-sm)] border border-[var(--line)] border-l-[3px] border-l-[var(--status-project-bg)] bg-[var(--surface-alt)] px-3 py-2 text-[12px] leading-6 text-[var(--text-mute)] break-words transition-colors hover:border-l-[var(--status-project-fg)]"
             >
-              <span className="inline-flex items-center rounded-full border border-[var(--line)] bg-[var(--surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-soft)]">
-                评价{i + 1}
-              </span>
               <span
-                className="ml-1 text-[var(--text-fade)]"
-                title={formatFullDateTime(a.created_at)}
+                className="mr-1.5 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1.5 align-middle text-[10px] font-bold"
+                style={{
+                  backgroundColor: "var(--status-project-bg)",
+                  color: "var(--status-project-fg)",
+                }}
               >
-                · {relativeTime(a.created_at)}
+                {i + 1}
               </span>
-              <span className="ml-2 inline-flex items-center gap-1 align-baseline">
-                <InlineUserAvatar view={a.author_view} name={author} />
+              <span className="mr-1.5 inline-flex items-center gap-1 align-middle">
+                <InlineUserAvatar view={a.author_view} name={author} size={16} />
                 <span
                   className={`font-semibold text-[var(--text)] ${userClassName(a.author_view?.status ?? "active")}`}
                   title={userTooltip(a.author_view?.status ?? "active") ?? undefined}
@@ -808,14 +859,21 @@ function AnnotationsBlock({ item }: { item: TimelineFileItem }) {
                   {author}
                 </span>
               </span>
-              <span className="ml-1 text-[var(--text-mute)]">评价:</span>
-              {body ? (
-                <span className="ml-0.5">{body}</span>
-              ) : (
-                <span className="ml-0.5 text-[var(--text-fade)]">
-                  未填写评价内容
-                </span>
-              )}
+              <span
+                className="mr-1.5 whitespace-nowrap text-[var(--text-fade)]"
+                title={formatFullDateTime(a.created_at)}
+              >
+                {relativeTime(a.created_at)}
+              </span>
+              <span>的评价</span>
+              <span className="mx-1.5 text-[var(--text-fade)]">·</span>
+              <span className="text-[13px] text-[var(--text)]">
+                {body || (
+                  <span className="italic text-[var(--text-fade)]">
+                    未填写评价内容
+                  </span>
+                )}
+              </span>
             </li>
           );
         })}

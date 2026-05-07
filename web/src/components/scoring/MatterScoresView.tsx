@@ -297,7 +297,7 @@ function SubjectScoresList({
             {skippedCount > 0 && ` · 证据不足跳过 ${skippedCount} 人`}
           </div>
           <p className="mt-0.5 text-[var(--text-mute)]">
-            候选人 = timeline 里出现过 think / act 的作者，每人独立打分。证据归因依据五条线索：文件作者、正文点名、@ 提及、转交原因、验收动作。
+            候选人 = timeline 里出现过 think / act 的作者，每人独立打分。证据归因依据五条线索：文件作者、正文点名、@ 提醒、转交原因、验收动作。
           </p>
         </div>
       )}

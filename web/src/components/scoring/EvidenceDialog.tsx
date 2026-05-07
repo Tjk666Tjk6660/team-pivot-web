@@ -21,7 +21,7 @@ const DIM_LABELS: Record<keyof ScoringDimensions, string> = {
 const ATTRIBUTION_LABELS: Record<ScoringAttributionBasis, string> = {
   file_creator: "文件作者",
   explicit_mention: "文本点名",
-  at_target: "@ 提及",
+  at_target: "@ 提醒",
   owner_change_reason: "转交原因",
   verify_outcome: "验收动作",
 };

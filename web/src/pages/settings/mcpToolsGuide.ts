@@ -63,7 +63,7 @@ export const MCP_TOOLS_GUIDE: McpToolGuide[] = [
   {
     name: "add_mention",
     title: "留言 / 圈人",
-    body: "在已有文件下追加一条留言（等价于 Web 上的「@ 提及」按钮），可选 @ 通知相关同事到飞书。",
+    body: "在已有文件下追加一条留言（等价于 Web 上的「@ 提醒」按钮），可选 @ 通知相关同事到飞书。",
     examples: [
       "对这条 think 留言：...，并圈 X 看",
       "@ X review 这条",

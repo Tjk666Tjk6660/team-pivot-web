@@ -101,9 +101,6 @@ export function AnnotationPopover({
             align === "right" ? "right-0" : "left-0",
           )}
         >
-          <p className="mb-2 text-[10.5px] font-bold uppercase tracking-wider text-[var(--text-mute)]">
-            对此文件评价
-          </p>
           <div className="rounded-md border bg-muted/30 p-3 space-y-2">
             <Label htmlFor="annotation-body" className="text-xs font-semibold">
               你的评价
