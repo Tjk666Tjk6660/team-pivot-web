@@ -261,6 +261,10 @@ skipped_subjects。同一个 subject 不能出现两次。
 - subject_pinyin 必须落在候选集 {{{subjects}}} 内
 - 同一个 subject 在 scores 数组里最多出现一次
 - 每个非 null dimension 至少 1 条 evidence 指向该维度
+- 同一 quote 支持多个维度时，请复制为多条 evidence row，每条标一个 dimension。
+  例如「李四二次提交补齐 C 风险」同时反映 delivery / accountability / judgment 时，
+  请输出三条 evidence（quote / source_filename / source_kind 等字段相同，只换 dimension）。
+  不要让某个维度的分数无 evidence 兜着——服务端会把无证据的维度丢分
 - source_filename 必须是我提供的 timeline 中真实存在的文件名（不要编造）
 - source_file_creator 应填写该文件的 creator pinyin（在每条 timeline 文件头里能看到）；
   此字段用于自我评价检测，错填会被服务端拒收
