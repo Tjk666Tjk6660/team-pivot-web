@@ -242,6 +242,49 @@ def test_creator_can_update_matter_visibility(tmp_path):
     assert cached_role["role"] == "ops"
 
 
+def test_owner_can_remove_creator_from_matter_visibility(tmp_path):
+    client, _workspace, pivot_users, sessions, _db = _client(tmp_path)
+    owner = pivot_users.create(
+        display_name="liuyu",
+        pinyin="liuyu",
+        email="liuyu@example.com",
+        avatar_url="",
+        role="member",
+    )
+    created = client.post(
+        "/api/matters",
+        json={
+            "category": "Pivot",
+            "title": "Visibility Owner Removes Creator",
+            "owner_id": owner.id,
+            "visibility": {
+                "mode": "restricted",
+                "roles": [],
+                "user_ids": [],
+            },
+            "initial_file": {
+                "type": "think",
+                "summary": "init",
+                "body": "# Summary\n\ninit\n",
+            },
+        },
+    )
+    assert created.status_code == 200
+    client.cookies.set("sid", sessions.create(owner.id))
+
+    r = client.put(
+        f"/api/matters/{created.json()['matter_id']}/visibility",
+        json={"mode": "restricted", "roles": [], "user_ids": [owner.id]},
+    )
+
+    assert r.status_code == 200
+    assert r.json()["visibility"] == {
+        "mode": "restricted",
+        "roles": [],
+        "user_ids": [owner.id],
+    }
+
+
 def test_update_matter_visibility_rejects_non_creator_or_owner(tmp_path):
     client, _workspace, pivot_users, sessions, _db = _client(tmp_path)
     created = client.post(

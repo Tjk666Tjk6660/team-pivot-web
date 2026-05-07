@@ -495,7 +495,7 @@ def build_router(
                         status_code=422,
                         detail={"code": "visibility_scope_exceeds_category"},
                     )
-        required = [_matter_creator(data), _effective_matter_owner(data)]
+        required = [_effective_matter_owner(data)]
         for principal in {value for value in required if value}:
             if not _scope_allows_principal(principal, visibility, db):
                 raise HTTPException(
