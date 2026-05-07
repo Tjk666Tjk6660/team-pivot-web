@@ -17,8 +17,10 @@ from server.scoring.worker import (
     ScoringQueue,
     ScoringWorker,
     compute_timeline_hash,
+    resolve_scoring_model,
     run_scoring_once,
 )
+from server.ai.client import DEFAULT_MODEL
 from server.settings import SettingsRepo
 
 
@@ -242,6 +244,30 @@ def test_run_scoring_once_uses_default_model_when_override_blank(
         settings=settings, pivot_users=pivot_users, ai_call=fake_ai,
     )
     assert captured["model"] == "test-model"  # from main ai.model
+
+
+# ---------- resolve_scoring_model (shared helper) ----------
+
+
+def test_resolve_scoring_model_prefers_scoring_override(settings):
+    """scoring.model wins over both main ai.model and DEFAULT_MODEL."""
+    settings.set("ai.model", "main-model")
+    settings.set(KEY_MODEL, "scoring-override")
+    assert resolve_scoring_model(settings) == "scoring-override"
+
+
+def test_resolve_scoring_model_falls_back_to_main_ai_model(settings):
+    """Scoring override blank → use main ai.model."""
+    settings.set("ai.model", "main-ai-model")
+    settings.set(KEY_MODEL, "")
+    assert resolve_scoring_model(settings) == "main-ai-model"
+
+
+def test_resolve_scoring_model_falls_back_to_default_when_all_empty(settings):
+    """Both blank → DEFAULT_MODEL constant."""
+    settings.set(KEY_MODEL, "   ")  # whitespace counts as blank
+    settings.set("ai.model", "")    # clear fixture default to test the bottom of the chain
+    assert resolve_scoring_model(settings) == DEFAULT_MODEL
 
 
 def test_run_scoring_once_uses_configured_timeout(

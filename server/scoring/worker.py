@@ -258,13 +258,11 @@ def _run_scoring_once_inner(
         store.mark_skipped(job, timeline_hash=timeline_hash, reason="no_owner")
         return
 
-    # 4. Load AI endpoint
+    # 4. Load AI endpoint + resolve scoring model via the shared helper so
+    # admin rerun (which pre-creates the run row) writes the same value the
+    # worker actually uses.
     ai_settings = _load_ai_endpoint(settings)
-    model = (settings.get(KEY_MODEL) or "").strip()
-    if not model and ai_settings is not None:
-        model = ai_settings.model
-    if not model:
-        model = DEFAULT_MODEL
+    model = resolve_scoring_model(settings)
 
     if ai_settings is None:
         # No api_key — record a failed run so admin sees why
@@ -441,6 +439,29 @@ def _load_ai_endpoint(settings: SettingsRepo) -> _AIEndpointConfig | None:
     base_url = (settings.get(_AI_KEY_BASE_URL) or DEFAULT_BASE_URL).strip()
     model = (settings.get(_AI_KEY_MODEL) or DEFAULT_MODEL).strip()
     return _AIEndpointConfig(api_key=api_key, base_url=base_url, model=model)
+
+
+def resolve_scoring_model(settings: SettingsRepo) -> str:
+    """Single source of truth for "what model does this scoring run use?".
+
+    Resolution chain (matches the order admin UI presents):
+      1. scoring.model — explicit override on the scoring settings page
+      2. ai.model — main AI config (used by chat / daily-report etc.)
+      3. DEFAULT_MODEL — hardcoded fallback (server/ai/client.py)
+
+    Used by both the worker (write to run row + actual AI call) and the
+    admin rerun endpoint (which pre-creates the row synchronously). Without
+    a shared helper the two paths drifted: admin wrote DEFAULT_MODEL while
+    worker used ai.model — UI showed wrong model for runs that hadn't
+    transitioned yet.
+    """
+    override = (settings.get(KEY_MODEL) or "").strip()
+    if override:
+        return override
+    main_ai = (settings.get(_AI_KEY_MODEL) or "").strip()
+    if main_ai:
+        return main_ai
+    return DEFAULT_MODEL
 
 
 def _load_timeout(settings: SettingsRepo) -> float:

@@ -381,12 +381,13 @@ def build_router(
             candidate_user_ids=tuple(candidate_ids),
         )
         from dataclasses import replace
-        from server.scoring.worker import compute_timeline_hash, DEFAULT_MODEL
+        from server.scoring.worker import compute_timeline_hash, resolve_scoring_model
         timeline_hash = compute_timeline_hash(index)
-        # Model is metadata only on the run row; the actual AI call resolves
-        # via _ai_endpoint_config in worker. Empty string would also work but
-        # populating it makes the runs list more useful immediately.
-        model = (settings.get(KEY_MODEL) or "").strip() or DEFAULT_MODEL
+        # Use the same model-resolution helper the worker uses so the value
+        # we stamp on the synchronously-created run row matches what the AI
+        # call will actually use (was a bug: admin path skipped the main
+        # ai.model fallback and always wrote DEFAULT_MODEL).
+        model = resolve_scoring_model(settings)
         run_id = store.start_run(
             job, timeline_hash=timeline_hash, model=model, schema_version=2,
         )
