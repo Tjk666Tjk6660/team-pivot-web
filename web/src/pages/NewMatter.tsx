@@ -46,6 +46,21 @@ const CATEGORY_PATTERN = /^[^/\\:*?"<>|\t\n\r]{1,20}$/;
 const NEW_MATTER_PSEUDO_ID = "_new_matter_";
 const PUBLIC_VISIBILITY: VisibilityScope = { mode: "public", roles: [], user_ids: [] };
 
+function ensureVisibilityUsers(
+  scope: VisibilityScope,
+  userIds: string[],
+): VisibilityScope {
+  if (scope.mode !== "restricted") return scope;
+  const locked = Array.from(new Set(userIds.filter(Boolean)));
+  const nextUserIds = [...scope.user_ids];
+  for (const id of locked) {
+    if (!nextUserIds.includes(id)) nextUserIds.push(id);
+  }
+  return nextUserIds.length === scope.user_ids.length
+    ? scope
+    : { ...scope, user_ids: nextUserIds };
+}
+
 export function NewMatter({ me }: { me: Me }) {
   // Two paths: guided AI conversation (default, mirrors AICraft demo) and the
   // classic form for users who already know what they want to write.
@@ -143,9 +158,19 @@ function NewMatterClassicForm({
   // mutates this in place when the user picks from the dropdown, but on
   // draft restore we only have open_ids — fetch the names lazily.
   const [resolvedNames, setResolvedNames] = useState<Record<string, string>>({});
+  const requiredVisibilityUserIds = Array.from(
+    new Set([me.id, matterOwner.pivotUserId].filter(Boolean)),
+  );
 
   const { dialog: qualityDialog, confirm: confirmPublishQuality } =
     useConfirmPublishQuality();
+
+  useEffect(() => {
+    setVisibility((current) =>
+      ensureVisibilityUsers(current, requiredVisibilityUserIds),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me.id, matterOwner.pivotUserId]);
 
   useEffect(() => {
     Promise.all([fetchMatters(), fetchDrafts()])
@@ -313,7 +338,7 @@ function NewMatterClassicForm({
           ? { body_source_snapshot: bodyState.body_source_snapshot }
           : {}),
         ...(mentions.open_ids.length > 0 ? { mentions } : {}),
-        matter_visibility: visibility,
+        matter_visibility: ensureVisibilityUsers(visibility, requiredVisibilityUserIds),
         created_category: createdCategory,
       },
     }),
@@ -412,7 +437,7 @@ function NewMatterClassicForm({
         category: category.trim(),
         title: title.trim(),
         owner_id: matterOwner.pivotUserId || me.id,
-        visibility,
+        visibility: ensureVisibilityUsers(visibility, requiredVisibilityUserIds),
         initial_file: {
           type: initialType,
           summary,
@@ -475,7 +500,7 @@ function NewMatterClassicForm({
         docType: initialType,
         matterOwner,
         mentions,
-        matterVisibility: visibility,
+        matterVisibility: ensureVisibilityUsers(visibility, requiredVisibilityUserIds),
         createdCategory,
       });
       toast.success("已切换到 AI 引导，正在为你重新起草…");
@@ -627,7 +652,7 @@ function NewMatterClassicForm({
                   value={visibility}
                   onChange={setVisibility}
                   disabled={submitting}
-                  requiredUserId={me.open_id}
+                  requiredUserIds={requiredVisibilityUserIds}
                 />
               </div>
 

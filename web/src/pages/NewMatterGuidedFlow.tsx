@@ -57,6 +57,21 @@ const CATEGORY_PATTERN = /^[^/\\:*?"<>|\t\n\r]{1,20}$/;
 const NEW_MATTER_PSEUDO_ID = "_new_matter_";
 const PUBLIC_VISIBILITY: VisibilityScope = { mode: "public", roles: [], user_ids: [] };
 
+function ensureVisibilityUsers(
+  scope: VisibilityScope,
+  userIds: string[],
+): VisibilityScope {
+  if (scope.mode !== "restricted") return scope;
+  const locked = Array.from(new Set(userIds.filter(Boolean)));
+  const nextUserIds = [...scope.user_ids];
+  for (const id of locked) {
+    if (!nextUserIds.includes(id)) nextUserIds.push(id);
+  }
+  return nextUserIds.length === scope.user_ids.length
+    ? scope
+    : { ...scope, user_ids: nextUserIds };
+}
+
 type Phase =
   | "topic"
   | "type"
@@ -181,6 +196,10 @@ export function NewMatterGuidedFlow({
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const draftedOnceRef = useRef(false);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const requiredVisibilityUserIds = useMemo(
+    () => Array.from(new Set([me.id, data.matterOwner.pivotUserId].filter(Boolean))),
+    [data.matterOwner.pivotUserId, me.id],
+  );
 
   // Scroll chat to bottom on new bubbles.
   useEffect(() => {
@@ -253,7 +272,10 @@ export function NewMatterGuidedFlow({
       ...(draftBody.trim() ? { body_source_snapshot: draftBody } : {}),
       ...(data.topic.trim() ? { topic: data.topic.trim() } : {}),
       ...(data.mentions.open_ids.length > 0 ? { mentions: data.mentions } : {}),
-      matter_visibility: data.matterVisibility,
+      matter_visibility: ensureVisibilityUsers(
+        data.matterVisibility,
+        requiredVisibilityUserIds,
+      ),
       created_category: createdCategory,
     },
   });
@@ -303,7 +325,10 @@ export function NewMatterGuidedFlow({
     docType: data.docType,
     matterOwner: data.matterOwner,
     mentions: data.mentions,
-    matterVisibility: data.matterVisibility,
+    matterVisibility: ensureVisibilityUsers(
+      data.matterVisibility,
+      requiredVisibilityUserIds,
+    ),
     createdCategory,
   });
 
@@ -375,13 +400,27 @@ export function NewMatterGuidedFlow({
   };
 
   const submitOwner = (owner: { pivotUserId: string; name: string }) => {
-    setData((d) => ({ ...d, matterOwner: owner }));
+    setData((d) => ({
+      ...d,
+      matterOwner: owner,
+      matterVisibility: ensureVisibilityUsers(
+        d.matterVisibility,
+        [me.id, owner.pivotUserId],
+      ),
+    }));
     recordUserAndAdvance(`责任人：${owner.name || owner.pivotUserId || "我"}`, "mentions");
   };
 
   const skipOwner = () => {
     const self = { pivotUserId: me.id, name: me.name };
-    setData((d) => ({ ...d, matterOwner: self }));
+    setData((d) => ({
+      ...d,
+      matterOwner: self,
+      matterVisibility: ensureVisibilityUsers(
+        d.matterVisibility,
+        [me.id, self.pivotUserId],
+      ),
+    }));
     recordUserAndAdvance("责任人：默认我自己", "mentions");
   };
 
@@ -598,7 +637,7 @@ export function NewMatterGuidedFlow({
         category: data.category.trim(),
         title: data.title.trim(),
         owner_id: data.matterOwner.pivotUserId || me.id,
-        visibility: data.matterVisibility,
+        visibility: ensureVisibilityUsers(data.matterVisibility, requiredVisibilityUserIds),
         initial_file: {
           type: data.docType,
           summary: data.summary.trim(),
@@ -746,7 +785,7 @@ export function NewMatterGuidedFlow({
                       value={data.matterVisibility}
                       onChange={(next) => setData((d) => ({ ...d, matterVisibility: next }))}
                       disabled={submitting || revising}
-                      requiredUserId={me.open_id}
+                      requiredUserIds={requiredVisibilityUserIds}
                     />
                   </div>
                 </div>

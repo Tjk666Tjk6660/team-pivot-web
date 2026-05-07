@@ -25,6 +25,7 @@ type Props = {
   allowUsers?: boolean;
   /** Always included in restricted scope; cannot be removed in this picker. */
   requiredUserId?: string;
+  requiredUserIds?: string[];
   allowedRoles?: string[];
   publicLabel?: string;
   restrictedLabel?: string;
@@ -40,6 +41,7 @@ export function VisibilityScopePicker({
   disabled,
   allowUsers = true,
   requiredUserId,
+  requiredUserIds,
   allowedRoles,
   publicLabel = "全部用户",
   restrictedLabel = "指定范围",
@@ -50,6 +52,10 @@ export function VisibilityScopePicker({
   const [draft, setDraft] = useState<VisibilityScope>(value);
   const [query, setQuery] = useState("");
   const [activeRole, setActiveRole] = useState<string | null>(null);
+  const lockedUserIds = useMemo(
+    () => dedupeIds([...(requiredUserIds ?? []), ...(requiredUserId ? [requiredUserId] : [])]),
+    [requiredUserId, requiredUserIds],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -59,13 +65,15 @@ export function VisibilityScopePicker({
       mode: "restricted",
       user_ids: allowUsers ? [...base.user_ids] : [],
     };
-    if (allowUsers && requiredUserId && !next.user_ids.includes(requiredUserId)) {
-      next.user_ids.push(requiredUserId);
+    if (allowUsers) {
+      for (const id of lockedUserIds) {
+        if (!next.user_ids.includes(id)) next.user_ids.push(id);
+      }
     }
     setDraft(next);
     setActiveRole(null);
     void fetchVisibilityOptions(category).then(setOptions);
-  }, [allowUsers, category, open, requiredUserId, value]);
+  }, [allowUsers, category, lockedUserIds, open, value]);
 
   const allowedRoleSet = useMemo(
     () => allowedRoles ? new Set(allowedRoles) : null,
@@ -125,7 +133,7 @@ export function VisibilityScopePicker({
     });
   };
   const toggleUser = (id: string) => {
-    if (requiredUserId && id === requiredUserId) return;
+    if (lockedUserIds.includes(id)) return;
     const user_ids = draft.user_ids.includes(id)
       ? draft.user_ids.filter((item) => item !== id)
       : [...draft.user_ids, id];
@@ -134,8 +142,10 @@ export function VisibilityScopePicker({
 
   const confirmDraft = () => {
     const lockedUsers = allowUsers ? [...draft.user_ids] : [];
-    if (allowUsers && requiredUserId && !lockedUsers.includes(requiredUserId)) {
-      lockedUsers.push(requiredUserId);
+    if (allowUsers) {
+      for (const id of lockedUserIds) {
+        if (!lockedUsers.includes(id)) lockedUsers.push(id);
+      }
     }
     const next: VisibilityScope =
       draft.roles.length || lockedUsers.length
@@ -229,9 +239,9 @@ export function VisibilityScopePicker({
                       type="checkbox"
                       checked={
                         draft.user_ids.includes(item.id) ||
-                        (requiredUserId ? item.id === requiredUserId : false)
+                        lockedUserIds.includes(item.id)
                       }
-                      disabled={!!requiredUserId && item.id === requiredUserId}
+                      disabled={lockedUserIds.includes(item.id)}
                       onChange={() => toggleUser(item.id)}
                     />
                     <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--surface-alt)] text-xs font-semibold text-[var(--text-soft)]">
@@ -266,7 +276,7 @@ export function VisibilityScopePicker({
                       key={id}
                       label={user?.display_name ?? id}
                       onRemove={
-                        requiredUserId && id === requiredUserId
+                        lockedUserIds.includes(id)
                           ? undefined
                           : () => toggleUser(id)
                       }
@@ -297,6 +307,10 @@ function roleDisplayName(role: { role: string; name?: string; label?: string }):
 
 function dedupeUsers(users: VisibilityUserOption[]): VisibilityUserOption[] {
   return Array.from(new Map(users.map((item) => [item.id, item])).values());
+}
+
+function dedupeIds(ids: string[]): string[] {
+  return Array.from(new Set(ids.filter(Boolean)));
 }
 
 function SelectedPill({
