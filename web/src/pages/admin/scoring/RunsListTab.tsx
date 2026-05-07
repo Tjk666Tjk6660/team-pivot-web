@@ -285,9 +285,10 @@ function MatterRow({
           </span>
         </div>
 
-        {/* subject chips — sized to content, capped at 480px. Doesn't reserve
-            space when only 1-2 chips, so the title gets the leftover. */}
-        <div className="flex items-center justify-start shrink-0 max-w-[480px]">
+        {/* subject chips — fixed-width column with left-aligned content so
+            every row's chips line up at the same x. Empty space goes on the
+            right when the row has fewer chips, never between title and chips. */}
+        <div className="flex items-center justify-start shrink-0 grow-0 basis-[460px]">
           <SubjectScoreChips
             scores={group.subject_scores}
             skipped={group.skipped_subjects}
@@ -387,7 +388,7 @@ function SubjectScoreChips({
   const skippedCollapsed = skipped.length >= SKIPPED_BATCH_THRESHOLD;
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 max-w-[480px]">
+    <div className="flex flex-wrap items-center gap-1.5">
       {visible.map((s) => (
         <ScoreChip key={s.subject_user_id} subject={s} />
       ))}
