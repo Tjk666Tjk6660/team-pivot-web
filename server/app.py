@@ -226,6 +226,7 @@ def create_app() -> FastAPI:
         settings=settings,
         notifier=notifier,
         users_db_path=dr_users_db,
+        web_base_url=cfg.web_dev_origin,
     )
 
     @asynccontextmanager
@@ -370,6 +371,7 @@ def create_app() -> FastAPI:
         admin_dep=admin_user_cookie_dep,
         index_dir_provider=_dr_index_dir,
         users_db_path=dr_users_db,
+        web_base_url=cfg.web_dev_origin,
     ))
     app.include_router(build_drafts_router(
         workspace, drafts, pivot_users, bindings, notifier, current_user_dep,

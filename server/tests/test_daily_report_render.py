@@ -111,6 +111,73 @@ def test_ai_company_card_has_blue_template():
     )
 
 
+def test_company_card_can_link_to_full_report_page():
+    nar = CompanyNarrative(status="ai", summary="x", tone="active")
+    card = build_company_card(
+        _facts(), nar, report_url="http://web/daily-report/runs/42",
+    )
+    button = card["body"]["elements"][-1]
+    assert button["tag"] == "button"
+    assert button["text"]["content"] == "查看完整日报"
+    assert button["multi_url"]["url"] == "http://web/daily-report/runs/42"
+
+
+def test_company_compact_card_keeps_feishu_message_short():
+    summary = (
+        "今天团队主要在 Pivot 与 enclaws 两个方向上推进。\n"
+        "\n"
+        "第一是 Pivot 产品方向。需要关注的有：\n"
+        "lishuai 负责的 Owner 机制验证未过，需要继续修复字段问题。\n"
+        "tangkun 相关筛选项还在待验证阶段。\n"
+        "\n"
+        "第二是 enclaws 底层方向。部署环境 lishuai 已完成。\n"
+    )
+    nar = CompanyNarrative(status="ai", summary=summary, tone="active")
+    card = build_company_card(
+        _facts(), nar, report_url="http://web/daily-report/runs/42", compact=True,
+    )
+    md = _markdown_from(card)
+    assert '## <font color="blue">今日概况</font>' in md
+    assert '## <font color="red">需要关注</font>' in md
+    assert '- <font color="red">lishuai 负责的 Owner 机制验证未过，需要继续修复字段问题。</font>' in md
+    assert "完整方向明细、事项列表和人员动作请查看完整日报" in md
+
+
+def test_company_compact_attention_strips_subsection_number():
+    summary = (
+        "今天团队主要在 Pivot 产品方向上推进。\n"
+        "\n"
+        "第一是 Pivot 产品方向。多项底层改造与内部产品固定位置集中暂停：\n"
+        "xiongjianping 按 dengke 拍板暂停 EC 底层改造规划，重新评估 ToB 架构与商业化定位。\n"
+        "xiongjianping 同步暂停 AI 客服 S1 上线，等待架构重估结论。\n"
+    )
+    nar = CompanyNarrative(status="ai", summary=summary, tone="steady")
+
+    md = _markdown_from(build_company_card(_facts(), nar, compact=True))
+
+    assert "(1) 多项底层改造与内部产品固定位置集中暂停" not in md
+    assert "多项底层改造与内部产品固定位置集中暂停" in md
+
+
+def test_company_compact_card_omits_disclaimer():
+    nar = CompanyNarrative(
+        status="ai",
+        summary="今天团队主要在 Pivot 产品方向上推进。",
+        tone="steady",
+    )
+
+    md = _markdown_from(
+        build_company_card(
+            _facts(),
+            nar,
+            report_url="http://web/daily-report/runs/42",
+            compact=True,
+        )
+    )
+
+    assert "本日报由 AI 基于 Pivot matter 数据生成" not in md
+
+
 def test_fallback_company_card_uses_wathet_template():
     nar = CompanyNarrative(
         status="fallback",

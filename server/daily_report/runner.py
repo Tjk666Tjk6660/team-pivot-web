@@ -45,6 +45,7 @@ def run_daily_report_for_job(
     now: datetime | None = None,
     explicit_window: TimeWindow | None = None,
     users_db_path: Path | None = None,
+    report_url: str | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """跑一个 Job,返回 (rc, debug)。
 
@@ -116,17 +117,24 @@ def run_daily_report_for_job(
     ai_settings = _load_ai_settings(settings)
     if job.view == "company":
         narrative = narrate_company(facts, ai_settings=ai_settings, no_ai=no_ai)
-        card = build_company_card(facts, narrative)
+        full_card = build_company_card(facts, narrative)
+        card = build_company_card(
+            facts, narrative, report_url=report_url, compact=bool(report_url),
+        )
         debug["narrative_status"] = narrative.status
         debug["tone"] = narrative.tone
         debug["fallback_reason"] = narrative.fallback_reason
     elif job.view == "personal":
         narrative = narrate_personal(facts, ai_settings=ai_settings, no_ai=no_ai)
-        card = build_personal_card(facts, narrative)
+        full_card = build_personal_card(facts, narrative)
+        card = build_personal_card(
+            facts, narrative, report_url=report_url, compact=bool(report_url),
+        )
         debug["narrative_status"] = narrative.status
         debug["fallback_reason"] = narrative.fallback_reason
     else:
         return 2, {**debug, "error": f"unknown view: {job.view}"}
+    debug["full_card"] = full_card
 
     # 4. dry-run 短路
     if dry_run:
@@ -134,6 +142,9 @@ def run_daily_report_for_job(
         debug["card"] = card
         debug["dry_run"] = True
         return 0, debug
+
+    debug["card"] = card
+    debug["report_url"] = report_url
 
     # 5. 按 receiver_type / receiver_ids 发送
     event_label = f"job-{job.id} {job.view} {window.label}"

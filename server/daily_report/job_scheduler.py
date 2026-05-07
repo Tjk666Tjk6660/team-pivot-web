@@ -55,6 +55,7 @@ class JobScheduler:
         settings: SettingsRepo,
         notifier: Notifier,
         users_db_path: Path | None = None,
+        web_base_url: str | None = None,
     ) -> None:
         self._db_path = db_path
         self._workspace_provider = workspace_index_dir_provider
@@ -65,6 +66,7 @@ class JobScheduler:
         # Dev 时用 .env 的 DAILY_REPORT_USERS_DB_PATH 覆盖
         # 进 personal 视角全员列表的来源(只读),不影响 AI 配置 / runs / jobs。
         self._users_db_path = users_db_path
+        self._web_base_url = (web_base_url or "").rstrip("/")
 
         self._task: asyncio.Task | None = None
         self._stop_event: asyncio.Event | None = None
@@ -215,6 +217,7 @@ class JobScheduler:
                 notifier=self._notifier,
                 now=fired_at,
                 users_db_path=self._users_db_path,
+                report_url=self._report_url(run_id),
             )
             error = None
             if rc == 0:
@@ -382,6 +385,11 @@ class JobScheduler:
             {**f, "name": chat_name.get(f.get("to"))}
             for f in failures
         ]
+
+    def _report_url(self, run_id: int) -> str | None:
+        if not self._web_base_url:
+            return None
+        return f"{self._web_base_url}/daily-report/runs/{run_id}"
 
     # ----------------------------------------------------------------- #
     # 365 天清理(每天首次 poll 跑一次)                                  #

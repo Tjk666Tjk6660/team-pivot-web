@@ -22,6 +22,7 @@ import { SettingsTab as AdminScoringSettingsTab } from "@/pages/admin/scoring/Se
 import { UnscoredMattersTab as AdminScoringUnscoredTab } from "@/pages/admin/scoring/UnscoredMattersTab";
 import { AdminUsers } from "@/pages/admin/AdminUsers";
 import { AdminWorkspace } from "@/pages/admin/AdminWorkspace";
+import { DailyReportReader } from "@/pages/DailyReportReader";
 import { MatterDetailEmpty, MatterDetailPane } from "@/pages/MatterDetailPane";
 import { NewMatter } from "@/pages/NewMatter";
 import { MatterEventsProvider } from "@/events/MatterEventsProvider";
@@ -84,6 +85,7 @@ export function App() {
           </Route>
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/settings/external-ai" element={<SettingsExternalAI />} />
+          <Route path="/daily-report/runs/:runId" element={<DailyReportReader />} />
           <Route path="/admin" element={<AdminLayout />}>
             <Route index element={<AdminHome />} />
             <Route path="applications" element={<AdminApplications />} />

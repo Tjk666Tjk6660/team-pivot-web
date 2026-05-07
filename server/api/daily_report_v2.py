@@ -199,6 +199,7 @@ def build_router(
     admin_dep: Callable,
     index_dir_provider: Callable[[], Path] | None = None,
     users_db_path: Path | None = None,
+    web_base_url: str | None = None,
 ) -> APIRouter:
     """v2 daily report admin router.
 
@@ -217,6 +218,10 @@ def build_router(
         if index_dir_provider is not None:
             return index_dir_provider()
         return workspace.path / "index"
+
+    def _report_url(run_id: int) -> str | None:
+        base = (web_base_url or "").rstrip("/")
+        return f"{base}/daily-report/runs/{run_id}" if base else None
 
     # ------------------ jobs CRUD --------------------------- #
 
@@ -383,6 +388,7 @@ def build_router(
                 dry_run=body.dry_run,
                 no_ai=body.no_ai,
                 users_db_path=users_db_path,
+                report_url=_report_url(run_id),
             ),
             name=f"daily-report-run-now-{job_id}",
             daemon=True,
@@ -454,6 +460,7 @@ def build_router(
                 no_ai=body.no_ai,
                 explicit_window=explicit_window,
                 users_db_path=users_db_path,
+                report_url=_report_url(run_id),
             ),
             name=f"daily-report-manual-{run_id}",
             daemon=True,
@@ -583,6 +590,7 @@ def _run_job_in_thread(
     no_ai: bool,
     explicit_window: TimeWindow | None = None,
     users_db_path: Path | None = None,
+    report_url: str | None = None,
 ) -> None:
     """跑 runner.run_daily_report_for_job + UPDATE runs.finish。
     与 JobScheduler 的 _run_one_job_safely 类似但不更新 jobs 表(因为是 ad-hoc)。"""
@@ -596,6 +604,7 @@ def _run_job_in_thread(
             dry_run=dry_run, no_ai=no_ai,
             explicit_window=explicit_window,
             users_db_path=users_db_path,
+            report_url=report_url,
         )
         if rc == 0:
             status = "succeeded"

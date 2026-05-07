@@ -319,12 +319,124 @@ def _split_into_card_sections(formatted: str) -> dict[str, list[str] | str]:
     return {"opening": opening, "directions": directions, "closing": closing}
 
 
+def _company_compact_markdown(formatted: str) -> str:
+    """Feishu push version: short executive note, not the full report."""
+    sections = _split_into_card_sections(formatted)
+    opening = str(sections["opening"]).strip() or _first_meaningful_line(formatted)
+    attention = _attention_lines(formatted, limit=3)
+
+    parts = [
+        _compact_heading("今日概况", "blue"),
+        "",
+        opening or "今日日报已生成,完整方向明细请查看页面版。",
+        "",
+        "---",
+        "",
+        _compact_heading("需要关注", "red"),
+        "",
+    ]
+    if attention:
+        parts.extend(attention)
+    else:
+        parts.append("- 暂无明显阻塞,完整方向明细请查看页面版。")
+    parts.extend([
+        "",
+        "---",
+        "",
+        "_完整方向明细、事项列表和人员动作请查看完整日报。_",
+    ])
+    return "\n".join(parts).rstrip()
+
+
+def _personal_compact_markdown(
+    entries,
+    *,
+    active_count: int,
+    inactive_count: int,
+    pinyins: Iterable[str],
+) -> str:
+    active = [e for e in entries if e.has_activity]
+    parts = [
+        _compact_heading("团队动态摘要", "blue"),
+        "",
+        f"今日有 **{active_count}** 人产生输入或输出,**{inactive_count}** 人暂无记录。",
+        "",
+        "---",
+        "",
+        _compact_heading("重点人员动态", "green"),
+        "",
+    ]
+    if active:
+        for e in active[:3]:
+            narrative = _bold_known_pinyins(e.narrative, pinyins)
+            parts.append(f"- **{e.pinyin}**: {_truncate_text(narrative, 72)}")
+        if len(active) > 3:
+            parts.append(f"- 另有 **{len(active) - 3}** 人动态请查看完整日报。")
+    else:
+        parts.append("- 今日团队成员在 Pivot 上均无任何输入和输出。")
+    parts.extend([
+        "",
+        "---",
+        "",
+        "_完整人员明细和无记录名单请查看完整日报。_",
+    ])
+    return "\n".join(parts).rstrip()
+
+
+def _attention_lines(formatted: str, *, limit: int) -> list[str]:
+    out: list[str] = []
+    keywords = ("需要关注", "需关注", "待关注", "风险", "失败", "未过", "卡住", "暂停")
+    for raw in formatted.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("## ") or line == "---":
+            continue
+        plain = _strip_outline_number(
+            _strip_inline_markup(line).lstrip("- ").strip()
+        )
+        if any(k in plain for k in keywords):
+            out.append(f"- {_color_text(plain, 'red')}")
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _compact_heading(text: str, color: str) -> str:
+    return f"## {_color_text(text, color)}"
+
+
+def _first_meaningful_line(text: str) -> str:
+    for raw in text.splitlines():
+        line = _strip_inline_markup(raw).strip()
+        if line and line != "---" and not line.startswith("## "):
+            return line
+    return ""
+
+
+def _strip_inline_markup(text: str) -> str:
+    return re.sub(r"<font color=\"[^\"]+\">(.*?)</font>", r"\1", text).replace("**", "")
+
+
+def _strip_outline_number(text: str) -> str:
+    return re.sub(r"^\(\d+\)\s*", "", text).strip()
+
+
+def _truncate_text(text: str, limit: int) -> str:
+    text = text.strip()
+    return text if len(text) <= limit else text[:limit].rstrip() + "…"
+
+
 # --------------------------------------------------------------------------- #
 # Company-view card                                                            #
 # --------------------------------------------------------------------------- #
 
 
-def build_company_card(facts: SharedFacts, narrative: CompanyNarrative) -> dict:
+def build_company_card(
+    facts: SharedFacts,
+    narrative: CompanyNarrative,
+    *,
+    report_url: str | None = None,
+    compact: bool = False,
+) -> dict:
     """飞书交互卡片字典,直接给 FeishuNotifier.broadcast_card。
 
     Schema 2.0 的 element 类型在不同飞书客户端版本支持度不一致(`note` /
@@ -353,15 +465,25 @@ def build_company_card(facts: SharedFacts, narrative: CompanyNarrative) -> dict:
     if narrative.status == "ai":
         formatted = _format_company_summary_for_card(narrative.summary)
         formatted = _bold_known_pinyins(formatted, _known_pinyins(facts))
-        sections = _split_into_card_sections(formatted)
-        chunks: list[str] = []
-        if sections["opening"]:
-            chunks.append(sections["opening"])
-        chunks.extend(sections["directions"])
-        if sections["closing"]:
-            chunks.append(sections["closing"])
-        # 各 chunk 间用 "---" 水平线分隔(段落空行 + hr 双重视觉断层)
-        parts.append("\n\n---\n\n".join(chunks))
+        if compact:
+            parts.append(_company_compact_markdown(formatted))
+            return _card_shell(
+                header=header,
+                template=template,
+                markdown="\n".join(parts).rstrip(),
+                button_text="查看完整日报" if report_url else None,
+                thread_url=report_url,
+            )
+        else:
+            sections = _split_into_card_sections(formatted)
+            chunks: list[str] = []
+            if sections["opening"]:
+                chunks.append(sections["opening"])
+            chunks.extend(sections["directions"])
+            if sections["closing"]:
+                chunks.append(sections["closing"])
+            # 各 chunk 间用 "---" 水平线分隔(段落空行 + hr 双重视觉断层)
+            parts.append("\n\n---\n\n".join(chunks))
     else:
         parts.append(narrative.summary)
 
@@ -383,6 +505,8 @@ def build_company_card(facts: SharedFacts, narrative: CompanyNarrative) -> dict:
         header=header,
         template=template,
         markdown="\n".join(parts).rstrip(),
+        button_text="查看完整日报" if report_url else None,
+        thread_url=report_url,
     )
 
 
@@ -391,7 +515,13 @@ def build_company_card(facts: SharedFacts, narrative: CompanyNarrative) -> dict:
 # --------------------------------------------------------------------------- #
 
 
-def build_personal_card(facts: SharedFacts, narrative: PersonalNarrative) -> dict:
+def build_personal_card(
+    facts: SharedFacts,
+    narrative: PersonalNarrative,
+    *,
+    report_url: str | None = None,
+    compact: bool = False,
+) -> dict:
     """飞书交互卡片字典,Phase 4 个人视角报告。
 
     Schema 2.0 的 note / hr element 在飞书部分版本不可用(reject 200861),
@@ -418,6 +548,21 @@ def build_personal_card(facts: SharedFacts, narrative: PersonalNarrative) -> dic
     inactive = [e for e in narrative.entries if not e.has_activity]
     entry_pinyins = tuple(e.pinyin for e in narrative.entries if e.pinyin)
     pinyins = tuple(dict.fromkeys((*_known_pinyins(facts), *entry_pinyins)))
+
+    if compact:
+        parts.append(_personal_compact_markdown(
+            narrative.entries,
+            active_count=len(active),
+            inactive_count=len(inactive),
+            pinyins=pinyins,
+        ))
+        return _card_shell(
+            header=header,
+            template=template,
+            markdown="\n".join(parts).rstrip(),
+            button_text="查看完整日报" if report_url else None,
+            thread_url=report_url,
+        )
 
     if narrative.status == "no_active_users":
         parts.append("**🌙 团队动态**")
@@ -457,6 +602,8 @@ def build_personal_card(facts: SharedFacts, narrative: PersonalNarrative) -> dic
         header=header,
         template=template,
         markdown="\n".join(parts).rstrip(),
+        button_text="查看完整日报" if report_url else None,
+        thread_url=report_url,
     )
 
 
