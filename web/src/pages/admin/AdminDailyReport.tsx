@@ -7,7 +7,7 @@ export function AdminDailyReport() {
     toast.error("管理员权限已失效，请刷新或重新登录");
   return (
     <PageShell
-      title="日报"
+      title="日报配置"
       description="配置每日 / 每周报告的时间窗口、内容与推送目标。"
     >
       <DailyReportSection onAdminLost={onAdminLost} />

@@ -120,7 +120,7 @@ export function AdminLayout() {
               to="/admin/daily-report"
               icon={<FileText className="h-3.5 w-3.5" />}
             >
-              日报
+              日报配置
             </NavItem>
             <NavItem to="/admin/ai" icon={<Bot className="h-3.5 w-3.5" />}>
               AI 助手
