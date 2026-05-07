@@ -56,25 +56,150 @@ class PersonalNarrative:
 
 
 _SYSTEM_PROMPT = """\
-你是 Pivot 个人视角日报生成器。基于成员今天 24 小时在 Pivot 时间线上的
-输入和输出,为每位列出的活跃成员生成一段简短叙述。
+你是 Pivot 个人视角日报生成器,向老板汇报每位活跃成员今天做了什么、
+做得怎么样。读者是公司老板,目的是让老板对每个人的当日产出有具体认知,
+**不用于绩效评估、打分、排名**。
 
-规则(严格):
-1. 只为输入数据中**列出**的成员生成叙述 —— 不要凭空增加成员
-2. 单条叙述 1-2 句,中文,**直接陈述事实**(谁今天做了什么、参与了哪些 matter)
-3. **反绩效化**:不打分、不排名、不对比、不评价"努力 / 高效"等主观判断
-4. 不输出技术细节:不引用文件路径、commit hash、内部 ID
-5. 严禁臆造:任何陈述必须基于输入字段;不允许编造未发生的动作 / 状态 / 人
-6. 单条最长 60 中文字符
-7. 输入与输出可混合叙述,不要强制分两栏
+⚠⚠⚠ **三大死禁** —— 出现一次都视为不达标:
 
-**重点**:可在叙述里点出"重点动作"(触发 status_change、给 verify 判定、
-  对他人 matter 的关键贡献),但不要与其他成员对比。
+1. **把 think / act / verify / result / insight 五个英文词写进输出**
+   → 用中文(讨论 / 实施 / 验证 / 收尾结果 / 复盘)。
 
-输出格式(严格 JSON,无任何 markdown 包裹):
+2. **用 收尾 / 收口 / 流转 / 落地 这类空洞动词**(包括所有变体词组):
+   ❌ "X 完成收尾"  ❌ "X 落地完成"  ❌ "推动 X 流转"  ❌ "X 收口"
+   ❌ "X 闭环了"(动词)
+   ✅ 必须用具体动词:
+   · 自己做完 → 完成 / 上线 / 合入主线 / 交付 / 关闭 / 取消 / 终止 /
+                拍板 / 暂缓
+   · 给别人工作判定 → 验证通过 / 验收通过 / 审定通过 / 判定关闭 /
+                      验证未过 / 确认无产出
+   注意:作为名词的"闭环"可以用("3 天闭环""推到闭环阶段")。
+
+3. **打分 / 排名 / 对比 / 评价"积极""高效""努力"等主观判断**
+   → 反绩效化原则:只陈述客观事实,不下评语。
+   ❌ "积极推进""配合默契""保持高效""贡献突出"
+   ✅ "完成 X 上线""把 Y 推到验证阶段""卡 8 天未推进"等可验证事实
+
+──────────────────────────────────────
+【角色化叙事】
+
+每位成员同时承担多种角色,输入数据已按角色分桶。**当天有数据的角色才写,
+没有的不强求**。三个角色 + 字段对照:
+
+1. **as_owner.matters[]** —— 自己作为负责人的事项(matter.owner == self),
+   每个 matter 一段叙述:
+   · 看 today_events[] 里**自己写的**事件(by_self=true)推到哪一步
+   · 看 today_events[] 里**别人写的**事件(by_self=false):
+     - 别人的 verify(验证通过 / 验证未过)→ 我的工作有没有被认可
+     - 别人在我事项的评论 / @ 抛球 → 我有没有响应
+   · 别人 verify 我的工作时,**仍要点出验证作者的 pinyin**(不要写"管理层")
+   · current_status / prev_summary 是上下文,可帮助你写"从 X 推到 Y"
+   · 一个 matter 的所有今天事件**揉成一句**叙述,不要按动作分散写
+
+2. **as_verifier.verifications_today[] / results_today[]** —— 我作为
+   把关人对别人事项的判定:
+   · verifications_today:每条带 matter + judgement
+     (passed/failed/partial),写"对 X 验证通过 / 验证未过"
+   · results_today:我写的收尾(用作 matter 闭环动作判定)
+   · 这是**评判别人工作**,措辞用"验证 / 判定 / 审定",不是"做完 X"
+
+3. **as_collaborator.thinks_in_others_matters[]** —— 我在**别人事项**里
+   写的讨论(think,但 matter_owner != 我):
+   · 这是协作贡献,通常是"提反提议 / 给关键反馈 / 拍板暂停"等
+   · matter_owner 字段告诉你这事项实际负责人是谁
+
+  另外还有 **as_collaborator.mentions_received_contexts[]** —— 我被 @ 抛球的
+  上下文(by + body),如果有响应可以提一句"X 抛球的 Y 已接住";没有就不提。
+
+不必硬塞所有角色;只写当天真实发生的。一个人某天可能只是负责人 /
+只是把关人 / 三种都有。
+
+**覆盖原则**:`as_owner.matters[]` **里有几个事项,叙述里就要带到几个**——
+即使是"暂停开放讨论""判定关闭"这种简短的拍板,也要点出。老板要从这一行
+看到这个人今天作为负责人推了哪些事(每个事项都要可识别),不能合并漏报。
+verifications_today / results_today 同理,**有几条就要点几条**(同一事项
+多条判定可合写)。
+
+**去重原则**:**同一事项在你的叙述里最多出现一次**。如果一个事项跨多个
+角色(如对同一事项既写过 verify 也在评论里拍板,或既是负责人也是把关人),
+合并到一句话讲完,**不要在不同角色段子里重复提及**。
+
+⚠ **关键陷阱**:同一事项可能在不同角色桶里以**略不同的名字**出现(如
+"Pivot UI 全新重构"和 "UI 重构"是同一事项),要按**同一 matter_id /
+business 含义**去重,不能因字面差就当成两个事项。判断方法:**关键词
+重叠就当同一事项**(如都含 "UI 重构"、都含 "商业化")。
+
+❌ 反例(同事项写 2 次):
+   "判定取消 UI 重构需求...在 UI 重构事项中参与...卡片模式改造"
+   (前后两个 "UI 重构" 是同一事项,只是后半截带了别的话题)
+✅ 正例:
+   "判定取消 UI 重构需求(与现有功能重复,卡片模式改造方向已转移)"
+   (一句话讲完该事项的所有动作)
+
+❌ 反例(同事项不同名):
+   "拍板关闭商业化挑战讨论事项;验证无效...无实质产出的商业化探讨;
+    关闭相关商业化与碧桂园物料讨论"
+   (商业化挑战讨论 / 商业化探讨 / 商业化 都指向同一事项)
+✅ 正例:
+   "判定关闭无实质产出的商业化探讨事项"
+   (合并到一次)
+
+**写完后自检**:扫描自己的草稿。一个事项的关键词如果出现 ≥ 2 次,必须
+合并;不要害怕一句话变长(单条 ≤ 150 字仍有空间),也不要拆成两句。
+
+──────────────────────────────────────
+【表达基调】
+
+- 单条 1-3 句,30-150 字之间(没干啥的就 30-50 字,事多的可到 150 字)
+- 不写文件路径 / commit hash / 内部 ID
+- 不写"X 创建了 N 篇 think,M 篇 act"这种活动量计数
+- 人名一律用 pinyin(huangshengli / dengke / liuyu,**不翻译为汉字**)
+- 数字一律阿拉伯("3 个事项""8 天",不写"三个事项""八天")
+- 事项名**不用任何符号包起来**(《》「」'' "" 都不要),直接用业务白话
+  当代称。如"团队日报推送服务"而不是"《新需求-日报推送》"或
+  "「失效自己文档」"
+- **写业务结果,不写技术实现细节** —— 老板不懂代码,只关心事项有没有
+  动 / 拍没拍板 / 闭没闭环。开发名词不要写出来:
+  ❌ "完成失效恢复事件、反写字段、通知提醒、界面更新与文档同步开发,
+     修复 strip 节点归位问题并将代码合入主线"
+  ✅ "完成作者失效文档功能开发并合入主线 v2"
+  ❌ "补全并发原子性验证、修复评论丢失字段缺失问题"
+  ✅ "完成已读状态功能开发并上线"
+  ❌ "P1-P5 落地、反写 4 字段、SSE thin payload"
+  ✅ "完成功能合入并推到验证阶段"
+
+**字段值的英文不要写进输出**:
+- current_status:planning / executing / paused / finished / cancelled / reviewed
+  → 中文(讨论中 / 执行中 / 暂停 / 完成 / 取消 / 已收口)
+- judgement:passed / failed / partial → 验证通过 / 验证未通过 / 部分通过
+- 结构性词:owner → 负责人 / matter → 事项 / creator → 写的人
+
+──────────────────────────────────────
+【硬约束】
+
+- 只为输入数据中**列出**的成员生成叙述 —— 不凭空增加成员
+- 严禁臆造:任何陈述必须基于输入字段;不编造未发生的动作 / 状态 / 人
+
+──────────────────────────────────────
+【输出格式】
+
+严格 JSON,无任何 markdown 包裹:
 {
   "entries": [
-    {"pinyin": "alice", "narrative": "在登录链路改造创建 verify..."}
+    {"pinyin": "alice", "narrative": "..."}
+  ]
+}
+
+──────────────────────────────────────
+【示例】
+
+{
+  "entries": [
+    {"pinyin": "huangshengli", "narrative": "作为作者失效文档需求的负责人当天合入主线 v2;在 Owner 机制事项中接住接口字段问题(验证未过卡 8 天仍在修复);在 EC 与 APP 形态讨论中拍板暂停。"},
+    {"pinyin": "liuyu", "narrative": "完成多项验证:产品分析报告判定关闭、列表筛选验证通过、通知卡片验证通过、Owner 机制验证未过指出接口字段需切换;主导员工评价体系方案设计与底层架构选型评估。"},
+    {"pinyin": "tangkun", "narrative": "作为事项列表筛选负责人完成红点清退上线(liuyu 验证通过);启动 comments 重命名方案设计;因方向调整暂停 benchmark SaaS 迭代。"},
+    {"pinyin": "dengke", "narrative": "拍板暂停 EC 底层改造与 AI 客服 S1(要求重估架构与商业化定位);新立 5 月底 SaaS 推出项目;判定关闭无产出的商业化探讨。"},
+    {"pinyin": "yezaiyong", "narrative": "完成 MCP 数据完整性修复并合入用户管理分支;启动 MCP 可见范围改造方案设计。"}
   ]
 }
 """
@@ -156,64 +281,144 @@ def _call_ai(active: list[UserActivity], ai_settings: AISettings) -> str:
 
 
 def _serialize_user(ua: UserActivity) -> dict:
-    """精简 UserActivity → AI 友好的 JSON。截断长 summary,限制条数。"""
-    # 自己创建的 file 按 type 分桶。think 算输入,act/verify/result/insight 算输出。
-    inputs: dict[str, list] = {"think_files": [], "comments_received_mentions": ua.mentions_received}
-    outputs: dict[str, list] = {
-        "act_files": [],
-        "verify_files": [],
-        "result_files": [],
-        "insight_files": [],
-        "status_transitions": [],
-        "files_on_others_matters": [],   # file_owns: 别人的 matter,自己 owner
-    }
+    """精简 UserActivity → AI 友好的 JSON,按"三种角色"分桶。
 
-    for ev in ua.file_creates[:8]:
-        item = {
-            "matter": ev.matter_title[:50],
-            "summary": (ev.summary or "")[:80],
-        }
-        if ev.file_type == "think":
-            inputs["think_files"].append(item)
-        elif ev.file_type == "act":
-            outputs["act_files"].append(item)
-        elif ev.file_type == "verify":
-            outputs["verify_files"].append(item)
-        elif ev.file_type == "result":
-            outputs["result_files"].append(item)
-        elif ev.file_type == "insight":
-            outputs["insight_files"].append(item)
+    v0.16 重构:从"按动作类型分桶(think_files/act_files/...)"改成
+    "按角色分桶(as_owner / as_verifier / as_collaborator)",让 LLM 输出
+    按事项叙述("作为 X 事项负责人推到 Y")而不是按动作堆砌。
 
-    # file_owns: 派给我的 matter 的文件(creator != self)
-    for ev in ua.file_owns[:5]:
-        outputs["files_on_others_matters"].append({
-            "matter": ev.matter_title[:50],
-            "type": ev.file_type,
-            "creator": ev.creator,
-            "summary": (ev.summary or "")[:80],
-        })
-
-    # 状态推进:matter 名 + from→to(去重 by matter)
-    seen_matters = set()
-    for ev in ua.status_changes_triggered:
-        if ev.matter_id in seen_matters or not ev.status_change:
-            continue
-        seen_matters.add(ev.matter_id)
-        outputs["status_transitions"].append({
-            "matter": ev.matter_title[:50],
-            "from": ev.status_change.get("from"),
-            "to": ev.status_change.get("to"),
-        })
-
+    三种角色:
+    - as_owner    matter.owner == self 的事项,今天有活动的清单
+                  (含别人在我事项上做的事 —— 我是被动负责人也要看到)
+    - as_verifier 我写的 verify / result 文件 —— 第三方判定动作
+                  (扁平列出,每条带 matter title + judgement)
+    - as_collaborator 我在别人事项里做的事(think 评审 / 评论参与 / 被 @ 抛球)
+    """
     return {
         "pinyin": ua.pinyin,
-        "display_name": ua.display_name,
-        "inputs": {
-            "think_files": inputs["think_files"],
-            "comments_count": len(ua.comments_given),
-            "mentions_received": ua.mentions_received,
+        "as_owner": {
+            "matters": [_serialize_owned_matter(d, ua.pinyin)
+                        for d in ua.matters_as_owner],
         },
-        "outputs": outputs,
+        "as_verifier": _serialize_verifier_actions(ua),
+        "as_collaborator": _serialize_collaborator_actions(ua),
+    }
+
+
+def _serialize_owned_matter(d, self_pinyin: str) -> dict:
+    """OwnedMatterDigest → JSON。每个事项一个对象,含今天的事件清单。"""
+    return {
+        "matter": (d.title or "")[:50],
+        "current_status": d.current_status,
+        "prev_summary": (d.prev_summary or "")[:120],
+        "today_events": [
+            _serialize_event(ev, self_pinyin)
+            for ev in d.today_events[:12]
+        ],
+    }
+
+
+def _serialize_event(ev, self_pinyin: str) -> dict:
+    """单条 timeline 事件 → JSON。标 by_self 让 LLM 区分"我做的"和"别人做的"。"""
+    out: dict = {
+        "by": ev.creator,
+        "by_self": ev.creator == self_pinyin,
+        "type": ev.file_type,
+        "summary": (ev.summary or "")[:80],
+    }
+    if ev.status_change:
+        out["status_change"] = {
+            "from": ev.status_change.get("from"),
+            "to": ev.status_change.get("to"),
+        }
+    if ev.file_type == "verify" and ev.verifications:
+        out["judgements"] = [
+            v.get("judgement") for v in ev.verifications if v.get("judgement")
+        ]
+    if ev.comments_in_window:
+        out["comments_in_window"] = [
+            {
+                "by": c.author,
+                "body": (c.body or "")[:80],
+                "mentions": list(c.mentions),
+            }
+            for c in ev.comments_in_window[:5]
+        ]
+    return out
+
+
+def _serialize_verifier_actions(ua: UserActivity) -> dict:
+    """我写的 verify / result 文件 —— 第三方判定动作,按事项扁平列出。"""
+    verifications = []
+    results = []
+    for ev in list(ua.file_creates) + list(ua.file_owns):
+        if not ev.file_in_window:
+            continue
+        if ev.file_type == "verify" and ev.verifications:
+            for v in ev.verifications:
+                judgement = v.get("judgement")
+                if not judgement:
+                    continue
+                verifications.append({
+                    "matter": (ev.matter_title or "")[:50],
+                    "judgement": judgement,
+                    "comment": (v.get("comment") or "")[:80],
+                })
+        elif ev.file_type == "result":
+            results.append({
+                "matter": (ev.matter_title or "")[:50],
+                "summary": (ev.summary or "")[:80],
+            })
+    return {
+        "verifications_today": verifications[:8],
+        "results_today": results[:5],
+    }
+
+
+def _serialize_collaborator_actions(ua: UserActivity) -> dict:
+    """在别人事项里做的事(think / 评论 / 被 @ 抛球)。
+
+    "别人事项" = matter.owner 不是 self。落差用 matter_owner 字段判断;
+    matter_owner 缺失(老 matter)时按"非自己的 matter"保守归类:看 ev.creator
+    或 ev.owner 是否等于 self。
+    """
+    self_pinyin = ua.pinyin
+    thinks_in_others = []
+    for ev in ua.file_creates[:8]:
+        if ev.file_type != "think":
+            continue
+        owner = ev.matter_owner or ev.owner
+        if owner and owner != self_pinyin:
+            thinks_in_others.append({
+                "matter": (ev.matter_title or "")[:50],
+                "matter_owner": ev.matter_owner or ev.owner,
+                "summary": (ev.summary or "")[:80],
+            })
+
+    # mentions 不数计数,给 LLM 看抛球的事项 + body 上下文
+    mention_contexts = []
+    seen_keys = set()
+    for ev in ua.file_creates + ua.file_owns:
+        for c in ev.comments_in_window:
+            if self_pinyin in c.mentions:
+                key = (ev.matter_id, c.created_at)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                mention_contexts.append({
+                    "matter": (ev.matter_title or "")[:50],
+                    "by": c.author,
+                    "body": (c.body or "")[:80],
+                })
+                if len(mention_contexts) >= 5:
+                    break
+        if len(mention_contexts) >= 5:
+            break
+
+    return {
+        "thinks_in_others_matters": thinks_in_others,
+        "comments_count": len(ua.comments_given),
+        "mentions_received_contexts": mention_contexts,
     }
 
 

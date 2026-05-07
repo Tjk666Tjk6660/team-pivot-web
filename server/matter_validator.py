@@ -6,6 +6,7 @@ from typing import Any
 from server.doc_types import (
     ALLOWED_TYPES_BY_STATUS,
     VALID_DOC_TYPES,
+    VALID_EVENT_REASONS,
     VALID_EVENT_TYPES,
     VALID_JUDGEMENTS,
     VALID_OUTCOMES,
@@ -86,6 +87,13 @@ def validate_append(
         )
 
     doc_type = item.get("type")
+
+    # Invalidation/restoration events: no `type` field, identified by `reason`.
+    # Bypasses the file-type × status matrix entirely (events fire in any state).
+    # See AI-docs/invalidate-self/product-design.md §三.
+    if doc_type is None and "reason" in item:
+        return _validate_invalidation_event_shape(item, index_data)
+
     if not doc_type:
         return _fail("type_missing", "type", "file type is required")
 
@@ -104,6 +112,13 @@ def validate_append(
             "type",
             f"type {doc_type!r} not allowed when matter is {current_status!r}",
         )
+
+    # §5.3 invalidation reference block: a new file item's quote / refer
+    # cannot point to an already-invalidated file in this matter. Enforced at
+    # file creation path, not at event creation path.
+    invalid_ref = _validate_no_quote_to_invalidated(item, index_data)
+    if invalid_ref is not None:
+        return invalid_ref
 
     sc = item.get("status_change")
     if sc:
@@ -378,4 +393,136 @@ def _validate_result_shape(
             "status_change",
             "result must carry status_change to finished or cancelled",
         )
+    return None
+
+
+def _validate_invalidation_event_shape(
+    item: dict[str, Any], index_data: dict[str, Any]
+) -> ValidationResult:
+    """Validate an invalidation/restoration event entry (no `type`, has `reason`).
+
+    Encodes the 6 rules from AI-docs/invalidate-self/product-design.md §三:
+      1. event creator must equal target file's creator (author-only)
+      2. already-invalidated file cannot be invalidated again (must restore first)
+      3. not-invalidated file cannot be restored
+      4. quote cannot point to another event item (no chained invalidation) —
+         enforced implicitly: event items have no `file` field, so the by-file
+         lookup naturally cannot resolve to one
+      5. quote must point to a file in the SAME matter — enforced implicitly by
+         the by-file lookup (cross-matter targets are simply not found)
+      6. comment cannot be invalidated — enforced implicitly: comments live
+         nested in `timeline[i].comments[]`, never as top-level timeline entries
+    """
+    creator = item.get("creator")
+    if not creator:
+        return _fail(
+            "creator_required", "creator", "creator is required for event entry",
+        )
+
+    quote = item.get("quote")
+    if not quote:
+        return _fail(
+            "quote_required",
+            "quote",
+            "quote is required (target file path)",
+        )
+
+    reason = item.get("reason")
+    if reason not in VALID_EVENT_REASONS:
+        return _fail(
+            "invalid_reason",
+            "reason",
+            f"reason must be one of {sorted(VALID_EVENT_REASONS)}",
+        )
+
+    # Find target file item in this matter's timeline. This single lookup
+    # implicitly enforces rules 4, 5, 6: event items / comments / cross-matter
+    # paths all fail to resolve to a top-level file entry.
+    target_item = None
+    for entry in index_data.get("timeline") or []:
+        if entry.get("file") == quote:
+            target_item = entry
+            break
+    if target_item is None:
+        return _fail(
+            "target_not_found",
+            "quote",
+            f"target {quote!r} is not a file in this matter timeline "
+            "(cross-matter / comment / event paths not allowed)",
+        )
+
+    # Defensive: target's `type` must be in the file-type whitelist. Owner_change
+    # events accidentally given a `file` field would otherwise slip through.
+    target_type = target_item.get("type")
+    if target_type not in VALID_DOC_TYPES:
+        return _fail(
+            "target_not_file_item",
+            "quote",
+            f"target must be a file item (think/act/verify/result/insight); "
+            f"got type={target_type!r}",
+        )
+
+    # Rule 1: creator must equal target file's creator.
+    target_creator = target_item.get("creator")
+    if creator != target_creator:
+        return _fail(
+            "event_creator_mismatch",
+            "creator",
+            f"creator {creator!r} is not the author of target {quote!r} "
+            f"(author={target_creator!r})",
+        )
+
+    # Rules 2 & 3: invalidate vs restore must match current state.
+    is_invalidated = bool(target_item.get("invalidated"))
+    if reason == "restored":
+        if not is_invalidated:
+            return _fail(
+                "target_not_invalidated",
+                "reason",
+                f"target {quote!r} is not invalidated; cannot restore",
+            )
+    else:  # misposted / inaccurate
+        if is_invalidated:
+            return _fail(
+                "target_already_invalidated",
+                "reason",
+                f"target {quote!r} is already invalidated; "
+                "restore first before re-invalidating",
+            )
+
+    return OK
+
+
+def _validate_no_quote_to_invalidated(
+    item: dict[str, Any], index_data: dict[str, Any]
+) -> ValidationResult | None:
+    """§5.3 reference block: a new file item's quote / refer cannot target
+    an already-invalidated file in the same matter.
+
+    Enforced at file-creation path (not at event-creation path) because the
+    constraint is "you cannot build new content on a withdrawn statement",
+    not "you cannot withdraw something". Cross-matter refer paths are not
+    checked here — they live in another matter, and resolving cross-matter
+    invalidation state is out of v1 scope.
+    """
+    by_file: dict[str, dict[str, Any]] = {}
+    for entry in index_data.get("timeline") or []:
+        f = entry.get("file")
+        if f:
+            by_file[f] = entry
+
+    quote = item.get("quote")
+    if quote and by_file.get(quote, {}).get("invalidated"):
+        return _fail(
+            "quote_target_invalidated",
+            "quote",
+            f"cannot quote already-invalidated file {quote!r}",
+        )
+    for ref in item.get("refer") or []:
+        if by_file.get(ref, {}).get("invalidated"):
+            return _fail(
+                "refer_target_invalidated",
+                "refer",
+                f"cannot refer already-invalidated file {ref!r}",
+            )
     return None

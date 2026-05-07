@@ -175,10 +175,10 @@ function NewMatterClassicForm({
 
   useEffect(() => {
     Promise.all([fetchMatters(), fetchDrafts()])
-      .then(([items, drafts]) => {
+      .then(([res, drafts]) => {
         const cats = Array.from(
           new Set(
-            items
+            res.items
               .map((m) => m.category)
               .filter((c): c is string => typeof c === "string" && c.length > 0),
           ),

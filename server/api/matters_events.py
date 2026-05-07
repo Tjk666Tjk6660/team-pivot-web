@@ -30,6 +30,7 @@ from server.events import (
     TOPIC_ANNOTATION_APPENDED,
     TOPIC_FILE_APPENDED,
     TOPIC_MATTER_CREATED,
+    TOPIC_MATTER_EVENT_APPENDED,
     TOPIC_MATTER_OWNER_CHANGED,
     TOPIC_MATTER_VISIBILITY_CHANGED,
     TOPIC_MENTION_APPENDED,
@@ -54,6 +55,11 @@ _TOPIC_MAP: dict[str, tuple[str, str]] = {
     TOPIC_ANNOTATION_APPENDED: ("matter.updated", "annotation_appended"),
     TOPIC_MATTER_OWNER_CHANGED: ("matter.updated", "owner_changed"),
     TOPIC_MATTER_VISIBILITY_CHANGED: ("matter.updated", "visibility_changed"),
+    # Invalidation/restoration events: thin SSE — just a "matter.updated"
+    # nudge with reason="event_appended", clients refetch matter detail to
+    # see the reverse-write fields + new event entry on the timeline.
+    # See AI-docs/invalidate-self/product-design.md §5.1.
+    TOPIC_MATTER_EVENT_APPENDED: ("matter.updated", "event_appended"),
 }
 
 # Process-level ring buffer for Last-Event-ID replay. New connections that

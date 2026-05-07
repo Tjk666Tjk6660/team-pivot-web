@@ -1,297 +1,132 @@
-# Pivot 日报 · 产品设计
+# Pivot 团队日报 · 产品设计文档
 
-> v0.2 已落地。基于 matter「新需求-日报推送」中 dengke #005 / #013 + terry #008 + huangshengli #009 的讨论收敛。
-
----
-
-## 〇、设计主轴
-
-- **只读 Pivot matter 数据**,**不接入** git 代码仓库 / 不做 commit 统计
-- **两份独立报告**:公司视角 + 个人视角,**共享底层事实数据,不共享 LLM 中间结果**(dengke #013 决议)
-- **不做评分**(团队 / 个人都不做),只做事项推进叙事 + 整体节奏定性(active / steady / stalled)
-- **进程内调度**:FastAPI lifespan 内挂 asyncio scheduler,不依赖 systemd timer
-- **配置驱动**:管理员通过 `/admin` UI 调整开关 / 时间 / 频率;手动触发也走同一 UI
-
----
+> v2 多任务版。详细技术设计见同目录 [`v2-multi-job-design.md`](./v2-multi-job-design.md)。
 
 ## 一、项目背景
 
-Pivot 已经把团队工作活动结构化为 matter 模型 —— 每件事一条 timeline,事项的状态、推进、参与人、讨论都沉淀在 index 里。
+公司管理层目前主要靠每日早会同步团队进展,现状问题:
 
-团队负责人需要每天对所有 matter 的进展心中有数,以便识别风险、调配资源、决定下一步关注点。但 matter 数量上去之后,逐个翻 timeline 的成本会越来越高。
+- 早会占用每个人 20-40 分钟。N 人会议的总成本远超扫一眼日报
+- 同步信息口头表述,事后无据可查
+- 管理者关心的"做了什么、做成了什么、卡在哪",每个人讲的颗粒度参差不齐
+- 团队规模扩大后串完一遍超过 1 小时
 
-日报就是把这份沉淀数据每天定时整理成一份**事项推进叙事**:matter 时间线上发生了什么、谁推动了什么、目前处于什么状态 —— 推到飞书群,让管理层不必逐个翻 matter 也能掌握全局。
-
-**产品定位:独立通知服务**。日报是 Pivot 向外输出的一条信息管道,在 IM 流量里触达管理层,不在 Pivot 站内承载页面。
-
----
+Pivot 系统已经把团队的工作活动结构化为 matter 模型(每件事一条时间线 + 多类型文件 + 6 状态机),数据已经是结构化事实,不需要人重复口头同步。
 
 ## 二、目标
 
-日报由两份独立 LLM 生成的报告组成:
+把 Pivot 中的 matter 活动**自动**整理为可订阅的"团队日报",按管理员配置的时间在飞书内推送。让管理层不参加早会就能掌握:
 
-### 2.1 公司视角报告
+1. **公司视角**:整体节奏 + matter 总览 + 关键推进/阻塞事件,一段 AI 叙事
+2. **个人视角**:逐人输入/输出叙述,无活动者合并到一行不漏报
 
-**回答 3 个问题**(由 LLM 用一段叙事一并回答):
+**非目标(初版不做)**:
+- 不做"明天该干什么"的调度建议(纯回看)
+- 不做绩效打分依据(AI 评分仅供管理者参考,不入考核)
+- 不允许人为豁免成员(在系统里"看见"是更稳的产品语义)
 
-1. 整体推进了什么?(file_type 分布 + verify 判定)
-2. 哪个 matter 今天最活跃?(top_active_matters 强度话术)
-3. 整体节奏如何?(active / steady / stalled 三选一定性)
+## 三、核心模型 — 多任务
 
-### 2.2 个人视角报告
+每条**任务(job)**独立配置:
 
-**逐人**生成一行叙述,涵盖每人当日的输入(think / 评论 / 被 mention 等)和输出(act / verify / result / insight / 状态推进等)。
-
-**所有团队成员都要覆盖**,无活动者合并到一行 `最近一天无输入输出: A、B、C`(避免团队规模大时 N 行重复句撑爆篇幅,但仍明确点名)。
-
-### 2.3 不是目标
-
-| 不做 | 原因 |
+| 字段 | 含义 |
 |---|---|
-| 不做绩效考核 / 个人排名 | 日报重点是事项推进,不是给人排名(dengke 原话) |
-| 不做 todo list | 不是日报职责 |
-| 不承载交互(评论 / 跳转) | 日报是只读推送 |
-| 不接入代码仓库 / commit 统计 | 工作分布在多个 repo,单仓库会偏(dengke #005) |
-| 不做 matter 视角逐个叙事 | dengke #013:第一版不做基于 matter 的逐事项报告 |
+| 名称 | 管理员看的标识,如"公司视角早报""高管个人晨报" |
+| 视角 | `company` 或 `personal` 二选一(每个 job 只发一种卡) |
+| 推送时刻 | `HH:MM`,Asia/Shanghai |
+| 频率 | `daily`(每天) / `weekdays`(仅工作日) / `mon`–`sun`(每周固定一天) / `month_start`(每月 1 号) / `month_end`(每月最后一天) |
+| 统计窗口 | `1–168` 小时;以推送时刻为终点回看 |
+| 接收类型 | `groups`(飞书群) / `users`(个人 DM) |
+| 接收对象 | `groups` 不填 = 全部 bot 群;`users` 必填 open_id 列表 |
+| 状态 | `active`(运行中) / `paused`(暂停) / `archived`(软删) |
 
----
+管理员可以同时跑多条任务 — 例如"公司视角 9:30 推全员群" + "个人视角 8:00 DM 给 CEO" + "公司视角周末单独跑测试群"。
 
-## 三、数据源(只一处)
+## 四、调度
 
-**Pivot 数据仓库 matter index**(`/opt/team-pivot-web/var/git/<repo>/index/*.index.yaml`),只读访问。
+- **内嵌主服务**:scheduler 是 FastAPI lifespan 启动的 asyncio 后台 task,每 60 秒扫一次 jobs 表
+- **不依赖外部 cron / systemd timer**:主服务起来 = 调度起来;主服务挂 = 调度也挂(可由监控告警发现)
+- **漏跑容忍 30 分钟**:服务重启后若错过窗口 ≤30 分钟,立即补跑;>30 分钟则发漏跑提醒卡,不再补
+- **失败重试**:retry_count < 3 时每 5 分钟重试,重试 3 次后发失败提醒卡
+- **历史保留 365 天**:每天清理一次旧的 runs 行,同步把 `jobs.last_run_id` 中失效的引用置 NULL
 
-读取的字段:
+## 五、系统通知
 
-- `matter.current_status` / `matter.updated_at` / `matter.title`
-- `timeline[].file / type / creator / owner / created_at / summary`
-- `timeline[].status_change` / `verifications[]` / `comments[]`
+漏跑、失败、重试到上限的告警卡发给"系统通知接收人":
 
-读取 `users` 表(SQLite,`mode=ro`)做 pinyin → 中文名展示和个人维度聚合。
+- 管理员可配置接收群(chat_ids)和接收人(open_ids)
+- 都不配置时 fallback 广播到全部 bot 所在的飞书群
 
-**不读** 代码仓库,**不读** commit history,**默认不读** matter 文件正文(v0.3 可能加 AI 下钻读正文,未实现)。
+入口在管理面板"日报配置"section 里,默认折叠。
 
----
+## 六、手动触发
 
-## 四、共享事实层 + 派生指标
+独立卡(不绑任何定时任务):管理员选定 view + 接收人 + 统计窗口,点"立即触发"。常用于:
 
-dengke #013 强调"程序层统一提供同一份事实数据"。`shared_facts.py` 一次性算好所有派生指标,两份 LLM 调用各取所需:
+- 临时补发(漏跑后人工补)
+- 排查问题(改了 AI 配置后试一发)
+- 单次执行(领导临时要求"现在拉一下今天的进度")
 
-| 字段 | 含义 | 给谁用 |
-|---|---|---|
-| `matter_events` | 24h 内的 timeline 事件清单 | 个人视角(按用户聚合) |
-| `user_activities` | 全员(含 0 活动)的 input/output 聚合 | 个人视角 |
-| `summary` | 窗口级总计数 | 公司视角 |
-| `matter_status_breakdown` | `current_status → 触动 matter 数` | 公司视角 |
-| `file_type_breakdown` | think / act / verify / result / insight 各几篇 | 公司视角("整体推进了什么") |
-| `verify_judgements` | passed / failed / partial 各几次 | 公司视角("实质推进"信号) |
-| `top_active_matters[]` | 按 activity_score 降序的 top N | 公司视角("最活跃 matter") |
+## 七、卡片输出形式
 
-`MatterActivityMetrics` 单条结构:
+仍是飞书交互卡(schema 2.0),分两类视角:
 
-```
-{
-  path: "Pivot/数据迁移方案",      ← category/slug 引用 token,不是自然语言 title
-  current_status: "finished",
-  file_count: 3,
-  file_types: { verify: 1, result: 1 },
-  status_change: { from: "executing", to: "finished" },
-  verify_judgements: { passed: 1 },
-  comments_count: 2,
-  activity_score: 16
-}
-```
-
-**activity_score 公式**:`file_count + (5 if status_change else 0) + (3 if has result) + verify_passed*2 + verify_failed*2 + comments/2`。weights 是粗略经验值,实测调整。
-
----
-
-## 五、LLM 调用契约
-
-### 5.1 两次独立调用
-
-| 调用 | 输入 | 输出 |
-|---|---|---|
-| **call C · 公司视角** | window + team_stats + matter_status_breakdown + top_active_matters | `{ summary, tone }` |
-| **call P · 个人视角** | 全员 input/output 聚合(只活跃用户喂 LLM) | `{ entries: [{ pinyin, narrative }] }` |
-
-两次调用**独立运行,互不依赖中间结果**(dengke #013)。共享底层 SharedFacts,但 LLM prompt / 输出 schema 不共享。
-
-### 5.2 公司视角 prompt 关键约束
-
-- summary 必须是 2-4 句中文叙事段落,**不切分子区块,不用 markdown**
-- 必须给 tone:`active / steady / stalled` 三选一
-- 描述"实质推进"必须基于 verify_judgements 数据(passed / failed 数字)
-- top_active_matters 用**强度话术**("讨论最激烈" / "落地最快" / "评论密度最高"),**禁止描述 matter 内容**(prompt 里没 summary 数据)
-- matter 引用必须用 path 原文(`Pivot/xxx`),不要改名 / 翻译 / 缩写
-- **不要把 path 中的 category 当方向归类** —— 防止 LLM 把"Pivot""enclaws"自由聚类成虚构产品方向
-- 末尾不绝对(用"整体""主要""可能",不用"完成""确定")
-
-### 5.3 个人视角 prompt 关键约束
-
-- 只为活跃成员生成 narrative,**无活动者由程序填固定字符串**"今天没有任何输入和输出"(避免 LLM 给无活动者编理由 / 模糊话术)
-- 单条叙述 1-2 句,中文,直接陈述事实
-- 反绩效化:不打分 / 不排名 / 不对比
-- 防御:LLM 漏返回 → 程序 stub;LLM 多返回不存在用户 → 忽略
-
-### 5.4 LLM 失败兜底
-
-任一调用 schema 不合格 / 异常 / 超时 → 该报告进 fallback 模式:卡片用 wathet 模板,内容退化为统计性兜底文案(公司:数字陈述;个人:全员 stub)。**另一份报告不受影响**。
-
----
-
-## 六、产出形式
-
-两张独立飞书卡,推到所有 bot 在的群。
-
-### 6.1 公司日报卡(示意)
+### 公司视角卡
 
 ```
-📊 公司日报 · 4-28
-📅 覆盖窗口:2026-04-28 09:00 → 2026-04-29 09:00
+📊 公司日报 · 4-26                            [蓝色 header]
+─────────────────────────────────────────────
+📅 覆盖窗口:2026-04-26 09:30 → 2026-04-27 09:30
 
 📈 团队总览
-matter 事件 55 篇 · 状态推进 13 次 · 评论 20 条 · 涉及 matter 19 个 · 活跃成员 11 人
+matter 事件 23 篇 · 状态推进 3 次 · 评论 18 条
+涉及 matter 7 个 · 活跃成员 6 人
 
 🚀 整体节奏:积极推进
-今日团队产出 40 篇 think + 10 篇 act + 12 篇 verify + 1 篇 result,
-verify 判定 8 passed / 2 failed,显示多任务线进入实质验证。今日交互
-密度最高的是 enclaws/OPC-数字员工服务台-产品规划,9 篇文件 + 集中
-评论形成高热度讨论区;落地最快的是 Pivot/支持SSE刷新...
+团队推进了《登录链路重构》并完成预期验收,
+《@提及系统》落地了关键功能,
+《数据迁移方案》启动了产品讨论。
 
-本日报由 AI 基于 Pivot matter 数据生成,仅供管理参考,不作为最终结论。
+_本日报由 AI 基于 Pivot matter 数据生成,仅供管理参考。_
 ```
 
-### 6.2 个人日报卡(示意)
+`tone` 由 AI 评定(active / steady / stalled),失败时降级为统计 stub + "AI 缺席"提示卡(浅蓝色 wathet 区分)。
+
+### 个人视角卡
 
 ```
-👥 个人日报 · 4-28
-📅 覆盖窗口:2026-04-28 09:00 → 2026-04-29 09:00
+👥 个人日报 · 4-26                            [蓝色 header]
+─────────────────────────────────────────────
+📅 覆盖窗口:2026-04-26 09:30 → 2026-04-27 09:30
 
 👥 团队动态
-· dengke:推进登录链路收口,完成 1 篇 verify、1 篇 result;在权限体系
-  评论中补充了多租户隔离的视角
-· liuyu:负责验收推进,完成 2 篇 verify;在权限体系给出技术意见
-· terry.tao:在新需求-日报推送补充 v0.2 PRD,推进设计评审
-· 最近一天无输入输出: 史宏伟、高勇
+· 邓柯:完成 auth-redesign 收口,verify 通过组员 2 篇 act
+· 刘昱:主推 mention 系统,3 篇 act 顺利落地
+· 唐昆:推进 mobile UI 改造,但 paused 1 件待恢复
+· 熊建平:主要在写 think,推进结果较少
+· 今日无输入和输出:张博、佘耀君
 
-本日报由 AI 基于 Pivot matter 数据生成,仅供管理参考,不作为最终结论;不用于绩效评价。
+_本日报由 AI 基于 Pivot matter 数据生成,仅供管理参考,不作为最终结论;不用于绩效评价。_
 ```
 
-模板色:`blue`(AI 成功)/ `wathet`(fallback / no_active_users)。
+无活动成员合并到一行(用顿号串联),既不漏报也不撑爆篇幅。
 
----
+## 八、运行历史
 
-## 七、调度 + 触发
+每条 job 维护独立的运行历史(分页 20/页,按时间倒序):
 
-### 7.1 进程内 asyncio scheduler
+- run_id / 触发类型(scheduled / manual / retry / makeup)/ 状态
+- 卡片发送 sent / total
+- 失败原因摘要 + 完整 debug payload(JSON,可展开看)
 
-主服务 FastAPI lifespan 启动时挂 `DailyReportScheduler` 后台任务:
+历史 365 天,过期自动清理(不依赖外键级联,代码层先把 jobs.last_run_id 中引用置 NULL 再删行)。
 
-1. 算下一个推送时刻(当前 push_time + push_freq:weekdays 跳过 Sat/Sun)
-2. `asyncio.wait_for(stop_event.wait(), timeout=sleep_secs)`
-3. 时间到 → 检查 `daily_report.enabled` → 开 → 在新 thread 跑 runner(LLM 慢调用不能阻塞 asyncio loop)
-4. 回到 1
+## 九、责任与上下文
 
-主服务停止时优雅取消调度循环,但**正在跑的 LLM 线程让它跑完**(LLM 调用不能安全 abort)。
-
-### 7.2 手动触发
-
-`/admin` 管理面板 → 日报配置卡片 → "立即触发"按钮:
-
-1. POST `/api/admin/daily-report/trigger` { dry_run, no_ai }
-2. 后端 200 + run_id 立即返回
-3. 后台 thread 跑 runner,结果存模块级 `_last_run` dict
-4. 前端轮询 `GET /last-run` 直到 `finished_at` 非空(默认 3s 间隔)
-5. toast 提示成功 / 失败
-
----
-
-## 八、配置项 (admin UI 可调)
-
-存 SQLite `settings` 表,**懒初始化**(没行用代码默认值,首次保存才写 DB):
-
-| 键 | 类型 | 默认 | 说明 |
-|---|---|---|---|
-| `daily_report.enabled` | bool | true | 总开关,关闭后调度和手动触发都跳过 |
-| `daily_report.company_enabled` | bool | true | 公司视角报告开关 |
-| `daily_report.personal_enabled` | bool | true | 个人视角报告开关 |
-| `daily_report.time_window_hours` | int | 24 | 统计时间窗口,1-168 |
-| `daily_report.push_time` | str | "09:30" | 每日推送时刻(HH:MM,Asia/Shanghai) |
-| `daily_report.push_freq` | str | "weekdays" | 推送频率:`daily` 或 `weekdays`(跳过 Sat/Sun) |
-
-UI 布局(3×2 对称网格):
-
-```
-┌──────────────┬──────────────┐
-│ 总开关        │ 仅工作日推送   │
-├──────────────┼──────────────┤
-│ 公司视角报告  │ 个人视角报告   │
-├──────────────┼──────────────┤
-│ 统计时间窗口  │ 每日推送时刻   │
-└──────────────┴──────────────┘
-```
-
----
-
-## 九、关键用户链路
-
-### 场景 1:管理者每日通过定时报告了解全局
-
-1. 09:30(由 `push_time` 控制)scheduler 自动触发
-2. runner 读 matter index + users 表,聚合 SharedFacts
-3. 公司视角 LLM(120s 超时)生成段落 + tone
-4. 个人视角 LLM(180s 超时)生成全员 narratives
-5. 渲染两张卡片,飞书 SDK 广播到所有 bot 在的群
-6. 管理者打开飞书群,1 分钟读完两张卡
-
-### 场景 2:管理员临时停推日报
-
-`/admin` → 日报配置 → 关闭"总开关"→ 保存。下次调度 fire 时检查到 `enabled=0`,直接跳过(loop 不停,可随时再开)。
-
-### 场景 3:管理员手动补跑
-
-`/admin` → 日报配置 → "立即触发"按钮(可选 dry-run / no-AI)→ 后台 thread 跑 → UI 轮询 last-run 状态 → toast 提示结果。
-
----
-
-## 十、降级 + 鲁棒性
-
-| 失败类型 | 行为 |
+| 文档 | 内容 |
 |---|---|
-| 全员 0 活动 | 公司视角进 `no_activity` 状态(固定文案 + tone=stalled);个人视角全部固定"无活动"行 |
-| AI 调用失败 / 超时 | 该报告 fallback 模板,**另一份不受影响** |
-| AI 返回非 JSON / schema 错 | 同上 |
-| 飞书 SSL 抖动 | `notify._http_get/post_with_retry` 一次性重试(实测 80%+ 抖动靠这条吃掉) |
-| 数据仓库读取失败 | runner 退出码 2,日志 ERROR,不发卡 |
-| 主服务进程崩溃 / 重启 | 调度器随主服务一起停;下次启动后等到下个 push_time 再跑(**不补跑**;管理员可手动触发补一次) |
-
----
-
-## 十一、本期不包含
-
-- 接入代码仓库 / commit 统计 / 评分
-- matter 视角(逐 matter 因果叙事)
-- AI 正文读取下钻(`tools/read_matter_file` 等待 v0.3)
-- 个人日报推到个人 IM 会话(目前统一发到 bot 群,dengke #012 暂定)
-- 多 worker 锁(scheduler 单 worker 假设)
-- 不补跑(主服务挂过夜恢复后等下个 push_time)
-- 多 IM 平台(钉钉 / Slack / 企业微信)
-- 日报站内存档与历史查看
-- 周报 / 月报
-
----
-
-## 十二、与 dengke / terry / huangshengli 讨论的对应
-
-本设计是这条讨论链的最终落地版:
-
-| 帖号 | 作者 | 关键贡献 |
-|---|---|---|
-| #001 - #002 | terry | 独立通知服务定位 |
-| #005 | dengke | 收窄数据源到 matter only,提出三层叙事 |
-| #006 | terry | PRD v0.2,决策辅助定位 + AI 读正文 + 后台配置 |
-| #008 | terry | PRD v0.3,接受 dengke 三层叙事方向 |
-| #009 | huangshengli | 替代方案:推送形态、风险呈现、合并行、AI 调用编排、push_freq |
-| **#012 - #013** | **dengke** | **决议:第一版不做 matter 视角;只做公司 + 个人两份独立报告;独立运行;统一推送到飞书机器人群;行动优先** |
-
-最终落地以 #013 为准。
+| 本文 | 产品设计(WHY + WHAT) |
+| [implementation-plan.md](./implementation-plan.md) | 实现现状(目录 / 模块 / 测试) |
+| [v2-multi-job-design.md](./v2-multi-job-design.md) | 详细技术设计(schema / endpoint / 状态机) |
+| [`pivot-interface.md`](../pivot-interface.md) | Admin API 文档 |
+| [`pivot-memo.md`](../pivot-memo.md) | 全项目实现现状(§8 含日报功能完成度) |

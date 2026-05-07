@@ -14,6 +14,12 @@ function loadMermaid() {
         theme: "default",
         flowchart: { useMaxWidth: true },
         sequence: { useMaxWidth: true },
+        // v11 default: render() returns the bomb-icon "Syntax error in text"
+        // SVG when parsing fails (no exception thrown). That SVG would land
+        // in our innerHTML and bypass the error-fallback UI below. With this
+        // flag mermaid throws on parse failure, our try/catch fires, and the
+        // user sees the styled "Mermaid 渲染失败" box with the offending code.
+        suppressErrorRendering: true,
       });
       return m.default;
     });

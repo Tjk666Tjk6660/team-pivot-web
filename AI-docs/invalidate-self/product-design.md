@@ -164,8 +164,13 @@ timeline:
 
 ### 5.1 实时推送
 
-- 失效 / 恢复事件触发 SSE 推送,新主题 `matter.invalidated` / `matter.restored`
-- `MatterEventsProvider` 收到后刷新对应 matter 的时间线视图
+- 失效 / 恢复事件触发 SSE 推送,沿用现有 thin SSE 模式:
+  - 内部事件总线新增 topic `TOPIC_MATTER_EVENT_APPENDED`(`matter.event_appended`)
+  - SSE 层映射到现有事件名 `matter.updated`,通过 `reason` 字段区分(`reason="event_appended"`)
+  - SSE 帧 data 仅 thin 4 字段 `{matter_id, reason, actor, at}`,**不携带业务字段**
+- `MatterEventsProvider` 已在监听 `matter.updated`,无需新增 listener;业务层
+  订阅者在 `reason === "event_appended"` 时 refetch matter detail —— timeline 里
+  已经含反写好的 invalidated 4 字段 + 新追加的事件项
 
 ### 5.2 通知
 
@@ -212,7 +217,7 @@ timeline:
 | `server/matter_validator.py` | 6 条新校验规则 |
 | `server/doc_types.py` | 新增 reason 枚举:文件项 `invalidated_reason` 取 {misposted, inaccurate};事件项 `reason` 取 {misposted, inaccurate, restored} |
 | `server/api/matters.py` | 新 endpoint 处理失效/恢复事件;读路径不需要可见性过滤 |
-| `server/api/matters_events.py` | 新 SSE 主题 `matter.invalidated` / `matter.restored` |
+| `server/api/matters_events.py` | `_TOPIC_MAP` 加一行:内部 topic `TOPIC_MATTER_EVENT_APPENDED` 映射到现有 SSE 事件名 `matter.updated`(reason=`event_appended`),沿用 thin SSE 模式,不引入新 SSE 事件名 |
 | `server/notify.py` | 新飞书卡片模板 |
 | `server/ai/tools.py` + `server/mcp/` | 不需要可见性过滤(失效不再是过滤维度,直接返回带 invalidated 元数据的内容) |
 | `web/src/pages/MatterDetailPane.tsx` | 时间线渲染分支(事件项 vs 文件项)+ 已失效徽标(渲染层标记,内容仍展示) |

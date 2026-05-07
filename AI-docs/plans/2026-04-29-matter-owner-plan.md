@@ -18,7 +18,7 @@
 
 - matter index 增加 `matter.owner`（与 creator 同格式：注册用户 = pinyin，未注册 = open_id）
 - timeline 增加 `type: owner_change` entry（含 actor / from_owner / to_owner / reason / 可选 status_change）
-- `POST /api/matters` 接受可选 `owner_open_id`（缺省 = 创建者）
+- `POST /api/matters` 接受可选 `owner_id`（缺省 = 创建者）
 - `POST /api/matters/{id}/owner` 端点
 - 列表 / 详情卡片 / timeline 三处 UI 展示
 - 转交合并 status_change 仅支持 `planning → executing`
@@ -53,7 +53,7 @@
 | [server/matter_validator.py](../../server/matter_validator.py) | `validate_append` 入口按 type 分流；新增 `_validate_owner_change_shape` |
 | [server/matter_index.py](../../server/matter_index.py) | `_normalize_item` 增加 owner_change 分支 + 独立 key 顺序；`create_matter_index` 接受 `matter_owner` 参数；新增 `apply_owner_change(...)` |
 | [server/publish.py](../../server/publish.py) | `publish_matter_create` 接受可选 `matter_owner_pinyin`；新增 `publish_matter_owner_change(...)` |
-| [server/api/matters.py](../../server/api/matters.py) | `NewMatterBody` 加 `owner_open_id`；新增 `OwnerChangeBody` + `POST /api/matters/{id}/owner`；`_summarize_matter` / `_render_matter_detail` 输出 owner 三件套；`_render_item` 走 owner_change 分支 |
+| [server/api/matters.py](../../server/api/matters.py) | `NewMatterBody` 加 `owner_id`；新增 `OwnerChangeBody` + `POST /api/matters/{id}/owner`；`_summarize_matter` / `_render_matter_detail` 输出 owner 三件套；`_render_item` 走 owner_change 分支 |
 | `server/events.py`（或对应 topics 文件） | 新增 `TOPIC_MATTER_OWNER_CHANGED` |
 | [server/recovery.py](../../server/recovery.py) | 启动期检测 matter.owner 缺失 → log warning |
 | [server/mcp/schemas.py](../../server/mcp/schemas.py) | timeline entry schema 加 `owner_change` 到 type enum |
@@ -71,7 +71,7 @@
 
 | 路径 | 修改内容 |
 |------|---------|
-| [web/src/api.ts](../../web/src/api.ts) | `MatterSummary` / `MatterMeta` 加 `owner / owner_display / owner_avatar_url`；`TimelineItem` 改成 union（含 `TimelineOwnerChangeItem`）；`createMatter` 入参增 `owner_open_id`；新增 `transferMatterOwner(matter_id, to_owner, reason, status_change?)` |
+| [web/src/api.ts](../../web/src/api.ts) | `MatterSummary` / `MatterMeta` 加 `owner / owner_display / owner_avatar_url`；`TimelineItem` 改成 union（含 `TimelineOwnerChangeItem`）；`createMatter` 入参增 `owner_id`；新增 `transferMatterOwner(matter_id, to_owner, reason, status_change?)` |
 | [web/src/components/ThreadListPane.tsx](../../web/src/components/ThreadListPane.tsx) | `MatterRow` meta 行加 OwnerChip；shrink-0 占位 |
 | [web/src/pages/MatterDetailPane.tsx](../../web/src/pages/MatterDetailPane.tsx) | 顶部 matter 卡片加 OwnerBadge + 转交按钮；接 TransferOwnerDialog；timeline 渲染层在 owner_change 分支调 OwnerChangeRow |
 | [web/src/components/matter/TimelineStrip.tsx](../../web/src/components/matter/TimelineStrip.tsx) | 节点渲染按 type 分形（owner_change = 小菱形 / 灰色） |
@@ -555,13 +555,13 @@ def publish_matter_owner_change(
 **Files:**
 - Modify: [server/api/matters.py](../../server/api/matters.py)
 
-- [ ] **Step 1：NewMatterBody 加 owner_open_id**
+- [ ] **Step 1：NewMatterBody 加 owner_id**
 
 ```python
 class NewMatterBody(BaseModel):
     category: str = ...
     title: str = ...
-    owner_open_id: str | None = Field(default=None, max_length=50)    # ← 新增
+    owner_id: str | None = Field(default=None, max_length=50)    # ← 新增
     initial_file: InitialFileIn
 ```
 
@@ -573,7 +573,7 @@ result = publish_matter_create(
     category=body.category,
     title=body.title,
     initial_item=initial,
-    matter_owner_open_id=body.owner_open_id,    # ← 新增
+    matter_owner_open_id=body.owner_id,    # ← 新增
     ...
 )
 ```
@@ -668,8 +668,8 @@ def test_transfer_owner_concurrent_stale_409()
 
 # 创建
 def test_create_matter_default_owner_is_creator()
-def test_create_matter_with_owner_open_id_to_other()
-def test_create_matter_owner_open_id_unknown_422()
+def test_create_matter_with_owner_id_to_other()
+def test_create_matter_owner_id_unknown_422()
 def test_create_matter_matter_owner_independent_from_file_owner()
 
 # 未分配（design §6.1）
@@ -920,13 +920,13 @@ export type TimelineItem = TimelineFileItem | TimelineOwnerChangeItem;
 
 ### Task 6.3：API 函数
 
-- [ ] **Step 1：createMatter 入参增 owner_open_id**
+- [ ] **Step 1：createMatter 入参增 owner_id**
 
 ```ts
 export async function createMatter(input: {
   category: string;
   title: string;
-  owner_open_id?: string;            // ← 新增
+  owner_id?: string;            // ← 新增
   initial_file: InitialFileIn;
 }): Promise<...>
 ```
@@ -1357,7 +1357,7 @@ const [matterOwner, setMatterOwner] = useState<{ openId: string; name: string }>
 ```tsx
 await createMatter({
   category, title,
-  owner_open_id: matterOwner.openId !== me.open_id ? matterOwner.openId : undefined,
+  owner_id: matterOwner.openId !== me.open_id ? matterOwner.openId : undefined,
   initial_file: { ... },
 });
 ```
@@ -1406,7 +1406,7 @@ bridge 入口（hasBridge）的 phase 仍直接跳到 drafting，但 data.matter
 await createMatter({
   category: data.category,
   title: data.title,
-  owner_open_id: data.matterOwner.openId !== me.open_id ? data.matterOwner.openId : undefined,
+  owner_id: data.matterOwner.openId !== me.open_id ? data.matterOwner.openId : undefined,
   initial_file: { ... },
 });
 ```
@@ -1651,7 +1651,7 @@ cd web && npm run build
 
 - [ ] 不指定 owner 创建 → 详情卡片 owner = 自己
 - [ ] 指定他人创建 → 详情卡片 owner = 他人；timeline 无 owner_change
-- [ ] 指定 owner_open_id 不存在 → 422
+- [ ] 指定 owner_id 不存在 → 422
 - [ ] matter 级 owner = A，文件级 `initial_file.owner` = B → 落盘 matter.owner=A，timeline[0].owner=B
 
 #### 列表 / 详情 / 转交
@@ -1678,7 +1678,7 @@ cd web && npm run build
 - [ ] §6.3 timeline 顺序：写入顺序 = 显示顺序
 - [ ] §6.4 MCP read_matter_index 含 owner_change 不报 schema 错
 - [ ] §6.6 owner = 不存在的 ou_xxx → owner_display = 截断字符串、avatar = null
-- [ ] §6.7 owner_open_id = 自己 → 等价于不传，matter.owner = creator.pinyin
+- [ ] §6.7 owner_id = 自己 → 等价于不传，matter.owner = creator.pinyin
 - [ ] §6.8 yaml key 顺序：type → created_at → actor → from_owner → to_owner → reason → status_change?
 
 #### reviewed / 兜底 / 撤销

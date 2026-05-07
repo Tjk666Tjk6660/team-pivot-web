@@ -24,6 +24,14 @@ ALLOWED_TYPES_BY_STATUS: dict[str, frozenset[str]] = {
 VALID_JUDGEMENTS = frozenset({"passed", "failed", "cancelled"})
 VALID_OUTCOMES = frozenset({"finished", "cancelled"})
 
+# Invalidation/restoration event reasons.
+# A file's `invalidated_reason` field can only carry one of the 2 invalidation
+# reasons (the file is currently invalidated). The 3-value EVENT_REASONS adds
+# `restored` for the timeline entry that flips invalidated back to false.
+# See AI-docs/invalidate-self/product-design.md §2.
+VALID_INVALIDATION_REASONS = frozenset({"misposted", "inaccurate"})
+VALID_EVENT_REASONS = frozenset({"misposted", "inaccurate", "restored"})
+
 
 def is_doc_type(value: str) -> bool:
     return value in VALID_DOC_TYPES

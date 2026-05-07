@@ -1,17 +1,15 @@
-"""End-to-end daily-report orchestration (v0.2).
+"""End-to-end daily-report orchestration (v2 多任务).
 
-被 scripts/daily-report/run.py(systemd timer)和 admin 手动触发端点
-共用调用。
-
-v0.2 进度:
-  Phase 3 已落地:公司视角报告(company_narrate + build_company_card +
-                  notifier.broadcast_card)
-  Phase 4 待落地:个人视角报告(personal_narrate + build_personal_card)
+`run_daily_report_for_job(job, ...)` 是唯一入口:
+  - 从 Job 对象拿配置(view / window_hours / push_time / receiver_type / receiver_ids)
+  - 收集 matter 事件 + 聚合 + AI 叙事 + 渲染卡片
+  - 按 receiver_type / receiver_ids 发送(broadcast 全部 / 指定群 / DM 个人)
+  - runs 表 INSERT/finish 由 caller(JobScheduler / API)负责,本函数不碰
 
 返回 (exit_code, debug_payload):
-  exit_code 0 — 成功(或 disabled / dry-run)
-  exit_code 1 — 运行时失败(发送失败等)
-  exit_code 2 — 配置错误(workspace 未配置等)
+  0 — 成功(或 dry-run)
+  1 — 部分发送失败 / broadcast 错误
+  2 — 配置错误(workspace 未配置 / view 不识别等)
 """
 from __future__ import annotations
 
@@ -26,13 +24,7 @@ from server.daily_report.company_narrate import (
     AISettings,
     narrate_company,
 )
-from server.daily_report.config_keys import (
-    KEY_COMPANY_ENABLED,
-    KEY_ENABLED,
-    KEY_PERSONAL_ENABLED,
-    KEY_PUSH_TIME,
-    KEY_TIME_WINDOW_HOURS,
-)
+from server.daily_report.jobs_repo import Job
 from server.daily_report.personal_narrate import narrate_personal
 from server.daily_report.render import build_company_card, build_personal_card
 from server.daily_report.shared_facts import build_shared_facts
@@ -42,59 +34,73 @@ from server.daily_report.window import compute_window
 log = logging.getLogger("server.daily_report.runner")
 
 
-def run_daily_report(
+def run_daily_report_for_job(
     *,
+    job: Job,
     db_path: Path,
     workspace_index_dir: Path,
-    now: datetime | None = None,
-    window: TimeWindow | None = None,
+    notifier,                                       # FeishuNotifier | NoOpNotifier
     dry_run: bool = False,
     no_ai: bool = False,
-    notifier=None,                 # FeishuNotifier | None
+    now: datetime | None = None,
+    explicit_window: TimeWindow | None = None,
+    users_db_path: Path | None = None,
 ) -> tuple[int, dict[str, Any]]:
-    """Run the daily report end-to-end."""
-    # Lazy imports to avoid hard dependency on server boot for tests
-    from server.db import Database
-    from server.pivot_users import PivotUserRepo
-    from server.settings import SettingsRepo
+    """跑一个 Job,返回 (rc, debug)。
 
+    `users_db_path`(dev 用):如果给定,从该 sqlite 以 mode=ro 读取 users 列表
+    (personal 视角全员),`db_path` 仍只用于 SettingsRepo(AI 配置)。这样
+    可以本地启动 + 用主 data.db 的 AI key + 用生产快照的真实团队跑日报
+    预览,绝不写入快照。生产/正常路径下置 None,二者都用 db_path。
+    """
     if not db_path.exists():
         log.error("db_path does not exist: %s", db_path)
         return 2, {"error": f"db not found: {db_path}"}
 
+    if not workspace_index_dir.is_dir():
+        log.error("workspace_index_dir not found: %s", workspace_index_dir)
+        return 2, {"error": f"workspace index dir missing: {workspace_index_dir}"}
+
+    from server.db import Database
+    from server.settings import SettingsRepo
+    from server.users import ReadOnlyUserView, UserRepo
+
     db = Database(db_path)
     settings = SettingsRepo(db)
 
-    if _is_disabled(settings, KEY_ENABLED):
-        log.info("daily report disabled (%s=0); skipping", KEY_ENABLED)
-        return 0, {"status": "disabled"}
+    if users_db_path is not None:
+        if not users_db_path.exists():
+            log.error("users_db_path does not exist: %s", users_db_path)
+            return 2, {"error": f"users_db not found: {users_db_path}"}
+        try:
+            all_users = ReadOnlyUserView(users_db_path).list_all()
+            log.info("daily-report users overridden: %s (%d users, read-only)",
+                     users_db_path, len(all_users))
+        except Exception as e:
+            log.exception("ReadOnlyUserView failed for %s", users_db_path)
+            return 2, {"error": f"users_db_path open failed: {e}"}
+    else:
+        all_users = UserRepo(db).list_all()
 
-    if not workspace_index_dir.is_dir():
-        log.error(
-            "workspace_index_dir not found: %s — workspace not configured?",
-            workspace_index_dir,
-        )
-        return 2, {"error": f"workspace index dir missing: {workspace_index_dir}"}
-
-    user_repo = PivotUserRepo(db)
-    all_users = user_repo.list_all()
-
-    if window is None:
-        # 从 settings 读 push_time + time_window_hours,这样 admin UI 改了即时生效
-        push_h, push_m = _read_push_time(settings)
-        win_hours = _read_window_hours(settings)
+    # 1. 计算时间窗口
+    if explicit_window is not None:
+        window = explicit_window
+    else:
+        push_h, push_m = _parse_hhmm(job.push_time)
         window = compute_window(
             now or datetime.now().astimezone(),
             push_hour=push_h, push_minute=push_m,
-            window_hours=win_hours,
+            window_hours=job.window_hours,
         )
 
-    # 1. Collect + aggregate
+    # 2. 收集 + 聚合
     matter_events = collect_matter_events(workspace_index_dir, window)
     activities, summary = aggregate(matter_events, all_users, window)
     facts = build_shared_facts(matter_events, activities, summary, window)
 
     debug: dict[str, Any] = {
+        "job_id": job.id,
+        "view": job.view,
         "window": {
             "since": window.since.isoformat(),
             "until": window.until.isoformat(),
@@ -104,124 +110,100 @@ def run_daily_report(
         "n_inactive": len(summary.inactive_users),
         "n_matter_events": len(matter_events),
         "matters_touched": summary.matters_touched,
-        "matter_status_breakdown": dict(facts.matter_status_breakdown),
     }
 
-    # 2. AI settings (shared by company / personal narratives)
+    # 3. AI 调用 + 渲染卡片(根据 view)
     ai_settings = _load_ai_settings(settings)
-
-    # 3. Company-view report (Phase 3)
-    cards: list[tuple[str, dict]] = []
-    if _is_enabled(settings, KEY_COMPANY_ENABLED, default=True):
+    if job.view == "company":
         narrative = narrate_company(facts, ai_settings=ai_settings, no_ai=no_ai)
-        debug["company"] = {
-            "status": narrative.status,
-            "tone": narrative.tone,
-            "fallback_reason": narrative.fallback_reason,
-            "summary_preview": (narrative.summary or "")[:80],
-        }
         card = build_company_card(facts, narrative)
-        cards.append((f"company_daily_report {window.label}", card))
+        debug["narrative_status"] = narrative.status
+        debug["tone"] = narrative.tone
+        debug["fallback_reason"] = narrative.fallback_reason
+    elif job.view == "personal":
+        narrative = narrate_personal(facts, ai_settings=ai_settings, no_ai=no_ai)
+        card = build_personal_card(facts, narrative)
+        debug["narrative_status"] = narrative.status
+        debug["fallback_reason"] = narrative.fallback_reason
     else:
-        log.info("company report disabled (%s=0); skipping",
-                 KEY_COMPANY_ENABLED)
+        return 2, {**debug, "error": f"unknown view: {job.view}"}
 
-    # 4. Personal-view report (Phase 4)
-    if _is_enabled(settings, KEY_PERSONAL_ENABLED, default=True):
-        p_narrative = narrate_personal(
-            facts, ai_settings=ai_settings, no_ai=no_ai,
-        )
-        debug["personal"] = {
-            "status": p_narrative.status,
-            "fallback_reason": p_narrative.fallback_reason,
-            "n_active": sum(1 for e in p_narrative.entries if e.has_activity),
-            "n_inactive": sum(1 for e in p_narrative.entries if not e.has_activity),
-        }
-        cards.append((
-            f"personal_daily_report {window.label}",
-            build_personal_card(facts, p_narrative),
-        ))
-    else:
-        log.info("personal report disabled (%s=0); skipping",
-                 KEY_PERSONAL_ENABLED)
-
-    debug["status"] = "rendered"
-    debug["n_cards"] = len(cards)
-
-    # 5. Send (or skip on dry-run)
+    # 4. dry-run 短路
     if dry_run:
-        log.info("dry-run: skipping broadcast (would send %d card(s))",
-                 len(cards))
-        debug["cards"] = [c for _, c in cards]
+        log.info("dry-run job=%d view=%s, skipping broadcast", job.id, job.view)
+        debug["card"] = card
+        debug["dry_run"] = True
         return 0, debug
 
-    if not cards:
-        log.info("no cards to send (all reports disabled)")
-        return 0, debug
-
-    if notifier is None:
-        log.error("notifier not provided and not dry_run; cannot send")
-        return 1, {**debug, "error": "no notifier"}
-
-    sent = 0
-    for event_label, card in cards:
-        try:
-            notifier.broadcast_card(card, event=event_label)
-            sent += 1
-        except Exception as e:  # noqa: BLE001
-            log.exception("broadcast failed for %s", event_label)
-            debug.setdefault("broadcast_errors", []).append(
-                f"{event_label}: {e}",
+    # 5. 按 receiver_type / receiver_ids 发送
+    event_label = f"job-{job.id} {job.view} {window.label}"
+    if job.receiver_type == "groups":
+        if job.receiver_ids:
+            sent, total, failures = notifier.send_card_to_chats(
+                card, list(job.receiver_ids), event=event_label,
             )
+            debug["receivers"] = {
+                "type": "groups", "sent": sent, "total": total,
+                "failures": failures,
+            }
+            if sent < total:
+                debug["error"] = _summarize_failures(failures)
+                return 1, debug
+        else:
+            # 默认全部 bot 群,沿用旧接口
+            try:
+                notifier.broadcast_card(card, event=event_label)
+                debug["receivers"] = {"type": "groups", "mode": "broadcast_all"}
+            except Exception as e:  # noqa: BLE001
+                log.exception("broadcast failed for job %d", job.id)
+                return 1, {**debug, "error": f"broadcast: {e}"}
+    elif job.receiver_type == "users":
+        if not job.receiver_ids:
+            log.error("job %d receiver_type=users but receiver_ids is empty", job.id)
+            return 2, {**debug, "error": "users receiver_type requires receiver_ids"}
+        sent, total, failures = notifier.send_card_to_users(
+            card, list(job.receiver_ids), event=event_label,
+        )
+        debug["receivers"] = {
+            "type": "users", "sent": sent, "total": total,
+            "failures": failures,
+        }
+        if sent < total:
+            debug["error"] = _summarize_failures(failures)
+            return 1, debug
+    else:
+        return 2, {**debug, "error": f"unknown receiver_type: {job.receiver_type}"}
 
-    debug["n_sent"] = sent
-    if sent < len(cards):
-        return 1, debug
     return 0, debug
 
 
-# --------------------------------------------------------------------------- #
-# Internals                                                                   #
-# --------------------------------------------------------------------------- #
+def _summarize_failures(failures: list[dict]) -> str:
+    """把 [{to, error}] 列表压成一段简短的人读字符串。
+    用于 debug["error"] / runs.error / 失败告警卡的 error 字段。
+    告警卡再单独附上 'name (open_id) — error' 详细行,这里只做兜底简介。"""
+    if not failures:
+        return "broadcast partial"
+    n = len(failures)
+    parts = []
+    for f in failures[:2]:
+        to = (f.get("to") or "?")
+        # open_id 通常比较长,缩到尾 8 位
+        short = to if len(to) <= 12 else f"…{to[-8:]}"
+        parts.append(f"{short}({(f.get('error') or '?')[:40]})")
+    suffix = f" +{n - 2} more" if n > 2 else ""
+    return f"{n} failed: " + "; ".join(parts) + suffix
 
 
-def _is_disabled(settings, key: str) -> bool:
-    raw = (settings.get(key) or "1").strip().lower()
-    return raw in ("0", "false", "off", "no")
-
-
-def _is_enabled(settings, key: str, *, default: bool) -> bool:
-    raw = settings.get(key)
-    if raw is None or not str(raw).strip():
-        return default
-    return str(raw).strip().lower() not in ("0", "false", "off", "no")
-
-
-def _read_push_time(settings) -> tuple[int, int]:
-    """读 push_time(HH:MM)→ (hour, minute)。坏值兜底 09:30。"""
-    raw = (settings.get(KEY_PUSH_TIME) or "09:30").strip()
+def _parse_hhmm(s: str) -> tuple[int, int]:
+    """解析 'HH:MM',坏值兜底 09:30。"""
     try:
-        hh, mm = raw.split(":")
+        hh, mm = s.split(":")
         h, m = int(hh), int(mm)
         if 0 <= h < 24 and 0 <= m < 60:
             return h, m
     except (ValueError, AttributeError):
         pass
     return 9, 30
-
-
-def _read_window_hours(settings) -> int:
-    """读 time_window_hours,默认 24,合法范围 [1, 168]。"""
-    raw = settings.get(KEY_TIME_WINDOW_HOURS)
-    if raw is None or not str(raw).strip():
-        return 24
-    try:
-        v = int(str(raw).strip())
-        if 1 <= v <= 168:
-            return v
-    except (TypeError, ValueError):
-        pass
-    return 24
 
 
 def _load_ai_settings(settings) -> AISettings | None:

@@ -422,3 +422,153 @@ def test_annotation_non_dict_rejected():
     KeyError."""
     r = validate_annotation(["not", "a", "dict"])  # type: ignore[arg-type]
     assert not r.ok and r.code == "annotation_not_object"
+
+
+# ---------- invalidation events (P1) ------------------------------------
+
+# Helpers for event tests
+def _matter_with_act(*, status: str = "executing", invalidated: bool = False,
+                     creator: str = "dengke",
+                     act_file: str = "discussions/m/002_d_act_b.md") -> dict:
+    """Matter with one act file (creator = `creator`). Optionally pre-invalidated."""
+    act_item = {"file": act_file, "creator": creator, "type": "act"}
+    if invalidated:
+        act_item["invalidated"] = True
+        act_item["invalidated_at"] = "2026-04-26T10:00:00+08:00"
+        act_item["invalidated_reason"] = "misposted"
+        act_item["invalidated_by"] = creator
+    return {
+        "matter": {"current_status": status},
+        "timeline": [act_item],
+    }
+
+
+def _event(*, creator: str = "dengke", quote: str = "discussions/m/002_d_act_b.md",
+           reason: str = "misposted") -> dict:
+    return {"creator": creator, "quote": quote, "reason": reason}
+
+
+# Happy path
+def test_invalidate_event_by_author_ok():
+    index = _matter_with_act()
+    assert validate_append(index, _event(reason="misposted")) == OK
+
+
+def test_restore_event_when_invalidated_ok():
+    index = _matter_with_act(invalidated=True)
+    assert validate_append(index, _event(reason="restored")) == OK
+
+
+# Rule 1: creator must equal target's creator
+def test_event_creator_mismatch_rejected():
+    index = _matter_with_act(creator="dengke")
+    r = validate_append(index, _event(creator="alice"))
+    assert not r.ok and r.code == "event_creator_mismatch"
+
+
+# Rule 2: already invalidated cannot be invalidated again
+def test_event_already_invalidated_rejected():
+    index = _matter_with_act(invalidated=True)
+    r = validate_append(index, _event(reason="misposted"))
+    assert not r.ok and r.code == "target_already_invalidated"
+
+
+# Rule 3: not invalidated cannot be restored
+def test_event_target_not_invalidated_rejected():
+    index = _matter_with_act(invalidated=False)
+    r = validate_append(index, _event(reason="restored"))
+    assert not r.ok and r.code == "target_not_invalidated"
+
+
+# Rule 4: quote cannot point to another event item
+# (Implicitly enforced: event items have no `file` field, so by-file lookup
+# fails and falls through to target_not_found.)
+def test_event_quote_to_event_item_rejected():
+    """Events have no `file`, so quoting an event resolves to target_not_found."""
+    index = {
+        "matter": {"current_status": "executing"},
+        "timeline": [
+            {"file": "discussions/m/002_d_act_b.md", "creator": "dengke", "type": "act"},
+            # An invalidation event entry (no `file`, has `reason`)
+            {"creator": "dengke", "quote": "discussions/m/002_d_act_b.md",
+             "reason": "misposted", "created_at": "2026-04-26T10:00:00+08:00"},
+        ],
+    }
+    # Try to invalidate "the event" — there's no path to address it; we'd have
+    # to fabricate one. Confirm any non-file path falls into target_not_found.
+    r = validate_append(index, _event(quote="some/non-file/path.md"))
+    assert not r.ok and r.code == "target_not_found"
+
+
+# Rule 5: cross-matter quote rejected (target not in this matter's timeline)
+def test_event_cross_matter_quote_rejected():
+    index = _matter_with_act()
+    r = validate_append(index, _event(quote="discussions/other-matter/001.md"))
+    assert not r.ok and r.code == "target_not_found"
+
+
+# Rule 6: comment cannot be invalidated (comments are nested, never top-level files)
+def test_event_quote_to_comment_path_rejected():
+    """Comments live inside file.comments[], never as top-level entries with
+    a `file` field. Any comment-shaped path naturally fails by-file lookup."""
+    index = _matter_with_act()
+    r = validate_append(index, _event(quote="discussions/m/002_d_act_b.md#comment-1"))
+    assert not r.ok and r.code == "target_not_found"
+
+
+# Reason validation
+def test_event_invalid_reason_rejected():
+    index = _matter_with_act()
+    r = validate_append(index, _event(reason="bogus"))
+    assert not r.ok and r.code == "invalid_reason"
+
+
+def test_event_missing_quote_rejected():
+    index = _matter_with_act()
+    item = {"creator": "dengke", "reason": "misposted"}  # no quote
+    r = validate_append(index, item)
+    assert not r.ok and r.code == "quote_required"
+
+
+def test_event_missing_creator_rejected():
+    index = _matter_with_act()
+    item = {"quote": "discussions/m/002_d_act_b.md", "reason": "misposted"}
+    r = validate_append(index, item)
+    assert not r.ok and r.code == "creator_required"
+
+
+# §5.3 reference block: file's quote/refer cannot target an invalidated file
+def test_new_file_quoting_invalidated_file_rejected():
+    """A new file item's `quote` cannot point to an already-invalidated file."""
+    index = _matter_with_act(invalidated=True)
+    new_act = {
+        "type": "act",
+        "summary": "继续推进",
+        "quote": "discussions/m/002_d_act_b.md",  # 这条已失效
+    }
+    r = validate_append(index, new_act)
+    assert not r.ok and r.code == "quote_target_invalidated"
+
+
+def test_new_file_referring_invalidated_file_rejected():
+    """A new file item's `refer` list cannot include an already-invalidated file."""
+    index = _matter_with_act(invalidated=True)
+    new_think = {
+        "type": "think",
+        "summary": "复盘",
+        "refer": ["discussions/m/002_d_act_b.md"],  # 已失效
+    }
+    # Note: matter is executing → think allowed
+    r = validate_append(index, new_think)
+    assert not r.ok and r.code == "refer_target_invalidated"
+
+
+def test_new_file_quoting_non_invalidated_file_ok():
+    """Sanity: §5.3 only blocks invalidated targets; normal quote still OK."""
+    index = _matter_with_act(invalidated=False)
+    new_act = {
+        "type": "act",
+        "summary": "继续",
+        "quote": "discussions/m/002_d_act_b.md",
+    }
+    assert validate_append(index, new_act) == OK

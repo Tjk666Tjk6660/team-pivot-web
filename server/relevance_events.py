@@ -235,6 +235,25 @@ class RelevanceEventsRepo:
             )
             return cur.rowcount
 
+    def mark_matter_events_read(
+        self,
+        user_open_id: str,
+        matter_id: str,
+    ) -> int:
+        """Mark matter-level event rows (filename=MATTER_EVENT_FILENAME) as
+        read for (user, matter). Used when the user has seen the OwnerChangeRow
+        but hasn't read any file in the matter — the side-effect path on
+        `mark_all_read_for_file` only fires when a real file is read."""
+        now = time()
+        with self._db.connect() as conn:
+            cur = conn.execute(
+                "UPDATE relevance_events SET read_at = ?"
+                " WHERE user_open_id = ? AND matter_id = ?"
+                "   AND filename = ? AND read_at IS NULL",
+                (now, user_open_id, matter_id, MATTER_EVENT_FILENAME),
+            )
+            return cur.rowcount
+
     # ---------- aggregates ----------
 
     def unread_breakdown_per_matter(
@@ -281,6 +300,20 @@ class RelevanceEventsRepo:
         return {
             (r["filename"], r["event_at"], r["actor_pinyin"]) for r in rows
         }
+
+    def matter_ids_for_user(self, user_open_id: str) -> set[str]:
+        """Distinct matter_ids where the user has any relevance row (read or
+        unread, kind=file or kind=mention). Used by GET /api/matters?scope=
+        relevant: combined with a timeline scan in matters._is_matter_relevant_to_user
+        to also catch matters where compute_relevance's self-exclusion left
+        no row (creator == me)."""
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT matter_id FROM relevance_events"
+                " WHERE user_open_id = ?",
+                (user_open_id,),
+            ).fetchall()
+        return {r["matter_id"] for r in rows}
 
     def file_reasons_for_matter(
         self, pivot_user_id: str, matter_id: str,

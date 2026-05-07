@@ -11,6 +11,7 @@ from server.events import (
     TOPIC_ANNOTATION_APPENDED,
     TOPIC_FILE_APPENDED,
     TOPIC_MATTER_CREATED,
+    TOPIC_MATTER_EVENT_APPENDED,
     TOPIC_MATTER_OWNER_CHANGED,
     TOPIC_MENTION_APPENDED,
     TOPIC_RESULT_CREATED,
@@ -26,6 +27,7 @@ from server.matter_index import (
     ValidationError as MatterIndexValidationError,
     append_annotation as matter_append_annotation,
     append_comment as matter_append_comment,
+    append_event as matter_append_event,
     append_file_item as matter_append_file_item,
     apply_owner_change as matter_apply_owner_change,
     create_matter_index,
@@ -1317,6 +1319,120 @@ def publish_matter_owner_change(
         "matter": matter_snapshot.get("matter", {}),
         "item": item,
         "at": now,
+    }
+
+
+def publish_matter_event(
+    workspace: Workspace,
+    user: User,
+    *,
+    matter_id: str,
+    target_file: str,
+    reason: str,
+    summary: str | None = None,
+    notifier: Notifier | None = None,
+) -> dict:
+    """Append an invalidation/restoration event to a matter's timeline and
+    reverse-write the target file's invalidated_* state.
+
+    Unlike publish_matter_append, this writes NO md file — the event lives
+    only in the index yaml as a non-file timeline entry (per design §2.2).
+
+    The matter_validator (called inside `matter_append_event`) is the single
+    source for shape errors (creator mismatch / target not found / already-
+    invalidated / etc.); the API layer maps MatterIndexValidationError to
+    precise HTTP status codes.
+
+    Emits TOPIC_MATTER_EVENT_APPENDED on success. Notifier hook is left as
+    a P3 extension point (notify_matter_event will be added there).
+    """
+    if not user.pinyin:
+        raise PublishError("profile setup required")
+
+    index_path = matter_index_path(workspace.index_dir, matter_id)
+    if read_matter_index(index_path) is None:
+        raise MatterNotFoundError(matter_id)
+
+    now = _now_iso()
+    event_item: dict = {
+        "creator": user.pinyin,
+        "quote": target_file,
+        "reason": reason,
+    }
+    if summary is not None and str(summary).strip():
+        event_item["summary"] = summary
+
+    with workspace.write_session(
+        message=f"chore: matter event {reason} on {matter_id}",
+        author_name=user.name,
+        author_email=f"{user.pinyin}@pivot.local",
+    ):
+        matter_append_event(index_path, event=event_item, now_iso=now)
+
+    matter_snapshot = read_matter_index(index_path) or {}
+    matter_meta = matter_snapshot.get("matter") or {}
+
+    # Locate the target file's reverse-write fields for the response payload.
+    # The validator already confirmed it exists, but be defensive against any
+    # racing read-after-write inconsistency.
+    target_item: dict | None = None
+    for it in matter_snapshot.get("timeline") or []:
+        if it.get("file") == target_file:
+            target_item = it
+            break
+
+    emit(
+        TOPIC_MATTER_EVENT_APPENDED,
+        matter_id=matter_id,
+        actor=user.pinyin,
+        at=now,
+        payload={
+            "target_file": target_file,
+            "reason": reason,
+            "summary": summary if (summary and str(summary).strip()) else None,
+        },
+    )
+
+    # Broadcast a Feishu card so bot-group members see "author withdrew/restored
+    # X" as soon as the event lands. Same notification level as new reply.
+    if notifier is not None:
+        category = _derive_category_from_timeline(matter_snapshot) or "matters"
+        target_filename = (target_file or "").rsplit("/", 1)[-1] or target_file
+        notifier.notify_matter_event(
+            category=category,
+            slug=matter_id,
+            thread_title=matter_meta.get("title") or matter_id,
+            target_filename=target_filename,
+            actor_name=user.name,
+            reason=reason,
+            summary=summary if (summary and str(summary).strip()) else None,
+        )
+
+    event_response: dict = {
+        "creator": user.pinyin,
+        "created_at": now,
+        "quote": target_file,
+        "reason": reason,
+    }
+    if summary and str(summary).strip():
+        event_response["summary"] = summary
+
+    return {
+        "matter_id": matter_id,
+        "matter": matter_meta,
+        "event": event_response,
+        "target": _make_event_target_response(target_item) if target_item else None,
+    }
+
+
+def _make_event_target_response(target_item: dict) -> dict:
+    """Slice the reverse-write fields from a file item for the API response."""
+    return {
+        "file": target_item.get("file"),
+        "invalidated": bool(target_item.get("invalidated")),
+        "invalidated_at": target_item.get("invalidated_at"),
+        "invalidated_reason": target_item.get("invalidated_reason"),
+        "invalidated_by": target_item.get("invalidated_by"),
     }
 
 

@@ -343,6 +343,57 @@ CREATE TABLE IF NOT EXISTS git_push_outbox (
 CREATE INDEX IF NOT EXISTS idx_git_push_outbox_pending
     ON git_push_outbox(tenant_id, status, enqueued_at)
     WHERE status IN ('pending', 'in_flight');
+-- Daily report v2: 多任务管理
+-- 字段值集合(view / status / push_freq / channel / receiver_type)统一在
+-- 代码层校验:jobs_repo Literal + Pydantic JobIn/JobUpdateIn。SQLite CHECK
+-- 不支持 ALTER,放在表里只会成为扩枚举的绊脚石。
+CREATE TABLE IF NOT EXISTS daily_report_jobs (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    name             TEXT NOT NULL,
+    view             TEXT NOT NULL,                                 -- 'company' | 'personal'
+    status           TEXT NOT NULL DEFAULT 'active',                -- 'active' | 'paused' | 'archived'
+    push_time        TEXT NOT NULL,                                 -- 'HH:MM' Asia/Shanghai
+    push_freq        TEXT NOT NULL DEFAULT 'weekdays',              -- 见 jobs_repo.PushFreq(共 11 值)
+    window_hours     INTEGER NOT NULL DEFAULT 24,                   -- Pydantic 层限定 1-168
+    channel          TEXT NOT NULL DEFAULT 'feishu',                -- v1 仅 feishu
+    receiver_type    TEXT NOT NULL,                                 -- 'groups' | 'users'
+    receiver_ids     TEXT,                                          -- JSON 数组,NULL = 默认全部 bot 群
+    next_run_at      REAL,                                          -- Unix epoch,active 时才有值
+    last_run_id      INTEGER,                                       -- 引用 daily_report_runs(id),代码层维护
+    last_status      TEXT,                                          -- 冗余 cache:succeeded/failed/partial/missed/skipped/running
+    retry_count      INTEGER NOT NULL DEFAULT 0,
+    last_notified_at REAL,                                          -- 上次"漏跑/失败通知"时间(去重)
+    created_by       TEXT,                                          -- creator open_id
+    created_at       REAL NOT NULL,
+    updated_at       REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_daily_report_jobs_active_due
+    ON daily_report_jobs(status, next_run_at);
+CREATE INDEX IF NOT EXISTS idx_daily_report_jobs_status
+    ON daily_report_jobs(status);
+
+CREATE TABLE IF NOT EXISTS daily_report_runs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id          INTEGER,                                        -- NULL = 手动一次性触发(不绑 job)
+    trigger_type    TEXT NOT NULL
+                    CHECK(trigger_type IN ('scheduled', 'manual', 'retry', 'makeup')),
+    view            TEXT NOT NULL,                                  -- 冗余:即使 job 删了也能查历史
+    started_at      REAL NOT NULL,
+    finished_at     REAL,
+    status          TEXT NOT NULL DEFAULT 'running'
+                    CHECK(status IN ('running', 'succeeded', 'failed', 'partial', 'skipped')),
+    rc              INTEGER,
+    cards_sent      INTEGER,
+    cards_total     INTEGER,
+    ai_tokens_in    INTEGER,
+    ai_tokens_out   INTEGER,
+    error           TEXT,
+    debug_json      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_daily_report_runs_job_started
+    ON daily_report_runs(job_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_daily_report_runs_started
+    ON daily_report_runs(started_at);
 """
 
 

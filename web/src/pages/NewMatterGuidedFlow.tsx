@@ -216,10 +216,10 @@ export function NewMatterGuidedFlow({
   // Initial categories load.
   useEffect(() => {
     fetchMatters()
-      .then((items) => {
+      .then((res) => {
         const cats = Array.from(
           new Set(
-            items
+            res.items
               .map((m) => m.category)
               .filter((c): c is string => typeof c === "string" && !!c),
           ),

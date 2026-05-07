@@ -148,3 +148,68 @@ def _row_to_user(row: sqlite3.Row) -> User:
         markdown_style=row["markdown_style"],
         created_at=row["created_at"],
     )
+
+
+# --------------------------------------------------------------------------- #
+# Read-only view (for dev preview / migration scripts)                        #
+# --------------------------------------------------------------------------- #
+
+
+class ReadOnlyUserView:
+    """Read-only minimal view of the `users` table — safe to point at a
+    snapshot / live production data.db.
+
+    **Why this exists:** `UserRepo(Database(path))` calls `Database.__init__`
+    which runs `CREATE TABLE IF NOT EXISTS` + `_migrate(conn)` — both can
+    perform DDL/DML against the file. If you point that at a snapshot or
+    production db whose schema lags the current code, those writes would
+    clobber it.
+
+    This view bypasses `Database` entirely, opens the SQLite via the
+    `file:...?mode=ro` URI (sqlite3 errors on any DDL/DML attempt), and
+    exposes only the read methods the daily-report runner needs:
+    `list_all()` and `get_by_any_id()`.
+
+    Used by:
+    - `scripts/preview_daily_report.py` — dev-time card preview
+    - `server/daily_report/runner.py` when `users_db_path` is set
+      (server boots with .env DAILY_REPORT_USERS_DB_PATH pointing here)
+
+    Pattern follows `scripts/migrate_index_schema.py::_ReadOnlyUserView`.
+    """
+
+    def __init__(self, db_path) -> None:
+        from pathlib import Path
+        # Resolve to absolute, sqlite URI requires forward slashes
+        abs_path = Path(db_path).resolve().as_posix()
+        self._uri = f"file:{abs_path}?mode=ro"
+        # Probe-connect once to fail fast on missing file / unreadable DB
+        # (mode=ro errors instead of creating, unlike default sqlite3.connect).
+        conn = sqlite3.connect(self._uri, uri=True)
+        conn.close()
+
+    def list_all(self) -> list[User]:
+        """All registered users, ordered by name. Mirrors `UserRepo.list_all`."""
+        conn = sqlite3.connect(self._uri, uri=True)
+        try:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM users ORDER BY name"
+            ).fetchall()
+        finally:
+            conn.close()
+        return [_row_to_user(r) for r in rows]
+
+    def get_by_any_id(self, id_: str) -> User | None:
+        if not id_:
+            return None
+        conn = sqlite3.connect(self._uri, uri=True)
+        try:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM users WHERE open_id=? OR union_id=? OR pinyin=?",
+                (id_, id_, id_),
+            ).fetchone()
+        finally:
+            conn.close()
+        return _row_to_user(row) if row else None

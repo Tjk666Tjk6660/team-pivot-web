@@ -8,22 +8,16 @@
  * AdminIntro / QuickFact were deleted — AdminLayout + AdminHome cover them.
  */
 import { useEffect, useState } from "react";
-import { Bot, FileText, FolderGit2, Palette, Play } from "lucide-react";
+import { Bot, FolderGit2, Palette } from "lucide-react";
 import { toast } from "sonner";
 import {
   AdminRequiredError,
   fetchAdminMarkdownSettings,
   fetchAISettings,
-  fetchDailyReportConfig,
-  fetchDailyReportLastRun,
   fetchWorkspaceAdminConfig,
-  triggerDailyReport,
   updateAdminMarkdownSettings,
   updateAISettings,
-  updateDailyReportConfig,
   updateWorkspaceAdminConfig,
-  type DailyReportConfig,
-  type DailyReportLastRun,
   type MarkdownStyleMeta,
 } from "@/api";
 import { Button } from "@/components/ui/button";
@@ -652,274 +646,6 @@ export function AISettingsSection({ onAdminLost }: { onAdminLost: () => void }) 
   );
 }
 
-// ── Daily Report (Phase 5) ────────────────────────────────────────────────────
-
-export function DailyReportSection({ onAdminLost }: { onAdminLost: () => void }) {
-  const [cfg, setCfg] = useState<DailyReportConfig | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [triggering, setTriggering] = useState(false);
-  const [dryRun, setDryRun] = useState(true);
-  const [noAi, setNoAi] = useState(false);
-  const [lastRun, setLastRun] = useState<DailyReportLastRun | null>(null);
-  const [pollingRunId, setPollingRunId] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetchDailyReportConfig()
-      .then(setCfg)
-      .catch((e) => {
-        if (e instanceof AdminRequiredError) {
-          toast.error("管理员密码已失效，请重新输入");
-          onAdminLost();
-        } else {
-          toast.error(e instanceof Error ? e.message : String(e));
-        }
-      })
-      .finally(() => setLoading(false));
-    fetchDailyReportLastRun().then(setLastRun).catch(() => {});
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // poll last-run when a trigger has just kicked off
-  useEffect(() => {
-    if (!pollingRunId) return;
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const lr = await fetchDailyReportLastRun();
-        if (cancelled) return;
-        setLastRun(lr);
-        if (lr.run_id === pollingRunId && lr.finished_at) {
-          setPollingRunId(null);
-          if (lr.error) {
-            toast.error(`触发失败：${lr.error}`);
-          } else if (lr.rc === 0) {
-            toast.success("日报已生成");
-          } else {
-            toast.error(`运行结束 rc=${lr.rc}`);
-          }
-        }
-      } catch {
-        /* ignore polling error */
-      }
-    };
-    const t = window.setInterval(tick, 3000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(t);
-    };
-  }, [pollingRunId]);
-
-  const save = async () => {
-    if (!cfg) return;
-    setSaving(true);
-    try {
-      await updateDailyReportConfig(cfg);
-      toast.success("日报配置已保存");
-    } catch (e) {
-      if (e instanceof AdminRequiredError) {
-        onAdminLost();
-      } else {
-        toast.error(e instanceof Error ? e.message : String(e));
-      }
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const trigger = async () => {
-    if (!cfg) return;
-    if (!cfg.enabled) {
-      toast.error("总开关 enabled=false，请先打开后保存再触发");
-      return;
-    }
-    setTriggering(true);
-    try {
-      const r = await triggerDailyReport({ dry_run: dryRun, no_ai: noAi });
-      toast.message(`已开始：${r.run_id}`);
-      setPollingRunId(r.run_id);
-    } catch (e) {
-      if (e instanceof AdminRequiredError) {
-        onAdminLost();
-      } else {
-        toast.error(e instanceof Error ? e.message : String(e));
-      }
-    } finally {
-      setTriggering(false);
-    }
-  };
-
-  const update = (patch: Partial<DailyReportConfig>) => {
-    if (!cfg) return;
-    setCfg({ ...cfg, ...patch });
-  };
-
-  return (
-    <section>
-      <Card className="shadow-[var(--shadow-sm)]">
-        <CardHeader className="pb-4">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <FileText className="h-4 w-4" />
-            日报配置 · 公司视角 / 个人视角
-          </CardTitle>
-          <CardDescription>
-            两份独立报告（公司视角 + 个人视角）的开关、推送窗口、触发方式与手动执行入口。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {loading || !cfg ? (
-            <p className="text-sm text-muted-foreground">加载中…</p>
-          ) : (
-            <>
-              <div className="grid gap-4 lg:grid-cols-2">
-                <ToggleRow
-                  label="总开关"
-                  checked={cfg.enabled}
-                  onChange={(v) => update({ enabled: v })}
-                  hint="关闭后定时调度和手动触发都跳过"
-                />
-                <ToggleRow
-                  label="仅工作日推送"
-                  checked={cfg.push_freq === "weekdays"}
-                  onChange={(v) =>
-                    update({ push_freq: v ? "weekdays" : "daily" })
-                  }
-                  hint="开启时周末跳过(避免空卡噪音);关闭则每天发"
-                />
-
-                <ToggleRow
-                  label="公司视角报告"
-                  checked={cfg.company_enabled}
-                  onChange={(v) => update({ company_enabled: v })}
-                  hint="一段叙事 + 整体节奏定性（积极/平稳/偏停滞）"
-                />
-                <ToggleRow
-                  label="个人视角报告"
-                  checked={cfg.personal_enabled}
-                  onChange={(v) => update({ personal_enabled: v })}
-                  hint="逐人输入/输出叙述，无活动者合并到一行"
-                />
-
-                <div className="space-y-2 rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] p-3">
-                  <Label htmlFor="dr-window-hours" className="text-sm font-semibold">
-                    统计时间窗口（小时）
-                  </Label>
-                  <Input
-                    id="dr-window-hours"
-                    type="number"
-                    min={1}
-                    max={168}
-                    value={cfg.time_window_hours}
-                    onChange={(e) =>
-                      update({ time_window_hours: Number(e.target.value) || 24 })
-                    }
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    默认 24 小时;范围 1-168
-                  </p>
-                </div>
-                <div className="space-y-2 rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] p-3">
-                  <Label htmlFor="dr-push-time" className="text-sm font-semibold">
-                    每日推送时刻 (HH:MM)
-                  </Label>
-                  <Input
-                    id="dr-push-time"
-                    type="time"
-                    value={cfg.push_time}
-                    onChange={(e) =>
-                      update({ push_time: e.target.value || "09:30" })
-                    }
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Asia/Shanghai,主服务进程内置定时
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex justify-end border-t pt-4">
-                <Button onClick={save} disabled={saving}>
-                  {saving ? "保存中…" : "保存配置"}
-                </Button>
-              </div>
-
-              <div className="rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface-alt)] p-4 space-y-3">
-                <div className="text-sm font-semibold text-[var(--text)]">
-                  立即手动触发一次
-                </div>
-                <div className="flex flex-wrap items-center gap-4 text-sm">
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={dryRun}
-                      onChange={(e) => setDryRun(e.target.checked)}
-                    />
-                    Dry-run（不发飞书）
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={noAi}
-                      onChange={(e) => setNoAi(e.target.checked)}
-                    />
-                    No AI（fallback 文案）
-                  </label>
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={trigger}
-                  disabled={triggering || pollingRunId !== null}
-                >
-                  <Play className="mr-1.5 h-3.5 w-3.5" />
-                  {triggering
-                    ? "启动中…"
-                    : pollingRunId
-                    ? "运行中…"
-                    : "立即触发"}
-                </Button>
-                {lastRun && (lastRun.started_at || lastRun.run_id) && (
-                  <div className="rounded border bg-[var(--surface)] p-3 text-xs space-y-1">
-                    <div>
-                      <span className="font-medium">run_id:</span>{" "}
-                      {lastRun.run_id ?? "-"}
-                    </div>
-                    <div>
-                      <span className="font-medium">started:</span>{" "}
-                      {lastRun.started_at ?? "-"}
-                    </div>
-                    <div>
-                      <span className="font-medium">finished:</span>{" "}
-                      {lastRun.finished_at ?? "(running…)"}
-                    </div>
-                    {lastRun.rc !== null && (
-                      <div>
-                        <span className="font-medium">rc:</span>{" "}
-                        <span
-                          style={{
-                            color:
-                              lastRun.rc === 0
-                                ? "var(--ok-600)"
-                                : "var(--warn-600)",
-                          }}
-                        >
-                          {lastRun.rc}
-                        </span>
-                      </div>
-                    )}
-                    {lastRun.error && (
-                      <div className="text-[var(--warn-600)]">
-                        error: {lastRun.error}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
-    </section>
-  );
-}
 
 export function ToggleRow({
   label,
@@ -959,3 +685,152 @@ export function ToggleRow({
 // `contacts.upsert_from_login` 单条更新负责）。删除 import + 函数本体；
 // AdminContacts 页面 + /admin/contacts 路由 + /api/contacts/sync 端点
 // 一并下线（同 commit）。
+export function ACard({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <Card
+      className={`overflow-hidden ${className}`}
+      style={{
+        background: "var(--surface)",
+        border: "1px solid var(--line)",
+        borderRadius: 14,
+        boxShadow: "0 1px 0 rgba(31,26,20,.04), 0 1px 2px rgba(31,26,20,.04)",
+      }}
+    >
+      {children}
+    </Card>
+  );
+}
+
+export function CardHead({
+  title,
+  desc,
+  trailing,
+}: {
+  title: string;
+  desc?: string;
+  trailing?: React.ReactNode;
+}) {
+  return (
+    <div
+      className="flex items-center justify-between gap-3 px-5 py-4"
+      style={{ borderBottom: "1px solid var(--line)" }}
+    >
+      <div className="min-w-0">
+        <h3 className="m-0 text-[14px] font-semibold" style={{ color: "var(--text)" }}>
+          {title}
+        </h3>
+        {desc && (
+          <div className="mt-0.5 text-[12px]" style={{ color: "var(--text-mute)" }}>
+            {desc}
+          </div>
+        )}
+      </div>
+      {trailing}
+    </div>
+  );
+}
+
+export function Subsection({
+  title,
+  children,
+  first,
+}: {
+  title: string;
+  children: React.ReactNode;
+  first?: boolean;
+}) {
+  return (
+    <div
+      className="px-5 py-4"
+      style={
+        first
+          ? undefined
+          : { borderTop: "1px solid var(--line)" }
+      }
+    >
+      <div
+        className="mb-3 flex items-center gap-2 text-[12px] font-semibold"
+        style={{ color: "var(--text-soft)" }}
+      >
+        <span
+          className="h-1 w-1 rounded-full"
+          style={{ background: "var(--accent)" }}
+        />
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+export function CardFoot({
+  hint,
+  children,
+}: {
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="flex items-center justify-between gap-3 px-5 py-3.5 max-sm:flex-col-reverse max-sm:items-stretch"
+      style={{
+        borderTop: "1px solid var(--line)",
+        background:
+          "linear-gradient(to bottom, transparent, color-mix(in srgb, var(--bg) 50%, transparent))",
+      }}
+    >
+      <div className="text-[12px]" style={{ color: "var(--text-mute)" }}>
+        {hint}
+      </div>
+      <div className="flex items-center gap-2 max-sm:w-full max-sm:[&>button]:flex-1">{children}</div>
+    </div>
+  );
+}
+
+export function FieldLabel({
+  htmlFor,
+  children,
+  required,
+  badge,
+}: {
+  htmlFor?: string;
+  children: React.ReactNode;
+  required?: boolean;
+  badge?: string;
+}) {
+  return (
+    <Label
+      htmlFor={htmlFor}
+      className="flex items-center gap-1.5 text-[12px] font-medium"
+      style={{ color: "var(--text-soft)" }}
+    >
+      {children}
+      {required && <span style={{ color: "var(--warn-600, #B43E3E)" }}>*</span>}
+      {badge && (
+        <span
+          className="rounded px-1.5 text-[10px]"
+          style={{ background: "var(--surface-alt)", color: "var(--text-mute)" }}
+        >
+          {badge}
+        </span>
+      )}
+    </Label>
+  );
+}
+
+export function FieldHelp({ children }: { children: React.ReactNode }) {
+  return (
+    <p
+      className="m-0 text-[11.5px] leading-[1.45]"
+      style={{ color: "var(--text-mute)" }}
+    >
+      {children}
+    </p>
+  );
+}

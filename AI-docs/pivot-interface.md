@@ -282,6 +282,107 @@ matter 草稿在 `matter_payload` 字段（JSON）里承载全部 matter 专属�
 ### GET /api/admin/workspace-config
 - 作用：读取管理员工作区配置
 
+## Admin · Daily Report (v2)
+
+> 全部端点鉴权：Cookie + `X-Admin-Password` 头(`require_admin`)。Bearer PAT 不可用。
+> 时间字段统一返回 ISO 8601 字符串(Asia/Shanghai)。
+> 详细设计见 [`AI-docs/daily-report/`](./daily-report/)。
+
+### GET /api/admin/daily-report/jobs
+- 作用：列出所有定时任务(默认过滤 `archived`)
+- Query:
+  - `include_archived=true`：包含已归档
+- 返回：`Job[]`（字段同下方 GET /jobs/{id}）
+
+### POST /api/admin/daily-report/jobs
+- 作用：创建定时任务；`status=active` 时同步算 `next_run_at`
+- 请求体：
+  - `name`（必填,1–100 字符）
+  - `view`：`"company" | "personal"`
+  - `push_time`：`"HH:MM"` 24h 制
+  - `push_freq`：`"daily" | "weekdays" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun" | "month_start" | "month_end"`,默认 `weekdays`
+  - `window_hours`：`1–168`，默认 `24`
+  - `receiver_type`：`"groups" | "users"`
+  - `receiver_ids`：字符串数组，可为 `null`(=全部 bot 群,仅 `groups` 有效)
+  - `status`：`"active" | "paused"`，默认 `active`
+- 返回：完整 Job(状态码 201)
+
+### GET /api/admin/daily-report/jobs/{job_id}
+- 作用：取单条任务详情
+- 返回字段：
+  - `id` / `name` / `view` / `status`
+  - `push_time` / `push_freq` / `window_hours` / `channel`
+  - `receiver_type` / `receiver_ids`
+  - `next_run_at`（ISO，可 null）
+  - `last_run_id` / `last_status`
+  - `retry_count` / `last_notified_at`
+  - `created_by` / `created_at` / `updated_at`
+- 可能错误：`404 job not found`
+
+### PUT /api/admin/daily-report/jobs/{job_id}
+- 作用：部分更新任务配置(只传需要改的字段)
+- 可改字段：`name / view / push_time / push_freq / window_hours / receiver_type / receiver_ids`
+- 备注：
+  - `receiver_ids` 显式传 `[]` 或 `null` 都视为"清空回默认 bot 群"
+  - 改 `push_time` / `push_freq` 且 `status=active` 时,服务端重算 `next_run_at`
+- 可能错误：`404 job not found`、`409 cannot update archived job`
+
+### PUT /api/admin/daily-report/jobs/{job_id}/status
+- 作用：切换状态。`active` → 算 `next_run_at`；`paused`/`archived` → 清 `next_run_at`
+- 请求体：`{"status": "active" | "paused" | "archived"}`
+
+### DELETE /api/admin/daily-report/jobs/{job_id}
+- 作用：软删(置 `archived` + 清 `next_run_at`)；不会真 DELETE 行
+- 返回：`{"ok": true}`
+
+### POST /api/admin/daily-report/jobs/{job_id}/run-now
+- 作用：用该 job 配置立即跑一次(后台 thread,异步)；不影响 `next_run_at` / `retry_count` / `last_status`
+- 请求体：`{"dry_run"?: bool, "no_ai"?: bool}`
+- 返回：`{"ok": true, "run_id": int, "started_at": iso}`
+- 可能错误：`404 job not found`、`409 cannot run-now archived job`
+
+### POST /api/admin/daily-report/manual-trigger
+- 作用：不绑任何 job 的一次性触发；窗口 = `[now - window_hours, now)`
+- 请求体：
+  - `view`：`"company" | "personal"`
+  - `window_hours`：默认 24
+  - `receiver_type`：`"groups" | "users"`
+  - `receiver_ids`：`users` 类型必填且非空
+  - `dry_run`、`no_ai`：可选 bool
+- 返回：`{"ok": true, "run_id": int, "started_at": iso}`
+- 备注：runs 表 `job_id=null` `trigger_type="manual"`
+
+### GET /api/admin/daily-report/jobs/{job_id}/runs
+- 作用：该 job 的运行历史(分页,按 `started_at` DESC)
+- Query:
+  - `page`：默认 1,`>=1`
+  - `size`：默认 20,`1–200`
+- 返回：`{ items: Run[], page, size, total }`
+- Run 字段:
+  - `id` / `job_id` / `trigger_type` / `view`
+  - `started_at` / `finished_at`（可 null）
+  - `status`：`"running" | "succeeded" | "failed" | "partial" | "skipped"`
+  - `rc` / `cards_sent` / `cards_total`
+  - `ai_tokens_in` / `ai_tokens_out`
+  - `error`（≤200 字摘要）
+
+### GET /api/admin/daily-report/runs/{run_id}
+- 作用：单条 run 详情(含完整 `debug_json`)
+- 返回字段：与 `Run[]` 元素一致 + `debug_json`(JSON 字符串)
+- 可能错误：`404 run not found`
+
+### GET /api/admin/daily-report/admin-notify
+- 作用：取系统通知接收人(漏跑/失败告警走这里;不配置时 fallback 全部 bot 群)
+- 返回：`{"chat_ids": string[], "open_ids": string[]}`
+
+### PUT /api/admin/daily-report/admin-notify
+- 作用：写系统通知接收人(JSON 数组,空数组 = 清空)
+- 请求体：`{"chat_ids": string[], "open_ids": string[]}`
+
+### GET /api/admin/daily-report/feishu-chats
+- 作用：列出 bot 所在的飞书群(供 UI 多选选群)
+- 返回：`Array<{ chat_id, name, avatar }>`
+
 ## Matter API（设计草案）
 
 这一组接口服务于新的 `matter` 模型。第一版目标不是替换所有 thread 接口，而是在现有 discussion 基础上，逐步补出 `matter timeline + 文件创建 + 状态迁移` 的最小闭环。
@@ -641,6 +742,46 @@ matter 草稿在 `matter_payload` 字段（JSON）里承载全部 matter 专属�
 - 返回：
   - `item`
   - `matter`
+
+### POST /api/matters/{matter_id}/events
+- 作用：作者**撤回 / 恢复**自己已发布的某个文件（声明式撤回，不删除原文）
+- 鉴权：Cookie 或 Bearer PAT
+- 设计依据：`AI-docs/invalidate-self/product-design.md`
+- 说明：
+  - 在 timeline 上写入一条**事件项**（无 md 文件落盘，仅 yaml index）
+  - 同时反写目标文件的 `invalidated / invalidated_at / invalidated_reason / invalidated_by` 4 字段
+  - **作者本人限定**：请求者的 pinyin 必须等于目标文件的 `creator`
+  - **失效不影响 matter 状态机**：被失效的若是 result 文件且曾把 matter 推到 finished，matter 仍 finished
+- 请求体：
+  - `target_file`: string，目标文件路径（必须是同一 matter 的 file 项）
+  - `reason`: `"misposted" | "inaccurate" | "restored"`
+    - `misposted` / `inaccurate`：失效（目标当前必须未失效）
+    - `restored`：恢复（目标当前必须已失效）
+  - `summary?`: 可选自由说明，最长 500
+- 返回：
+  - `event`: `{ creator, created_at, quote, reason, summary? }` —— 新追加的事件项
+  - `target`: `{ file, invalidated, invalidated_at, invalidated_reason, invalidated_by }` —— 目标文件反写后的状态
+  - `matter`: matter 元数据
+- 错误码（detail.code）：
+  - `target_not_found` (404)：目标文件不在本 matter 的 timeline 内（跨 matter / comment / 事件项路径）
+  - `event_creator_mismatch` (403)：请求者非目标文件作者
+  - `target_already_invalidated` (409)：目标已失效，需先恢复才能再次失效
+  - `target_not_invalidated` (409)：目标未失效，无法发恢复事件
+  - `target_not_file_item` (422)：目标不是合法文件项（防御性）
+  - `invalid_reason` / `quote_required` / `creator_required` (422)
+  - `quote_target_invalidated` (422)：另见 `POST /files`，新文件 `quote` / `refer` 不能指向已失效文件
+- SSE：成功后服务端 emit `matter.event_appended`，SSE 层映射为 `matter.updated` 事件，`reason="event_appended"`，详见下文 SSE 章节
+
+### SSE: GET /api/matters/events
+- 事件：`matter.created` / `matter.updated`
+- payload：`{matter_id, reason, actor, at}` —— **thin SSE**，不携带业务字段
+- `reason` 取值：
+  - `created`：新建 matter
+  - `file_appended`：新文件追加
+  - `comment_appended`：评论追加
+  - `owner_changed`：负责人转交
+  - `event_appended`：失效 / 恢复事件追加（来自 `POST /events`）
+- 客户端收到任一 `matter.updated` 事件后，应通过 `GET /api/matters/{id}` 重新拉取详情
 
 ### 最小服务端校验建议
 

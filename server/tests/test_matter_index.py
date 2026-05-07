@@ -1115,3 +1115,201 @@ def test_append_annotation_does_not_bump_matter_updated_at(tmp_path):
     )
     after = read_matter_index(path)["matter"].get("updated_at")
     assert after == before
+
+
+# ---------- invalidation events (P1) ------------------------------------
+
+
+def _bootstrap_invalidate(tmp_path, *, creator: str = "dengke") -> tuple:
+    """Create a matter with one think (creator) + one act (creator).
+    Both files belong to the same creator so the invalidation event tests can
+    exercise the author-only rule without owner-change setup. Returns
+    (index_path, act_file_path) for convenience."""
+    path = matter_index_path(tmp_path / "index", "m")
+    create_matter_index(
+        path, matter_id="m", title="m",
+        initial_item=_initial_think(creator=creator),
+        now_iso="2026-04-23T10:00:00+08:00",
+    )
+    act_file = "discussions/auth-redesign/002_dengke_act_bbb.md"
+    from server.matter_index import append_file_item
+    append_file_item(
+        path,
+        item={
+            "file": act_file,
+            "creator": creator,
+            "type": "act",
+            "summary": "推进登录回跳",
+            "status_change": {"from": "planning", "to": "executing"},
+        },
+        now_iso="2026-04-23T11:00:00+08:00",
+    )
+    return path, act_file
+
+
+def test_invalidation_event_normalization_uses_event_key_order(tmp_path):
+    """事件项 (无 type, 有 reason) 走 _INVALIDATION_EVENT_KEY_ORDER。"""
+    from server.matter_index import append_event
+    path, act_file = _bootstrap_invalidate(tmp_path)
+    append_event(
+        path,
+        event={
+            # 字段故意打乱顺序传入
+            "reason": "misposted",
+            "summary": "误发,撤回",
+            "quote": act_file,
+            "creator": "dengke",
+        },
+        now_iso="2026-04-26T10:00:00+08:00",
+    )
+    raw = path.read_text(encoding="utf-8")
+    # 事件项是 timeline 最后一条;按 _INVALIDATION_EVENT_KEY_ORDER:
+    # creator → created_at → quote → reason → summary
+    last_block = raw.rsplit("- creator: dengke", 1)[1]
+    expected_order = ["created_at:", "quote:", "reason:", "summary:"]
+    last_idx = -1
+    for marker in expected_order:
+        idx = last_block.find(marker)
+        assert idx > last_idx, f"{marker} out of canonical order"
+        last_idx = idx
+    # 事件项不应有 type 字段
+    assert "  type:" not in last_block.split("\n", 5)[0:5][0]
+
+
+def test_reverse_write_invalidation_sets_4_fields(tmp_path):
+    """misposted/inaccurate event 反写文件项的 invalidated + 3 元数据字段。"""
+    from server.matter_index import append_event
+    path, act_file = _bootstrap_invalidate(tmp_path)
+    append_event(
+        path,
+        event={
+            "creator": "dengke",
+            "quote": act_file,
+            "reason": "misposted",
+            "summary": "误发",
+        },
+        now_iso="2026-04-26T10:00:00+08:00",
+    )
+    data = read_matter_index(path)
+    target = next(it for it in data["timeline"] if it.get("file") == act_file)
+    assert target["invalidated"] is True
+    assert target["invalidated_at"] == "2026-04-26T10:00:00+08:00"
+    assert target["invalidated_reason"] == "misposted"
+    assert target["invalidated_by"] == "dengke"
+
+
+def test_reverse_write_restoration_only_flips_bool_keeps_audit_trail(tmp_path):
+    """restored 事件仅翻转 invalidated=False;其他 3 字段保留作审计。"""
+    from server.matter_index import append_event
+    path, act_file = _bootstrap_invalidate(tmp_path)
+    # 第 1 步:失效
+    append_event(
+        path,
+        event={
+            "creator": "dengke", "quote": act_file,
+            "reason": "misposted", "summary": "误发",
+        },
+        now_iso="2026-04-26T10:00:00+08:00",
+    )
+    # 第 2 步:恢复
+    append_event(
+        path,
+        event={"creator": "dengke", "quote": act_file, "reason": "restored"},
+        now_iso="2026-04-27T15:00:00+08:00",
+    )
+    data = read_matter_index(path)
+    target = next(it for it in data["timeline"] if it.get("file") == act_file)
+    assert target["invalidated"] is False
+    # 审计痕迹保留
+    assert target["invalidated_at"] == "2026-04-26T10:00:00+08:00"
+    assert target["invalidated_reason"] == "misposted"
+    assert target["invalidated_by"] == "dengke"
+
+
+def test_reverse_write_uses_canonical_order_for_4_fields(tmp_path):
+    """反写后文件项 yaml 输出按 canonical order:
+    verifications_received → invalidated → invalidated_at → invalidated_reason →
+    invalidated_by → outcome → comments → status_change。"""
+    from server.matter_index import append_event
+    path, act_file = _bootstrap_invalidate(tmp_path)
+    append_event(
+        path,
+        event={
+            "creator": "dengke", "quote": act_file,
+            "reason": "inaccurate", "summary": "信息有误",
+        },
+        now_iso="2026-04-26T10:00:00+08:00",
+    )
+    raw = path.read_text(encoding="utf-8")
+    # 找到 act 文件项块
+    act_block = raw.split(f"- file: {act_file}", 1)[1].split("\n- ", 1)[0]
+    expected_order = [
+        "invalidated:",
+        "invalidated_at:",
+        "invalidated_reason:",
+        "invalidated_by:",
+    ]
+    last_idx = -1
+    for marker in expected_order:
+        idx = act_block.find(marker)
+        assert idx > last_idx, f"{marker} out of canonical order"
+        last_idx = idx
+
+
+def test_re_invalidate_after_restore_overwrites_metadata(tmp_path):
+    """失效 → 恢复 → 再失效 时,3 个元数据字段被新值覆盖,不保留前一次。"""
+    from server.matter_index import append_event
+    path, act_file = _bootstrap_invalidate(tmp_path)
+    append_event(
+        path,
+        event={"creator": "dengke", "quote": act_file, "reason": "misposted"},
+        now_iso="2026-04-26T10:00:00+08:00",
+    )
+    append_event(
+        path,
+        event={"creator": "dengke", "quote": act_file, "reason": "restored"},
+        now_iso="2026-04-27T10:00:00+08:00",
+    )
+    append_event(
+        path,
+        event={"creator": "dengke", "quote": act_file, "reason": "inaccurate"},
+        now_iso="2026-04-28T10:00:00+08:00",
+    )
+    data = read_matter_index(path)
+    target = next(it for it in data["timeline"] if it.get("file") == act_file)
+    assert target["invalidated"] is True
+    assert target["invalidated_reason"] == "inaccurate"  # 最新值,非"misposted"
+    assert target["invalidated_at"] == "2026-04-28T10:00:00+08:00"
+
+
+def test_invalidation_event_does_not_bump_matter_updated_at(tmp_path):
+    """失效事件不 bump matter.updated_at(撤回声明 != matter 进展)。"""
+    from server.matter_index import append_event
+    path, act_file = _bootstrap_invalidate(tmp_path)
+    before = read_matter_index(path)["matter"]["updated_at"]
+    append_event(
+        path,
+        event={"creator": "dengke", "quote": act_file, "reason": "misposted"},
+        now_iso="2026-04-26T10:00:00+08:00",
+    )
+    after = read_matter_index(path)["matter"]["updated_at"]
+    assert before == after  # updated_at 不变
+
+
+def test_invalidation_event_validation_failure_no_partial_state(tmp_path):
+    """validator reject 时,timeline 不该追加任何条目,文件项的 invalidated_*
+    也不应被反写。"""
+    from server.matter_index import append_event
+    path, act_file = _bootstrap_invalidate(tmp_path)
+    timeline_len_before = len(read_matter_index(path)["timeline"])
+    # rule 1 拒绝:非作者来失效
+    with pytest.raises(ValidationError):
+        append_event(
+            path,
+            event={"creator": "alice", "quote": act_file, "reason": "misposted"},
+            now_iso="2026-04-26T10:00:00+08:00",
+        )
+    data = read_matter_index(path)
+    assert len(data["timeline"]) == timeline_len_before  # 没追加
+    target = next(it for it in data["timeline"] if it.get("file") == act_file)
+    assert "invalidated" not in target  # 没反写
