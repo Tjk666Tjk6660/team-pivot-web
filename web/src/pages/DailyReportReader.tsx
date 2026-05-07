@@ -127,12 +127,12 @@ function ReportTabs({
             className={[
               "border px-4 py-3 text-left transition",
               selected
-                ? "border-[#2d6f73] bg-[#1f3030] text-[#fffaf0] shadow-[0_12px_34px_rgba(31,48,48,0.18)]"
+                ? "border-[#8fb8ae] bg-[#eef7f4] text-[#173736] shadow-[0_10px_28px_rgba(31,48,48,0.08)]"
                 : "border-[#d9d0bf] bg-[#fffaf0] text-[#1f3030] hover:border-[#9eb3a0]",
             ].join(" ")}
           >
             <div className="text-sm font-semibold">{tab.label}</div>
-            <div className={selected ? "mt-1 text-xs text-[#d8e0d6]" : "mt-1 text-xs text-[#8a8173]"}>
+            <div className={selected ? "mt-1 text-xs text-[#5e7d78]" : "mt-1 text-xs text-[#8a8173]"}>
               {tab.desc}
             </div>
           </button>
@@ -255,12 +255,9 @@ function ReadableTimelineCard({
       </div>
       <h3 className={`text-sm font-black leading-5 ${tone.text}`}>{title}</h3>
       <ul className="mt-3 space-y-2 text-sm leading-6 text-[#344054]">
-        {group.items.slice(0, 3).map((item, index) => (
-          <li key={item} className="grid grid-cols-[20px_minmax(0,1fr)] gap-2">
-            <span className="mt-0.5 flex h-5 w-5 items-center justify-center rounded-full border border-[#d7dee8] bg-[#f8fbfd] text-[10px] font-black leading-none text-[#667085]">
-              {index + 1}
-            </span>
-            <span>{item}</span>
+        {group.items.slice(0, 3).map((item) => (
+          <li key={item} className="border-l-2 border-[#d7dee8] pl-3">
+            {item}
           </li>
         ))}
       </ul>
