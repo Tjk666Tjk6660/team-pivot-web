@@ -940,6 +940,32 @@ def test_rerun_enqueues_admin_rerun_job(
     assert job.triggered_by == "admin:rerun"
 
 
+def test_rerun_creates_queued_row_synchronously(
+    client, queue, pivot_users, workspace, store,
+):
+    """Admin rerun should create the queued row before returning, so the
+    matter shows up in scoring lists immediately (regression: previously
+    worker created the row async; admin saw 'enqueued' toast but list was
+    stale until worker pickup)."""
+    pivot_users.create(
+        display_name="zs", pinyin="zhangsan", email=None, avatar_url="",
+    )
+    _write_matter(workspace, "m")
+
+    r = client.post(
+        "/api/admin/scoring/matters/m/rerun", headers=_admin_headers(),
+    )
+    assert r.status_code == 200
+
+    # Run row exists, status='queued', and the enqueued job carries run_id
+    # so worker uses the pre-created row instead of inserting another.
+    runs = store.list_runs(matter_id="m")
+    assert len(runs) == 1
+    assert runs[0].status == "queued"
+    assert len(queue.jobs) == 1
+    assert queue.jobs[0].run_id == runs[0].run_id
+
+
 def test_rerun_supersedes_stuck_running_run(
     client, queue, pivot_users, workspace, store,
 ):

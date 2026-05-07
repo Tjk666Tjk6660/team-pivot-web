@@ -366,7 +366,12 @@ def build_router(
                 matter_id, superseded, admin_user.id,
             )
 
-        # admin_user is already a PivotUser — its id is the audit trail value
+        # 2026-05-07 fix: previously we just enqueued the job and let the
+        # worker create the 'queued' row — admin clicking the button saw the
+        # toast but the matter didn't appear in the runs list until worker
+        # picked up (~seconds, sometimes longer). Now we synchronously create
+        # the row here and pass run_id through job; worker uses it directly.
+        # admin_user is already a PivotUser — its id is the audit trail value.
         job = ScoringJob(
             matter_id=matter_id,
             matter_category=category,
@@ -375,10 +380,22 @@ def build_router(
             triggered_actor_id=admin_user.id,
             candidate_user_ids=tuple(candidate_ids),
         )
+        from dataclasses import replace
+        from server.scoring.worker import compute_timeline_hash, DEFAULT_MODEL
+        timeline_hash = compute_timeline_hash(index)
+        # Model is metadata only on the run row; the actual AI call resolves
+        # via _ai_endpoint_config in worker. Empty string would also work but
+        # populating it makes the runs list more useful immediately.
+        model = (settings.get(KEY_MODEL) or "").strip() or DEFAULT_MODEL
+        run_id = store.start_run(
+            job, timeline_hash=timeline_hash, model=model, schema_version=2,
+        )
+        job = replace(job, run_id=run_id)
         queue.enqueue(job)
         log.info(
-            "scoring admin rerun enqueued matter=%s subject=%s candidates=%d admin=%s",
-            matter_id, owner.id, len(candidate_ids), admin_user.id,
+            "scoring admin rerun enqueued matter=%s subject=%s candidates=%d "
+            "run=%s admin=%s",
+            matter_id, owner.id, len(candidate_ids), run_id, admin_user.id,
         )
         return RerunResponse(
             ok=True,

@@ -96,6 +96,12 @@ class ScoringJob:
     triggered_by: TriggeredBy
     triggered_actor_id: str | None = None
     candidate_user_ids: tuple[str, ...] = field(default_factory=tuple)
+    # 2026-05-07 fix: when admin rerun creates the queued row synchronously
+    # (so the UI shows the run immediately rather than waiting for worker
+    # pickup), it stamps run_id here. Worker reads it instead of calling
+    # _try_start_run again. None on auto-trigger path — worker creates the
+    # run row itself.
+    run_id: str | None = None
 
 
 @dataclass(frozen=True)
