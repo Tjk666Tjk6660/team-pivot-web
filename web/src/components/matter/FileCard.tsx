@@ -43,7 +43,6 @@ import { InlineUserAvatar } from "./InlineUserAvatar";
 import { RelevanceChip } from "./RelevanceChip";
 import { InvalidatedBadge } from "./InvalidatedBadge";
 import { InvalidateDialog } from "./InvalidateDialog";
-import { CopyForAIButton } from "@/components/CopyForAIButton";
 import { publishListRefresh } from "@/events/listRefresh";
 
 const COLLAPSE_HEIGHT = 208;
@@ -491,7 +490,6 @@ export function FileCard({
           active={activeType === "verify"}
           onClick={() => onCreate("verify", item.file)}
         />
-        <CopyForAIButton matterId={matterId} filePath={item.file} />
         {/* Author-only invalidate / restore. The button label switches by
             current state: 失效 (when not yet invalidated) ↔ 恢复 (when
             invalidated). The actual permission check is enforced server-side

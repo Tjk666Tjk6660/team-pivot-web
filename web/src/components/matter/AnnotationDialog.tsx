@@ -88,7 +88,7 @@ export function AnnotationPopover({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        title="对该文件写一条评价（不可编辑/删除，三个 stakeholder 会收到飞书通知）"
+        title="对该文件写一条评价（不可编辑/删除）"
         className="inline-flex items-center gap-1 rounded-[var(--r-sm)] border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-[11px] font-semibold text-[var(--text-soft)] hover:bg-[var(--surface-alt)] hover:text-[var(--text)]"
       >
         <MessageSquareText className="h-3 w-3" />
