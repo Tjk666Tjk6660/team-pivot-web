@@ -152,18 +152,22 @@ def build_router(
         # `error=access_denied&state=...`). Land them on the originating page
         # with a reason so the SPA can show "you cancelled, try again" — the
         # invite stays unused since we never reached exchange_code.
+        # Redirect must include the SPA origin (post_login_redirect) — bare
+        # paths land back on the backend and 404 since SPA routes only exist
+        # on the frontend dev server (or behind reverse-proxy in prod).
         if code is None:
+            spa_origin = post_login_redirect.rstrip("/")
             try:
                 invite_token = decode_invite_state(state, secret=session_secret)
                 log.info("oauth callback denied invite flow error=%s", error)
                 return RedirectResponse(
-                    f"/invite/{invite_token}?reason=feishu_denied",
+                    f"{spa_origin}/invite/{invite_token}?reason=feishu_denied",
                     status_code=302,
                 )
             except InviteStateError:
                 log.info("oauth callback denied login flow error=%s", error)
                 return RedirectResponse(
-                    f"{post_login_redirect}?reason=feishu_denied",
+                    f"{spa_origin}/?reason=feishu_denied",
                     status_code=302,
                 )
         # State is either a regular login envelope (itsdangerous-signed dict
