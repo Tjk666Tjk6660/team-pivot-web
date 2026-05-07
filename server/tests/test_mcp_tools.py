@@ -709,12 +709,12 @@ def test_create_matter_omits_visibility_keys_when_unset():
     assert "new_category_visibility" not in sent_body
 
 
-def test_create_matter_surfaces_missing_category_visibility_422():
-    """Backend's missing_category_visibility flows through as `errors` payload."""
+def test_create_matter_surfaces_backend_validation_422():
+    """Backend validation payloads flow through as `errors`."""
     client = MagicMock(spec=MatterApiClient)
     client.post_matter.return_value = {
         "__validation_errors__": {
-            "detail": {"code": "missing_category_visibility"},
+            "detail": {"code": "invalid_visibility"},
         },
     }
     out = tool_create_matter(
@@ -729,7 +729,7 @@ def test_create_matter_surfaces_missing_category_visibility_422():
         "https://pivot.enclaws.ai",
     )
     assert "errors" in out
-    assert out["errors"]["detail"]["code"] == "missing_category_visibility"
+    assert out["errors"]["detail"]["code"] == "invalid_visibility"
 
 
 def test_create_file_mentions_translate_to_top_level_mentions():

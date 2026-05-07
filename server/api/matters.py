@@ -539,16 +539,6 @@ def build_router(
                 if body.new_category_visibility is not None
                 else None
             )
-            category_visibility_path = workspace.path / "categories" / f"{body.category}.yaml"
-            if (
-                not category_visibility_path.is_file()
-                and visibility.mode == "restricted"
-                and new_category_visibility is None
-            ):
-                raise HTTPException(
-                    status_code=422,
-                    detail={"code": "missing_category_visibility"},
-                )
             if (
                 new_category_visibility is not None
                 and new_category_visibility.mode == "restricted"
