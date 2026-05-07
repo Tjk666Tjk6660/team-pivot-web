@@ -177,6 +177,38 @@ def test_create_matter_omits_body_source_when_absent(client):
     assert "body_source" not in post.frontmatter
 
 
+def test_create_matter_adds_matter_owner_to_restricted_visibility(client, db):
+    from server.matter_index import matter_index_path, read_matter_index
+
+    owner_id = _seed_pivot_user_with_feishu(
+        db, pinyin="liuyu", display_name="liuyu", open_id="ou_2",
+    )
+
+    r = client.post("/api/matters", json={
+        "category": "Pivot",
+        "title": "Owner Visible Matter",
+        "owner_id": owner_id,
+        "visibility": {
+            "mode": "restricted",
+            "roles": [],
+            "user_ids": ["ou_1"],
+        },
+        "initial_file": {
+            "type": "think",
+            "summary": "restricted",
+            "body": "body",
+        },
+    })
+    assert r.status_code == 200, r.text
+
+    raw = read_matter_index(
+        matter_index_path(client.workspace.index_dir, r.json()["matter_id"])
+    )
+    visibility = raw["matter"]["visibility"]
+    assert visibility["mode"] == "restricted"
+    assert visibility["user_ids"] == ["ou_1", owner_id]
+
+
 def test_append_file_writes_body_source_manual(client):
     from server.posts import read_post
 

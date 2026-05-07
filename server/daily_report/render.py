@@ -1,18 +1,19 @@
 """Render daily report narratives to Feishu interactive cards (schema 2.0).
 
-设计原则(2026-05-06 演示反馈后重构):
-- 多元素卡片(`hr` 分隔 / `note` 小灰字 / `markdown` 主体内容),不再塞单 blob
-- 方向标题用彩色 emoji + bold(🔵🟠🟢),不依赖 markdown 标题语法在飞书的支持度
-- 子段标题用 ▸ 三角箭头 + bold,与正文文字加视觉区分
-- 窗口和免责声明用 `note` 元素,飞书自带小灰字样式
+设计原则(2026-05-06 演示反馈后重构,2026-05-07 日报视觉微调):
+- 飞书部分客户端不稳定支持 `note` / `hr`,所以继续使用单 markdown blob
+- 方向标题暂用 markdown 二级标题 + 蓝色字体(`## 一、方向`)放大字号
+- 子段标题只加粗序号 + 语义色(`**(1)** 子段`),避免抢过一级方向标题
+- 时间窗口和免责声明用 markdown italic 模拟辅助文本
 
 LLM 输出本身零改动(三大死禁 / 跨度稀缺 / owner 中心 / 中文化等),只是
-渲染层接收 markdown 后切分成多元素 + 每段加 emoji / 箭头视觉装饰。
+渲染层接收 markdown 后切分成单 markdown 卡片,并加序号视觉装饰。
 """
 from __future__ import annotations
 
 import re
 from datetime import datetime
+from collections.abc import Iterable
 
 from server.daily_report.company_narrate import CompanyNarrative
 from server.daily_report.personal_narrate import (
@@ -35,22 +36,7 @@ _DIRECTION_HEADER_RE = re.compile(
     r"^第([一二三四五六七八九十])是\s*(.+?)。\s*(.*)$"
 )
 
-
-def _direction_emoji(direction_text: str) -> str:
-    """根据方向名返回视觉分类 emoji。
-    - Pivot 产品 → 🔵 (蓝)
-    - enclaws / EC / OPC 底层基建 → 🟠 (橙)
-    - 外部交付 / 客户 → 🟢 (绿)
-    - 其他 → ⚪ (灰白,通用)
-    """
-    s = direction_text.lower()
-    if "pivot" in s or "产品" in direction_text:
-        return "🔵"
-    if "enclaws" in s or "底层" in direction_text or "ec" in s or "opc" in s:
-        return "🟠"
-    if "外部" in direction_text or "交付" in direction_text or "客户" in direction_text:
-        return "🟢"
-    return "⚪"
+_DIRECTION_COLOR = "blue"
 
 
 # --------------------------------------------------------------------------- #
@@ -59,12 +45,11 @@ def _direction_emoji(direction_text: str) -> str:
 
 
 def _format_company_summary_for_card(text: str) -> str:
-    """把 LLM 输出的公司视角叙事加视觉层次(bold + 彩色 emoji + 箭头)。
+    """把 LLM 输出的公司视角叙事加视觉层次(一级标题 + 二级序号)。
 
     转换规则:
-    1. 方向段开头"第X是 Y 方向。剩余" → **<emoji> Y 方向**(彩色 emoji 按方向
-       分类),剩余内容(可能含子段标题)放下一段
-    2. 子段标题(全角 ":" 结尾) → **▸ X**(去掉 ":"),与正文有视觉区分
+    1. 方向段开头"第X是 Y 方向。剩余" → ## <font color="blue">X、Y 方向</font>
+    2. 子段标题(全角 ":" 结尾) → <font color="...">**(1)** X</font>
     3. 子段下方 ≥ 2 行事项逐行加 "- " 前缀变 markdown bullet list
     4. 普通段落不动
 
@@ -73,6 +58,7 @@ def _format_company_summary_for_card(text: str) -> str:
     lines = text.split("\n")
     out: list[str] = []
     i = 0
+    subsection_index = 0
     while i < len(lines):
         line = lines[i]
         stripped = line.strip()
@@ -80,14 +66,18 @@ def _format_company_summary_for_card(text: str) -> str:
         # ---- 方向段标题 ----
         m = _DIRECTION_HEADER_RE.match(stripped)
         if m:
-            _ord_zh, direction, rest = m.groups()
-            emoji = _direction_emoji(direction)
-            out.append(f"**{emoji} {direction}**")
+            ord_zh, direction, rest = m.groups()
+            subsection_index = 0
+            out.append(f"## {_color_text(f'{ord_zh}、{direction}', _DIRECTION_COLOR)}")
             out.append("")  # 方向标题后总是留空行,与后续子段或正文分开
             i += 1
             if rest:
                 if _is_subsection_header(rest.rstrip()):
-                    out.append(_format_subsection_header(rest.rstrip()))
+                    subsection_index += 1
+                    out.append(_format_subsection_header(
+                        rest.rstrip(),
+                        subsection_index,
+                    ))
                     i, block_lines = _collect_block(lines, i)
                     out.extend(_bulletize_if_multi(block_lines))
                 else:
@@ -99,7 +89,8 @@ def _format_company_summary_for_card(text: str) -> str:
             # 上一行非空时插空行,与前一段(子段或正文)分隔
             if out and out[-1].strip():
                 out.append("")
-            out.append(_format_subsection_header(line.rstrip()))
+            subsection_index += 1
+            out.append(_format_subsection_header(line.rstrip(), subsection_index))
             i += 1
             i, block_lines = _collect_block(lines, i)
             out.extend(_bulletize_if_multi(block_lines))
@@ -108,11 +99,15 @@ def _format_company_summary_for_card(text: str) -> str:
         # ---- 普通行 ---- 但先尝试识别"行内串接式子段"
         # (LLM 偶尔把多 matter 串一行写成 "X的有:A;B;C。",绕过了换行规则)
         if stripped:
-            inline_split = _try_split_inline_subsection(stripped)
+            inline_split = _try_split_inline_subsection(
+                stripped,
+                subsection_index + 1,
+            )
             if inline_split is not None:
                 if out and out[-1].strip():
                     out.append("")
                 out.extend(inline_split)
+                subsection_index += 1
                 i += 1
                 continue
         out.append(line)
@@ -121,8 +116,11 @@ def _format_company_summary_for_card(text: str) -> str:
     return "\n".join(out)
 
 
-def _try_split_inline_subsection(stripped: str) -> list[str] | None:
-    """识别行内串接式子段并拆成"▸ 子段头 + bullet list"。
+def _try_split_inline_subsection(
+    stripped: str,
+    subsection_index: int | None = None,
+) -> list[str] | None:
+    """识别行内串接式子段并拆成"(1) 子段头 + bullet list"。
 
     LLM 偶尔把多个 matter 串成一行(违反 prompt 的"≥4 matter 每行一个"
     规则),典型形态:
@@ -152,22 +150,74 @@ def _try_split_inline_subsection(stripped: str) -> list[str] | None:
     items = [s.strip() for s in re.split(r"[；;]", body) if s.strip()]
     if len(items) < 3:
         return None
-    out_lines = [_format_subsection_header(head + "：")]
+    out_lines = [_format_subsection_header(head + "：", subsection_index)]
     for item in items:
         out_lines.append(f"- {item}")
     return out_lines
 
 
-def _format_subsection_header(stripped: str) -> str:
-    """子段标题 → "**▸ 文本**"。去掉行末全角 / 半角冒号。
+def _format_subsection_header(
+    stripped: str,
+    subsection_index: int | None = None,
+) -> str:
+    """子段标题 → "<font color='...'>**(1)** 文本</font>"。
 
-    ▸ 三角箭头是飞书可靠渲染的 unicode 字符(U+25B8),配 bold 形成
-    "下面要列举一组事项"的视觉信号,比纯 bold 多一个层级标记。
+    去掉行末全角 / 半角冒号。只加粗序号,标题文字用语义色,
+    避免二级小节在视觉重量上压过一级方向标题。
     """
     text = stripped.rstrip()
     if text.endswith("：") or text.endswith(":"):
         text = text[:-1].rstrip()
-    return f"**▸ {text}**"
+    color = _subsection_color(text)
+    if subsection_index is not None and subsection_index >= 1:
+        label = f"**({subsection_index})** {text}"
+        return _color_text(label, color)
+    return f"**{_color_text(text, color)}**"
+
+
+def _color_text(text: str, color: str) -> str:
+    """Apply Feishu markdown font color to short headings.
+
+    If a Feishu client ignores `<font>`, the original markdown heading/bold
+    still preserves the visual hierarchy.
+    """
+    return f'<font color="{color}">{text}</font>'
+
+
+def _subsection_color(text: str) -> str:
+    """Choose a restrained semantic color for subsection headings only."""
+    if any(k in text for k in ("需要关注", "需关注", "待关注", "风险", "失败", "未过", "卡住", "暂停")):
+        return "red"
+    if any(k in text for k in ("完成", "完毕", "收口", "闭环", "通过", "定稿", "落地")):
+        return "green"
+    if any(k in text for k in ("待验证", "验收", "评审", "确认")):
+        return "orange"
+    return "blue"
+
+
+def _known_pinyins(facts: SharedFacts) -> tuple[str, ...]:
+    """Known pinyin names that may appear in AI-generated daily-report text."""
+    names: set[str] = set()
+    for ua in facts.user_activities:
+        if ua.pinyin:
+            names.add(ua.pinyin)
+    for m in facts.top_active_matters:
+        names.update(p for p in m.participants if p)
+    # Longest first prevents partial replacement when one pinyin prefixes another.
+    return tuple(sorted(names, key=len, reverse=True))
+
+
+def _bold_known_pinyins(text: str, pinyins: Iterable[str]) -> str:
+    """Bold known pinyin names in free text without touching already-bold names."""
+    out = text
+    for p in pinyins:
+        escaped = re.escape(p)
+        out = re.sub(
+            rf"(?<![A-Za-z0-9_.*])({escaped})(?![A-Za-z0-9_.*])",
+            r"**\1**",
+            out,
+        )
+    return out
 
 
 def _is_subsection_header(stripped: str) -> bool:
@@ -229,7 +279,7 @@ def _split_into_card_sections(formatted: str) -> dict[str, list[str] | str]:
         "closing": str,        # 收尾段(最后一个方向之后的内容)
     }
 
-    切分点是 "**🔵 X**" / "**🟠 X**" / "**🟢 X**" / "**⚪ X**" 这种方向行
+    切分点是 "## <font color=\"blue\">一、X</font>" / "## 二、X" 这种方向行
     (_format_company_summary_for_card 已把方向标题转换成这个形态)。
     """
     blocks: list[str] = []
@@ -240,9 +290,12 @@ def _split_into_card_sections(formatted: str) -> dict[str, list[str] | str]:
         if not raw.strip():
             continue
         blocks.append(raw.rstrip())
-        # 段首行匹配方向标题模式(以 ** 包裹的彩色 emoji + 文本)
+        # 段首行匹配方向标题模式(markdown 二级标题 + 中文序号)
         first_line = raw.split("\n", 1)[0].strip()
-        if re.match(r"^\*\*[🔵🟠🟢⚪].+\*\*$", first_line):
+        if re.match(
+            r"^##\s+(?:<font color=\"[a-z]+\">)?[一二三四五六七八九十]、.+",
+            first_line,
+        ):
             direction_indices.append(len(blocks) - 1)
 
     if not direction_indices:
@@ -279,8 +332,8 @@ def build_company_card(facts: SharedFacts, narrative: CompanyNarrative) -> dict:
     层次都做进**单个 markdown blob**:
     - markdown italic `_..._` 模拟"小灰字辅助文本"(替代 note)
     - markdown 水平线 `---`(替代 hr 元素)
-    - 彩色 emoji 🔵🟠🟢 给方向分类(避开 ##h2 heading 渲染不稳定)
-    - **▸ X** + bullet list 做子段层次
+    - ## 一、X 给方向分组并放大标题
+    - **(1)** X + bullet list 做子段层次
 
     布局:
       header bar:📊 公司日报 · M-D
@@ -292,19 +345,14 @@ def build_company_card(facts: SharedFacts, narrative: CompanyNarrative) -> dict:
     """
     s = facts.summary
     template = "blue" if narrative.status == "ai" else "wathet"
-    header = f"📊 公司日报 · {s.window.label}"
+    header = f"📊 公司日报 · {_fmt_window(s.window.since, s.window.until)}"
 
     parts: list[str] = []
-
-    # 1. 时间窗口(italic 小字)
-    parts.append(f"_📅 {_fmt_dt(s.window.since)} → {_fmt_dt(s.window.until)}_")
-    parts.append("")
-    parts.append("---")
-    parts.append("")
 
     # 2. 主体内容
     if narrative.status == "ai":
         formatted = _format_company_summary_for_card(narrative.summary)
+        formatted = _bold_known_pinyins(formatted, _known_pinyins(facts))
         sections = _split_into_card_sections(formatted)
         chunks: list[str] = []
         if sections["opening"]:
@@ -362,16 +410,14 @@ def build_personal_card(facts: SharedFacts, narrative: PersonalNarrative) -> dic
     """
     s = facts.summary
     template = "blue" if narrative.status == "ai" else "wathet"
-    header = f"👥 个人日报 · {s.window.label}"
+    header = f"👥 个人日报 · {_fmt_window(s.window.since, s.window.until)}"
 
     parts: list[str] = []
-    parts.append(f"_📅 {_fmt_dt(s.window.since)} → {_fmt_dt(s.window.until)}_")
-    parts.append("")
-    parts.append("---")
-    parts.append("")
 
     active = [e for e in narrative.entries if e.has_activity]
     inactive = [e for e in narrative.entries if not e.has_activity]
+    entry_pinyins = tuple(e.pinyin for e in narrative.entries if e.pinyin)
+    pinyins = tuple(dict.fromkeys((*_known_pinyins(facts), *entry_pinyins)))
 
     if narrative.status == "no_active_users":
         parts.append("**🌙 团队动态**")
@@ -382,9 +428,10 @@ def build_personal_card(facts: SharedFacts, narrative: PersonalNarrative) -> dic
         parts.append("")
         for e in active:
             # pinyin 而非 display_name(memory: feedback_daily_report_use_pinyin_only)
-            parts.append(f"- **{e.pinyin}**: {e.narrative}")
+            narrative_text = _bold_known_pinyins(e.narrative, pinyins)
+            parts.append(f"- **{e.pinyin}**: {narrative_text}")
         if inactive:
-            names = "、".join(e.pinyin for e in inactive)
+            names = "、".join(f"**{e.pinyin}**" for e in inactive)
             parts.append("")
             parts.append("---")
             parts.append("")
@@ -503,3 +550,7 @@ def _format_failure_line(f: dict) -> str:
 
 def _fmt_dt(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d %H:%M")
+
+
+def _fmt_window(since: datetime, until: datetime) -> str:
+    return f"{_fmt_dt(since)} → {_fmt_dt(until)}"

@@ -105,7 +105,10 @@ def test_ai_company_card_has_blue_template():
     )
     card = build_company_card(_facts(), nar)
     assert card["header"]["template"] == "blue"
-    assert card["header"]["title"]["content"] == "📊 公司日报 · 4-28"
+    assert (
+        card["header"]["title"]["content"]
+        == "📊 公司日报 · 2026-04-28 09:00 → 2026-04-29 09:00"
+    )
 
 
 def test_fallback_company_card_uses_wathet_template():
@@ -137,16 +140,18 @@ def test_no_activity_card_uses_wathet_template():
     assert "今日团队在 Pivot 上无任何 matter 活动" in md
 
 
-def test_ai_card_renders_window_no_stats():
+def test_ai_card_renders_window_in_header_no_stats():
     """v0.7(2026-05-01): 不再渲染"📈 团队总览"统计行 —— 老板不爱看僵硬
     的统计数字。
     v0.20(2026-05-06): 时间窗口移到 note 元素(小灰字),"覆盖窗口" 字面
     词省略,只保留 📅 + 时间区间。"""
     nar = CompanyNarrative(status="ai", summary="x", tone="steady")
-    md = _markdown_from(build_company_card(_facts(), nar))
-    assert "📅" in md
-    assert "2026-04-28 09:00" in md
-    assert "2026-04-29 09:00" in md
+    card = build_company_card(_facts(), nar)
+    md = _markdown_from(card)
+    assert "2026-04-28 09:00 → 2026-04-29 09:00" in card["header"]["title"]["content"]
+    assert "📅" not in md
+    assert "2026-04-28 09:00" not in md
+    assert "2026-04-29 09:00" not in md
     # 统计行已删除
     assert "团队总览" not in md
     assert "matter 事件" not in md
@@ -181,11 +186,9 @@ def test_disclaimer_always_present():
 # --------------------------------------------------------------------------- #
 
 
-def test_company_summary_direction_header_renders_with_color_emoji_bold():
-    """方向段开头"第X是 Y。"渲染成 "**<emoji> Y**"(2026-05-06 v2:
-    彩色 emoji + bold,代替之前的 ##h2,因为飞书 markdown heading 支持
-    度不稳定。彩色 emoji 同时承担"分类"视觉信号:Pivot=🔵 / enclaws=🟠 /
-    外部=🟢)。"""
+def test_company_summary_direction_header_renders_with_h2_number():
+    """方向段开头"第X是 Y。"渲染成 "## X、Y"。
+    先暂定 markdown h2,让一级方向标题在飞书里更明显。"""
     summary = (
         "今天团队主要在 Pivot 与 enclaws 两个方向上推进。\n"
         "\n"
@@ -196,15 +199,15 @@ def test_company_summary_direction_header_renders_with_color_emoji_bold():
     )
     nar = CompanyNarrative(status="ai", summary=summary, tone="active")
     md = _markdown_from(build_company_card(_facts(), nar))
-    # bold + 蓝色圆点(Pivot 产品分类)
-    assert "**🔵 Pivot 产品方向**" in md
+    # markdown h2 + 中文序号
+    assert '## <font color="blue">一、Pivot 产品方向</font>' in md
     # "第一是" 序号文字不再出现
     assert "第一是 Pivot" not in md
 
 
 def test_company_summary_direction_header_without_方向_suffix():
     """方向名不以"方向"结尾也要被识别为方向段标题。
-    enclaws/OPC 关键词触发橙色 🟠 emoji。"""
+    序号来自原始"第X是"。"""
     summary = (
         "今天团队主要在 Pivot 产品 与 enclaws 与 OPC 项目底座 两个方向上推进。\n"
         "\n"
@@ -215,17 +218,17 @@ def test_company_summary_direction_header_without_方向_suffix():
     )
     nar = CompanyNarrative(status="ai", summary=summary, tone="active")
     md = _markdown_from(build_company_card(_facts(), nar))
-    # bold + 橙色(enclaws/OPC 分类),不带"方向"后缀
-    assert "**🟠 enclaws 与 OPC 项目底座**" in md
+    # markdown h2 + 中文序号,不带"方向"后缀
+    assert '## <font color="blue">二、enclaws 与 OPC 项目底座</font>' in md
     assert "第二是 enclaws" not in md
-    # 子段头用 ▸ 三角箭头 + bold(去掉行尾 ":")
-    assert "**▸ OPC 演示与方案项集中闭环**" in md
+    # 子段头用 (1) + 语义色 + bold(去掉行尾 ":")
+    assert '<font color="green">**(1)** OPC 演示与方案项集中闭环</font>' in md
     # 事项 bullet 化
     assert "- A 完成 X。" in md
 
 
-def test_company_summary_direction_emoji_picks_external_for_客户交付():
-    """外部客户交付方向用绿色 🟢 emoji。"""
+def test_company_summary_direction_number_keeps_external_title():
+    """外部客户交付方向也用统一的 h2 + 中文序号标题。"""
     summary = (
         "今天团队主要在外部客户交付方向上推进。\n"
         "\n"
@@ -235,11 +238,11 @@ def test_company_summary_direction_emoji_picks_external_for_客户交付():
     )
     nar = CompanyNarrative(status="ai", summary=summary, tone="active")
     md = _markdown_from(build_company_card(_facts(), nar))
-    assert "**🟢 外部客户交付方向**" in md
+    assert '## <font color="blue">一、外部客户交付方向</font>' in md
 
 
-def test_company_summary_subsection_renders_with_arrow_bold():
-    """子段标题用 ▸ + bold,去掉行尾 :,后多行(≥2)事项逐行加 "- " 前缀。"""
+def test_company_summary_subsection_renders_with_secondary_number_bold():
+    """子段标题用 (1) + 语义色 + bold,去掉行尾 :,后多行(≥2)事项逐行加 "- " 前缀。"""
     summary = (
         "第一是 Pivot 产品方向。多项老需求集中闭环：\n"
         "A 完成 X。\n"
@@ -249,9 +252,9 @@ def test_company_summary_subsection_renders_with_arrow_bold():
     )
     nar = CompanyNarrative(status="ai", summary=summary, tone="active")
     md = _markdown_from(build_company_card(_facts(), nar))
-    # 子段头 ▸ + bold,无 :
-    assert "**▸ 多项老需求集中闭环**" in md
-    assert "**▸ 多项老需求集中闭环：**" not in md
+    # 子段头 (1) + 语义色 + bold,无 :
+    assert '<font color="green">**(1)** 多项老需求集中闭环</font>' in md
+    assert "多项老需求集中闭环：" not in md
     # 事项 bullet 化
     assert "- A 完成 X。" in md
     assert "- B 完成 Y。" in md
@@ -272,7 +275,7 @@ def test_company_summary_both_fullwidth_and_halfwidth_colon_trigger_subsection()
     )
     nar = CompanyNarrative(status="ai", summary=summary_full, tone="active")
     md = _markdown_from(build_company_card(_facts(), nar))
-    assert "**▸ 执行中与待推进的有**" in md
+    assert '<font color="blue">**(1)** 执行中与待推进的有</font>' in md
     assert "- A 推进 X。" in md
 
     # 半角 ":" 同样触发
@@ -286,7 +289,7 @@ def test_company_summary_both_fullwidth_and_halfwidth_colon_trigger_subsection()
     )
     nar = CompanyNarrative(status="ai", summary=summary_half, tone="active")
     md = _markdown_from(build_company_card(_facts(), nar))
-    assert "**▸ 进入实施或待验收的有**" in md
+    assert '<font color="orange">**(1)** 进入实施或待验收的有</font>' in md
     assert "- A 推进 X。" in md
 
     # —— 不触发(prompt 已统一改 ":")
@@ -298,22 +301,22 @@ def test_company_summary_both_fullwidth_and_halfwidth_colon_trigger_subsection()
     nar = CompanyNarrative(status="ai", summary=summary_dash, tone="active")
     md = _markdown_from(build_company_card(_facts(), nar))
     assert "- A 完成 X。" not in md
-    assert "**▸ 多项闭环**" not in md
+    assert "(1) 多项闭环" not in md
 
 
 def test_company_summary_inline_subsection_with_semicolons_gets_split():
     """LLM 偶尔把多 matter 串成一行 "X 的有:A;B;C。" 形式(违反 prompt 的
-    "≥4 matter 每行一个"规则),渲染层要兜底拆成 ▸ 子段头 + bullet list。"""
+    "≥4 matter 每行一个"规则),渲染层要兜底拆成二级序号子段头 + bullet list。"""
     summary = (
-        "**🔵 Pivot 产品方向**\n"
+        "第一是 Pivot 产品方向。\n"
         "\n"
         "实施推进与待验收的有：yezaiyong正修复MCP字段；"
         "terry.tao明确视图spec后zhangbo接手；lishuai交付Owner机制验证未过。\n"
     )
     nar = CompanyNarrative(status="ai", summary=summary, tone="active")
     md = _markdown_from(build_company_card(_facts(), nar))
-    # 子段头被识别 + ▸ 化
-    assert "**▸ 实施推进与待验收的有**" in md
+    # 子段头被识别 + 二级序号化
+    assert '<font color="orange">**(1)** 实施推进与待验收的有</font>' in md
     # 三个 matter 各自成 bullet
     assert "- yezaiyong正修复MCP字段" in md
     assert "- terry.tao明确视图spec后zhangbo接手" in md
@@ -323,7 +326,7 @@ def test_company_summary_inline_subsection_with_semicolons_gets_split():
 def test_company_summary_inline_subsection_too_short_not_split():
     """≤2 项分号串接不当作子段(避免误伤"项目X:配置项A;配置项B"这种句子)。"""
     summary = (
-        "**🔵 Pivot 方向**\n"
+        "第一是 Pivot 方向。\n"
         "\n"
         "项目A：备注X；备注Y。\n"     # 只有 2 项,不拆
     )
@@ -348,9 +351,9 @@ def test_company_summary_subsection_header_breaks_list_collection():
     )
     nar = CompanyNarrative(status="ai", summary=summary, tone="active")
     md = _markdown_from(build_company_card(_facts(), nar))
-    # 两个子段头都被识别为 ▸
-    assert "**▸ 已完成的有**" in md
-    assert "**▸ 执行中或待验证的有**" in md
+    # 两个子段头都被识别为二级序号
+    assert '<font color="green">**(1)** 已完成的有</font>' in md
+    assert '<font color="orange">**(2)** 执行中或待验证的有</font>' in md
     # 第二段开头的子段头不能被当成 list item
     assert "- 执行中或待验证的有" not in md
     # 各项归到正确的 list
@@ -359,14 +362,14 @@ def test_company_summary_subsection_header_breaks_list_collection():
 
 
 def test_company_summary_single_item_after_subsection_not_bulleted_but_arrow():
-    """子段下只有一行(≤3 matter 串接子段)不加 -,但子段头本身仍 ▸。"""
+    """子段下只有一行(≤3 matter 串接子段)不加 -,但子段头本身仍有序号。"""
     summary = (
         "第一是 enclaws 方向。三项交付完毕：\n"
         "A 完成 X; B 完成 Y; C 完成 Z。\n"
     )
     nar = CompanyNarrative(status="ai", summary=summary, tone="active")
     md = _markdown_from(build_company_card(_facts(), nar))
-    assert "**▸ 三项交付完毕**" in md       # ▸ 头
+    assert '<font color="green">**(1)** 三项交付完毕</font>' in md
     assert "- A 完成 X" not in md           # 单行不 bullet
     assert "A 完成 X; B 完成 Y; C 完成 Z" in md
 
@@ -376,7 +379,7 @@ def test_company_card_inline_visual_hierarchy_in_single_markdown():
     改回单 markdown blob 用 markdown 内部语法做视觉层次:
     - "_..._" italic 模拟小灰字辅助文本
     - "---" markdown 水平线模拟段间分隔
-    - 彩色 emoji + bold + bullet list 做层次
+    - h2 方向标题 + 二级序号 + bullet list 做层次
     """
     summary = (
         "今天团队主要在 Pivot 方向推进。\n"
@@ -393,8 +396,9 @@ def test_company_card_inline_visual_hierarchy_in_single_markdown():
     assert len(md_elements) == 1
     assert all(e.get("tag") == "markdown" for e in elements)   # 全部都是 markdown
     md = md_elements[0]["content"]
-    # 内部用 italic 时间窗口 + 水平线
-    assert "_📅" in md
+    # 时间窗口已上移到卡片标题;正文仍用水平线做段间分隔
+    assert "2026-04-28 09:00 → 2026-04-29 09:00" in card["header"]["title"]["content"]
+    assert "_📅" not in md
     assert "---" in md
     # italic footer
     assert "_本日报由 AI" in md
@@ -422,7 +426,7 @@ def test_company_summary_passes_through_for_non_ai_status():
                            fallback_reason="ai_disabled")
     md = _markdown_from(build_company_card(_facts(), nar))
     assert summary in md
-    # 没有 emoji bold 化
+    # 没有 h2 / 二级序号化
     assert "1️⃣" not in md
 
 
@@ -453,7 +457,7 @@ def test_personal_card_ai_template_blue():
     card = build_personal_card(_facts(), nar)
     assert card["header"]["template"] == "blue"
     assert "👥" in card["header"]["title"]["content"]
-    assert "4-28" in card["header"]["title"]["content"]
+    assert "2026-04-28 09:00 → 2026-04-29 09:00" in card["header"]["title"]["content"]
 
 
 def test_personal_card_active_users_each_on_own_line():
@@ -469,6 +473,25 @@ def test_personal_card_active_users_each_on_own_line():
         assert f"成员{i}今天的输入和输出" in md
 
 
+def test_personal_card_bolds_pinyin_mentions_inside_narrative():
+    """正文里再次提到 pinyin 时也要加粗,方便扫读人名。"""
+    nar = PersonalNarrative(
+        status="ai",
+        entries=(
+            PersonalEntry(
+                pinyin="a0", display_name="成员0", has_activity=True,
+                narrative="与 a1 一起推进验证,等待 alice 确认。",
+            ),
+            PersonalEntry(
+                pinyin="a1", display_name="成员1", has_activity=True,
+                narrative="补充验证说明。",
+            ),
+        ),
+    )
+    md = _markdown_from(build_personal_card(_facts(), nar))
+    assert "与 **a1** 一起推进验证,等待 **alice** 确认。" in md
+
+
 def test_personal_card_inactive_users_merged_to_one_line():
     """无活动成员合并到一行,顿号串联;名字是 pinyin;"无活动"短语 italic
     与 active 行视觉区分。"""
@@ -478,9 +501,9 @@ def test_personal_card_inactive_users_merged_to_one_line():
     md = _markdown_from(build_personal_card(_facts(), nar))
     # 合并行:"- _今天没有任何输入和输出_: b0、b1、b2"(- 列表前缀 + italic)
     assert "_今天没有任何输入和输出_" in md
-    assert "b0、b1、b2" in md
+    assert "**b0**、**b1**、**b2**" in md
     # 不应该有"bX 今天没有任何输入和输出"独立成行的形式
-    assert "**b0**" not in md
+    assert "**b0**: 今天没有任何输入和输出" not in md
 
 
 def test_personal_card_no_active_users_status():

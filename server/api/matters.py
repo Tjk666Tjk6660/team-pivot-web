@@ -534,6 +534,16 @@ def build_router(
         _preflight_initial(initial)
         try:
             visibility = VisibilityScope.from_dict(body.visibility)
+            visibility = _ensure_matter_owner_visible(
+                visibility,
+                owner_id=(
+                    body.owner_id
+                    or getattr(user, "id", None)
+                    or getattr(user, "open_id", None)
+                ),
+                pivot_users=pivot_users,
+                bindings=bindings,
+            )
             new_category_visibility = (
                 CategoryVisibilityScope.from_dict(body.new_category_visibility)
                 if body.new_category_visibility is not None
@@ -1114,6 +1124,41 @@ def _identifiers_for_user(user: PivotUser) -> list[str]:
         getattr(user, "email", None),
     ]
     return [str(v) for v in values if v]
+
+
+def _ensure_matter_owner_visible(
+    visibility: VisibilityScope,
+    *,
+    owner_id: str | None,
+    pivot_users: PivotUserRepo,
+    bindings: ExternalBindingRepo,
+) -> VisibilityScope:
+    if visibility.mode != "restricted":
+        return visibility
+    owner_user_id = _resolve_visibility_user_id(owner_id, pivot_users, bindings)
+    if not owner_user_id or owner_user_id in visibility.user_ids:
+        return visibility
+    return VisibilityScope(
+        mode=visibility.mode,
+        roles=list(visibility.roles),
+        user_ids=[*visibility.user_ids, owner_user_id],
+    )
+
+
+def _resolve_visibility_user_id(
+    value: str | None,
+    pivot_users: PivotUserRepo,
+    bindings: ExternalBindingRepo,
+) -> str | None:
+    if not value:
+        return None
+    user = pivot_users.get(value) or pivot_users.get_by_pinyin(value)
+    if user is not None:
+        return user.id
+    binding = bindings.lookup_any_provider(value)
+    if binding is not None:
+        return binding.pivot_user_id
+    return value
 
 
 def _roles_for_user(user: PivotUser, db: Database | None) -> list[str]:
