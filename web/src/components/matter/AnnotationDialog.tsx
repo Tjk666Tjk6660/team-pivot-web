@@ -73,7 +73,7 @@ export function AnnotationPopover({
         type: "evaluation",
         body: trimmed,
       });
-      toast.success("已发送");
+      toast.success("已发送评价");
       reset();
       setOpen(false);
       await onSubmitted?.();
