@@ -774,8 +774,11 @@ def _main() -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     parser.add_argument("--db", type=Path, required=True)
     parser.add_argument(
-        "--initial-admin", type=str, required=True,
-        help="pinyin of the user to promote to admin",
+        "--initial-admin", type=str, default="liuyu",
+        help=(
+            "pinyin of the user to promote to admin "
+            "(default: 'liuyu', hard-coded for the current Pivot prod deployment)"
+        ),
     )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
