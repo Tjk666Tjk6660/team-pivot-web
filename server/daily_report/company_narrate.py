@@ -250,10 +250,27 @@ category 取值:`Pivot` / `enclaws` / `外部客户实施` / `probe`。其中 pr
     然后每行写一个 matter。**统一用全角 ":",不用 "——"**(渲染层依据
     全角冒号识别子段头并加视觉层次):
     几项老需求集中闭环:
-    X(pinyin)完成 ...
-    Y(pinyin)上线 ...
-    Z(pinyin)合入主线,W 验收通过 ...
-  · 子段含 ≤ 3 个 matter 时,按句号 / 分号在同一段内串接(不必每行一个)
+    yuebilin 完成多角色权限模型并合入主线,dengke 验证通过
+    liuyu 收口产品分析报告与 SaaS 主线重叠的判定,terry.tao 已接入处理
+    tangkun 上线列表筛选红点清退逻辑,liuyu 验收通过
+  · ⚠⚠⚠ **每行必须 pinyin 起头叙述**,**严禁字典式陈列**:
+    ❌ "Pivot 产品分析报告: terry.tao 确认与 SaaS 主线重复, liuyu 关闭"
+       (matter 名当锚点 + 冒号 + 谁做了什么 = 字典/查表风格,管理层
+        读起来像 Excel 表格,不是 PM 当面汇报)
+    ❌ "新需求-matter列表筛选控件: tangkun 上线红点清退逻辑"
+       (字典式 + 还把"新需求-X"内部前缀直接念了)
+    ❌ "设计: 员工评价体系: tangkun 拍板拆分路线"
+       (双重字典)
+    ✅ "terry.tao 确认产品分析报告与 SaaS 主线重叠,liuyu 判定关闭"
+       (pinyin 起头,事项白话融进句子,把关人具名)
+    ✅ "tangkun 完成列表筛选红点清退逻辑上线,liuyu 验收通过"
+    ✅ "tangkun 拍板员工评价体系评论拆分路线,转入开发"
+    **行格式硬规则**: <pinyin 名> + <动词> + <事项业务白话> +
+    [, <把关人 pinyin> + <判定>]。事项白话名要**去掉所有内部前缀**
+    ("新需求-X" → "X"; "设计:Y" → "Y"; "需求:Z" → "Z";
+    "Pivot UI 全新重构" → "UI 重构";"Pivot 通知改版需求" → "通知改版")。
+  · 子段含 ≤ 3 个 matter 时,按句号 / 分号在同一段内串接(不必每行一个),
+    但**仍然 pinyin 起头**,不要字典式
   · ⚠ 即使是"暂停"/"启动设计"这种"看起来都很相似的子段",只要 matter
     数 ≥ 4,**也必须每行一个**,不要因为"反正都是暂停"就揉成一段
   · **不要**写 # / ** / Markdown 标题 / 列表符号这种独立标题行
@@ -297,24 +314,35 @@ category 取值:`Pivot` / `enclaws` / `外部客户实施` / `probe`。其中 pr
 [tone: stalled]  几乎只有讨论中事项,无完成无产出推进
 
 ──────────────────────────────────────
-【完整示例】(看清楚:数字阿拉伯 / 无书名号 / 段间真换行 / 收尾独立成段 /
-人名 pinyin / 每个事项必点负责人 / 验证作者具名(用 pinyin) / **跨度数字
-只在显著异常时才写**(示例里 10 个事项只 2 处提跨度,常规节奏不贴 N 天) /
-不写 file 计数 / 字段值全中文 / 没有黑话和套话)
+【完整示例】(看清楚:**每行 pinyin 起头**(不写"事项名: pinyin..."字典式) /
+事项白话名揉进句子(去内部前缀"新需求-/设计:/需求:") / 数字阿拉伯 /
+无书名号 / 段间真换行 / 收尾独立成段 / 每个事项必点负责人 /
+验证作者具名(用 pinyin) / **跨度数字只在显著异常时才写**(示例里 14 个
+事项只 2 处提跨度,常规节奏不贴 N 天) / 不写 file 计数 / 字段值全中文 /
+没有黑话和套话)
 
-今天团队主要在 Pivot 产品 与 外部客户交付 两个方向上推进。
+今天团队主要在 Pivot 产品、enclaws 底层 与 外部客户交付 三个方向上推进。
 
 第一是 Pivot 产品方向。多项老需求集中闭环:
-数据隐私权限体系 yuebilin 把多角色权限模型推到验收,dengke 验证通过。
-员工 AI 评价方案 liuyu 抛出 admin 视角初版,dengke 反提议扩到协作 mention,核心争议在评分权重 AI 派生 vs 人工。
-团队日报推送 huangshengli 在 dengke 拍板后当天合入 v0.2。
-事项列表筛选 tangkun 完成红点清退逻辑上线,liuyu 验收通过。
+yuebilin 把多角色权限模型推到验收,dengke 验证通过。
+liuyu 抛出员工 AI 评价方案 admin 视角初版,dengke 反提议扩到协作 mention,核心争议在评分权重 AI 派生 vs 人工。
+huangshengli 在 dengke 拍板后当天合入团队日报推送 v0.2。
+tangkun 完成列表筛选红点清退逻辑上线,liuyu 验收通过。
+yezaiyong 完成 MCP 跨机验证与体验优化,liuyu 验收通过。
+yuebilin 完成 Web 端 AI 助手与移动端 UI 改造方案上线。
+dengke 判定 UI 重构与现有需求重叠当天取消,terry.tao 确认产品分析报告与 SaaS 主线重叠由 liuyu 关闭。
 
-执行中或待验收的有:Owner 机制 lishuai 实施后,liuyu 验证未过指出接口字段需切换为用户表 ID,卡 8 天仍在修复。
+执行中或待验收的有:lishuai 完成 Owner 机制实施,liuyu 验证未过指出接口字段需切换为用户表 ID,卡 8 天仍在修复。
 
-第二是外部交付方向。面向碧桂园的产品介绍物料底稿完成,terry.tao 定下"标准核心+定制 Agent"双层服务定位,3 天交底稿。opc-dev 演示环境上线,lishuai 部署华为云。CRM Agent 客户演示,xiaoming 抛出方案后 14 天仍未推进,terry.tao 介入推动,xiaoming 节奏偏慢。
+第二是 enclaws 底层方向。多项底层任务因架构重估暂停:
+xiongjianping 暂停 EC 底层改造,dengke 拍板要重估 ToB 适配性。
+xiongjianping 同步暂停 AI 客服 S1 上线与 LLM 巡检方案。
+huangshengli 判定 EC 与 APP 结合形态讨论暂停,后续视需要重启。
+zhangbo 评估 EC 定时任务后台场景少,当前版本暂缓改动。
 
-团队今日 10 人 / 18 个事项,2 个事项节奏偏慢。
+第三是外部交付方向。terry.tao 定下"标准核心+定制 Agent"双层服务定位,3 天交付碧桂园物料底稿,dengke 判定关闭。lishuai 完成 opc-dev 华为云部署,自验证关闭。xiongjianping 抛出 CRM Agent 客户演示方案后 14 天仍未推进,terry.tao 介入推动,xiongjianping 节奏偏慢。
+
+团队今日 10 人 / 14 个事项,2 个事项节奏偏慢。
 
 [tone: active]
 """
