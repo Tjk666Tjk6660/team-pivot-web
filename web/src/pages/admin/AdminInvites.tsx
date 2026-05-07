@@ -153,10 +153,17 @@ function InviteRow({
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span
-              className="truncate text-[14px] font-semibold"
-              style={{ color: "var(--text)" }}
+              className="rounded-full px-2 py-0.5 text-[10.5px] font-bold tracking-wider font-meta"
+              style={{
+                background: "var(--surface-alt)",
+                color: "var(--accent)",
+                border: "1px solid var(--accent)",
+              }}
             >
-              {invite.email}
+              飞书
+            </span>
+            <span className="truncate text-[14px]" style={{ color: "var(--text-mute)" }}>
+              invite#{invite.id.slice(0, 8)}
             </span>
             <span
               className="rounded-full px-2 py-0.5 text-[10.5px] font-bold tracking-wider font-meta"
@@ -170,7 +177,6 @@ function InviteRow({
             </span>
           </div>
           <div className="mt-0.5 truncate text-[12px] font-meta" style={mutedStyle}>
-            {invite.display_name ? `${invite.display_name} · ` : ""}
             创建于 {new Date(invite.created_at * 1000).toLocaleString()}
             {!used && !expired && (
               <> · {formatExpires(invite.expires_at)}</>
@@ -211,16 +217,12 @@ function CreateInviteDialog({
   onClose: () => void;
   onCreated: (i: CreatedInvite) => void;
 }) {
-  const [email, setEmail] = useState("");
-  const [displayName, setDisplayName] = useState("");
   const [ttlDays, setTtlDays] = useState(7);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
-      setEmail("");
-      setDisplayName("");
       setTtlDays(7);
       setError(null);
     }
@@ -230,11 +232,7 @@ function CreateInviteDialog({
     setBusy(true);
     setError(null);
     try {
-      const inv = await createInvite(
-        email.trim(),
-        displayName.trim() || undefined,
-        ttlDays,
-      );
+      const inv = await createInvite(ttlDays);
       onCreated(inv);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -247,31 +245,14 @@ function CreateInviteDialog({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>创建邀请</DialogTitle>
+          <DialogTitle>创建飞书邀请</DialogTitle>
           <DialogDescription>
-            生成一条用于邮箱密码登录的一次性邀请链接。链接里的 token 仅会展示
-            一次，请尽快复制发给被邀请人。
+            生成一条飞书邀请链接。受邀人打开链接后会被引导到飞书登录，
+            完成授权后进入管理员审核队列。链接里的 token 仅展示一次，
+            请尽快发给被邀请人。
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
-          <div>
-            <Label className="text-[12.5px]">邮箱</Label>
-            <Input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="alice@company.com"
-              autoFocus
-            />
-          </div>
-          <div>
-            <Label className="text-[12.5px]">显示名（可选）</Label>
-            <Input
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="Alice"
-            />
-          </div>
           <div>
             <Label className="text-[12.5px]">有效期（天）</Label>
             <Input
@@ -280,6 +261,7 @@ function CreateInviteDialog({
               max={90}
               value={ttlDays}
               onChange={(e) => setTtlDays(Number(e.target.value) || 7)}
+              autoFocus
             />
           </div>
           {error && (
@@ -293,7 +275,7 @@ function CreateInviteDialog({
             取消
           </Button>
           <Button
-            disabled={busy || !email}
+            disabled={busy}
             onClick={submit}
             style={{
               background: "var(--accent)",
@@ -353,8 +335,7 @@ function CreatedTokenDialog({
           {link}
         </div>
         <p className="text-[12px] font-meta" style={{ color: "var(--text-mute)" }}>
-          邀请发给 <strong>{invite.email}</strong>，
-          {formatExpires(invite.expires_at)}。
+          飞书邀请，{formatExpires(invite.expires_at)}。
         </p>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>

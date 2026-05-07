@@ -1568,21 +1568,28 @@ export async function postEmailPasswordLogin(body: { email: string; password: st
   return jsonPost("/auth/login_email_password", body);
 }
 
+export type InviteProvider = "feishu";
+
 export type InvitePreview = {
-  email: string;
-  display_name: string | null;
   expires_at: number;
+  provider: InviteProvider;
 };
 
 export async function getInvite(token: string): Promise<InvitePreview> {
   return jsonGet<InvitePreview>(`/api/invite/${encodeURIComponent(token)}`);
 }
 
-export async function postInviteAccept(
+export async function startInvite(
   token: string,
-  body: { password: string; display_name: string; pinyin: string },
-) {
-  return jsonPost(`/api/invite/${encodeURIComponent(token)}/accept`, body);
+): Promise<{ redirect_url: string }> {
+  const r = await fetch(`/api/invite/${encodeURIComponent(token)}/start`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (r.status === 410) throw new Error("invite_unusable");
+  if (r.status === 404) throw new Error("invite_not_found");
+  if (!r.ok) throw new Error(`start invite failed: ${r.status}`);
+  return (await r.json()) as { redirect_url: string };
 }
 
 // ── Admin: applications ───────────────────────────────────────────────────
@@ -1610,6 +1617,13 @@ export type Application = {
   reject_reason: string | null;
   /** approved 状态下展示"目标 pivot_user"信息；其它状态为 null */
   merged_into: ApplicationMergedInto | null;
+  /** Non-null when this application was created via an invite link —
+   * lets the admin queue show "邀请来源：<inviter>" badges. */
+  via_invite: {
+    invite_id: string;
+    invited_by_pinyin: string | null;
+    invited_by_display_name: string | null;
+  } | null;
 };
 
 export type MatchCandidate = {
@@ -1741,8 +1755,7 @@ export async function resetUserPassword(
 
 export type AdminInvite = {
   id: string;
-  email: string;
-  display_name: string | null;
+  provider: InviteProvider;
   created_by: string;
   created_at: number;
   expires_at: number;
@@ -1761,10 +1774,8 @@ export async function listInvites(
   return jsonGet(`/api/admin/invites${qs}`);
 }
 
-export async function createInvite(
-  email: string, display_name?: string, ttl_days = 7,
-): Promise<CreatedInvite> {
-  return jsonPost(`/api/admin/invites`, { email, display_name, ttl_days });
+export async function createInvite(ttl_days = 7): Promise<CreatedInvite> {
+  return jsonPost(`/api/admin/invites`, { ttl_days });
 }
 
 export async function revokeInvite(id: string): Promise<{ revoked: true }> {

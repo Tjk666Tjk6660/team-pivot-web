@@ -146,8 +146,23 @@ function ApplicationRow({
             </div>
           )}
           <div>
-            <div className="text-[15px] font-semibold" style={{ color: "var(--text)" }}>
-              {profile.name || "(未知)"}
+            <div className="flex items-center gap-2">
+              <span className="text-[15px] font-semibold" style={{ color: "var(--text)" }}>
+                {profile.name || "(未知)"}
+              </span>
+              {app.via_invite && (
+                <span
+                  className="inline-flex items-center rounded-full px-2 py-0.5 text-[10.5px] font-bold tracking-wider font-meta"
+                  style={{
+                    background: "var(--accent-bg)",
+                    color: "var(--accent)",
+                    border: "1px solid var(--accent)",
+                  }}
+                  title={`邀请来源：${app.via_invite.invited_by_display_name ?? app.via_invite.invited_by_pinyin ?? "未知 admin"}`}
+                >
+                  邀请来源：{app.via_invite.invited_by_display_name ?? app.via_invite.invited_by_pinyin ?? "?"}
+                </span>
+              )}
             </div>
             <div className="mt-0.5 text-[12px] font-meta" style={mutedStyle}>
               {app.provider} · {new Date(app.applied_at * 1000).toLocaleString()}

@@ -1,28 +1,16 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import {
-  getInvite,
-  postInviteAccept,
-  type InvitePreview,
-} from "@/api";
+import { useParams } from "react-router-dom";
+import { getInvite, startInvite, type InvitePreview } from "@/api";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-
-const PINYIN_RE = /^[a-z][a-z0-9._-]+$/;
 
 export function InviteAccept() {
   const { token = "" } = useParams<{ token: string }>();
-  const nav = useNavigate();
 
   const [invite, setInvite] = useState<InvitePreview | null | undefined>(undefined);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [password, setPassword] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [pinyin, setPinyin] = useState("");
-  const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -30,7 +18,6 @@ export function InviteAccept() {
       .then((r) => {
         if (!alive) return;
         setInvite(r);
-        setDisplayName(r.display_name ?? "");
       })
       .catch((err) => {
         if (!alive) return;
@@ -66,28 +53,19 @@ export function InviteAccept() {
     );
   }
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const goFeishu = async () => {
     setSubmitError(null);
-    if (password.length < 6) {
-      setSubmitError("密码至少 6 位");
-      return;
-    }
-    if (!PINYIN_RE.test(pinyin)) {
-      setSubmitError("拼音格式：以小写字母开头，仅含 a-z / 0-9 / . _ -");
-      return;
-    }
     setSubmitting(true);
     try {
-      await postInviteAccept(token, {
-        password,
-        display_name: displayName.trim(),
-        pinyin: pinyin.trim(),
-      });
-      nav("/", { replace: true });
-      window.location.reload();
+      const { redirect_url } = await startInvite(token);
+      window.location.href = redirect_url;
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : String(err));
+      const code = err instanceof Error ? err.message : String(err);
+      setSubmitError(
+        code === "invite_unusable" ? "邀请已失效（过期或已使用）" :
+        code === "invite_not_found" ? "邀请链接无效" :
+        `跳转失败：${code}`
+      );
       setSubmitting(false);
     }
   };
@@ -106,114 +84,36 @@ export function InviteAccept() {
         欢迎加入
       </h2>
       <p className="mt-3 text-[14px] leading-[1.65]" style={bodyTextStyle}>
-        管理员通过邀请链接邀请你加入 Pivot。设置好密码和拼音名后即可登录。
+        管理员邀请你加入 Pivot。点下面的按钮用飞书账号登录；登录后会进入
+        管理员审核队列，审核通过后即可访问。
       </p>
 
-      <form onSubmit={submit} className="mt-6 flex flex-col gap-4">
-        <Field
-          id="email"
-          label="邮箱"
-          hint="管理员预先指定，不可修改"
-          input={
-            <Input
-              id="email"
-              type="email"
-              value={invite.email}
-              readOnly
-              disabled
-              className="h-10 rounded-[var(--r-sm)] text-[14px]"
-              style={{
-                background: "var(--surface-alt)",
-                border: "1px solid var(--line)",
-                color: "var(--text-mute)",
-              }}
-            />
-          }
-        />
-        <Field
-          id="password"
-          label="密码"
-          hint="至少 6 位"
-          required
-          input={
-            <Input
-              id="password"
-              type="password"
-              autoComplete="new-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              minLength={6}
-              className="h-10 rounded-[var(--r-sm)] text-[14px]"
-              style={inputStyle}
-            />
-          }
-        />
-        <Field
-          id="display_name"
-          label="显示名"
-          required
-          input={
-            <Input
-              id="display_name"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              required
-              className="h-10 rounded-[var(--r-sm)] text-[14px]"
-              style={inputStyle}
-            />
-          }
-        />
-        <Field
-          id="pinyin"
-          label="拼音名"
-          hint="用作 git author 和分支名。例：lihua / alice.chen"
-          required
-          input={
-            <Input
-              id="pinyin"
-              value={pinyin}
-              onChange={(e) => setPinyin(e.target.value)}
-              required
-              pattern="^[a-z][a-z0-9._-]+$"
-              placeholder="lihua"
-              className="h-10 rounded-[var(--r-sm)] font-mono text-[14px]"
-              style={{
-                ...inputStyle,
-                border: "1.5px solid var(--accent)",
-              }}
-            />
-          }
-        />
-        {submitError && (
-          <p className="text-[12px]" style={{ color: "var(--danger-500)" }}>
-            {submitError}
-          </p>
-        )}
-        <div
-          className="flex items-center justify-between gap-3 pt-2"
-          style={{ borderTop: "1px solid var(--line)", paddingTop: "1rem" }}
-        >
-          <span
-            className="text-[11.5px] font-meta"
-            style={{ color: "var(--text-mute)" }}
-          >
-            {expiresLabel}
-          </span>
-          <Button
-            type="submit"
-            disabled={submitting || !password || !displayName || !pinyin}
-            className="h-10 rounded-[var(--r-sm)] px-5 text-[14px] font-semibold shadow-none"
-            style={{
-              background: "var(--accent)",
-              color: "var(--accent-ink)",
-              border: "1px solid var(--accent)",
-            }}
-          >
-            {submitting ? "创建中…" : "创建账号"}
-          </Button>
-        </div>
-      </form>
+      <Button
+        type="button"
+        onClick={goFeishu}
+        disabled={submitting}
+        className="mt-6 h-11 w-full rounded-[var(--r-sm)] text-[14px] font-semibold shadow-none"
+        style={{
+          background: "var(--accent)",
+          color: "var(--accent-ink)",
+          border: "1px solid var(--accent)",
+        }}
+      >
+        {submitting ? "正在跳转飞书…" : "用飞书账号登录"}
+      </Button>
+
+      {submitError && (
+        <p className="mt-3 text-[12px]" style={{ color: "var(--danger-500)" }}>
+          {submitError}
+        </p>
+      )}
+
+      <p
+        className="mt-4 text-[11.5px] font-meta"
+        style={{ color: "var(--text-mute)" }}
+      >
+        {expiresLabel}
+      </p>
     </Shell>
   );
 }
@@ -233,12 +133,6 @@ function Loading() {
     </p>
   );
 }
-
-const inputStyle: React.CSSProperties = {
-  background: "var(--surface-alt)",
-  border: "1px solid var(--line)",
-  color: "var(--text)",
-};
 
 const titleStyle: React.CSSProperties = {
   fontFamily: "var(--font-serif)",
@@ -268,49 +162,6 @@ function Shell({ children }: { children: React.ReactNode }) {
       >
         {children}
       </div>
-    </div>
-  );
-}
-
-function Field({
-  id,
-  label,
-  hint,
-  required,
-  input,
-}: {
-  id: string;
-  label: string;
-  hint?: string;
-  required?: boolean;
-  input: React.ReactNode;
-}) {
-  return (
-    <div className="grid gap-1.5">
-      <Label
-        htmlFor={id}
-        className="flex items-center gap-2 text-[13px] font-semibold"
-        style={{ color: "var(--text)" }}
-      >
-        {label}
-        {required && (
-          <span
-            className="text-[10px] font-bold tracking-[0.08em] font-meta"
-            style={{ color: "var(--danger-500)" }}
-          >
-            必填
-          </span>
-        )}
-      </Label>
-      {input}
-      {hint && (
-        <p
-          className="text-[11.5px] font-meta leading-[1.5]"
-          style={{ color: "var(--text-mute)" }}
-        >
-          {hint}
-        </p>
-      )}
     </div>
   );
 }
