@@ -7,6 +7,7 @@ import {
   fetchMatterScoringGroups,
   triggerScoringRerun,
   type MatterGroupRunBrief,
+  type MatterGroupSkipped,
   type MatterGroupSubjectScore,
   type MatterScoringGroup,
   type ScoringRunSummary,
@@ -370,7 +371,7 @@ function SubjectScoreChips({
   skipped,
 }: {
   scores: MatterGroupSubjectScore[];
-  skipped: { display: string | null; pinyin: string }[];
+  skipped: MatterGroupSkipped[];
 }) {
   if (scores.length === 0 && skipped.length === 0) {
     return <span className="text-xs text-[var(--text-mute)]">—</span>;
@@ -515,7 +516,7 @@ function OverflowPill({
 function SkippedBatchPill({
   subjects,
 }: {
-  subjects: { display: string | null; pinyin: string }[];
+  subjects: MatterGroupSkipped[];
 }) {
   return (
     <span className="relative group inline-flex">
