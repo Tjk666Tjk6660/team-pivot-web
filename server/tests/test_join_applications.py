@@ -136,3 +136,39 @@ def test_match_candidates_truncated_to_5(deps):
     )
     # 10 全拼匹配候选 → 截断到 5
     assert len(cands) <= 5
+
+
+def test_create_application_persists_via_invite_id(deps):
+    _, apps = deps
+    a = apps.create(
+        provider="feishu", external_id="ou_abc", external_union_id=None,
+        raw_profile={"name": "Alice"}, suggested_match_user_id=None,
+        via_invite_id="inv_123",
+    )
+    got = apps.get(a.id)
+    assert got is not None
+    assert got.via_invite_id == "inv_123"
+
+
+def test_create_application_via_invite_id_default_none(deps):
+    _, apps = deps
+    a = apps.create(
+        provider="feishu", external_id="ou_abc", external_union_id=None,
+        raw_profile={"name": "Alice"}, suggested_match_user_id=None,
+    )
+    got = apps.get(a.id)
+    assert got is not None
+    assert got.via_invite_id is None
+
+
+def test_set_via_invite_patches_existing_application(deps):
+    _, apps = deps
+    a = apps.create(
+        provider="feishu", external_id="ou_abc", external_union_id=None,
+        raw_profile={"name": "Alice"}, suggested_match_user_id=None,
+    )
+    assert a.via_invite_id is None
+    apps.set_via_invite(application_id=a.id, via_invite_id="inv_456")
+    got = apps.get(a.id)
+    assert got is not None
+    assert got.via_invite_id == "inv_456"

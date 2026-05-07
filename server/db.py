@@ -178,7 +178,8 @@ CREATE TABLE IF NOT EXISTS join_application (
     applied_at REAL NOT NULL,
     reviewed_at REAL,
     reviewed_by TEXT,
-    reject_reason TEXT
+    reject_reason TEXT,
+    via_invite_id TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_join_app_pending_unique
     ON join_application(provider, external_id) WHERE status='pending';
@@ -362,6 +363,13 @@ def _assert_no_legacy_user_open_id(conn) -> None:
 
 def _migrate(conn) -> None:
     _assert_no_legacy_user_open_id(conn)
+    # join_application: added via_invite_id in IM-binding-required-invite rework
+    # so the admin queue can show "invited by X" badges.
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(join_application)")}
+    if "via_invite_id" not in cols:
+        conn.execute(
+            "ALTER TABLE join_application ADD COLUMN via_invite_id TEXT"
+        )
     # invite table: dropped email/display_name in IM-binding-required-invite
     # rework. Existing invite rows are abandoned (per spec — internal 10-user
     # deployment had no live unused invites at cutover).

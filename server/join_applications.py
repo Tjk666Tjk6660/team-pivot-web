@@ -36,6 +36,7 @@ class JoinApplication:
     reviewed_at: float | None
     reviewed_by: str | None
     reject_reason: str | None
+    via_invite_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ def _row_to_app(row: sqlite3.Row) -> JoinApplication:
         reviewed_at=row["reviewed_at"],
         reviewed_by=row["reviewed_by"],
         reject_reason=row["reject_reason"],
+        via_invite_id=row["via_invite_id"] if "via_invite_id" in row.keys() else None,
     )
 
 
@@ -75,6 +77,7 @@ class JoinApplicationRepo:
         external_union_id: str | None,
         raw_profile: dict[str, Any],
         suggested_match_user_id: str | None,
+        via_invite_id: str | None = None,
     ) -> JoinApplication:
         new_id = uuid.uuid4().hex
         with self._db.connect() as conn:
@@ -82,17 +85,28 @@ class JoinApplicationRepo:
                 conn.execute(
                     "INSERT INTO join_application"
                     " (id, provider, external_id, external_union_id, raw_profile,"
-                    "  suggested_match_user_id, status, applied_at)"
-                    " VALUES (?,?,?,?,?,?,?,?)",
+                    "  suggested_match_user_id, status, applied_at, via_invite_id)"
+                    " VALUES (?,?,?,?,?,?,?,?,?)",
                     (new_id, provider, external_id, external_union_id,
                      json.dumps(raw_profile, ensure_ascii=False),
-                     suggested_match_user_id, "pending", time()),
+                     suggested_match_user_id, "pending", time(),
+                     via_invite_id),
                 )
             except sqlite3.IntegrityError as e:
                 raise ValueError(f"duplicate pending application: {e}") from e
         got = self.get(new_id)
         assert got is not None
         return got
+
+    def set_via_invite(self, *, application_id: str, via_invite_id: str) -> None:
+        """Patch via_invite_id on an existing application — used when the
+        Feishu callback finds a pre-existing pending application that the
+        invite-bearing flow now wants to credit."""
+        with self._db.connect() as conn:
+            conn.execute(
+                "UPDATE join_application SET via_invite_id=? WHERE id=?",
+                (via_invite_id, application_id),
+            )
 
     def get(self, application_id: str) -> JoinApplication | None:
         with self._db.connect() as conn:
