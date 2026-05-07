@@ -301,6 +301,8 @@ def create_app() -> FastAPI:
     app.include_router(
         build_invite_router(
             invites,
+            feishu_oauth=oauth,
+            state_secret=cfg.session_secret,
             secure_cookie=cfg.feishu_redirect_uri.startswith("https://"),
         )
     )
