@@ -919,7 +919,7 @@ def test_add_annotation_defaults_type_to_evaluation():
         {
             "matter_id": "x",
             "target_file": "discussions/Pivot/x/003_a_verify_b.md",
-            "body": "短评估",
+            "body": "短评价",
         },
         client,
         "https://pivot",
@@ -951,7 +951,7 @@ def test_add_annotation_success_returns_view_url_and_summary():
         {
             "matter_id": "x",
             "target_file": "discussions/Pivot/x/003_a_verify_b.md",
-            "body": "短评估",
+            "body": "短评价",
         },
         client,
         "https://pivot.enclaws.ai",
@@ -963,7 +963,7 @@ def test_add_annotation_success_returns_view_url_and_summary():
         "https://pivot.enclaws.ai/m/x/f/"
         "discussions/Pivot/x/003_a_verify_b.md"
     )
-    assert "evaluation" in out["summary_for_ai"]
+    assert "评价" in out["summary_for_ai"]
     assert out["view_url"] in out["summary_for_ai"]
 
 

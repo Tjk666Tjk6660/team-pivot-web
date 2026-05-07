@@ -72,12 +72,12 @@ export const MCP_TOOLS_GUIDE: McpToolGuide[] = [
   },
   {
     name: "add_annotation",
-    title: "评估 / 评分意见",
-    body: "对某条文件写一条结构化评估（v1 仅 type=evaluation）。无需 @ 谁，文件的相关方（创建者 / matter owner / matter creator）会自动收到飞书 DM。",
+    title: "评价",
+    body: "对某条文件写一条结构化评价（v1 仅 type=evaluation）。无需 @ 谁，文件的相关方（创建者 / matter owner / matter creator）会自动收到飞书 DM。",
     examples: [
-      "对这条 verify 写个评估",
+      "对这条 verify 写个评价",
       "评一下这条 result",
-      "给 003 这条做个 evaluation",
+      "给 003 这条做个评价",
     ],
   },
   {

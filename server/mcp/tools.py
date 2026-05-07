@@ -679,7 +679,7 @@ def tool_add_annotation(
 
     view_url = build_view_url(web_base_url, input_.matter_id, input_.target_file)
     summary_ai = (
-        f"✅ 已在「{input_.matter_id}」的 {input_.target_file} 下追加 evaluation 评估。"
+        f"✅ 已在「{input_.matter_id}」的 {input_.target_file} 下追加评价。"
         f"点这里查看：{view_url}"
     )
 

@@ -42,7 +42,7 @@ verify / result / insight）组成。
 "针对 X 跟一条 verify"）
 - add_mention — 给文件加留言 / 圈人（"对这条留言：…，并圈 X 看" / \
 "@ X review 这条"）
-- add_annotation — 给文件做评估（"对这条 verify 写个评估" / \
+- add_annotation — 给文件做评价（"对这条 verify 写个评价" / \
 "评一下这条 result"）
 - list_visibility_options — 列可见范围候选角色 / 成员（"哪些角色能选" / \
 "看下这个分类能限制给谁"）

@@ -251,7 +251,7 @@ def _register_tools(mcp_server: Server, api_base_url: str, web_base_url: str) ->
                     "are no @-targets — the file's stakeholders (creator + "
                     "matter.owner + matter.creator) are auto-DM'd by the "
                     "backend. v1 only supports type='evaluation'. "
-                    "Common user phrasings: \"对这条 verify 写个评估\", "
+                    "Common user phrasings: \"对这条 verify 写个评价\", "
                     "\"给 003 这条做个 evaluation\", \"评一下这条 result\". "
                     "Use `add_mention` instead when the user just wants to "
                     "leave a note or @ someone. "
