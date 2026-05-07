@@ -125,20 +125,21 @@ class EvidenceItem(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _infer_source_kind(cls, data: object) -> object:
-        """Defensive: infer source_kind when AI omits it.
+        """Defensive: infer source_kind when AI omits it OR returns an invalid
+        value (e.g. "mention", "verify", "owner_change", "").
 
-        Inference precedence: annotation > comment > file. Explicit
-        source_kind from AI always wins. Reasoning:
+        Inference precedence: annotation > comment > file. Reasoning:
           - annotation metadata present → it's an annotation
           - else if comment metadata present → it's a comment
           - else → it's a file
-        Models occasionally drop source_kind on later evidence items even
-        though the prompt schema lists it as mandatory. Rather than rejecting
-        an otherwise valid response, we recover via this heuristic.
+        Models occasionally drop source_kind on later evidence items, or
+        emit drift values that aren't in the Literal whitelist. Rather than
+        failing the whole run on AI noise, we recover via this heuristic.
         """
         if not isinstance(data, dict):
             return data
-        if data.get("source_kind"):
+        valid_kinds = ("file", "comment", "annotation")
+        if data.get("source_kind") in valid_kinds:
             return data
         has_annotation_meta = bool(
             str(data.get("source_annotation_created_at") or "").strip()

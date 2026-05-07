@@ -334,6 +334,26 @@ def test_parse_infers_comment_when_comment_meta_present(index_data):
     assert out.scores[0].evidence[0].source_kind == "comment"
 
 
+def test_parse_recovers_invalid_source_kind_via_inference(index_data):
+    """AI sometimes emits drift values like 'mention' / 'verify' / '' that
+    aren't in the Literal whitelist. Treat them as missing and infer
+    instead of failing the whole run with pydantic_invalid."""
+    for drift_value in ("mention", "verify", "owner_change", ""):
+        bad_dict = json.loads(_good_output())
+        bad_dict["scores"][0]["evidence"][0]["source_kind"] = drift_value
+        # Add comment metadata so inference picks "comment".
+        bad_dict["scores"][0]["evidence"][0].update({
+            "source_comment_created_at": "2026-04-22T14:00:00+08:00",
+            "source_comment_author": "lisi",
+        })
+        out = parse_and_validate(
+            json.dumps(bad_dict), index_data, candidate_subjects={"zhangsan"},
+        )
+        assert out.scores[0].evidence[0].source_kind == "comment", (
+            f"drift={drift_value!r} should infer to 'comment'"
+        )
+
+
 def test_parse_explicit_source_kind_overrides_inference(index_data):
     """If AI explicitly sets source_kind, trust it even if heuristic disagrees.
 
