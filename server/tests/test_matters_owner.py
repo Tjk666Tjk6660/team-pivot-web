@@ -1,4 +1,4 @@
-"""Integration tests for matter-level owner: creation with owner_pivot_user_id +
+"""Integration tests for matter-level owner: creation with owner_id +
 POST /api/matters/{id}/owner transfer endpoint + SSE event emission.
 
 Reuses the same TestClient + workspace fixtures pattern as test_matters_api.py.
@@ -114,20 +114,20 @@ def client(db, tmp_path):
     return c
 
 
-def _create_matter(client: TestClient, *, title: str = "Test Matter", owner_pivot_user_id: str | None = None) -> str:
+def _create_matter(client: TestClient, *, title: str = "Test Matter", owner_id: str | None = None) -> str:
     payload = {
         "category": "Pivot",
         "title": title,
         "initial_file": {"type": "think", "summary": "x", "body": "x"},
     }
-    if owner_pivot_user_id is not None:
-        payload["owner_pivot_user_id"] = owner_pivot_user_id
+    if owner_id is not None:
+        payload["owner_id"] = owner_id
     r = client.post("/api/matters", json=payload)
     assert r.status_code == 200, r.text
     return r.json()["matter_id"]
 
 
-# ---------- POST /api/matters with owner_pivot_user_id ----------
+# ---------- POST /api/matters with owner_id ----------
 
 
 def test_create_matter_default_owner_is_creator(client):
@@ -138,16 +138,16 @@ def test_create_matter_default_owner_is_creator(client):
 
 
 def test_create_matter_with_other_owner(client):
-    mid = _create_matter(client, owner_pivot_user_id="ou_2")
+    mid = _create_matter(client, owner_id="ou_2")
     r = client.get(f"/api/matters/{mid}")
     assert r.json()["matter"]["owner"] == "lisi"
 
 
-def test_create_matter_owner_pivot_user_id_unknown(client):
+def test_create_matter_owner_id_unknown(client):
     r = client.post("/api/matters", json={
         "category": "Pivot",
         "title": "x",
-        "owner_pivot_user_id": "ou_does_not_exist",
+        "owner_id": "ou_does_not_exist",
         "initial_file": {"type": "think", "summary": "x", "body": "x"},
     })
     assert r.status_code == 422
@@ -155,14 +155,14 @@ def test_create_matter_owner_pivot_user_id_unknown(client):
 
 
 def test_create_matter_owner_self_equivalent_to_no_owner(client):
-    """Passing one's own pivot_user_id is equivalent to omitting owner_pivot_user_id."""
-    mid = _create_matter(client, owner_pivot_user_id="ou_1")
+    """Passing one's own pivot_user_id is equivalent to omitting owner_id."""
+    mid = _create_matter(client, owner_id="ou_1")
     r = client.get(f"/api/matters/{mid}")
     assert r.json()["matter"]["owner"] == "dengke"
 
 
 def test_create_matter_does_not_emit_owner_changed(client, event_bucket):
-    _create_matter(client, owner_pivot_user_id="ou_2")
+    _create_matter(client, owner_id="ou_2")
     topics = [e.topic for e in event_bucket]
     assert "matter.owner_changed" not in topics
 
@@ -172,7 +172,7 @@ def test_create_matter_matter_owner_independent_from_file_owner(client):
     r = client.post("/api/matters", json={
         "category": "Pivot",
         "title": "indep",
-        "owner_pivot_user_id": "ou_2",
+        "owner_id": "ou_2",
         "initial_file": {
             "type": "think",
             "summary": "x",
@@ -234,7 +234,7 @@ def test_transfer_owner_notifies_feishu_group(client):
 
 
 def test_list_matters_owner_filter_matches_matter_owner(client):
-    mid = _create_matter(client, title="Owned by Lisi", owner_pivot_user_id="ou_2")
+    mid = _create_matter(client, title="Owned by Lisi", owner_id="ou_2")
     _create_matter(client, title="Owned by Dengke")
 
     r = client.get("/api/matters?owner=lisi")

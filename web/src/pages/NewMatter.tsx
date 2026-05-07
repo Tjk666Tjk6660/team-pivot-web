@@ -457,7 +457,7 @@ function NewMatterClassicForm({
       const r = await createMatter({
         category: category.trim(),
         title: title.trim(),
-        owner_pivot_user_id: matterOwner.pivotUserId || me.id,
+        owner_id: matterOwner.pivotUserId || me.id,
         visibility,
         new_category_visibility:
           isNewCategory

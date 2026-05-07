@@ -647,7 +647,7 @@ export function NewMatterGuidedFlow({
       const r = await createMatter({
         category: data.category.trim(),
         title: data.title.trim(),
-        owner_pivot_user_id: data.matterOwner.pivotUserId || me.id,
+        owner_id: data.matterOwner.pivotUserId || me.id,
         visibility: data.matterVisibility,
         new_category_visibility: isNewCategory
           ? data.categoryVisibility
