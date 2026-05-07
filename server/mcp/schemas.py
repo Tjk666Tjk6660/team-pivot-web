@@ -216,7 +216,7 @@ class MentionIn(BaseModel):
     )
     say: str = Field(
         min_length=1,
-        max_length=500,
+        max_length=300,
         description=(
             "One-line message delivered to the mentioned users (Feishu DM "
             "and Matter detail page). Required whenever `targets` is non-empty."
@@ -412,7 +412,7 @@ class AddCommentIn(BaseModel):
     )
     body: str = Field(
         min_length=1,
-        max_length=2000,
+        max_length=300,
         description=(
             "Comment text. If `mentions` is set, this same text becomes the "
             "@ DM message delivered to the targets — i.e. body doubles as 'say'."

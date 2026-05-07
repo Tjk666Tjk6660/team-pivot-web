@@ -26,7 +26,7 @@ OWNER_CHANGE_REASON_MAX = 200
 VALID_ANNOTATION_TYPES = frozenset({"evaluation"})
 
 ANNOTATION_BODY_MIN = 1
-ANNOTATION_BODY_MAX = 2000
+ANNOTATION_BODY_MAX = 300
 
 # Derived fields that v1 explicitly refuses on the writer side. These are
 # either AI-computed (weight / score_delta) or upstream-only labels

@@ -136,6 +136,7 @@ function sameDetail(
     if (
       x.file !== y.file ||
       x.mentions.length !== y.mentions.length ||
+      (x.annotations?.length ?? 0) !== (y.annotations?.length ?? 0) ||
       (x.status_change?.to ?? null) !== (y.status_change?.to ?? null)
     ) {
       return false;
@@ -1115,6 +1116,7 @@ export function MatterDetailPane() {
                   onAddComment={(body, targets) =>
                     submitMention(item.file, body, targets)
                   }
+                  onAnnotationSubmitted={refreshDetailSilently}
                   onJump={onJump}
                   registerRef={(el) => {
                     cardRefs.current[item.file] = el;

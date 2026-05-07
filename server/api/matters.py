@@ -91,7 +91,7 @@ def _reject_legacy_mention_inner_key(data):
 
 
 class MentionIn(BaseModel):
-    body: str = Field(min_length=1, max_length=2000)
+    body: str = Field(min_length=1, max_length=300)
     targets: list[str] | None = None
 
     @model_validator(mode="before")
@@ -167,7 +167,7 @@ class NewResultBody(BaseModel):
 
 class MentionBody(BaseModel):
     target_file: str = Field(min_length=1, max_length=500)
-    body: str = Field(min_length=1, max_length=2000)
+    body: str = Field(min_length=1, max_length=300)
     targets: list[str] | None = None
 
     @model_validator(mode="before")
@@ -195,7 +195,7 @@ class AnnotationBody(BaseModel):
     type: Literal["evaluation"] = Field(
         description="Annotation flavor; v1 only supports 'evaluation'.",
     )
-    body: str = Field(min_length=1, max_length=2000)
+    body: str = Field(min_length=1, max_length=300)
 
     @model_validator(mode="before")
     @classmethod

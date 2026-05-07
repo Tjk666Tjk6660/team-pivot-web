@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 
 import { appendMatterAnnotation } from "@/api";
 
-const BODY_MAX = 2000;
+const BODY_MAX = 300;
 
 /** Standalone evaluation popover (Phase 6).
  *
@@ -73,7 +73,7 @@ export function AnnotationPopover({
         type: "evaluation",
         body: trimmed,
       });
-      toast.success("已提交评价");
+      toast.success("已发送");
       reset();
       setOpen(false);
       await onSubmitted?.();
@@ -142,7 +142,7 @@ export function AnnotationPopover({
               disabled={submitting || body.trim().length === 0}
               className="bg-[var(--accent)] text-[var(--accent-ink)] hover:opacity-90"
             >
-              {submitting ? "提交中…" : "提交评价"}
+              {submitting ? "发送中…" : "发送"}
             </Button>
           </div>
         </div>
