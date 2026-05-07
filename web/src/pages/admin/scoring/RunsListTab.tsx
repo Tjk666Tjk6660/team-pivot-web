@@ -272,8 +272,11 @@ function MatterRow({
           />
         </button>
 
-        {/* matter title */}
-        <div className="flex flex-col min-w-0 flex-1">
+        {/* matter title — gets all remaining space, hover shows full title. */}
+        <div
+          className="flex flex-col min-w-0 flex-1"
+          title={group.matter_title ?? group.matter_id}
+        >
           <span className="font-medium truncate">
             {group.matter_title ?? group.matter_id}
           </span>
@@ -282,9 +285,9 @@ function MatterRow({
           </span>
         </div>
 
-        {/* subject chips (latest successful run) — bounded width so adding
-            many subjects doesn't push timestamp/actions off the row. */}
-        <div className="flex items-center justify-start basis-[480px] shrink-0">
+        {/* subject chips — sized to content, capped at 480px. Doesn't reserve
+            space when only 1-2 chips, so the title gets the leftover. */}
+        <div className="flex items-center justify-start shrink-0 max-w-[480px]">
           <SubjectScoreChips
             scores={group.subject_scores}
             skipped={group.skipped_subjects}
@@ -292,7 +295,7 @@ function MatterRow({
         </div>
 
         {/* status pill + history hint */}
-        <div className="flex flex-col items-start gap-0.5 w-28 shrink-0">
+        <div className="flex flex-col items-start gap-0.5 w-24 shrink-0">
           {latest ? (
             <StatusPill status={latest.status} error={latest.error} />
           ) : (
@@ -312,8 +315,8 @@ function MatterRow({
           )}
         </div>
 
-        {/* timestamp */}
-        <span className="text-xs text-[var(--text-mute)] tabular-nums shrink-0 w-32 text-right">
+        {/* timestamp — narrower; "2026-05-07 13:29" fits in 7rem. */}
+        <span className="text-xs text-[var(--text-mute)] tabular-nums shrink-0 w-[7rem] text-right">
           {latest ? formatTime(latest.started_at) : ""}
         </span>
 
