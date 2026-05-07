@@ -271,12 +271,30 @@ def _validate_business_rules(
                 f"more than once — collapse evidence into a single row"
             )
         seen.add(s.subject_pinyin)
-        _validate_dimensions_have_evidence(s)
+        # Filter per-evidence violations gracefully: drop the offending row +
+        # log, but keep the run going. AI is non-deterministic and one stray
+        # evidence (self-eval, fabricated filename, missing comment fields)
+        # shouldn't kill the whole run. Subject-level checks above (candidates,
+        # duplicates) stay strict — those signal run-level corruption.
+        kept: list[EvidenceItem] = []
         for e in s.evidence:
-            _validate_evidence_source(e, valid_filenames)
-            _validate_comment_evidence_completeness(e)
-            _validate_annotation_evidence_completeness(e)
-            _validate_no_self_evaluation(e, s.subject_pinyin)
+            try:
+                _validate_evidence_source(e, valid_filenames)
+                _validate_comment_evidence_completeness(e)
+                _validate_annotation_evidence_completeness(e)
+                _validate_no_self_evaluation(e, s.subject_pinyin)
+            except SchemaError as exc:
+                log.warning(
+                    "scoring: dropping invalid evidence subject=%s dim=%s "
+                    "file=%s reason=%s",
+                    s.subject_pinyin, e.dimension, e.source_filename, exc,
+                )
+                continue
+            kept.append(e)
+        s.evidence = kept
+        # Now check dimension-evidence consistency. Any dimension whose only
+        # supporting evidence we just dropped will get nulled out here.
+        _validate_dimensions_have_evidence(s)
 
 
 def _validate_dimensions_have_evidence(s: SubjectScore) -> None:

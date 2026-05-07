@@ -494,7 +494,12 @@ def test_fails_when_subject_not_owner(store, workspace, settings, pivot_users, o
     assert "subject_not_in_candidates" in runs[0].error
 
 
-def test_fails_on_fabricated_filename(store, workspace, settings, pivot_users, owner):
+def test_drops_fabricated_filename_row_but_succeeds(
+    store, workspace, settings, pivot_users, owner,
+):
+    """Fabricated filename → bad evidence dropped, run still succeeds.
+    Graceful-drop: AI drift on one row shouldn't fail the whole run; the
+    affected dim loses its evidence and gets nulled, others survive."""
     _write_matter(workspace, "m")
 
     def fake_ai(**k):
@@ -507,8 +512,17 @@ def test_fails_on_fabricated_filename(store, workspace, settings, pivot_users, o
         settings=settings, pivot_users=pivot_users, ai_call=fake_ai,
     )
     runs = store.list_runs()
-    assert runs[0].status == "failed"
-    assert "fabricated_source_filename" in runs[0].error
+    assert runs[0].status == "success"
+    got = store.get_score(runs[0].run_id)
+    assert got is not None
+    score, evidence = got
+    # Bad row dropped; the other two (accountability + process) survive.
+    assert len(evidence) == 2
+    assert all(e.source_filename != "999_fake.md" for e in evidence)
+    # delivery dim was tied to the dropped row → nulled out by graceful-drop.
+    assert score.delivery is None
+    assert score.accountability is not None
+    assert score.process is not None
 
 
 def test_success_when_ai_returns_skipped_subjects(
