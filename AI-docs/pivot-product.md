@@ -228,87 +228,28 @@ MD 文档也只有一套类型系统，用来描述“这份文档承担什么�
 核心原则是：
 
 - `timeline` 是 `matter` 的唯一演进主结构
-- 时间线上每一项都对应一篇新出现的文件
+- 时间线上每一项都对应一篇新出现的文件，或 owner_change / 失效/恢复 等事件项
 - 状态变化、引用关系、评论、圈人、验收结果，都附着在文件项上表达
 - 除了少量头部快照字段，程序不再维护第二套并列事实结构
 
-### 1. 顶层头部
+### 完整字段集详见单一权威源：
 
-顶层只保留程序高频读取的当前快照：
+> 📘 **[`AI-docs/pivot-index-schema.md`](./pivot-index-schema.md)**
+>
+> 该文档是 matter index 数据结构的**单一权威源**，包含：
+>
+> - matter 顶层结构（id / title / current_status / owner / created_at / updated_at）
+> - timeline 三种 entry 形态的识别方法（文件项 / owner_change / 失效-恢复）
+> - 文件项所有字段（含 invalidated_\* 反写字段）
+> - 事件项字段集
+> - 字段间关系（quote 因果链、verifications 反写、invalidated 反写、owner_change 反写）
+> - 状态机迁移触发规则简表
+>
+> 任何 AI 应用读 index 时应注入这份 schema doc。matter index 字段集变动时必须同步更新（程序化测试 `test_index_schema_doc.py` 守住）。
 
-```yaml
-version: 1
+### 当前阶段明确不进入 schema 的字段
 
-matter:
-  id: auth-redesign
-  title: Authentication Redesign
-  current_status: executing
-  created_at: 2026-04-23T10:00:00+08:00
-  updated_at: 2026-04-23T15:30:00+08:00
-```
-
-这里的头部字段只服务快速读取，不承担完整事实表达。完整演进信息仍然在 `timeline` 中。
-
-### 2. timeline 基本单元
-
-每一条 timeline item 都是一篇文件。当前最小结构如下：
-
-```yaml
-- file: discussions/auth-redesign/006_dengke_verify_f6g7.md
-  created_at: 2026-04-23T15:30:00+08:00
-  creator: dengke
-  owner: dengke
-  type: verify
-  summary: 汇总当前行动验证结果，并形成后续正式结果判断的依据
-
-  quote: discussions/auth-redesign/005_liuyu_act_d4e5.md
-  verifications:
-    - target: discussions/auth-redesign/003_dengke_act_a1b2.md
-      judgement: passed
-      comment: 主链路完成，质量一般，但结果可接受
-    - target: discussions/auth-redesign/004_liuyu_act_b2c3.md
-      judgement: failed
-      comment: 关键边界遗漏，当前结果不可接受
-
-  comments:
-    - created_at: 2026-04-23T15:31:00+08:00
-      body: 主链路通过，边界情况已记录
-      mentions:
-        - liuyu
-
-  status_change:
-    from: executing
-    to: finished
-```
-
-### 3. 字段含义
-
-- `file`
-  - 文件路径，作为该文件项的唯一身份字段
-- `created_at`
-  - 文件创建时间
-- `creator`
-  - 文件创建者，即谁把这篇文件正式写入系统
-- `owner`
-  - 文件责任人，即后续应由谁对这篇文件的推进和结果负责
-- `type`
-  - 文档类型，只允许 `think / act / verify / result / insight`
-- `summary`
-  - 该文件的最小解释信息
-- `quote`
-  - 单值，中文语义统一为“引用”，表示这篇文件主要承接或回应的那篇文件
-- `refer`
-  - 数组，中文语义统一为“参考”，表示其他补充参考文件
-- `verifications`
-  - 只用于 `verify` 文件，表示这篇验证覆盖的行动及其判断结果
-- `comments`
-  - 附着在该文件上的评论流；每条评论都有 `created_at / body / mentions`
-- `status_change`
-  - 只有当这篇文件触发事项状态迁移时才出现
-
-### 4. 当前明确不进入 schema 的字段
-
-当前以下概念不进入第一版 schema：
+以下概念不进入第一版 schema（即便 schema doc 没有相关字段）：
 
 - 独立 `goal`
 - 独立 `task` 对象
@@ -316,48 +257,12 @@ matter:
 - 独立 `files` 列表
 - `anchor` / `current_anchor`
 - `importance`
-- `title`
-- 拆分的 `id / filename / path`
 
 原因很简单：这些字段要么没有独立信息增量，要么会过早把模型推向更重的对象结构。
 
-### 5. 事件项形态（timeline 上的非文件型记录）
+### 失效不影响 matter 状态机
 
-除了文件项之外，timeline 还可以承载**事件项**——它们没有对应的 md 文件落盘，仅作为 yaml 索引上的可审计事件存在。当前两种事件项：
-
-- **owner_change**：matter 责任人转交事件。带 `type: owner_change` 字段。
-- **失效 / 恢复事件**：作者对自己已发布文档的"声明式撤回 / 恢复"。**没有 `type` 字段**，通过 `reason` 字段编码（`misposted` / `inaccurate` / `restored`）。详见 `AI-docs/invalidate-self/product-design.md`。
-
-事件项与文件项**通过 `type` 字段的存在与否自然区分**：
-- 文件项：`type ∈ {think, act, verify, result, insight}`
-- owner_change 事件项：`type == "owner_change"`
-- 失效/恢复事件项：**没有 `type`**，但有 `reason ∈ {misposted, inaccurate, restored}`
-
-失效/恢复事件项的最小形态：
-
-```yaml
-- creator: dengke
-  created_at: 2026-04-26T10:00:00+08:00
-  quote: discussions/Pivot/xxx/003_dengke_act_bbb.md   # 被撤回的目标文件
-  reason: misposted                                    # 同字段编码事件类型 + 具体原因
-  summary: "误发,撤回此文档"                            # 可选
-```
-
-事件项的影响（如失效事件→反写文件项的 `invalidated_*` 字段）由写入侧的反写函数承担，不重复声明。
-
-### 6. 文件项的反写字段（invalidated_\*）
-
-文件项除了创建时由作者声明的字段外，还有一组**由系统反写**的字段，用于记录文件被外部事件（如失效/恢复、verify 通过等）影响后的状态：
-
-- `verifications_received`（数组）：act 文件被 verify 文件覆盖后，反写此处。
-- `invalidated`（bool）：文件当前是否处于失效状态。
-- `invalidated_at`：最近一次失效的时间。
-- `invalidated_reason`：最近一次失效的理由（`misposted` / `inaccurate`）。
-- `invalidated_by`：最近一次失效的操作人 pinyin。
-
-恢复事件仅翻转 `invalidated: true → false`，**保留**其他三个字段作为审计痕迹（再次失效时被新值覆盖）。
-
-**失效不影响 matter 状态机**：即使被失效的是触发了 `executing → finished` 的 result 文件，matter 当前状态依然 finished。timeline 与状态机是两条独立事实链。详见 `AI-docs/invalidate-self/product-design.md` §5.5。
+即使被失效的是触发了 `executing → finished` 的 result 文件，matter 当前状态依然 finished。timeline 与状态机是两条独立事实链。详见 `AI-docs/invalidate-self/product-design.md` §5.5。
 
 ## 九、executing、paused、finished 与 cancelled 的最小规则
 

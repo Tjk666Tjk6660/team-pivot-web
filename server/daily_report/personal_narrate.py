@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from server.ai.oneshot import AIError, generate_text
-from server.daily_report.company_narrate import AISettings
+from server.daily_report.company_narrate import AISettings, _load_index_schema_doc
 from server.daily_report.shared_facts import SharedFacts
 from server.daily_report.types import UserActivity
 
@@ -120,6 +120,10 @@ _SYSTEM_PROMPT = """\
 verifications_today / results_today 同理,**有几条就要点几条**(同一事项
 多条判定可合写)。
 
+⚠ **唯一例外**:若某 matter 今日活动**仅由失效操作 / 失效文件**构成
+(详见后文【失效文件消费规则】),视作该成员今日在该事项上**无真实推进**,
+允许跳过,**不计入漏报**。
+
 **去重原则**:**同一事项在你的叙述里最多出现一次**。如果一个事项跨多个
 角色(如对同一事项既写过 verify 也在评论里拍板,或既是负责人也是把关人),
 合并到一句话讲完,**不要在不同角色段子里重复提及**。
@@ -173,6 +177,20 @@ business 含义**去重,不能因字面差就当成两个事项。判断方法:*
   → 中文(讨论中 / 执行中 / 暂停 / 完成 / 取消 / 已收口)
 - judgement:passed / failed / partial → 验证通过 / 验证未通过 / 部分通过
 - 结构性词:owner → 负责人 / matter → 事项 / creator → 写的人
+
+──────────────────────────────────────
+【失效语义说明】(产品决策)
+
+- 你看到的 `as_owner.matters[].today_events` 已**在数据层剔除所有失效
+  文件 + 失效/恢复事件项**(见 `server/daily_report/collect_matter.py`
+  的 `_convert_item`);today_events 呈现给你的就是"未失效的有效条目",
+  直接叙事即可
+- 因此**不会**也**不应**出现这些禁语:
+  ❌ "X 测试后自行标记无效" / "X 起草后自行失效"
+  ❌ "X 撤回了 N 个方案" / "X 撤销了 Y" / "X 把 Y 标作失效"
+  ❌ "X 自行废弃 Y" / "X 标记 Y 为无效" / "X 纠正了先前判断"
+- 若某 matter 在数据层过滤后,该成员今日**没有任何 today_events**,
+  该 matter 不进入该成员的 narrative(覆盖原则的唯一例外,见前文)
 
 ──────────────────────────────────────
 【硬约束】
@@ -268,9 +286,21 @@ def narrate_personal(
 def _call_ai(active: list[UserActivity], ai_settings: AISettings) -> str:
     payload = {"users": [_serialize_user(ua) for ua in active]}
     user_msg = json.dumps(payload, ensure_ascii=False)
+    # 注入 index schema doc — 单一权威源,告诉 LLM as_owner.matters 里的字段
+    # (file_type / invalidated / verifications 等)是什么意思。schema 改 →
+    # AI 应用自动获益,不需要每个 prompt 同步维护字段说明。
+    system_msg = (
+        _SYSTEM_PROMPT
+        + "\n\n──────────────────────────────────────\n"
+        + "【index schema 字段语义参考】\n"
+        + "(以下是 matter index 数据结构的权威说明,源自 "
+        + "`AI-docs/pivot-index-schema.md`。as_owner.matters[].today_events 里"
+        + "每个事件来自 timeline,字段含义、形态都可在下面查)\n\n"
+        + _load_index_schema_doc()
+    )
     return generate_text(
         messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": system_msg},
             {"role": "user", "content": user_msg},
         ],
         model=ai_settings.model,
