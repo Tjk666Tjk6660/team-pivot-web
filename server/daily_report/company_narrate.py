@@ -15,14 +15,30 @@ Never raises — caller looks at `CompanyNarrative.status` 决定卡片走 ai/
 fallback 模板。"""
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from server.ai.oneshot import AIError, generate_text
 from server.daily_report.shared_facts import SharedFacts
+
+
+@functools.lru_cache(maxsize=1)
+def _load_index_schema_doc() -> str:
+    """读取 AI-docs/pivot-index-schema.md 的内容。
+
+    这份 doc 是 matter index 数据结构的**单一权威源**(见 doc preamble),
+    运行时注入到 LLM system prompt,告诉 LLM "timeline 里每个字段是什么意思"。
+    `lru_cache(maxsize=1)` 确保进程级缓存,不每次调用都读盘。
+    schema doc 改了需重启 server(可接受 — schema 变动频率低)。
+    """
+    project_root = Path(__file__).resolve().parent.parent.parent
+    doc_path = project_root / "AI-docs" / "pivot-index-schema.md"
+    return doc_path.read_text(encoding="utf-8")
 
 log = logging.getLogger("server.daily_report.company_narrate")
 
@@ -131,6 +147,10 @@ category 取值:`Pivot` / `enclaws` / `外部客户实施` / `probe`。其中 pr
 因为字数问题省略,**漏报 = 不达标**。老板要从这份汇报回答"今天团队都干了
 啥",任何活跃 matter 被隐匿都是错。
 
+⚠ **唯一例外**:若某 matter 今日活动**仅由失效操作 / 失效文件**构成
+(详见后文【字段消费规则】中的"失效文件"条目),视作今日**无真实推进**,
+允许跳过,**不计入漏报**。
+
 但要做**差别化展开**:
 - **有重大弧线感的事项**(经过方案争论拍板 / 验收通过 / 状态推进 /
   跨需求影响等):正常展开 30-60 字,讲清楚"是干啥 / 谁推动 / 现在到哪 /
@@ -154,39 +174,57 @@ category 取值:`Pivot` / `enclaws` / `外部客户实施` / `probe`。其中 pr
 - timeline_yaml 完整时间线 yaml,字段含义见下
 
 ──────────────────────────────────────
-【timeline_yaml 字段含义】
+【字段消费规则】(基于本 prompt 末尾 schema doc 里的字段语义,叙事时如何使用)
 
-顶层 `matter` + `timeline` 两块。每条 timeline 项的字段:
+完整字段定义见末尾【index schema 字段语义参考】块。本节只讲"叙事时这些
+字段怎么读、怎么写进 PM 视角的故事"。
 
-- type          think / act / verify / result / insight —— 推进的业务动作:
-                · think:   讨论 / 评审 / 提反提议
-                · act:     实施 / 动手 / 合入主线
-                · verify:  验收(verifications.judgement: passed/failed/partial)
-                · result:  事项正式收尾
-                · insight: 复盘 / 沉淀
-                **这五个英文字面词不能写进输出**,但**必须用它们的序列识别
-                事项节奏**:
-                · 全 think → 还在讨论
-                · think → act → 收口实施
-                · act + verify(passed) → 实施完成且通过验收
-                · act + result → 整体闭环
-- creator       写这条文件的人(pinyin):
-                · 第一条 think 的 creator    = 需求提出方
-                · 后续 think 的 creator      = 协作讨论者(多人知识碰撞)
-                · act 的 creator             = 实施者(通常 = 负责人,允许换人)
-                · verify / result 的 creator = 第三方评估者(非负责人本人)
-- owner         单条 timeline 项的责任人(多数 = matter.owner;落差 = 协作)。
-                **顶层 `matter.owner` 才是叙事核心** —— "对此事负责到底的人"。
-                ⚠ creator 与 owner 经常不同(提出方 ≠ 实施方),不要写成"代写"。
-                  叙事不用 creator 计数判断负责人表现,看 status_change /
-                  verifications / result 等推进结果
-- in_window     true=今日窗口内 / false=窗口前的历史(写故事时**两段都要看**)
-- summary       AI 生成的正文摘要 —— 你提取业务事实的主要来源
-- quote         引用上一条文件路径(因果链:谁回应谁)
-- status_change {from, to} —— 状态机转折节点(关键)
-- comments      评论流。author / body / mentions(@ 谁=抛球给谁,短决断
-                的评论通常是收口动作)
-- verifications verify 特有:验收对象 + 判定 + 评语
+- **type 业务节奏判断**(五个英文字面词不能写进输出,只用它们的序列识别节奏):
+  · 全 think → 还在讨论
+  · think → act → 收口实施
+  · act + verify(passed) → 实施完成且通过验收
+  · act + result → 整体闭环
+
+- **creator 解读**(谁写了这条文件,看上下文不同位置):
+  · 第一条 think 的 creator    = 需求提出方
+  · 后续 think 的 creator      = 协作讨论者(多人知识碰撞)
+  · act 的 creator             = 实施者(通常 = 负责人,允许换人)
+  · verify / result 的 creator = 第三方评估者(非负责人本人)
+
+- **owner 解读**(单条 timeline 项级 vs matter 顶层级):
+  · 单条 timeline 项的 owner 多数 = matter.owner;落差时 = 协作场景
+  · **顶层 `matter.owner` 才是叙事核心** —— "对此事负责到底的人"
+  · ⚠ creator 与 owner 经常不同(提出方 ≠ 实施方),不要写成"代写"
+  · 叙事不用 creator 计数判断负责人表现,看 status_change / verifications /
+    result 等推进结果
+
+- **in_window** true=今日窗口内 / false=窗口前的历史 —— 写故事时**两段都要看**
+
+- **summary** 是 AI 生成的正文摘要,提取业务事实的主要来源
+
+- **status_change** 是状态机转折节点(关键),触发 transition 的文件才有
+
+- **comments** 评论流,@ 谁=抛球给谁,短决断的评论通常是收口动作
+
+- **verifications / verifications_received** 验证关系:verify 文件写
+  `verifications`(我验证了哪些 act);被覆盖的 act 反写 `verifications_received`
+  (我被哪些 verify 覆盖)
+
+- ⚠ **失效语义说明**(产品决策):
+  · 你看到的 timeline_yaml 已**在数据层剔除所有失效文件 + 失效/恢复事件
+    项**(见 `server/daily_report/matter_timeline_renderer.py`);timeline
+    呈现给你的就是"未失效的有效演进",直接叙事即可
+  · 因此**不会**也**不应**出现这些禁语:
+    ❌ "X 测试后自行标记无效" / "X 起草后自行失效"
+    ❌ "X 撤回了 N 个方案" / "X 撤销了 Y" / "X 把 Y 标作失效"
+    ❌ "X 自行废弃 Y" / "X 标记 Y 为无效" / "X 纠正了先前判断"
+  · 若某 matter 在数据层过滤后,今日窗口内**没有任何 file 条目**,
+    该 matter 今日**无真实推进**,可直接跳过(覆盖原则的唯一例外,
+    见前文)
+  · 失效不影响 matter 状态机:即使被失效的是触发了 executing→finished 的
+    result 文件,matter 当前状态依然 finished(timeline 与状态机两条独立
+    事实链,见 schema doc)
+  · 字段含义见末尾 schema doc
 
 ──────────────────────────────────────
 【表达基调】
@@ -404,9 +442,21 @@ def narrate_company(
 def _call_ai(facts: SharedFacts, ai_settings: AISettings) -> str:
     payload = _build_input(facts)
     user_msg = json.dumps(payload, ensure_ascii=False)
+    # 把 index schema doc 注入到 system prompt 末尾,让 LLM 知道
+    # timeline_yaml 里每个字段是什么意思。schema doc 是单一权威源
+    # (`AI-docs/pivot-index-schema.md`),所有读 index 的 AI 应用都应注入它。
+    system_msg = (
+        _SYSTEM_PROMPT
+        + "\n\n──────────────────────────────────────\n"
+        + "【index schema 字段语义参考】\n"
+        + "(以下是 matter index 数据结构的权威说明,源自 "
+        + "`AI-docs/pivot-index-schema.md`。timeline_yaml 里每个字段的"
+        + "含义、形态、字段间关系都在下面查)\n\n"
+        + _load_index_schema_doc()
+    )
     return generate_text(
         messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": system_msg},
             {"role": "user", "content": user_msg},
         ],
         model=ai_settings.model,

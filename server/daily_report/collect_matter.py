@@ -133,6 +133,12 @@ def _convert_item(
     file_path = str(item.get("file") or "")
     if not file_path:
         return None
+    # 失效语义:已失效文件不计入日报事件流。日报场景下 LLM 不应看到失效
+    # 文件,避免写出"X 起草后自行失效""X 标记 Y 为无效"等失效行为陈述,
+    # 也避免把失效文件 summary 当今日成果。详见 matter_timeline_renderer.py
+    # 内 `_is_invalidated_or_invalidation_event` 注释。
+    if item.get("invalidated") is True:
+        return None
     file_type = str(item.get("type") or "")
 
     file_dt = _parse_iso(item.get("created_at"))

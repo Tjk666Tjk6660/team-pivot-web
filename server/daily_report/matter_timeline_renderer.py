@@ -71,9 +71,15 @@ def render_matter_timeline_yaml(
     timeline = timeline_raw[-max_timeline_items:] if truncated else timeline_raw
 
     # 修剪每条 timeline 项 + 加 in_window 标记
+    # 失效语义在日报场景下严格隔离:已失效的文件项 + 失效/恢复事件项
+    # 都从 timeline 中剔除,LLM 看不到 → 不会基于失效内容写叙事。
+    # 这是日报特定的产品决策(产品设计 §四原则"AI 应能看到 invalidated
+    # 元数据"主要面向 AI 助手 / MCP 等推理场景,日报这种成果叙事场景不需要)。
     trimmed_timeline: list[dict] = []
     for item in timeline:
         if not isinstance(item, dict):
+            continue
+        if _is_invalidated_or_invalidation_event(item):
             continue
         trimmed_timeline.append(_trim_item(
             item, window, max_summary_chars, max_comment_chars,
@@ -96,6 +102,26 @@ def render_matter_timeline_yaml(
         sort_keys=False,
         width=200,
     )
+
+
+_INVALIDATION_EVENT_REASONS = {"misposted", "inaccurate", "restored"}
+
+
+def _is_invalidated_or_invalidation_event(item: dict) -> bool:
+    """判断该 timeline entry 在日报场景下是否应被剔除。
+
+    两种 entry 形态(详见 AI-docs/pivot-index-schema.md §二):
+      - 文件项 `invalidated: true` → 已失效文件,日报不当作今日推进
+      - 失效/恢复事件项(无 `type` + `reason ∈ {misposted, inaccurate, restored}`)
+        → 失效操作本身是"声明动作",不是工作动作,日报视作未发生
+    """
+    if item.get("invalidated") is True:
+        return True
+    has_type = bool(item.get("type"))
+    reason = str(item.get("reason") or "")
+    if not has_type and reason in _INVALIDATION_EVENT_REASONS:
+        return True
+    return False
 
 
 def _trim_item(

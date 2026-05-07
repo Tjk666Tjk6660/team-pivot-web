@@ -901,11 +901,11 @@ def build_matter_event_card(
 
     See AI-docs/invalidate-self/product-design.md §5.2 — same notification
     level as a new reply (broadcast), but with a header that distinguishes
-    "withdrawn" vs "restored" so readers know it's a withdrawal action and
-    NOT new content. Body shows actor / target file / optional summary.
+    "invalidated" vs "restored" so readers know it's an invalidation action
+    and NOT new content. Body shows actor / target file / optional summary.
     """
     is_restore = reason == "restored"
-    header_verb = "恢复了文档" if is_restore else "撤回了文档"
+    header_verb = "恢复了文档" if is_restore else "失效了文档"
     reason_label = _INVALIDATION_REASON_LABEL.get(reason, reason)
     rows: list[tuple[str, str]] = [
         ("操作", f"{actor_name}（{reason_label}）"),

@@ -289,6 +289,98 @@ def test_collect_carries_status_change_and_verifications(tmp_path):
     assert out[0].verifications[0]["judgement"] == "passed"
 
 
+def test_collect_drops_invalidated_files(tmp_path):
+    """已失效文件(invalidated: true)在数据层被剔除,不进入日报事件流。
+
+    Why: 日报场景下"失效内容彻底不进叙事"是产品决策(路径 2,见 act 007
+    后续讨论)。通过数据层过滤而不是 prompt 软约束,避免 LLM 把已失效的
+    summary 当今日成果叙述。"""
+    idx = tmp_path / "index"
+    _write_index(idx, "demo", timeline=[
+        {
+            "file": "discussions/test/demo/001_a_act_aaa.md",
+            "type": "act",
+            "created_at": "2026-04-26T15:00:00+08:00",
+            "creator": "a",
+            "owner": "a",
+            "summary": "valid act content",
+        },
+        {
+            "file": "discussions/test/demo/002_a_act_bbb.md",
+            "type": "act",
+            "created_at": "2026-04-26T16:00:00+08:00",
+            "creator": "a",
+            "owner": "a",
+            "summary": "this content has been invalidated and must NOT leak",
+            "invalidated": True,
+            "invalidated_at": "2026-04-26T16:30:00+08:00",
+            "invalidated_reason": "misposted",
+            "invalidated_by": "a",
+        },
+    ])
+    out = collect_matter_events(
+        idx,
+        _window("2026-04-26T09:30:00+08:00", "2026-04-27T09:30:00+08:00"),
+    )
+    assert len(out) == 1, "invalidated file must be dropped from event stream"
+    assert out[0].file.endswith("001_a_act_aaa.md")
+    assert "invalidated" not in out[0].summary
+
+
+def test_renderer_drops_invalidated_files_and_invalidation_events(tmp_path):
+    """matter_timeline_renderer 同样剔除失效文件 + 失效/恢复事件项。
+
+    LLM 看到的 timeline_yaml 就是清洁版,不含任何 invalidated:true 的
+    file 项,也不含 reason ∈ {misposted, inaccurate, restored} 的事件项。"""
+    from server.daily_report.matter_timeline_renderer import render_matter_timeline_yaml
+
+    matter_index = {
+        "matter": {
+            "id": "demo",
+            "title": "demo",
+            "current_status": "executing",
+            "owner": "a",
+        },
+        "timeline": [
+            {
+                "file": "discussions/test/demo/001_a_act_aaa.md",
+                "type": "act",
+                "created_at": "2026-04-26T15:00:00+08:00",
+                "creator": "a",
+                "owner": "a",
+                "summary": "valid act content",
+            },
+            {
+                "file": "discussions/test/demo/002_a_act_bbb.md",
+                "type": "act",
+                "created_at": "2026-04-26T16:00:00+08:00",
+                "creator": "a",
+                "owner": "a",
+                "summary": "INVALIDATED_CONTENT_MUST_NOT_LEAK",
+                "invalidated": True,
+                "invalidated_reason": "misposted",
+            },
+            {
+                "creator": "a",
+                "created_at": "2026-04-26T16:30:00+08:00",
+                "quote": "discussions/test/demo/002_a_act_bbb.md",
+                "reason": "misposted",
+                "summary": "INVALIDATION_EVENT_MUST_NOT_LEAK",
+            },
+        ],
+    }
+    rendered = render_matter_timeline_yaml(
+        matter_index,
+        _window("2026-04-26T09:30:00+08:00", "2026-04-27T09:30:00+08:00"),
+    )
+    assert "001_a_act_aaa.md" in rendered, "valid act must be present"
+    assert "INVALIDATED_CONTENT_MUST_NOT_LEAK" not in rendered
+    assert "INVALIDATION_EVENT_MUST_NOT_LEAK" not in rendered
+    assert "002_a_act_bbb.md" not in rendered, (
+        "invalidated file path itself must be filtered too"
+    )
+
+
 def test_collect_continues_when_one_yaml_corrupt(tmp_path):
     """A malformed yaml shouldn't kill the whole report."""
     idx = tmp_path / "index"

@@ -970,21 +970,21 @@ def test_noop_notifier_annotation_silent():
 
 
 def test_matter_event_card_invalidate_misposted():
-    """misposted 失效:header 含'撤回了文档',row 含 actor / 文件 / 说明。"""
+    """misposted 失效:header 含'失效了文档',row 含 actor / 文件 / 说明。"""
     card = build_matter_event_card(
         thread_title="登录链路重构",
         target_filename="003_dengke_act_abc.md",
         actor_name="邓柯",
         reason="misposted",
-        summary="误发,撤回此文档",
+        summary="误发,标记失效",
         thread_url="http://x/m/auth",
     )
     md = card["body"]["elements"][0]["content"]
-    assert card["header"]["title"]["content"] == "作者撤回了文档：登录链路重构"
+    assert card["header"]["title"]["content"] == "作者失效了文档：登录链路重构"
     assert card["header"]["template"] == "yellow"
     assert "**操作**：邓柯（误发）" in md
     assert "**文件**：003_dengke_act_abc.md" in md
-    assert "**说明**：误发,撤回此文档" in md
+    assert "**说明**：误发,标记失效" in md
 
 
 def test_matter_event_card_invalidate_inaccurate():
@@ -998,7 +998,7 @@ def test_matter_event_card_invalidate_inaccurate():
         thread_url="http://x/m/X",
     )
     md = card["body"]["elements"][0]["content"]
-    assert "撤回了文档" in card["header"]["title"]["content"]
+    assert "失效了文档" in card["header"]["title"]["content"]
     assert "**操作**：A（信息有误）" in md
     # summary 缺失时,**说明** 行不出现
     assert "**说明**" not in md
