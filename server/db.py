@@ -433,17 +433,22 @@ def _assert_no_legacy_user_open_id(conn) -> None:
 
 
 def _migrate(conn) -> None:
+    """执行数据库迁移。
+
+    逐个检查旧表结构是否缺字段、缺索引或仍保留旧约束；
+    如果发现老版本 schema，就补列、建索引、重建表或一次性回填数据，
+    确保旧数据库能够平滑升级到当前版本。
+    """
     _assert_no_legacy_user_open_id(conn)
-    # join_application: added via_invite_id in IM-binding-required-invite rework
-    # so the admin queue can show "invited by X" badges.
+
+    # join_application 表新增 via_invite_id，用于标记申请来自哪个邀请。
     cols = {row[1] for row in conn.execute("PRAGMA table_info(join_application)")}
     if "via_invite_id" not in cols:
         conn.execute(
             "ALTER TABLE join_application ADD COLUMN via_invite_id TEXT"
         )
-    # invite table: dropped email/display_name in IM-binding-required-invite
-    # rework. Existing invite rows are abandoned (per spec — internal 10-user
-    # deployment had no live unused invites at cutover).
+
+    # invite 表在新邀请模型里去掉了 email/display_name 字段，旧表直接重建。
     cols = {row[1] for row in conn.execute("PRAGMA table_info(invite)")}
     if "email" in cols:
         conn.execute("DROP TABLE invite")
@@ -458,9 +463,13 @@ def _migrate(conn) -> None:
                 used_by_user_id TEXT
             )
         """)
+
+    # users 表增加 markdown_style，保存用户的 Markdown 渲染偏好。
     cols = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
     if "markdown_style" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN markdown_style TEXT")
+
+    # drafts 表补充提及、回复和引用相关字段。
     cols = {row[1] for row in conn.execute("PRAGMA table_info(drafts)")}
     if "mentions_json" not in cols:
         conn.execute("ALTER TABLE drafts ADD COLUMN mentions_json TEXT")
@@ -471,13 +480,15 @@ def _migrate(conn) -> None:
             "ALTER TABLE drafts ADD COLUMN references_json TEXT NOT NULL DEFAULT '[]'"
         )
     if "matter_payload_json" not in cols:
-        # P4.6: matter 草稿复用 drafts 表，type 仍为 proposal|reply；
-        # matter 专属结构化字段（doc_type/summary/owner/quote/refer/
-        # verifications/outcome/status_change）统一落在这一列里。
+        # matter 草稿复用 drafts 表，专属结构化字段统一放到这一列中。
         conn.execute("ALTER TABLE drafts ADD COLUMN matter_payload_json TEXT")
+
+    # sessions 表补充 user_access_token，便于会话关联飞书 access token。
     cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
     if "user_access_token" not in cols:
         conn.execute("ALTER TABLE sessions ADD COLUMN user_access_token TEXT")
+
+    # AI 会话表补充上下文文件、回复目标和参考文件字段。
     cols = {row[1] for row in conn.execute("PRAGMA table_info(ai_conversations)")}
     if "context_files_json" not in cols:
         conn.execute(
@@ -489,7 +500,7 @@ def _migrate(conn) -> None:
         conn.execute(
             "ALTER TABLE ai_conversations ADD COLUMN reference_files_json TEXT NOT NULL DEFAULT '[]'"
         )
-        # One-time backfill: split old context_files_json into (reply_target, reference_files)
+        # 一次性回填：把旧的 context_files_json 拆成 reply_target 和 reference_files_json。
         for row in conn.execute(
             "SELECT pivot_user_id, thread_key, context_files_json FROM ai_conversations"
         ).fetchall():
@@ -507,49 +518,42 @@ def _migrate(conn) -> None:
                 " WHERE pivot_user_id=? AND thread_key=?",
                 (target, __import__("json").dumps(refs), row["pivot_user_id"], row["thread_key"]),
             )
-    # Tool-use schema migration: clear all prior AI conversations on first
-    # boot of the tool-use version. Threads/posts are untouched (Git is the
-    # source of truth). Column presence acts as the migration marker so this
-    # only fires once.
+
+    # tool-use 版本首次启动时清空旧 AI 对话，避免和新 schema 混用。
     if "schema_ver" not in cols:
         conn.execute(
             "ALTER TABLE ai_conversations ADD COLUMN schema_ver INTEGER NOT NULL DEFAULT 1"
         )
         conn.execute("DELETE FROM ai_conversations")
+
+    # contacts 表补充拼音字段，并回填已有联系人拼音。
     cols = {row[1] for row in conn.execute("PRAGMA table_info(contacts)")}
     if "pinyin" not in cols:
         conn.execute("ALTER TABLE contacts ADD COLUMN pinyin TEXT")
-        # Backfill: compute pinyin from existing names so MCP @-by-pinyin
-        # works immediately without waiting for the next contacts sync.
         from server.contacts import name_to_pinyin
         for row in conn.execute("SELECT open_id, name FROM contacts").fetchall():
             conn.execute(
                 "UPDATE contacts SET pinyin=? WHERE open_id=?",
                 (name_to_pinyin(row["name"] or ""), row["open_id"]),
             )
-    # Idempotent: covers both freshly-created tables (column came from SCHEMA)
-    # and migrated ones (column came from the ALTER above). Cheap on every boot.
+
+    # 联系人拼音索引：保证按拼音搜索更快，且对新旧库都幂等。
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_contacts_pinyin ON contacts(pinyin)"
     )
-    # Scoring v0.3 -> v0.3.1: relax idempotency idx (drop 'success' from the
-    # active-statuses set) so admin reruns can record a new run alongside
-    # prior successes. CREATE UNIQUE INDEX IF NOT EXISTS in SCHEMA wouldn't
-    # change a pre-existing index definition; explicit DROP+CREATE forces
-    # the new shape on dev DBs that were created against the old SCHEMA.
+
+    # 重建评分幂等索引：让 running/queued 的判定符合新逻辑。
     conn.execute("DROP INDEX IF EXISTS idx_scoring_runs_idempotency")
     conn.execute(
         "CREATE UNIQUE INDEX idx_scoring_runs_idempotency"
         " ON matter_scoring_runs(matter_id, timeline_hash)"
         " WHERE status IN ('queued','running')"
     )
-    # Scoring v0.3.1 -> v2.1: add schema_version to runs and three new
-    # columns to evidence (annotation source + attribution_basis). Old DBs
-    # still have the original CREATE TABLE shape — ALTER on missing cols.
+
+    # matter_scoring_runs / matter_score_evidence 补充新评分 schema 字段。
     cols = {row[1] for row in conn.execute("PRAGMA table_info(matter_scoring_runs)")}
     if "schema_version" not in cols:
-        # Default 1 = legacy Phase 1 (owner-only). New rows from the Phase 1
-        # worker still write 1; Phase 2 worker bumps to 2.
+        # 旧数据默认视为 v1。
         conn.execute(
             "ALTER TABLE matter_scoring_runs"
             " ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1"
@@ -574,10 +578,10 @@ def _migrate(conn) -> None:
         conn.execute(
             "ALTER TABLE matter_scoring_runs ADD COLUMN skipped_subjects TEXT"
         )
+
+    # pivot_user 旧库可能还带着老的 role CHECK 约束，需要重建一次表。
     cols = {row[1] for row in conn.execute("PRAGMA table_info(pivot_user)")}
     if "role" in cols:
-        # Legacy databases may still have CHECK(role IN ('admin','member')).
-        # SQLite cannot drop that CHECK in place, so rebuild the table once.
         sql_row = conn.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='pivot_user'"
         ).fetchone()
@@ -614,15 +618,21 @@ def _migrate(conn) -> None:
                 CREATE INDEX IF NOT EXISTS idx_pivot_user_role_status ON pivot_user(role, status);
                 """
             )
+
+    # matter_visibility_cache 新增 creator_id / owner_id，便于筛选与回溯。
     cols = {row[1] for row in conn.execute("PRAGMA table_info(matter_visibility_cache)")}
     if cols:
         if "creator_id" not in cols:
             conn.execute("ALTER TABLE matter_visibility_cache ADD COLUMN creator_id TEXT")
         if "owner_id" not in cols:
             conn.execute("ALTER TABLE matter_visibility_cache ADD COLUMN owner_id TEXT")
+
+    # pivot_role 增加 label 字段，支持更友好的角色名称展示。
     cols = {row[1] for row in conn.execute("PRAGMA table_info(pivot_role)")}
     if cols and "label" not in cols:
         conn.execute("ALTER TABLE pivot_role ADD COLUMN label TEXT")
+
+    # 补齐系统预置角色，确保迁移后角色数据完整。
     _ensure_pivot_roles(conn)
 
 
